@@ -1,0 +1,16 @@
+<svg width="180" height="48" viewBox="0 0 180 48" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Catalyst">
+  <rect width="180" height="48" rx="10" fill="white"/>
+  <g font-family="'Manrope', 'Segoe UI', sans-serif" font-size="26" font-weight="700" letter-spacing="3">
+    <text x="10" y="31" fill="#1f7bb6">C</text>
+    <text x="28" y="31" fill="#0f7e45">A</text>
+    <text x="46" y="31" fill="#e97724">T</text>
+    <text x="64" y="31" fill="#4f46e5">A</text>
+    <text x="82" y="31" fill="#1f7bb6">L</text>
+    <text x="100" y="31" fill="#0f7e45">Y</text>
+    <text x="118" y="31" fill="#e97724">S</text>
+    <text x="136" y="31" fill="#4f46e5">T</text>
+  </g>
+  <text x="12" y="42" font-family="'Manrope', 'Segoe UI', sans-serif" font-size="10" fill="#6b7280" letter-spacing="1.2">
+    Partnering for Sustainability
+  </text>
+</svg>
