@@ -1,232 +1,287 @@
 import { useMemo, useState } from "react";
+import {
+  Search, Plus, Building2, CheckCircle2, XCircle,
+  Mail, Phone, MapPin, Edit, Trash2, X,
+} from "lucide-react";
 
-const ClientManagement = ({ clients, onAddClient, resetClientForm }) => {
-  const [form, setForm] = useState(resetClientForm());
+const emptyClient = {
+  clientName: "", email: "", phone: "", state: "",
+  pincode: "", gst: "", company: "", address: "", status: "Active",
+};
+
+const ClientManagement = ({ clients, onAddClient, onEditClient, onDeleteClient }) => {
+  const [form, setForm] = useState(emptyClient);
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingId, setEditingId] = useState(null); // null = Add mode, id = Edit mode
+  const [saving, setSaving] = useState(false);
+  const [apiError, setApiError] = useState(null);
 
   const stats = useMemo(() => {
     const active = clients.filter((c) => c.status === "Active").length;
     const inactive = clients.filter((c) => c.status === "Inactive").length;
-    return {
-      total: clients.length,
-      active,
-      inactive,
-    };
+    return { total: clients.length, active, inactive };
   }, [clients]);
 
   const filteredClients = useMemo(() => {
     const term = search.toLowerCase();
-    return clients.filter((c) => {
-      const matchesSearch = term
+    return clients.filter((c) =>
+      term
         ? c.clientName?.toLowerCase().includes(term) ||
-          c.email?.toLowerCase().includes(term) ||
-          c.company?.toLowerCase().includes(term)
-        : true;
-      const matchesStatus =
-        statusFilter === "all" ? true : c.status === (statusFilter === "active" ? "Active" : "Inactive");
-      return matchesSearch && matchesStatus;
+        c.email?.toLowerCase().includes(term) ||
+        c.company?.toLowerCase().includes(term)
+        : true
+    );
+  }, [clients, search]);
+
+  const openAdd = () => {
+    setEditingId(null);
+    setForm(emptyClient);
+    setApiError(null);
+    setIsModalOpen(true);
+  };
+
+  const openEdit = (c) => {
+    setEditingId(c.id);
+    setForm({
+      clientName: c.clientName || "",
+      email: c.email || "",
+      phone: c.phone || "",
+      state: c.state || "",
+      pincode: c.pincode || "",
+      gst: c.gst || "",
+      company: c.company || "",
+      address: c.address || "",
+      status: c.status || "Active",
     });
-  }, [clients, search, statusFilter]);
+    setApiError(null);
+    setIsModalOpen(true);
+  };
+
+  const closeModal = () => {
+    setIsModalOpen(false);
+    setEditingId(null);
+    setApiError(null);
+  };
 
   const handleChange = (e) => {
     const { name, value } = e.target;
     setForm((prev) => ({ ...prev, [name]: value }));
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    const next = { ...form };
-    onAddClient(next);
-    setForm(resetClientForm());
+    setSaving(true);
+    setApiError(null);
+    try {
+      if (editingId) {
+        await onEditClient(editingId, form);
+      } else {
+        await onAddClient(form);
+      }
+      closeModal();
+    } catch (err) {
+      setApiError(err.message || "Something went wrong");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (c) => {
+    if (!window.confirm(`Delete "${c.clientName}"? This will also remove all linked users.`)) return;
+    try {
+      await onDeleteClient(c.id);
+    } catch (err) {
+      alert(`Delete failed: ${err.message}`);
+    }
   };
 
   return (
-    <div className="client-page">
-      <div className="page-title-block">
-        <div>
-          <p className="eyebrow">Dashboard</p>
-          <h1>Clients</h1>
+    <div>
+      <div className="page-header">
+        <h1>Clients Management</h1>
+        <p>Manage all client companies in the system</p>
+      </div>
+
+      <div className="toolbar">
+        <div className="search-container">
+          <Search className="search-icon" size={18} />
+          <input
+            className="search-input"
+            placeholder="Search clients…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
         </div>
+        <button className="add-btn" onClick={openAdd}>
+          <Plus size={18} />
+          Add Client
+        </button>
       </div>
 
       <div className="stat-grid">
-        <button
-          type="button"
-          className={statusFilter === "all" ? "stat-card active" : "stat-card"}
-          onClick={() => setStatusFilter("all")}
-        >
-          <div className="stat-value">{stats.total}</div>
-          <div className="stat-label">Total Clients</div>
-        </button>
-        <button
-          type="button"
-          className={statusFilter === "active" ? "stat-card active" : "stat-card"}
-          onClick={() => setStatusFilter("active")}
-        >
-          <div className="stat-value">{stats.active}</div>
-          <div className="stat-label">Active Clients</div>
-        </button>
-        <button
-          type="button"
-          className={statusFilter === "inactive" ? "stat-card active" : "stat-card"}
-          onClick={() => setStatusFilter("inactive")}
-        >
-          <div className="stat-value">{stats.inactive}</div>
-          <div className="stat-label">Inactive Clients</div>
-        </button>
+        <div className="stat-card">
+          <div className="stat-info">
+            <span className="stat-label">Total Clients</span>
+            <span className="stat-value">{stats.total}</span>
+          </div>
+          <div className="stat-icon blue"><Building2 size={24} /></div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-info">
+            <span className="stat-label">Active Clients</span>
+            <span className="stat-value">{stats.active}</span>
+          </div>
+          <div className="stat-icon green"><CheckCircle2 size={24} /></div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-info">
+            <span className="stat-label">Inactive Clients</span>
+            <span className="stat-value">{stats.inactive}</span>
+          </div>
+          <div className="stat-icon gray"><XCircle size={24} /></div>
+        </div>
       </div>
 
-      <div className="client-grid">
-        <div className="stack">
-          <div className="card">
-            <div className="card-header">
-              <span className="card-title">Quick Search</span>
-            </div>
-            <div className="card-body">
-              <input
-                className="input"
-                placeholder="Type a name, email, or company"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-            </div>
-          </div>
-
-          <div className="card">
-            <div className="card-header">
-              <span className="card-title">Clients</span>
-              <span className="card-meta">{filteredClients.length} result(s)</span>
-            </div>
-            <div className="list">
-              {filteredClients.length === 0 ? (
-                <div className="empty">No clients yet. Add your first client.</div>
-              ) : (
-                filteredClients.map((c) => (
-                  <div className="list-row" key={c.id}>
-                    <div>
-                      <div className="list-primary">{c.clientName}</div>
-                      <div className="list-secondary">{c.company || "—"}</div>
+      <div className="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Company Name</th>
+              <th>Contact Info</th>
+              <th>Address</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredClients.length === 0 ? (
+              <tr>
+                <td colSpan="5" style={{ textAlign: "center", padding: "32px" }}>
+                  No clients found.
+                </td>
+              </tr>
+            ) : (
+              filteredClients.map((c) => (
+                <tr key={c.id}>
+                  <td>
+                    <div className="user-cell">
+                      <div className="avatar gray"><Building2 size={18} /></div>
+                      <span className="user-name-text">{c.clientName}</span>
                     </div>
-                    <div className="list-tertiary">{c.status}</div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
+                  </td>
+                  <td>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                      <div className="icon-text"><Mail size={14} />{c.email || "N/A"}</div>
+                      <div className="icon-text"><Phone size={14} />{c.phone || "N/A"}</div>
+                    </div>
+                  </td>
+                  <td>
+                    <div className="icon-text">
+                      <MapPin size={14} style={{ flexShrink: 0 }} />
+                      <span style={{ maxWidth: "250px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {c.address || "N/A"}
+                      </span>
+                    </div>
+                  </td>
+                  <td>
+                    <span className={`badge status-${c.status.toLowerCase()}`}>{c.status}</span>
+                  </td>
+                  <td>
+                    <div className="actions">
+                      <button className="action-btn" title="Edit" onClick={() => openEdit(c)}>
+                        <Edit size={18} />
+                      </button>
+                      <button className="action-btn delete" title="Delete" onClick={() => handleDelete(c)}>
+                        <Trash2 size={18} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
 
-        <div className="card form-card">
-          <div className="card-header">
-            <span className="card-title">Add Client</span>
-          </div>
-          <form className="card-body" onSubmit={handleSubmit}>
-            <div className="form-grid">
-              <label className="field">
-                <span>Client Name</span>
-                <input
-                  name="clientName"
-                  placeholder="Client name"
-                  value={form.clientName}
-                  onChange={handleChange}
-                  required
-                  className="input"
-                />
-              </label>
-              <label className="field">
-                <span>Email Address</span>
-                <input
-                  name="email"
-                  type="email"
-                  placeholder="name@company.com"
-                  value={form.email}
-                  onChange={handleChange}
-                  className="input"
-                />
-              </label>
-              <label className="field">
-                <span>Phone Number</span>
-                <input
-                  name="phone"
-                  placeholder="98765 43210"
-                  value={form.phone}
-                  onChange={handleChange}
-                  className="input"
-                />
-              </label>
-              <label className="field">
-                <span>State Name</span>
-                <input
-                  name="state"
-                  placeholder="State"
-                  value={form.state}
-                  onChange={handleChange}
-                  className="input"
-                />
-              </label>
-              <label className="field">
-                <span>GST Number</span>
-                <input
-                  name="gst"
-                  placeholder="22AAAAA0000A1Z5"
-                  value={form.gst}
-                  onChange={handleChange}
-                  className="input"
-                />
-              </label>
-              <label className="field">
-                <span>Pincode</span>
-                <input
-                  name="pincode"
-                  placeholder="560001"
-                  value={form.pincode}
-                  onChange={handleChange}
-                  className="input"
-                />
-              </label>
-              <label className="field">
-                <span>Status</span>
-                <select
-                  name="status"
-                  value={form.status}
-                  onChange={handleChange}
-                  className="input select"
-                >
+      {isModalOpen && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h2>{editingId ? "Edit Client" : "Add New Client"}</h2>
+              <button className="close-btn" onClick={closeModal}><X size={24} /></button>
+            </div>
+
+            {apiError && (
+              <div style={{ background: "#3b0e0e", color: "#f87171", padding: "10px 14px", borderRadius: "6px", marginBottom: "12px", fontSize: "14px" }}>
+                ⚠️ {apiError}
+              </div>
+            )}
+
+            <form onSubmit={handleSubmit}>
+              <div className="form-group">
+                <label>Client Name</label>
+                <input name="clientName" placeholder="Acme Corporation" value={form.clientName}
+                  onChange={handleChange} required className="form-input" />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+                <div className="form-group">
+                  <label>Email Address</label>
+                  <input name="email" type="email" placeholder="contact@acme.com" value={form.email}
+                    onChange={handleChange} className="form-input" />
+                </div>
+                <div className="form-group">
+                  <label>Phone Number</label>
+                  <input name="phone" placeholder="+1 (555) 123-4567" value={form.phone}
+                    onChange={handleChange} className="form-input" />
+                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+                <div className="form-group">
+                  <label>Company Name</label>
+                  <input name="company" placeholder="Acme Ltd." value={form.company}
+                    onChange={handleChange} className="form-input" />
+                </div>
+                <div className="form-group">
+                  <label>GST Number</label>
+                  <input name="gst" placeholder="22AAAAA0000A1Z5" value={form.gst}
+                    onChange={handleChange} className="form-input" />
+                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+                <div className="form-group">
+                  <label>State</label>
+                  <input name="state" placeholder="Maharashtra" value={form.state}
+                    onChange={handleChange} className="form-input" />
+                </div>
+                <div className="form-group">
+                  <label>Pincode</label>
+                  <input name="pincode" placeholder="400001" value={form.pincode}
+                    onChange={handleChange} className="form-input" />
+                </div>
+              </div>
+              <div className="form-group">
+                <label>Address</label>
+                <input name="address" placeholder="123 Business St, Suite 100" value={form.address}
+                  onChange={handleChange} className="form-input" />
+              </div>
+              <div className="form-group">
+                <label>Status</label>
+                <select name="status" value={form.status} onChange={handleChange} className="form-select">
                   <option value="Active">Active</option>
                   <option value="Inactive">Inactive</option>
                 </select>
-              </label>
-              <label className="field">
-                <span>Company Name</span>
-                <input
-                  name="company"
-                  placeholder="Company name"
-                  value={form.company}
-                  onChange={handleChange}
-                  className="input"
-                />
-              </label>
-              <label className="field span-2">
-                <span>Address</span>
-                <textarea
-                  name="address"
-                  placeholder="Street, city, and country"
-                  value={form.address}
-                  onChange={handleChange}
-                  className="input textarea"
-                  rows={3}
-                />
-              </label>
-            </div>
-
-            <div className="form-actions">
-              <button type="submit" className="primary-btn">
-                Add
-              </button>
-            </div>
-          </form>
+              </div>
+              <div className="modal-actions">
+                <button type="button" className="btn-cancel" onClick={closeModal}>Cancel</button>
+                <button type="submit" className="btn-submit" disabled={saving}>
+                  {saving ? "Saving…" : editingId ? "Save Changes" : "Add Client"}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };

@@ -4,6 +4,12 @@ import helmet from "helmet";
 import morgan from "morgan";
 import clientsRouter from "./routes/clients.js";
 import usersRouter from "./routes/users.js";
+import authRouter from "./routes/auth.js";
+import companiesRouter from "./routes/companies.js";
+import assetsRouter from "./routes/assets.js";
+import departmentsRouter from "./routes/departments.js";
+import checklistsRouter from "./routes/checklists.js";
+import logsRouter from "./routes/logs.js";
 
 const app = express();
 
@@ -20,8 +26,14 @@ app.use(express.json());
 app.use(morgan("tiny"));
 
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
+app.use("/api/auth", authRouter);
 app.use("/api/clients", clientsRouter);
 app.use("/api/users", usersRouter);
+app.use("/api/companies", companiesRouter);
+app.use("/api/departments", departmentsRouter);
+app.use("/api/assets", assetsRouter);
+app.use("/api/checklists", checklistsRouter);
+app.use("/api/logs", logsRouter);
 
 // Basic 404 handler
 app.use((req, res) => res.status(404).json({ message: "Not found", path: req.originalUrl }));
