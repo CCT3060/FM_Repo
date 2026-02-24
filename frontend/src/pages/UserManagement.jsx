@@ -4,7 +4,7 @@ import {
   Mail, Building2, Edit, Trash2, X,
 } from "lucide-react";
 
-const emptyUser = { fullName: "", email: "", phone: "", role: "", clientId: "", status: "Active" };
+const emptyUser = { fullName: "", email: "", phone: "", role: "", clientId: "", status: "Active", password: "", confirmPassword: "" };
 
 const UserManagement = ({ clients, users, clientOptions, onAddUser, onEditUser, onDeleteUser }) => {
   const [form, setForm] = useState(emptyUser);
@@ -47,6 +47,8 @@ const UserManagement = ({ clients, users, clientOptions, onAddUser, onEditUser, 
       role: u.role || "",
       clientId: String(u.clientId || ""),
       status: u.status || "Active",
+      password: "",
+      confirmPassword: "",
     });
     setApiError(null);
     setIsModalOpen(true);
@@ -68,7 +70,19 @@ const UserManagement = ({ clients, users, clientOptions, onAddUser, onEditUser, 
     setSaving(true);
     setApiError(null);
     try {
+      if (!editingId && (!form.password || form.password.length === 0)) {
+        throw new Error("Password is required");
+      }
+      if (form.password !== form.confirmPassword) {
+        throw new Error("Passwords do not match");
+      }
+
       const payload = { ...form, clientId: Number(form.clientId) };
+      if (!payload.password) {
+        delete payload.password;
+      }
+      delete payload.confirmPassword;
+
       if (editingId) {
         await onEditUser(editingId, payload);
       } else {
@@ -249,6 +263,18 @@ const UserManagement = ({ clients, users, clientOptions, onAddUser, onEditUser, 
                 <label>Role</label>
                 <input name="role" placeholder="Admin / Manager / User" value={form.role}
                   onChange={handleChange} className="form-input" />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+                <div className="form-group">
+                  <label>Password</label>
+                  <input name="password" type="password" placeholder="At least 8 chars & a number" value={form.password}
+                    onChange={handleChange} className="form-input" required={!editingId} />
+                </div>
+                <div className="form-group">
+                  <label>Confirm Password</label>
+                  <input name="confirmPassword" type="password" placeholder="Re-enter password" value={form.confirmPassword}
+                    onChange={handleChange} className="form-input" required={!editingId} />
+                </div>
               </div>
               <div className="form-group">
                 <label>Client Company</label>

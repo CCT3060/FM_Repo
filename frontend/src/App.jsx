@@ -1,22 +1,24 @@
 import { useEffect, useMemo, useState } from "react";
+import { Routes, Route, useNavigate, Navigate } from "react-router-dom";
 import { Building2, Users, LogOut } from "lucide-react";
 import logo from "./images/image.png";
 import ClientManagement from "./pages/ClientManagement";
 import UserManagement from "./pages/UserManagement";
+import CompanyPortal from "./pages/CompanyPortal";
 import "./styles.css";
 import {
   getClients, createClient, updateClient, deleteClient,
   getUsers, createUser, updateUser, deleteUser,
 } from "./api";
 
-function App() {
+const AdminShell = () => {
   const [activeTab, setActiveTab] = useState("clients");
   const [clients, setClients] = useState([]);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const navigate = useNavigate();
 
-  // ── Load data on mount ─────────────────────────────────────────────────────
   useEffect(() => {
     Promise.all([getClients(), getUsers()])
       .then(([c, u]) => {
@@ -32,7 +34,6 @@ function App() {
     [clients]
   );
 
-  // ── Client handlers ────────────────────────────────────────────────────────
   const handleAddClient = async (data) => {
     const created = await createClient(data);
     setClients((prev) => [created, ...prev]);
@@ -48,7 +49,6 @@ function App() {
     setClients((prev) => prev.filter((c) => c.id !== id));
   };
 
-  // ── User handlers ──────────────────────────────────────────────────────────
   const handleAddUser = async (data) => {
     const created = await createUser(data);
     setUsers((prev) => [created, ...prev]);
@@ -67,7 +67,7 @@ function App() {
   return (
     <div className="app-shell">
       <aside className="side-panel">
-        <div className="brand-section">
+        <div className="brand-section" onClick={() => navigate("/")} style={{ cursor: "pointer" }}>
           <img src={logo} alt="Catalyst" className="brand-logo" />
         </div>
 
@@ -94,9 +94,7 @@ function App() {
             <p className="user-name">Root Admin</p>
             <p className="user-email">admin@root.com</p>
           </div>
-          <button className="logout-btn">
-            <LogOut size={18} />
-          </button>
+          <button className="logout-btn" onClick={() => navigate("/client")}>Client Portal</button>
         </div>
       </aside>
 
@@ -128,6 +126,16 @@ function App() {
         )}
       </main>
     </div>
+  );
+};
+
+function App() {
+  return (
+    <Routes>
+      <Route path="/client" element={<CompanyPortal />} />
+      <Route path="/company" element={<Navigate to="/client" replace />} />
+      <Route path="*" element={<AdminShell />} />
+    </Routes>
   );
 }
 
