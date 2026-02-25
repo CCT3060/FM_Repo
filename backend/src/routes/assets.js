@@ -9,7 +9,13 @@ const router = Router();
 
 router.use(requireAuth);
 
-const assetTypes = ["soft", "technical", "fleet"];
+const getAssetType = async (code) => {
+  const [rows] = await pool.query(
+    "SELECT code, label, category FROM asset_types WHERE code = ? AND status = 'Active'",
+    [code]
+  );
+  return rows[0] || null;
+};
 
 const logHistory = async (assetId, action, details, userId) => {
   await pool.execute(
@@ -22,7 +28,7 @@ const createRules = [
   body("companyId").isInt({ min: 1 }).withMessage("companyId is required"),
   body("departmentId").isInt({ min: 1 }).withMessage("departmentId is required"),
   body("assetName").trim().notEmpty().withMessage("Asset name is required"),
-  body("assetType").isIn(assetTypes).withMessage("Invalid asset type"),
+  body("assetType").trim().notEmpty().withMessage("Invalid asset type"),
   body("status").optional().isIn(["Active", "Inactive"]),
   body("assetUniqueId").optional().isString().isLength({ max: 120 }),
   body("building").optional().isString().isLength({ max: 160 }),
@@ -36,7 +42,7 @@ const updateRules = [
   param("id").isInt().withMessage("id must be numeric"),
   body("departmentId").optional().isInt({ min: 1 }),
   body("assetName").optional().isString().notEmpty(),
-  body("assetType").optional().isIn(assetTypes),
+  body("assetType").optional().isString().trim(),
   body("status").optional().isIn(["Active", "Inactive"]),
   body("assetUniqueId").optional().isString().isLength({ max: 120 }),
   body("building").optional().isString().isLength({ max: 160 }),
@@ -51,7 +57,7 @@ router.get(
   validate([
     query("companyId").optional().isInt({ min: 1 }),
     query("departmentId").optional().isInt({ min: 1 }),
-    query("type").optional().isIn(assetTypes),
+    query("type").optional().isString().trim(),
     query("status").optional().isIn(["Active", "Inactive"]),
     query("search").optional().isString(),
   ]),
@@ -146,6 +152,11 @@ router.post(
         metadata = {},
       } = req.body;
 
+      const assetTypeRecord = await getAssetType(assetType);
+      if (!assetTypeRecord) {
+        return res.status(400).json({ message: "Asset type does not exist or is inactive" });
+      }
+
       const [companyRows] = await conn.query(
         "SELECT id FROM companies WHERE id = ? AND user_id = ?",
         [companyId, req.user.id]
@@ -178,7 +189,7 @@ router.post(
           departmentId,
           assetName,
           uniqueIdToUse,
-          assetType,
+          assetTypeRecord.code,
           building || null,
           floor || null,
           room || null,
@@ -205,7 +216,7 @@ router.post(
         "created",
         {
           assetName,
-          assetType,
+          assetType: assetTypeRecord.code,
           departmentId,
           status,
           building,
@@ -243,18 +254,18 @@ router.put(
   validate(updateRules),
   async (req, res, next) => {
     const { id } = req.params;
-    const {
-      assetName,
-      assetType,
-      departmentId,
-      assetUniqueId,
-      building,
-      floor,
-      room,
-      status,
-      qrCode,
-      metadata,
-    } = req.body;
+      const {
+        assetName,
+        assetType,
+        departmentId,
+        assetUniqueId,
+        building,
+        floor,
+        room,
+        status,
+        qrCode,
+        metadata,
+      } = req.body;
 
     try {
       const [rows] = await pool.query(
@@ -269,6 +280,13 @@ router.put(
       }
 
       const companyId = rows[0].company_id;
+
+      if (assetType !== undefined) {
+        const assetTypeRecord = await getAssetType(assetType);
+        if (!assetTypeRecord) {
+          return res.status(400).json({ message: "Asset type does not exist or is inactive" });
+        }
+      }
 
       if (departmentId !== undefined) {
         const [departmentRows] = await pool.query(

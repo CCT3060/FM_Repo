@@ -7,8 +7,21 @@ async function request(method, path, body, options = {}) {
     if (body !== undefined) opts.body = JSON.stringify(body);
     const res = await fetch(`${BASE}${path}`, opts);
     if (res.status === 204) return null;
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+
+    let data = null;
+    try {
+        data = await res.json();
+    } catch (_) {
+        // ignore body parse errors for non-JSON responses
+    }
+
+    if (!res.ok) {
+        const err = new Error((data && data.message) || `HTTP ${res.status}`);
+        err.status = res.status;
+        err.body = data;
+        throw err;
+    }
+
     return data;
 }
 
@@ -51,3 +64,11 @@ export const deleteChecklist = (token, id) => request("DELETE", `/api/checklists
 export const getLogs = (token, params = "") => request("GET", `/api/logs${params ? `?${params}` : ""}`, undefined, { authToken: token });
 export const createLog = (token, data) => request("POST", "/api/logs", data, { authToken: token });
 export const deleteLog = (token, id) => request("DELETE", `/api/logs/${id}`, undefined, { authToken: token });
+
+// Checklist assignments
+export const getChecklistAssignees = (token, id) => request("GET", `/api/checklists/${id}/assignees`, undefined, { authToken: token });
+export const assignChecklistToUsers = (token, id, userIds) => request("POST", `/api/checklists/${id}/assignees`, { userIds }, { authToken: token });
+
+// Asset types master
+export const getAssetTypes = (token) => request("GET", "/api/asset-types", undefined, { authToken: token });
+export const createAssetType = (token, data) => request("POST", "/api/asset-types", data, { authToken: token });

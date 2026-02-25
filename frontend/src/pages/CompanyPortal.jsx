@@ -11,13 +11,16 @@ import {
   getDepartments,
   createDepartment,
   deleteDepartment,
-  getChecklists,
-  createChecklist,
-  deleteChecklist,
   getLogs,
   createLog,
   deleteLog,
+  getChecklistAssignees,
+  assignChecklistToUsers,
+  getAssetTypes,
+  createAssetType,
+  getUsers,
 } from "../api";
+import ChecklistBuilder from "../components/ChecklistBuilder";
 
 const TOKEN_KEY = "company_portal_token";
 
@@ -107,7 +110,11 @@ const assetTypeLabels = {
 };
 
 const CompanyPortal = () => {
-  const [token, setToken] = useState(localStorage.getItem(TOKEN_KEY) || "");
+  const [token, setToken] = useState(() => {
+    const stored = localStorage.getItem(TOKEN_KEY);
+    if (!stored || stored === "undefined" || stored === "null") return "";
+    return stored;
+  });
   const [authError, setAuthError] = useState(null);
   const [loading, setLoading] = useState(false);
   const [companies, setCompanies] = useState([]);
@@ -128,17 +135,17 @@ const CompanyPortal = () => {
   const [assetSearch, setAssetSearch] = useState("");
   const [assetTypeFilter, setAssetTypeFilter] = useState("all");
   const [editingAssetId, setEditingAssetId] = useState(null);
+  const [assetTypes, setAssetTypes] = useState([]);
+  const [assetTypeDraft, setAssetTypeDraft] = useState({ code: "", label: "", category: "" });
   const [departments, setDepartments] = useState([]);
   const [departmentForm, setDepartmentForm] = useState(emptyDepartment);
   const [departmentLoading, setDepartmentLoading] = useState(false);
   const [departmentError, setDepartmentError] = useState(null);
   const [departmentSearch, setDepartmentSearch] = useState("");
-  const [checklists, setChecklists] = useState([]);
   const [logs, setLogs] = useState([]);
-  const [checklistForm, setChecklistForm] = useState({ assetId: "", name: "", itemsText: "" });
   const [logForm, setLogForm] = useState({ assetId: "", note: "" });
-  const [checklistError, setChecklistError] = useState(null);
   const [logError, setLogError] = useState(null);
+  const [portalUsers, setPortalUsers] = useState([]);
 
   const selectedCompany = useMemo(
     () => companies.find((c) => c.id === selectedCompanyId) || companies[0],
@@ -177,6 +184,12 @@ const CompanyPortal = () => {
     });
   }, [assets, assetTypeFilter, assetSearch]);
 
+  const assetTypeLabelMap = useMemo(() => {
+    const map = {};
+    assetTypes.forEach((t) => { map[t.code] = t.label; });
+    return map;
+  }, [assetTypes]);
+
   const filteredDepartments = useMemo(() => {
     const term = departmentSearch.trim().toLowerCase();
     const activeCompanyId = selectedCompanyId || companies[0]?.id;
@@ -208,6 +221,11 @@ const CompanyPortal = () => {
       setCompanies(normalized);
       setSelectedCompanyId((prev) => prev || normalized[0]?.id || null);
     } catch (err) {
+      if (err.status === 401) {
+        handleLogout();
+        setAuthError("Session expired. Please log in again.");
+        return;
+      }
       setCompanyError(err.message);
     } finally {
       setCompanyLoading(false);
@@ -253,6 +271,20 @@ const CompanyPortal = () => {
     }
   };
 
+  const loadAssetTypes = async (authToken) => {
+    if (!authToken) return;
+    try {
+      const list = await getAssetTypes(authToken);
+      setAssetTypes(list);
+      const defaultType = list[0]?.code || "";
+      setAssetForm((prev) => ({ ...prev, assetType: prev.assetType || defaultType }));
+    } catch (err) {
+      // keep silent but avoid crash
+      // eslint-disable-next-line no-console
+      console.error(err);
+    }
+  };
+
   useEffect(() => {
     if (token && nav === "assets") {
       const companyId = selectedCompanyId || companies[0]?.id;
@@ -265,6 +297,13 @@ const CompanyPortal = () => {
   }, [token, nav, selectedCompanyId]);
 
   useEffect(() => {
+    if (token) {
+      loadAssetTypes(token).catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
+  useEffect(() => {
     if (token && (nav === "checklists" || nav === "logs")) {
       const companyId = selectedCompanyId || companies[0]?.id;
       if (companyId) {
@@ -275,14 +314,18 @@ const CompanyPortal = () => {
   }, [token, nav, selectedCompanyId]);
 
   useEffect(() => {
-    if (nav === "checklists" && checklistForm.assetId) {
-      loadChecklists(checklistForm.assetId).catch(() => {});
+    if (nav === "checklists" && portalUsers.length === 0) {
+      loadUsers().catch(() => {});
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nav]);
+
+  useEffect(() => {
     if (nav === "logs" && logForm.assetId) {
       loadLogs(logForm.assetId).catch(() => {});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nav, checklistForm.assetId, logForm.assetId]);
+  }, [nav, logForm.assetId]);
 
   useEffect(() => {
     if (token && (nav === "assets" || nav === "departments")) {
@@ -346,11 +389,6 @@ const CompanyPortal = () => {
     setAssetForm((prev) => ({ ...prev, [name]: type === "checkbox" ? checked : value }));
   };
 
-  const handleChecklistChange = (e) => {
-    const { name, value } = e.target;
-    setChecklistForm((prev) => ({ ...prev, [name]: value }));
-  };
-
   const handleLogChange = (e) => {
     const { name, value } = e.target;
     setLogForm((prev) => ({ ...prev, [name]: value }));
@@ -406,6 +444,31 @@ const CompanyPortal = () => {
     }
   };
 
+  const handleCreateAssetType = async (e) => {
+    e.preventDefault();
+    if (!token) return;
+    if (!assetTypeDraft.code.trim() || !assetTypeDraft.label.trim()) {
+      setAssetError("Type code and label are required");
+      return;
+    }
+    setAssetError(null);
+    setAssetLoading(true);
+    try {
+      const payload = {
+        code: assetTypeDraft.code.trim().toLowerCase(),
+        label: assetTypeDraft.label.trim(),
+        category: assetTypeDraft.category.trim() || undefined,
+      };
+      const created = await createAssetType(token, payload);
+      setAssetTypes((prev) => [...prev, created].sort((a, b) => a.label.localeCompare(b.label)));
+      setAssetTypeDraft({ code: "", label: "", category: "" });
+    } catch (err) {
+      setAssetError(err.message || "Could not create asset type");
+    } finally {
+      setAssetLoading(false);
+    }
+  };
+
   const buildMetadataFromForm = (form) => {
     if (form.assetType === "soft") {
       return {
@@ -438,19 +501,26 @@ const CompanyPortal = () => {
         documents: form.documentLinks ? form.documentLinks.split(/\n|,/).map((d) => d.trim()).filter(Boolean) : [],
       };
     }
+    if (form.assetType === "fleet") {
+      return {
+        vehicleNumber: form.vehicleNumber,
+        vehicleType: form.vehicleType,
+        fuelType: form.fuelType,
+        driver: form.driver,
+        rcNumber: form.rcNumber,
+        insuranceExpiry: form.insuranceExpiry,
+        pucExpiry: form.pucExpiry,
+        serviceDueDate: form.serviceDueDate,
+        purchaseDate: form.purchaseDate,
+        vendor: form.vendor,
+        dailyKmTracking: !!form.dailyKmTracking,
+        checklist: form.checklist,
+        description: form.description,
+        imageUrl: form.imageUrl,
+        documents: form.documentLinks ? form.documentLinks.split(/\n|,/).map((d) => d.trim()).filter(Boolean) : [],
+      };
+    }
     return {
-      vehicleNumber: form.vehicleNumber,
-      vehicleType: form.vehicleType,
-      fuelType: form.fuelType,
-      driver: form.driver,
-      rcNumber: form.rcNumber,
-      insuranceExpiry: form.insuranceExpiry,
-      pucExpiry: form.pucExpiry,
-      serviceDueDate: form.serviceDueDate,
-      purchaseDate: form.purchaseDate,
-      vendor: form.vendor,
-      dailyKmTracking: !!form.dailyKmTracking,
-      checklist: form.checklist,
       description: form.description,
       imageUrl: form.imageUrl,
       documents: form.documentLinks ? form.documentLinks.split(/\n|,/).map((d) => d.trim()).filter(Boolean) : [],
@@ -496,22 +566,32 @@ const CompanyPortal = () => {
         documentLinks: (meta.documents || []).join("\n"),
       };
     }
+    if (asset.assetType === "fleet") {
+      return {
+        ...emptyAsset,
+        ...asset,
+        departmentId: asset.departmentId ? String(asset.departmentId) : "",
+        vehicleNumber: meta.vehicleNumber || "",
+        vehicleType: meta.vehicleType || "",
+        fuelType: meta.fuelType || "",
+        driver: meta.driver || "",
+        rcNumber: meta.rcNumber || "",
+        insuranceExpiry: meta.insuranceExpiry || "",
+        pucExpiry: meta.pucExpiry || "",
+        serviceDueDate: meta.serviceDueDate || "",
+        purchaseDate: meta.purchaseDate || "",
+        vendor: meta.vendor || "",
+        dailyKmTracking: !!meta.dailyKmTracking,
+        checklist: meta.checklist || "",
+        description: meta.description || "",
+        imageUrl: meta.imageUrl || "",
+        documentLinks: (meta.documents || []).join("\n"),
+      };
+    }
     return {
       ...emptyAsset,
       ...asset,
       departmentId: asset.departmentId ? String(asset.departmentId) : "",
-      vehicleNumber: meta.vehicleNumber || "",
-      vehicleType: meta.vehicleType || "",
-      fuelType: meta.fuelType || "",
-      driver: meta.driver || "",
-      rcNumber: meta.rcNumber || "",
-      insuranceExpiry: meta.insuranceExpiry || "",
-      pucExpiry: meta.pucExpiry || "",
-      serviceDueDate: meta.serviceDueDate || "",
-      purchaseDate: meta.purchaseDate || "",
-      vendor: meta.vendor || "",
-      dailyKmTracking: !!meta.dailyKmTracking,
-      checklist: meta.checklist || "",
       description: meta.description || "",
       imageUrl: meta.imageUrl || "",
       documentLinks: (meta.documents || []).join("\n"),
@@ -588,49 +668,6 @@ const CompanyPortal = () => {
     }
   };
 
-  const loadChecklists = async (assetId) => {
-    if (!token || !assetId) return;
-    try {
-      const list = await getChecklists(token, `assetId=${assetId}`);
-      setChecklists(list);
-    } catch (err) {
-      setChecklistError(err.message || "Could not load checklists");
-    }
-  };
-
-  const handleCreateChecklist = async (e) => {
-    e.preventDefault();
-    if (!token) return;
-    if (!checklistForm.assetId) {
-      setChecklistError("Select an asset first");
-      return;
-    }
-    const items = (checklistForm.itemsText || "").split(/\n/).map((t) => t.trim()).filter(Boolean).map((title) => ({ title }));
-    if (!items.length) {
-      setChecklistError("Add at least one item");
-      return;
-    }
-    setChecklistError(null);
-    try {
-      await createChecklist(token, { assetId: Number(checklistForm.assetId), name: checklistForm.name || "Checklist", items });
-      await loadChecklists(checklistForm.assetId);
-      setChecklistForm({ ...checklistForm, name: "", itemsText: "" });
-    } catch (err) {
-      setChecklistError(err.message || "Could not create checklist");
-    }
-  };
-
-  const handleDeleteChecklist = async (id) => {
-    if (!token) return;
-    if (!window.confirm("Delete this checklist?")) return;
-    try {
-      await deleteChecklist(token, id);
-      setChecklists((prev) => prev.filter((c) => c.id !== id));
-    } catch (err) {
-      setChecklistError(err.message || "Delete failed");
-    }
-  };
-
   const loadLogs = async (assetId) => {
     if (!token || !assetId) return;
     try {
@@ -638,6 +675,16 @@ const CompanyPortal = () => {
       setLogs(list);
     } catch (err) {
       setLogError(err.message || "Could not load logs");
+    }
+  };
+
+  const loadUsers = async () => {
+    try {
+      const list = await getUsers();
+      setPortalUsers(list);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(err);
     }
   };
 
@@ -863,6 +910,33 @@ const CompanyPortal = () => {
               </button>
             </div>
 
+            <div className="card" style={{ padding: "12px", marginBottom: "12px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+                <div>
+                  <h3 style={{ margin: 0 }}>Asset Type Master</h3>
+                  <p style={{ margin: 0, color: "#94a3b8", fontSize: "13px" }}>Create reusable asset types for consistent data.</p>
+                </div>
+                <div style={{ fontSize: "13px", color: "#94a3b8" }}>Total types: {assetTypes.length || 3}</div>
+              </div>
+              <form onSubmit={handleCreateAssetType} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "10px", alignItems: "end" }}>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label>Type Code</label>
+                  <input className="form-input" value={assetTypeDraft.code} onChange={(e) => setAssetTypeDraft({ ...assetTypeDraft, code: e.target.value })} placeholder="e.g. kitchen" required />
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label>Type Label</label>
+                  <input className="form-input" value={assetTypeDraft.label} onChange={(e) => setAssetTypeDraft({ ...assetTypeDraft, label: e.target.value })} placeholder="Kitchen Equipment" required />
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label>Category (optional)</label>
+                  <input className="form-input" value={assetTypeDraft.category} onChange={(e) => setAssetTypeDraft({ ...assetTypeDraft, category: e.target.value })} placeholder="Grouping or module" />
+                </div>
+                <button type="submit" className="pill-btn" style={{ height: "40px" }} disabled={assetLoading}>
+                  {assetLoading ? "Saving…" : "Add Type"}
+                </button>
+              </form>
+            </div>
+
             <div className="card" style={{ padding: "16px", marginBottom: "16px" }}>
               <div className="company-list-toolbar" style={{ gap: "12px" }}>
                 <div className="search-container" style={{ width: "100%" }}>
@@ -874,11 +948,15 @@ const CompanyPortal = () => {
                     style={{ paddingLeft: "12px" }}
                   />
                 </div>
-                <div className="company-filters">
+                <div className="company-filters" style={{ flexWrap: "wrap" }}>
                   <button className={assetTypeFilter === "all" ? "filter-chip active" : "filter-chip"} onClick={() => setAssetTypeFilter("all")} type="button">All</button>
-                  <button className={assetTypeFilter === "soft" ? "filter-chip active" : "filter-chip"} onClick={() => setAssetTypeFilter("soft")} type="button">Soft Services</button>
-                  <button className={assetTypeFilter === "technical" ? "filter-chip active" : "filter-chip"} onClick={() => setAssetTypeFilter("technical")} type="button">Technical</button>
-                  <button className={assetTypeFilter === "fleet" ? "filter-chip active" : "filter-chip"} onClick={() => setAssetTypeFilter("fleet")} type="button">Fleet</button>
+                  {(assetTypes.length ? assetTypes : [
+                    { code: "soft", label: "Soft Services" },
+                    { code: "technical", label: "Technical" },
+                    { code: "fleet", label: "Fleet" },
+                  ]).map((t) => (
+                    <button key={t.code} className={assetTypeFilter === t.code ? "filter-chip active" : "filter-chip"} onClick={() => setAssetTypeFilter(t.code)} type="button">{t.label}</button>
+                  ))}
                 </div>
               </div>
 
@@ -903,7 +981,7 @@ const CompanyPortal = () => {
                       filteredAssets.map((a) => (
                         <tr key={a.id} style={{ borderTop: "1px solid #e2e8f0" }}>
                           <td style={{ padding: "10px" }}>{a.assetName}</td>
-                          <td style={{ padding: "10px" }}>{assetTypeLabels[a.assetType] || a.assetType}</td>
+                          <td style={{ padding: "10px" }}>{assetTypeLabelMap[a.assetType] || assetTypeLabels[a.assetType] || a.assetType}</td>
                           <td style={{ padding: "10px" }}>{a.companyName || ""}</td>
                           <td style={{ padding: "10px" }}>{a.departmentName || "—"}</td>
                           <td style={{ padding: "10px" }}>{[a.building, a.floor, a.room].filter(Boolean).join(", ") || "—"}</td>
@@ -957,9 +1035,14 @@ const CompanyPortal = () => {
                     <div className="form-group">
                       <label>Asset Type</label>
                       <select name="assetType" value={assetForm.assetType} onChange={handleAssetChange} className="form-select" required>
-                        <option value="soft">Soft Services</option>
-                        <option value="technical">Technical</option>
-                        <option value="fleet">Fleet</option>
+                        <option value="" disabled>Select type</option>
+                        {(assetTypes.length ? assetTypes : [
+                          { code: "soft", label: "Soft Services" },
+                          { code: "technical", label: "Technical" },
+                          { code: "fleet", label: "Fleet" },
+                        ]).map((t) => (
+                          <option key={t.code} value={t.code}>{t.label}</option>
+                        ))}
                       </select>
                     </div>
                     <div className="form-group">
@@ -1176,76 +1259,7 @@ const CompanyPortal = () => {
         )}
 
         {nav === "checklists" && (
-          <>
-            <div className="page-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div>
-                <h1>Asset Checklists</h1>
-                <p>Create checklist items per asset.</p>
-              </div>
-            </div>
-
-            {checklistError && (
-              <div style={{ background: "#3b0e0e", color: "#f87171", padding: "10px 14px", borderRadius: "6px", marginBottom: "12px", fontSize: "14px" }}>
-                ⚠️ {checklistError}
-              </div>
-            )}
-
-            <div className="card" style={{ padding: "16px", marginBottom: "16px" }}>
-              <form onSubmit={handleCreateChecklist}>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-                  <div className="form-group">
-                    <label>Asset</label>
-                    <select name="assetId" value={checklistForm.assetId} onChange={handleChecklistChange} className="form-select" required>
-                      <option value="" disabled>Select asset</option>
-                      {assetOptions.map((a) => (
-                        <option key={a.id} value={a.id}>{a.assetName}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="form-group">
-                    <label>Checklist Name</label>
-                    <input name="name" value={checklistForm.name} onChange={handleChecklistChange} className="form-input" placeholder="Daily Routine" />
-                  </div>
-                </div>
-                <div className="form-group">
-                  <label>Items (one per line)</label>
-                  <textarea name="itemsText" value={checklistForm.itemsText} onChange={handleChecklistChange} className="form-input" rows="3" placeholder={`Inspect floor\nMop corridors`} />
-                </div>
-                <div className="modal-actions" style={{ justifyContent: "flex-start" }}>
-                  <button type="submit" className="btn-submit">Save Checklist</button>
-                </div>
-              </form>
-            </div>
-
-            <div className="card" style={{ padding: "16px" }}>
-              <div className="page-header" style={{ marginBottom: "8px" }}>
-                <h3 style={{ marginBottom: "4px" }}>Existing Checklists</h3>
-                <p style={{ margin: 0 }}>Listed per selected asset.</p>
-              </div>
-              {checklists.length === 0 ? (
-                <p style={{ color: "#94a3b8" }}>No checklists yet for this asset.</p>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                  {checklists.map((c) => (
-                    <div key={c.id} className="card" style={{ padding: "12px", border: "1px solid #e2e8f0" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <div>
-                          <div style={{ fontWeight: 600 }}>{c.name}</div>
-                          <div style={{ fontSize: "12px", color: "#94a3b8" }}>{c.items?.length || 0} items</div>
-                        </div>
-                        <button className="btn-cancel" type="button" onClick={() => handleDeleteChecklist(c.id)} style={{ padding: "6px 10px" }}>Delete</button>
-                      </div>
-                      <ul style={{ margin: "8px 0 0 16px", color: "#475569" }}>
-                        {(c.items || []).map((i) => (
-                          <li key={i.id || i.title}>{i.title}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </>
+          <ChecklistBuilder token={token} assets={assets} users={portalUsers} />
         )}
 
         {nav === "logsheets" && (
