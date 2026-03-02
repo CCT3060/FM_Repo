@@ -61,7 +61,8 @@ router.post(
       }
 
       const [result] = await pool.execute(
-        `INSERT INTO departments (company_id, name, description) VALUES (?, ?, ?)` ,
+        `INSERT INTO departments (company_id, name, description) VALUES (?, ?, ?)
+         RETURNING id` ,
         [companyId, name, description || null]
       );
 
@@ -72,7 +73,7 @@ router.post(
         description: description || "",
       });
     } catch (err) {
-      if (err?.code === "ER_DUP_ENTRY") {
+      if (err?.code === "23505") {
         return res.status(400).json({ message: "Department name already exists for this company" });
       }
       next(err);

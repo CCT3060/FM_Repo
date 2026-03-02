@@ -3,6 +3,7 @@ import { body, param, query } from "express-validator";
 import pool from "../db.js";
 import { validate } from "../validators.js";
 import { requireAuth } from "../middleware/auth.js";
+import { createFlag } from "../utils/flagsHelper.js";
 
 const router = Router();
 
@@ -59,7 +60,8 @@ router.get(
 
       const checklistIds = rows.map((r) => r.id);
       const [items] = await pool.query(
-        `SELECT id, checklist_id AS checklistId, title, answer_type AS answerType, is_required AS isRequired, order_index AS orderIndex, config
+        `SELECT id, checklist_id AS checklistId, title, answer_type AS answerType, is_required AS isRequired, order_index AS orderIndex, config,
+                allow_image AS allowImage, allow_remark AS allowRemark, allow_flag AS allowFlagIssue, require_reason AS requireReason
          FROM asset_checklist_items
          WHERE checklist_id IN (${checklistIds.map(() => "?").join(",")})
          ORDER BY order_index ASC, id ASC`,
@@ -73,6 +75,10 @@ router.get(
           .map((i) => ({
             ...i,
             config: i.config ? JSON.parse(i.config) : null,
+            allowImage: !!i.allowImage,
+            allowRemark: i.allowRemark === undefined ? true : !!i.allowRemark,
+            allowFlagIssue: i.allowFlagIssue === undefined ? true : !!i.allowFlagIssue,
+            requireReason: !!i.requireReason,
           })),
       }));
 
@@ -104,7 +110,7 @@ router.post(
 
       const conn = pool;
       const [result] = await conn.execute(
-        "INSERT INTO asset_checklists (asset_id, name, description, asset_category) VALUES (?, ?, ?, ?)",
+        "INSERT INTO asset_checklists (asset_id, name, description, asset_category) VALUES (?, ?, ?, ?) RETURNING id",
         [assetId, name, description || null, asset.assetType]
       );
       const checklistId = result.insertId;
@@ -117,9 +123,13 @@ router.post(
           i.isRequired ? 1 : 0,
           Number.isFinite(i.order) ? Number(i.order) : idx,
           i.config ? JSON.stringify(i.config) : null,
+          i.allowImage ? 1 : 0,
+          i.allowRemark !== false ? 1 : 0,
+          i.allowFlagIssue !== false ? 1 : 0,
+          i.requireReason ? 1 : 0,
         ]);
         await conn.query(
-          "INSERT INTO asset_checklist_items (checklist_id, title, answer_type, is_required, order_index, config) VALUES ?",
+          "INSERT INTO asset_checklist_items (checklist_id, title, answer_type, is_required, order_index, config, allow_image, allow_remark, allow_flag, require_reason) VALUES ?",
           [values]
         );
       }
@@ -136,6 +146,10 @@ router.post(
           isRequired: !!i.isRequired,
           orderIndex: Number.isFinite(i.order) ? Number(i.order) : idx,
           config: i.config || null,
+          allowImage: !!i.allowImage,
+          allowRemark: i.allowRemark !== false,
+          allowFlagIssue: i.allowFlagIssue !== false,
+          requireReason: !!i.requireReason,
         })) || [],
       });
     } catch (err) {
@@ -205,7 +219,7 @@ router.post(
       // insert new assignments ignoring duplicates
       const values = userIds.map((uid) => [id, uid]);
       await pool.query(
-        "INSERT IGNORE INTO asset_checklist_assignments (checklist_id, user_id) VALUES ?",
+        "INSERT INTO asset_checklist_assignments (checklist_id, user_id) VALUES ? ON CONFLICT (checklist_id, user_id) DO NOTHING",
         [values]
       );
 
@@ -220,6 +234,243 @@ router.post(
       return res.status(201).json(assigned);
     } catch (err) {
       return next(err);
+    }
+  }
+);
+
+// ── Submission endpoints ────────────────────────────────────────────────────
+
+// GET /api/checklists/submissions/issues  – issues report (must be before /:id routes)
+router.get(
+  "/submissions/issues",
+  async (req, res, next) => {
+    try {
+      const userId = req.user.id;
+      const { assetId, checklistId, from, to, limit = 50, offset = 0 } = req.query;
+
+      let where = `c.user_id = ? AND r.flag_issue = TRUE`;
+      const params = [userId];
+
+      if (assetId) { where += " AND a.id = ?"; params.push(assetId); }
+      if (checklistId) { where += " AND ac.id = ?"; params.push(checklistId); }
+      if (from) { where += " AND s.created_at >= ?"; params.push(from); }
+      if (to) { where += " AND s.created_at <= ?"; params.push(to); }
+
+      params.push(Number(limit), Number(offset));
+
+      const [rows] = await pool.query(
+        `SELECT r.id, r.submission_id AS submissionId, r.item_id AS itemId,
+                i.title AS itemTitle, i.answer_type AS answerType,
+                r.answer, r.reason, r.remark, r.image_url AS imageUrl, r.answered_at AS answeredAt,
+                s.checklist_id AS checklistId, ac.name AS checklistName,
+                s.asset_id AS assetId, a.name AS assetName,
+                s.submitted_by AS submittedBy, s.submitted_by_name AS submittedByName,
+                s.created_at AS submittedAt
+         FROM asset_checklist_item_responses r
+         JOIN asset_checklist_submissions s ON s.id = r.submission_id
+         JOIN asset_checklist_items i ON i.id = r.item_id
+         JOIN asset_checklists ac ON ac.id = s.checklist_id
+         JOIN assets a ON a.id = s.asset_id
+         JOIN companies c ON c.id = a.company_id
+         WHERE ${where}
+         ORDER BY r.answered_at DESC
+         LIMIT ? OFFSET ?`,
+        params
+      );
+
+      res.json(rows);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// POST /api/checklists/:id/submit  – execute a checklist submission
+router.post(
+  "/:id/submit",
+  validate([
+    param("id").isInt({ min: 1 }).withMessage("id must be numeric"),
+    body("assetId").isInt({ min: 1 }).withMessage("assetId is required"),
+    body("submittedBy").isInt({ min: 1 }).withMessage("submittedBy (companyUserId) is required"),
+    body("submittedByName").optional().isString().trim(),
+    body("responses").isArray({ min: 1 }).withMessage("responses array is required"),
+    body("responses.*.itemId").isInt({ min: 1 }).withMessage("itemId is required"),
+    body("responses.*.answer").optional().isString(),
+    body("responses.*.flagIssue").optional().isBoolean().toBoolean(),
+    body("responses.*.reason").optional().isString().trim(),
+    body("responses.*.remark").optional().isString().trim(),
+    body("responses.*.imageUrl").optional().isURL(),
+  ]),
+  async (req, res, next) => {
+    const { id } = req.params;
+    const { assetId, submittedBy, submittedByName, responses } = req.body;
+    try {
+      // verify checklist belongs to this admin's company
+      const [clRows] = await pool.query(
+        `SELECT ac.id, ac.name, a.company_id AS companyId
+         FROM asset_checklists ac
+         JOIN assets a ON a.id = ac.asset_id
+         JOIN companies c ON c.id = a.company_id
+         WHERE ac.id = ? AND c.user_id = ?`,
+        [id, req.user.id]
+      );
+      if (clRows.length === 0) return res.status(404).json({ message: "Checklist not found" });
+      const { companyId } = clRows[0];
+
+      // fetch all items to validate and calc stats
+      const [items] = await pool.query(
+        `SELECT id, title, answer_type AS answerType, is_required AS isRequired,
+                allow_flag AS allowFlag, require_reason AS requireReason
+         FROM asset_checklist_items WHERE checklist_id = ?`,
+        [id]
+      );
+
+      const itemMap = Object.fromEntries(items.map((i) => [i.id, i]));
+      const totalItems = items.filter((i) => i.isRequired).length || items.length;
+      let answered = 0; let totalIssues = 0;
+
+      for (const r of responses) {
+        const item = itemMap[r.itemId];
+        if (!item) continue;
+        if (r.answer !== undefined && r.answer !== null && r.answer !== "") answered++;
+        if (r.flagIssue) totalIssues++;
+      }
+
+      const completionPct = Math.round((answered / Math.max(totalItems, 1)) * 100);
+      let status = "completed";
+      if (totalIssues > 0) status = "completed_with_issues";
+      if (completionPct < 100) status = completionPct === 0 ? "in_progress" : "in_progress";
+      if (completionPct >= 100 && totalIssues > 0) status = "completed_with_issues";
+      if (completionPct >= 100 && totalIssues === 0) status = "completed";
+
+      // insert submission
+      const [subResult] = await pool.execute(
+        `INSERT INTO asset_checklist_submissions
+           (checklist_id, asset_id, submitted_by, submitted_by_name, status, completion_pct, total_issues, submitted_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, NOW()) RETURNING id`,
+        [id, assetId, submittedBy, submittedByName || null, status, completionPct, totalIssues]
+      );
+      const submissionId = subResult.insertId;
+
+      // insert responses
+      if (responses.length > 0) {
+        const resValues = responses.map((r) => [
+          submissionId,
+          r.itemId,
+          r.answer || null,
+          r.flagIssue ? true : false,
+          r.reason || null,
+          r.remark || null,
+          r.imageUrl || null,
+        ]);
+        await pool.query(
+          `INSERT INTO asset_checklist_item_responses
+             (submission_id, item_id, answer, flag_issue, reason, remark, image_url)
+           VALUES ?`,
+          [resValues]
+        );
+      }
+
+      // create flags for flagged items (non-fatal)
+      const flagPromises = responses
+        .filter((r) => r.flagIssue && itemMap[r.itemId]?.allowFlag)
+        .map((r) =>
+          createFlag(
+            {
+              companyId,
+              assetId,
+              source: "checklist",
+              checklistId: id,
+              submissionId,
+              questionId: r.itemId,
+              raisedBy: submittedBy,
+              severity: "medium",
+              description: `Checklist item flagged: ${itemMap[r.itemId]?.title || r.itemId}${
+                r.reason ? ` — ${r.reason}` : ""
+              }`,
+            },
+            { id: assetId },
+            pool
+          ).catch(() => null)
+        );
+      await Promise.allSettled(flagPromises);
+
+      res.status(201).json({
+        id: submissionId,
+        checklistId: Number(id),
+        assetId,
+        submittedBy,
+        submittedByName: submittedByName || null,
+        status,
+        completionPct,
+        totalIssues,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// GET /api/checklists/:id/submissions  – list submissions for a checklist
+router.get(
+  "/:id/submissions",
+  validate([
+    param("id").isInt({ min: 1 }).withMessage("id must be numeric"),
+    query("limit").optional().isInt({ min: 1, max: 200 }).toInt(),
+    query("offset").optional().isInt({ min: 0 }).toInt(),
+  ]),
+  async (req, res, next) => {
+    const { id } = req.params;
+    const { limit = 20, offset = 0, status } = req.query;
+    try {
+      // verify ownership
+      const [clRows] = await pool.query(
+        `SELECT ac.id FROM asset_checklists ac
+         JOIN assets a ON a.id = ac.asset_id
+         JOIN companies c ON c.id = a.company_id
+         WHERE ac.id = ? AND c.user_id = ?`,
+        [id, req.user.id]
+      );
+      if (clRows.length === 0) return res.status(404).json({ message: "Checklist not found" });
+
+      let where = "s.checklist_id = ?";
+      const params = [id];
+      if (status) { where += " AND s.status = ?"; params.push(status); }
+
+      const [subs] = await pool.query(
+        `SELECT s.id, s.checklist_id AS checklistId, s.asset_id AS assetId,
+                s.submitted_by AS submittedBy, s.submitted_by_name AS submittedByName,
+                s.status, s.completion_pct AS completionPct, s.total_issues AS totalIssues,
+                s.submitted_at AS submittedAt, s.created_at AS createdAt
+         FROM asset_checklist_submissions s
+         WHERE ${where}
+         ORDER BY s.created_at DESC
+         LIMIT ? OFFSET ?`,
+        [...params, Number(limit), Number(offset)]
+      );
+
+      if (subs.length === 0) return res.json([]);
+
+      const subIds = subs.map((s) => s.id);
+      const [responses] = await pool.query(
+        `SELECT r.id, r.submission_id AS submissionId, r.item_id AS itemId,
+                i.title AS itemTitle, i.answer_type AS answerType,
+                r.answer, r.flag_issue AS flagIssue, r.reason, r.remark, r.image_url AS imageUrl, r.answered_at AS answeredAt
+         FROM asset_checklist_item_responses r
+         JOIN asset_checklist_items i ON i.id = r.item_id
+         WHERE r.submission_id IN (${subIds.map(() => "?").join(",")})
+         ORDER BY i.order_index ASC, i.id ASC`,
+        subIds
+      );
+
+      const grouped = subs.map((s) => ({
+        ...s,
+        responses: responses.filter((r) => r.submissionId === s.id),
+      }));
+
+      res.json(grouped);
+    } catch (err) {
+      next(err);
     }
   }
 );

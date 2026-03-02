@@ -1,32 +1,104 @@
 import "dotenv/config";
-import mysql from "mysql2/promise";
+import { Pool } from "pg";
 
-let _pool = null;
+const connectionString = process.env.SUPABASE_DB_URL || process.env.DATABASE_URL;
 
-function getPool() {
-  if (!_pool) {
-    _pool = mysql.createPool({
-      host: process.env.DB_HOST,
-      port: Number(process.env.DB_PORT || 3306),
-      user: process.env.DB_USER,
-      password: process.env.DB_PASSWORD,
-      database: process.env.DB_NAME,
-      waitForConnections: true,
-      connectionLimit: 10,
-      queueLimit: 0,
-      timezone: "Z",
-    });
-  }
-  return _pool;
+if (!connectionString) {
+  throw new Error("Missing SUPABASE_DB_URL (or DATABASE_URL) for Supabase connection");
 }
 
-// Export a proxy that forwards .query / .execute to the lazy pool
-const pool = new Proxy({}, {
-  get(_target, prop) {
-    const p = getPool();
-    const val = p[prop];
-    return typeof val === "function" ? val.bind(p) : val;
-  },
+const sslMode = (process.env.SUPABASE_DB_SSL || "require").toLowerCase();
+const sslConfig = sslMode === "disable" ? false : { rejectUnauthorized: false };
+
+const poolInstance = new Pool({
+  connectionString,
+  ssl: sslConfig,
+  max: Number(process.env.DB_POOL_SIZE || 10),
+  idleTimeoutMillis: 30000,
+  family: 4,
 });
+
+const isBulkRows = (value) => Array.isArray(value) && value.length > 0 && Array.isArray(value[0]);
+
+const normalizeResult = (result) => {
+  if (typeof result.rowCount === "number") {
+    result.affectedRows = result.rowCount;
+  }
+  if (result.command === "INSERT" && result.rows?.length && Object.prototype.hasOwnProperty.call(result.rows[0], "id")) {
+    result.insertId = result.rows[0].id;
+  }
+  return result;
+};
+
+const prepareQuery = (sql, params = []) => {
+  if (!params || params.length === 0) {
+    return { text: sql, values: [] };
+  }
+
+  const values = [];
+  let paramIndex = 0;
+
+  const text = sql.replace(/\?/g, () => {
+    if (paramIndex >= params.length) {
+      throw new Error("Not enough parameters supplied for SQL query");
+    }
+
+    const value = params[paramIndex++];
+
+    if (isBulkRows(value)) {
+      const columnCount = value[0].length;
+      return value
+        .map((row) => {
+          if (!Array.isArray(row) || row.length !== columnCount) {
+            throw new Error("Bulk insert rows must all have the same length");
+          }
+          const placeholders = row.map((col) => {
+            values.push(col);
+            return `$${values.length}`;
+          });
+          return `(${placeholders.join(", ")})`;
+        })
+        .join(", ");
+    }
+
+    values.push(value);
+    return `$${values.length}`;
+  });
+
+  if (paramIndex < params.length) {
+    throw new Error("Too many parameters supplied for SQL query");
+  }
+
+  return { text, values };
+};
+
+const run = async (executor, sql, params = []) => {
+  const { text, values } = prepareQuery(sql, params);
+  const result = await executor.query(text, values);
+  const normalized = normalizeResult(result);
+  // Attach insertId to the rows array so `const [result] = pool.execute(...)` → result.insertId works
+  if (normalized.insertId !== undefined) {
+    result.rows.insertId = normalized.insertId;
+  }
+  result.rows.affectedRows = normalized.affectedRows;
+  return [result.rows, normalized];
+};
+
+const pool = {
+  query: (sql, params) => run(poolInstance, sql, params),
+  execute: (sql, params) => run(poolInstance, sql, params),
+  getConnection: async () => {
+    const client = await poolInstance.connect();
+    const runner = (sql, params) => run(client, sql, params);
+    return {
+      query: runner,
+      execute: runner,
+      beginTransaction: () => client.query("BEGIN"),
+      commit: () => client.query("COMMIT"),
+      rollback: () => client.query("ROLLBACK"),
+      release: () => client.release(),
+    };
+  },
+};
 
 export default pool;

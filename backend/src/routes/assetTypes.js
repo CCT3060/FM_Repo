@@ -37,12 +37,13 @@ router.post(
     try {
       const [result] = await pool.execute(
         `INSERT INTO asset_types (code, label, category, description, status, created_by)
-         VALUES (?, ?, ?, ?, ?, ?)` ,
+         VALUES (?, ?, ?, ?, ?, ?)
+         RETURNING id` ,
         [code.trim().toLowerCase(), label.trim(), category || null, description || null, status, req.user.id]
       );
       res.status(201).json({ id: result.insertId, code: code.trim().toLowerCase(), label: label.trim(), category, description, status });
     } catch (err) {
-      if (err?.code === "ER_DUP_ENTRY") {
+      if (err?.code === "23505") {
         return res.status(400).json({ message: "Asset type code already exists" });
       }
       return next(err);
@@ -64,7 +65,7 @@ router.put(
       if (result.affectedRows === 0) return res.status(404).json({ message: "Asset type not found" });
       res.json({ id: Number(id), code: code.trim().toLowerCase(), label: label.trim(), category, description, status });
     } catch (err) {
-      if (err?.code === "ER_DUP_ENTRY") {
+      if (err?.code === "23505") {
         return res.status(400).json({ message: "Asset type code already exists" });
       }
       return next(err);

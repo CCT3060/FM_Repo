@@ -13,6 +13,15 @@ import checklistsRouter from "./routes/checklists.js";
 import logsRouter from "./routes/logs.js";
 import checklistTemplatesRouter from "./routes/templateChecklists.js";
 import logsheetTemplatesRouter from "./routes/templateLogs.js";
+import companyUsersRouter from "./routes/companyUsers.js";
+import companyAuthRouter from "./routes/companyAuth.js";
+import companyPortalRouter from "./routes/companyPortal.js";
+import assetQRRouter from "./routes/assetQR.js";
+import mobileAuthRouter from "./routes/mobileAuth.js";
+import templateAssignmentsRouter from "./routes/templateAssignments.js";
+import flagsRouter from "./routes/flags.js";
+import flagRulesRouter from "./routes/flagRules.js";
+import notificationsRouter from "./routes/notifications.js";
 
 const app = express();
 
@@ -40,6 +49,15 @@ app.use("/api/checklists", checklistsRouter);
 app.use("/api/logs", logsRouter);
 app.use("/api/checklist-templates", checklistTemplatesRouter);
 app.use("/api/logsheet-templates", logsheetTemplatesRouter);
+app.use("/api/company-users", companyUsersRouter);
+app.use("/api/company-auth", companyAuthRouter);
+app.use("/api/company-portal", companyPortalRouter);
+app.use("/api/asset-qr", assetQRRouter);
+app.use("/api/mobile-auth", mobileAuthRouter);
+app.use("/api/template-assignments", templateAssignmentsRouter);
+app.use("/api/flags", flagsRouter);
+app.use("/api/flag-rules", flagRulesRouter);
+app.use("/api/notifications", notificationsRouter);
 
 // Basic 404 handler
 app.use((req, res) => res.status(404).json({ message: "Not found", path: req.originalUrl }));

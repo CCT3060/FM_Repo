@@ -183,7 +183,8 @@ router.post(
         `INSERT INTO assets (
             company_id, department_id, asset_name, asset_unique_id, asset_type,
             building, floor, room, status, qr_code, created_by
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         RETURNING id` ,
         [
           companyId,
           departmentId,

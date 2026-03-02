@@ -3,9 +3,17 @@ import { body, param, query } from "express-validator";
 import pool from "../db.js";
 import { validate } from "../validators.js";
 import { requireAuth } from "../middleware/auth.js";
+import { orchestrateFlag } from "../utils/flagOrchestrator.js";
 
 const router = Router();
 router.use(requireAuth);
+
+// pg returns JSONB columns as already-parsed JS objects; guard against re-parsing
+const safeParse = (v) => {
+  if (v == null) return null;
+  if (typeof v === "string") return JSON.parse(v);
+  return v;
+};
 
 const templateInputTypes = [
   "text",
@@ -55,6 +63,7 @@ router.post(
     body("shift").optional().isString(),
     body("status").optional().isIn(["active", "inactive"]),
     body("isActive").optional().isBoolean().toBoolean(),
+    body("assetId").optional({ nullable: true }).isInt({ min: 1 }),
     body("questions").isArray({ min: 1 }),
     body("questions.*.questionText").trim().notEmpty(),
     body("questions.*.inputType").isIn(templateInputTypes),
@@ -68,6 +77,7 @@ router.post(
       companyId,
       templateName,
       assetType,
+      assetId,
       category,
       description,
       frequency = "Daily",
@@ -87,12 +97,14 @@ router.post(
       const conn = pool;
       const [templateResult] = await conn.execute(
         `INSERT INTO checklist_templates (
-            company_id, template_name, asset_type, category, description, frequency, shift, status, is_active, created_by
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
+            company_id, template_name, asset_type, asset_id, category, description, frequency, shift, status, is_active, created_by
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         RETURNING id` ,
         [
           companyId,
           templateName,
           assetType,
+          assetId || null,
           category || null,
           description || null,
           frequency,
@@ -111,7 +123,7 @@ router.post(
         q.isRequired ? 1 : 0,
         Number.isInteger(q.orderIndex) ? q.orderIndex : idx,
         q.options ? JSON.stringify(q.options) : null,
-        q.meta ? JSON.stringify(q.meta) : null,
+        JSON.stringify({ ...(q.meta || {}), ...(q.rule ? { rule: q.rule } : {}) }) || null,
       ]);
 
       await conn.query(
@@ -161,9 +173,12 @@ router.get(
 
       const [templates] = await pool.query(
         `SELECT ct.id, ct.company_id AS companyId, ct.template_name AS templateName, ct.asset_type AS assetType,
-          ct.category, ct.description, ct.frequency, ct.shift, ct.status, ct.is_active AS isActive, ct.created_at AS createdAt
+          ct.asset_id AS assetId, a.asset_name AS assetName,
+          ct.category, ct.description, ct.frequency, ct.shift, ct.status, ct.is_active AS isActive,
+          ct.questions, ct.created_at AS createdAt
          FROM checklist_templates ct
          JOIN companies c ON ct.company_id = c.id
+         LEFT JOIN assets a ON ct.asset_id = a.id
          ${where}
          ORDER BY ct.created_at DESC`,
         params
@@ -185,11 +200,15 @@ router.get(
         ...t,
         questions: questions
           .filter((q) => q.templateId === t.id)
-          .map((q) => ({
-            ...q,
-            meta: q.meta ? JSON.parse(q.meta) : undefined,
-            options: q.optionsJson ? JSON.parse(q.optionsJson) : undefined,
-          })),
+          .map((q) => {
+            const parsedMeta = q.meta ? JSON.parse(q.meta) : {};
+            return {
+              ...q,
+              meta: parsedMeta,
+              rule: parsedMeta.rule || undefined,
+              options: q.optionsJson ? JSON.parse(q.optionsJson) : undefined,
+            };
+          }),
       }));
 
       res.json(withQuestions);
@@ -221,7 +240,8 @@ router.post(
       await pool.query(
         `INSERT INTO checklist_assignments (template_id, assigned_to_type, assigned_to_id, frequency, start_date, due_time, status, attached_by)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE frequency = VALUES(frequency), start_date = VALUES(start_date), due_time = VALUES(due_time), status = VALUES(status)`,
+         ON CONFLICT (template_id, assigned_to_type, assigned_to_id)
+         DO UPDATE SET frequency = EXCLUDED.frequency, start_date = EXCLUDED.start_date, due_time = EXCLUDED.due_time, status = EXCLUDED.status`,
         [templateId, assignedToType, assignedToId, frequency, startDate || null, dueTime || null, status, req.user.id]
       );
 
@@ -317,11 +337,15 @@ router.get(
         ...t,
         questions: questions
           .filter((q) => q.templateId === t.templateId)
-          .map((q) => ({
-            ...q,
-            meta: q.meta ? JSON.parse(q.meta) : undefined,
-            options: q.optionsJson ? JSON.parse(q.optionsJson) : undefined,
-          })),
+          .map((q) => {
+            const parsedMeta = q.meta ? JSON.parse(q.meta) : {};
+            return {
+              ...q,
+              meta: parsedMeta,
+              rule: parsedMeta.rule || undefined,
+              options: q.optionsJson ? JSON.parse(q.optionsJson) : undefined,
+            };
+          }),
       }));
 
       res.json(result);
@@ -354,11 +378,15 @@ const fetchQuestionsForTemplate = async (templateId) => {
      ORDER BY order_index ASC, id ASC`,
     [templateId]
   );
-  return questions.map((q) => ({
-    ...q,
-    options: q.optionsJson ? JSON.parse(q.optionsJson) : undefined,
-    meta: q.meta ? JSON.parse(q.meta) : undefined,
-  }));
+  return questions.map((q) => {
+    const parsedMeta = q.meta ? JSON.parse(q.meta) : {};
+    return {
+      ...q,
+      options: q.optionsJson ? JSON.parse(q.optionsJson) : undefined,
+      meta: parsedMeta,
+      rule: parsedMeta.rule || undefined,
+    };
+  });
 };
 
 router.get(
@@ -452,7 +480,8 @@ const createSubmission = async ({
   const [submissionResult] = await conn.execute(
     `INSERT INTO checklist_submissions (
         template_id, assignment_id, asset_id, submitted_by, shift, status, completion_pct, gps_lat, gps_lng, submitted_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     RETURNING id` ,
     [
       assignment.templateId,
       assignment.id,
@@ -554,6 +583,24 @@ router.post(
       });
 
       res.status(201).json({ submissionId: submission.id, completionPct: submission.completionPct });
+
+      // ── Advanced Flag Intelligence: fire orchestrator asynchronously ──────
+      const assetId = assignment.assignedToType === "asset" ? (answers[0]?.assetId || assignment.assignedToId) : null;
+      if (assetId && assignment.companyId) {
+        const orchAnswers = (answers || []).map((a) => ({
+          questionId: a.questionId,
+          answerJson: { value: a.value ?? a.answerValue },
+        }));
+        orchestrateFlag({
+          companyId:    assignment.companyId,
+          assetId,
+          templateId:   assignment.templateId,
+          templateType: "checklist",
+          submissionId: submission.id,
+          answers:      orchAnswers,
+          raisedBy:     req.user.id,
+        }).catch((e) => console.error("[Checklist] orchestrateFlag error:", e.message));
+      }
     } catch (err) {
       next(err);
     }
@@ -722,7 +769,8 @@ router.post(
       const conn = pool;
       const [submissionResult] = await conn.execute(
         `INSERT INTO checklist_submissions (template_id, asset_id, submitted_by, shift)
-         VALUES (?, ?, ?, ?)` ,
+         VALUES (?, ?, ?, ?)
+         RETURNING id` ,
         [templateId, assetId, req.user.id, shift || null]
       );
       const submissionId = submissionResult.insertId;
@@ -754,4 +802,196 @@ router.post(
   }
 );
 
+// ── Single template with questions ────────────────────────────────────────────
+router.get(
+  "/:id",
+  validate([param("id").isInt({ min: 1 })]),
+  async (req, res, next) => {
+    const templateId = Number(req.params.id);
+    try {
+      const owned = await ensureTemplateOwned(templateId, req.user.id);
+      if (!owned) return res.status(404).json({ message: "Template not found" });
+
+      const [rows] = await pool.query(
+        `SELECT ct.id, ct.company_id AS companyId, ct.template_name AS templateName, ct.asset_type AS assetType,
+                ct.category, ct.description, ct.frequency, ct.shift, ct.status, ct.is_active AS isActive,
+                ct.created_at AS createdAt
+         FROM checklist_templates ct WHERE ct.id = ?`,
+        [templateId]
+      );
+      const tmpl = rows[0];
+      if (!tmpl) return res.status(404).json({ message: "Template not found" });
+
+      const questions = await fetchQuestionsForTemplate(templateId);
+      res.json({ ...tmpl, questions });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// ── Update template (rebuild questions) ───────────────────────────────────────
+router.put(
+  "/:id",
+  validate([
+    param("id").isInt({ min: 1 }),
+    body("templateName").optional().trim().notEmpty(),
+    body("assetType").optional().isString(),
+    body("category").optional().isString(),
+    body("description").optional().isString(),
+    body("frequency").optional().isIn(frequencies),
+    body("shift").optional().isString(),
+    body("status").optional().isIn(["active", "inactive"]),
+    body("isActive").optional().isBoolean().toBoolean(),
+    body("questions").optional().isArray({ min: 1 }),
+    body("questions.*.questionText").optional().trim().notEmpty(),
+    body("questions.*.inputType").optional().isIn(templateInputTypes),
+    body("questions.*.isRequired").optional().isBoolean().toBoolean(),
+    body("questions.*.orderIndex").optional().isInt(),
+    body("questions.*.options").optional().isArray(),
+    body("questions.*.meta").optional().isObject(),
+  ]),
+  async (req, res, next) => {
+    const templateId = Number(req.params.id);
+    const { templateName, assetType, category, description, frequency, shift, status, isActive, questions } = req.body;
+    try {
+      const owned = await ensureTemplateOwned(templateId, req.user.id);
+      if (!owned) return res.status(404).json({ message: "Template not found" });
+
+      const setClauses = [];
+      const setParams = [];
+      if (templateName !== undefined) { setClauses.push("template_name = ?"); setParams.push(templateName); }
+      if (assetType !== undefined) { setClauses.push("asset_type = ?"); setParams.push(assetType); }
+      if (category !== undefined) { setClauses.push("category = ?"); setParams.push(category || null); }
+      if (description !== undefined) { setClauses.push("description = ?"); setParams.push(description || null); }
+      if (frequency !== undefined) { setClauses.push("frequency = ?"); setParams.push(frequency); }
+      if (shift !== undefined) { setClauses.push("shift = ?"); setParams.push(shift || null); }
+      if (status !== undefined) { setClauses.push("status = ?"); setParams.push(status); }
+      if (isActive !== undefined) { setClauses.push("is_active = ?"); setParams.push(isActive ? 1 : 0); }
+
+      if (setClauses.length) {
+        await pool.execute(
+          `UPDATE checklist_templates SET ${setClauses.join(", ")} WHERE id = ?`,
+          [...setParams, templateId]
+        );
+      }
+
+      if (questions) {
+        await pool.execute("DELETE FROM checklist_template_questions WHERE template_id = ?", [templateId]);
+        if (questions.length) {
+          const values = questions.map((q, idx) => [
+            templateId,
+            q.questionText,
+            q.inputType,
+            q.isRequired ? 1 : 0,
+            Number.isInteger(q.orderIndex) ? q.orderIndex : idx,
+            q.options ? JSON.stringify(q.options) : null,
+            JSON.stringify({ ...(q.meta || {}), ...(q.rule ? { rule: q.rule } : {}) }) || null,
+          ]);
+          await pool.query(
+            `INSERT INTO checklist_template_questions
+               (template_id, question_text, input_type, is_required, order_index, options_json, meta)
+             VALUES ?`,
+            [values]
+          );
+        }
+      }
+
+      res.status(204).send();
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// ── Recent checklist submissions (admin dashboard) ────────────────────────────
+router.get("/submissions/recent", async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT cs.id, cs.submitted_at AS "submittedAt",
+              ct.template_name AS "templateName", ct.id AS "templateId", ct.frequency,
+              a.asset_name AS "assetName", a.id AS "assetId",
+              c.company_name AS "companyName", c.id AS "companyId",
+              cs.status, cs.completion_pct AS "completionPct",
+              cu.full_name AS "submittedBy"
+       FROM checklist_submissions cs
+       LEFT JOIN checklist_templates ct ON ct.id = cs.template_id
+       LEFT JOIN assets a ON a.id = cs.asset_id
+       LEFT JOIN company_users cu ON cu.id = COALESCE(cs.company_user_id, cs.submitted_by)
+       LEFT JOIN companies c ON c.id = ct.company_id
+       WHERE c.user_id = ?
+       ORDER BY cs.submitted_at DESC NULLS LAST
+       LIMIT 50`,
+      [req.user.id]
+    );
+    res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ── Single checklist submission detail (admin) ──────────────────────────── */
+router.get("/submissions/:id", async (req, res, next) => {
+  const submissionId = Number(req.params.id);
+  try {
+    const [[submission]] = await pool.query(
+      `SELECT cs.id, cs.status, cs.completion_pct AS "completionPct",
+              cs.submitted_at AS "submittedAt",
+              ct.template_name AS "templateName", ct.id AS "templateId", ct.frequency,
+              a.asset_name AS "assetName", a.id AS "assetId",
+              c.company_name AS "companyName",
+              cu.full_name AS "submittedBy"
+       FROM checklist_submissions cs
+       LEFT JOIN checklist_templates ct ON ct.id = cs.template_id
+       LEFT JOIN assets a ON a.id = cs.asset_id
+       LEFT JOIN company_users cu ON cu.id = COALESCE(cs.company_user_id, cs.submitted_by)
+       LEFT JOIN companies c ON c.id = ct.company_id
+       WHERE cs.id = ? AND c.user_id = ?`,
+      [submissionId, req.user.id]
+    );
+    if (!submission) return res.status(404).json({ message: "Submission not found" });
+
+    const [answers] = await pool.query(
+      `SELECT csa.id, csa.question_text AS "questionText", csa.input_type AS "inputType",
+              csa.answer_json AS "answerJson", csa.option_selected AS "optionSelected"
+       FROM checklist_submission_answers csa
+       WHERE csa.submission_id = ?
+       ORDER BY csa.id ASC`,
+      [submissionId]
+    );
+
+    const safeParse = (v) => {
+      if (v == null) return null;
+      if (typeof v === "string") { try { return JSON.parse(v); } catch { return v; } }
+      return v;
+    };
+
+    res.json({
+      ...submission,
+      answers: answers.map((a) => ({ ...a, answerJson: safeParse(a.answerJson) })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── Delete template ────────────────────────────────────────────────────────────
+router.delete(
+  "/:id",
+  validate([param("id").isInt({ min: 1 })]),
+  async (req, res, next) => {
+    const templateId = Number(req.params.id);
+    try {
+      const owned = await ensureTemplateOwned(templateId, req.user.id);
+      if (!owned) return res.status(404).json({ message: "Template not found" });
+
+      await pool.execute("DELETE FROM checklist_templates WHERE id = ?", [templateId]);
+      res.status(204).send();
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 export default router;
+

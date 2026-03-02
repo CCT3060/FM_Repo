@@ -3,6 +3,7 @@ import { body, param, query } from "express-validator";
 import pool from "../db.js";
 import { validate } from "../validators.js";
 import { requireAuth } from "../middleware/auth.js";
+import { orchestrateFlag } from "../utils/flagOrchestrator.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -32,6 +33,13 @@ const ensureAssetOwned = async (assetId, userId) => {
     [assetId, userId]
   );
   return rows[0];
+};
+
+// pg returns JSONB columns as already-parsed JS objects; guard against re-parsing
+const safeParse = (v) => {
+  if (v == null) return null;
+  if (typeof v === "string") return JSON.parse(v);
+  return v;
 };
 
 const normalizeHeaderConfig = (config = {}) => {
@@ -91,13 +99,14 @@ const createWorkOrder = async (conn, {
 }) => {
   const workOrderNumber = generateWorkOrderNumber();
   const location = [asset.building, asset.floor, asset.room].filter(Boolean).join(", ") || null;
-  const [woResult] = await conn.execute(
+  const [woRows] = await conn.execute(
     `INSERT INTO work_orders (
       work_order_number, asset_id, asset_name, location, issue_source, logsheet_entry_id, question_id, issue_description, priority, status, created_by
-    ) VALUES (?, ?, ?, ?, 'logsheet', ?, ?, ?, ?, 'open', ?)` ,
+    ) VALUES (?, ?, ?, ?, 'logsheet', ?, ?, ?, ?, 'open', ?)
+    RETURNING id` ,
     [workOrderNumber, asset.id, asset.asset_name, location, entryId, questionId, issueDescription, priority, createdBy]
   );
-  const woId = woResult.insertId;
+  const woId = woRows[0]?.id;
   await conn.execute(
     `INSERT INTO work_order_history (work_order_id, status, updated_by, remarks)
      VALUES (?, 'open', ?, ?)` ,
@@ -106,6 +115,8 @@ const createWorkOrder = async (conn, {
   return { id: woId, workOrderNumber };
 };
 
+const frequencies = ["daily","weekly","monthly","quarterly","half_yearly","yearly"];
+
 router.post(
   "/",
   validate([
@@ -113,6 +124,8 @@ router.post(
     body("templateName").trim().notEmpty(),
     body("assetType").isIn(assetTypes),
     body("assetModel").optional().isString(),
+    body("frequency").optional().isIn(frequencies),
+    body("assetId").optional({ nullable: true }).isInt({ min: 1 }),
     body("description").optional().isString(),
     body("isActive").optional().isBoolean().toBoolean(),
     body("headerConfig").optional().isObject(),
@@ -129,7 +142,7 @@ router.post(
     body("sections.*.questions.*.order").optional().isInt({ min: 0 }).toInt(),
   ]),
   async (req, res, next) => {
-    const { companyId, templateName, assetType, assetModel, description, isActive = true, headerConfig = {}, sections } = req.body;
+    const { companyId, templateName, assetType, assetModel, frequency = "daily", assetId, description, isActive = true, headerConfig = {}, sections } = req.body;
     const headerJson = normalizeHeaderConfig(headerConfig);
     try {
       const [companyRows] = await pool.query(
@@ -141,21 +154,23 @@ router.post(
       const conn = await pool.getConnection();
       try {
         await conn.beginTransaction();
-        const [tmplResult] = await conn.execute(
-          `INSERT INTO logsheet_templates (company_id, template_name, asset_type, asset_model, header_config, description, is_active, created_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)` ,
-          [companyId, templateName, assetType, assetModel || null, JSON.stringify(headerJson), description || null, isActive ? 1 : 0, req.user.id]
+        const [tmplRows] = await conn.execute(
+          `INSERT INTO logsheet_templates (company_id, asset_id, template_name, asset_type, asset_model, frequency, header_config, description, is_active, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           RETURNING id` ,
+          [companyId, assetId || null, templateName, assetType, assetModel || null, frequency, JSON.stringify(headerJson), description || null, isActive ? 1 : 0, req.user.id]
         );
-        const templateId = tmplResult.insertId;
+        const templateId = tmplRows[0]?.id;
 
         for (let sIdx = 0; sIdx < sections.length; sIdx += 1) {
           const section = sections[sIdx];
-          const [secResult] = await conn.execute(
+          const [secRows] = await conn.execute(
             `INSERT INTO logsheet_sections (template_id, section_name, order_index)
-             VALUES (?, ?, ?)` ,
+             VALUES (?, ?, ?)
+             RETURNING id` ,
             [templateId, section.name, Number.isFinite(section.order) ? section.order : sIdx]
           );
-          const sectionId = secResult.insertId;
+          const sectionId = secRows[0]?.id;
 
           const questionValues = section.questions.map((q, qIdx) => [
             sectionId,
@@ -172,6 +187,14 @@ router.post(
             `INSERT INTO logsheet_questions (section_id, question_text, specification, answer_type, rule_json, priority, is_mandatory, order_index)
              VALUES ?`,
             [questionValues]
+          );
+        }
+
+        // Auto-assign to asset if provided
+        if (assetId) {
+          await conn.execute(
+            `INSERT IGNORE INTO logsheet_template_assignments (template_id, asset_id, attached_by) VALUES (?, ?, ?)`,
+            [templateId, assetId, req.user.id]
           );
         }
 
@@ -206,16 +229,19 @@ router.get(
 
       const [templates] = await pool.query(
         `SELECT lt.id, lt.company_id AS companyId, lt.template_name AS templateName, lt.asset_type AS assetType,
-                lt.asset_model AS assetModel, lt.header_config AS headerConfig, lt.description, lt.is_active AS isActive, lt.created_at AS createdAt
+                lt.asset_model AS assetModel, lt.frequency, lt.asset_id AS assetId,
+                a.asset_name AS assetName,
+                lt.header_config AS headerConfig, lt.description, lt.is_active AS isActive, lt.created_at AS createdAt
          FROM logsheet_templates lt
          JOIN companies c ON lt.company_id = c.id
+         LEFT JOIN assets a ON a.id = lt.asset_id
          ${where}
          ORDER BY lt.created_at DESC`,
         params
       );
 
       if (!includeSections || templates.length === 0) {
-        const basic = templates.map((t) => ({ ...t, headerConfig: t.headerConfig ? JSON.parse(t.headerConfig) : {} }));
+        const basic = templates.map((t) => ({ ...t, headerConfig: safeParse(t.headerConfig) ?? {} }));
         return res.json(basic);
       }
 
@@ -244,7 +270,7 @@ router.get(
 
       const mapped = templates.map((t) => ({
         ...t,
-        headerConfig: t.headerConfig ? JSON.parse(t.headerConfig) : {},
+        headerConfig: safeParse(t.headerConfig) ?? {},
         sections: sections
           .filter((s) => s.templateId === t.id)
           .map((s) => ({
@@ -253,7 +279,7 @@ router.get(
               .filter((q) => q.sectionId === s.id)
               .map((q) => ({
                 ...q,
-                rule: q.ruleJson ? JSON.parse(q.ruleJson) : undefined,
+                rule: safeParse(q.ruleJson) ?? undefined,
               })),
           })),
       }));
@@ -287,7 +313,7 @@ router.post(
       await pool.query(
         `INSERT INTO logsheet_template_assignments (template_id, asset_id, attached_by)
          VALUES (?, ?, ?)
-         ON DUPLICATE KEY UPDATE attached_at = attached_at`,
+         ON CONFLICT (template_id, asset_id) DO NOTHING`,
         [templateId, assetId, req.user.id]
       );
 
@@ -343,14 +369,14 @@ router.get(
 
       const result = templates.map((t) => ({
         ...t,
-        headerConfig: t.headerConfig ? JSON.parse(t.headerConfig) : {},
+        headerConfig: safeParse(t.headerConfig) ?? {},
         sections: sections
           .filter((s) => s.templateId === t.templateId)
           .map((s) => ({
             ...s,
             questions: questions
               .filter((q) => q.sectionId === s.id)
-              .map((q) => ({ ...q, rule: q.ruleJson ? JSON.parse(q.ruleJson) : undefined })),
+              .map((q) => ({ ...q, rule: safeParse(q.ruleJson) ?? undefined })),
           })),
       }));
 
@@ -360,6 +386,142 @@ router.get(
     }
   }
 );
+
+/* ── Recent filled logsheet entries (admin) ────────────────────────────────── */
+router.get("/entries/recent", async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT le.id, le.month, le.year, le.shift,
+              COALESCE(le.submitted_at, le.entry_date) AS "submittedAt",
+              le.status,
+              lt.template_name AS "templateName", lt.frequency, lt.id AS "templateId",
+              a.asset_name AS "assetName", a.id AS "assetId",
+              c.company_name AS "companyName", c.id AS "companyId",
+              cu.full_name AS "submittedBy"
+       FROM logsheet_entries le
+       LEFT JOIN logsheet_templates lt ON lt.id = le.template_id
+       LEFT JOIN assets a ON a.id = le.asset_id
+       LEFT JOIN company_users cu ON cu.id = COALESCE(le.company_user_id, le.submitted_by)
+       LEFT JOIN companies c ON c.id = lt.company_id
+       WHERE c.user_id = ?
+       ORDER BY le.submitted_at DESC NULLS LAST, le.entry_date DESC
+       LIMIT 30`,
+      [req.user.id]
+    );
+    res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ── Single logsheet entry detail (admin) ──────────────────────────────────── */
+router.get("/entries/:id", async (req, res, next) => {
+  const entryId = Number(req.params.id);
+  try {
+    const [[entry]] = await pool.query(
+      `SELECT le.id, le.month, le.year, le.shift, le.status, le.data,
+              COALESCE(le.submitted_at, le.entry_date) AS "submittedAt",
+              lt.template_name AS "templateName", lt.frequency, lt.id AS "templateId",
+              lt.layout_type AS "layoutType", lt.header_config AS "headerConfig",
+              a.asset_name AS "assetName", a.id AS "assetId",
+              c.company_name AS "companyName",
+              cu.full_name AS "submittedBy"
+       FROM logsheet_entries le
+       LEFT JOIN logsheet_templates lt ON lt.id = le.template_id
+       LEFT JOIN assets a ON a.id = le.asset_id
+       LEFT JOIN company_users cu ON cu.id = COALESCE(le.company_user_id, le.submitted_by)
+       LEFT JOIN companies c ON c.id = lt.company_id
+       WHERE le.id = ? AND c.user_id = ?`,
+      [entryId, req.user.id]
+    );
+    if (!entry) return res.status(404).json({ message: "Entry not found" });
+
+    const [answers] = await pool.query(
+      `SELECT la.id, la.question_id AS "questionId", la.date_column AS "dateColumn",
+              la.answer_value AS "answerValue", la.is_issue AS "isIssue",
+              la.issue_reason AS "issueReason",
+              lq.question_text AS "questionText", lq.answer_type AS "answerType",
+              lq.specification,
+              ls.name AS "sectionName"
+       FROM logsheet_answers la
+       LEFT JOIN logsheet_questions lq ON lq.id = la.question_id
+       LEFT JOIN logsheet_sections ls ON ls.id = lq.section_id
+       WHERE la.entry_id = ?
+       ORDER BY ls.order_index ASC, lq.order_index ASC, la.date_column ASC`,
+      [entryId]
+    );
+
+    const safeParse = (v) => {
+      if (v == null) return null;
+      if (typeof v === "string") { try { return JSON.parse(v); } catch { return v; } }
+      return v;
+    };
+
+    res.json({ ...entry, data: safeParse(entry.data), answers });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── Issues / flagged readings report ──────────────────────────────────────────
+router.get("/entries/issues", async (req, res, next) => {
+  const { from, to, assetId, templateId: filterTemplateId, limit = 200, offset = 0 } = req.query;
+  try {
+    let where = "c.user_id = ? AND la.is_issue = TRUE";
+    const params = [req.user.id];
+    if (assetId) { where += " AND a.id = ?"; params.push(assetId); }
+    if (filterTemplateId) { where += " AND lt.id = ?"; params.push(filterTemplateId); }
+    if (from) { where += " AND le.entry_date >= ?"; params.push(from); }
+    if (to) { where += " AND le.entry_date <= ?"; params.push(to); }
+    params.push(Number(limit), Number(offset));
+
+    const [rows] = await pool.query(
+      `SELECT la.id, la.date_column AS day, la.answer_value AS value,
+              la.is_issue AS isIssue, la.issue_reason AS issueReason,
+              lq.question_text AS questionText, lq.specification, lq.answer_type AS answerType, lq.priority,
+              ls.section_name AS sectionName,
+              le.id AS entryId, le.month, le.year, le.shift,
+              le.submitted_at AS submittedAt,
+              lt.id AS templateId, lt.template_name AS templateName, lt.frequency,
+              a.id AS assetId, a.asset_name AS assetName,
+              c.id AS companyId, c.company_name AS companyName,
+              cu.full_name AS submittedBy
+       FROM logsheet_answers la
+       JOIN logsheet_entries le ON le.id = la.entry_id
+       JOIN logsheet_questions lq ON lq.id = la.question_id
+       JOIN logsheet_sections ls ON ls.id = lq.section_id
+       JOIN logsheet_templates lt ON lt.id = le.template_id
+       LEFT JOIN assets a ON a.id = le.asset_id
+       LEFT JOIN company_users cu ON cu.id = le.company_user_id
+       JOIN companies c ON c.id = lt.company_id
+       WHERE ${where}
+       ORDER BY le.submitted_at DESC NULLS LAST, la.date_column ASC
+       LIMIT ? OFFSET ?`,
+      params
+    );
+
+    // Summary stats
+    const [stats] = await pool.query(
+      `SELECT COUNT(*) AS total,
+              SUM(CASE WHEN lq.priority = 'critical' THEN 1 ELSE 0 END) AS critical,
+              SUM(CASE WHEN lq.priority = 'high'     THEN 1 ELSE 0 END) AS high,
+              SUM(CASE WHEN lq.priority = 'medium'   THEN 1 ELSE 0 END) AS medium,
+              SUM(CASE WHEN lq.priority = 'low'      THEN 1 ELSE 0 END) AS low
+       FROM logsheet_answers la
+       JOIN logsheet_entries le ON le.id = la.entry_id
+       JOIN logsheet_questions lq ON lq.id = la.question_id
+       JOIN logsheet_sections ls ON ls.id = lq.section_id
+       JOIN logsheet_templates lt ON lt.id = le.template_id
+       JOIN companies c ON c.id = lt.company_id
+       WHERE c.user_id = ? AND la.is_issue = TRUE`,
+      [req.user.id]
+    );
+
+    res.json({ issues: rows, summary: stats[0] });
+  } catch (err) {
+    next(err);
+  }
+});
 
 router.post(
   "/:id/entries",
@@ -404,12 +566,13 @@ router.post(
       const conn = await pool.getConnection();
       try {
         await conn.beginTransaction();
-        const [entryResult] = await conn.execute(
+        const [entryRows] = await conn.execute(
           `INSERT INTO logsheet_entries (template_id, asset_id, submitted_by, entry_date, month, year, shift, header_values, data)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+           RETURNING id` ,
           [templateId, assetId, req.user.id, monthDate, month, year, shift || null, JSON.stringify(headerValues || {}), JSON.stringify({})]
         );
-        const entryId = entryResult.insertId;
+        const entryId = entryRows[0]?.id;
 
         const answerValues = answers.map((a) => {
           const question = questionMap.get(a.questionId);
@@ -457,6 +620,28 @@ router.post(
         }
 
         await conn.commit();
+
+        // ── Advanced Flag Intelligence: fire orchestrator asynchronously ──────
+        const [[assetCompany]] = await pool.query(
+          `SELECT company_id AS companyId FROM assets WHERE id = ? LIMIT 1`,
+          [assetId]
+        ).catch(() => [[null]]);
+        if (assetCompany?.companyId) {
+          const orchAnswers = answers.map((a) => ({
+            questionId: a.questionId,
+            answerJson: { value: a.answerValue },
+          }));
+          orchestrateFlag({
+            companyId:    assetCompany.companyId,
+            assetId,
+            templateId,
+            templateType: "logsheet",
+            submissionId: entryId,
+            answers:      orchAnswers,
+            raisedBy:     req.user.id,
+          }).catch((e) => console.error("[Logsheet] orchestrateFlag error:", e.message));
+        }
+
         res.status(201).json({ id: entryId, issues: answerValues.filter((v) => v[4] === 1).length });
       } catch (err) {
         await conn.rollback();
@@ -517,7 +702,7 @@ router.get(
 
       const result = entries.map((e) => ({
         ...e,
-        headerValues: e.headerValues ? JSON.parse(e.headerValues) : {},
+        headerValues: safeParse(e.headerValues) ?? {},
         answers: answers.filter((a) => a.entryId === e.id),
       }));
 
@@ -528,4 +713,344 @@ router.get(
   }
 );
 
+// ── Single template with sections + questions ─────────────────────────────────
+router.get(
+  "/:id",
+  validate([param("id").isInt({ min: 1 })]),
+  async (req, res, next) => {
+    const templateId = Number(req.params.id);
+    try {
+      const template = await ensureTemplateOwned(templateId, req.user.id);
+      if (!template) return res.status(404).json({ message: "Template not found" });
+
+      const [rows] = await pool.query(
+        `SELECT lt.id, lt.company_id AS companyId, lt.template_name AS templateName, lt.asset_type AS assetType,
+                lt.asset_model AS assetModel, lt.frequency, lt.asset_id AS assetId,
+                a.asset_name AS assetName,
+                lt.header_config AS headerConfig, lt.description,
+                lt.is_active AS isActive, lt.created_at AS createdAt
+         FROM logsheet_templates lt
+         LEFT JOIN assets a ON a.id = lt.asset_id
+         WHERE lt.id = ?`,
+        [templateId]
+      );
+      const tmpl = rows[0];
+      if (!tmpl) return res.status(404).json({ message: "Template not found" });
+
+      const [sections] = await pool.query(
+        `SELECT id, section_name AS sectionName, order_index AS orderIndex
+         FROM logsheet_sections WHERE template_id = ? ORDER BY order_index ASC, id ASC`,
+        [templateId]
+      );
+
+      const sectionIds = sections.map((s) => s.id);
+      let questions = [];
+      if (sectionIds.length) {
+        const [qRows] = await pool.query(
+          `SELECT id, section_id AS sectionId, question_text AS questionText, specification,
+                  answer_type AS answerType, rule_json AS ruleJson, priority, is_mandatory AS isMandatory,
+                  order_index AS orderIndex
+           FROM logsheet_questions
+           WHERE section_id IN (${sectionIds.map(() => "?").join(",")})
+           ORDER BY order_index ASC, id ASC`,
+          sectionIds
+        );
+        questions = qRows;
+      }
+
+      res.json({
+        ...tmpl,
+        headerConfig: safeParse(tmpl.headerConfig) ?? {},
+        sections: sections.map((s) => ({
+          ...s,
+          questions: questions
+            .filter((q) => q.sectionId === s.id)
+            .map((q) => ({ ...q, rule: safeParse(q.ruleJson) ?? undefined })),
+        })),
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// ── Update template (rebuild sections + questions in a transaction) ────────────
+router.put(
+  "/:id",
+  validate([
+    param("id").isInt({ min: 1 }),
+    body("templateName").optional().trim().notEmpty(),
+    body("assetType").optional().isIn(assetTypes),
+    body("assetModel").optional().isString(),
+    body("description").optional().isString(),
+    body("isActive").optional().isBoolean().toBoolean(),
+    body("headerConfig").optional().isObject(),
+    body("sections").optional().isArray({ min: 1 }),
+    body("sections.*.name").optional().trim().notEmpty(),
+    body("sections.*.order").optional().isInt({ min: 0 }).toInt(),
+    body("sections.*.questions").optional().isArray({ min: 1 }),
+    body("sections.*.questions.*.questionText").optional().trim().notEmpty(),
+    body("sections.*.questions.*.answerType").optional().isIn(answerTypes),
+    body("sections.*.questions.*.specification").optional().isString(),
+    body("sections.*.questions.*.rule").optional(),
+    body("sections.*.questions.*.priority").optional().isIn(priorityLevels),
+    body("sections.*.questions.*.mandatory").optional().isBoolean().toBoolean(),
+    body("sections.*.questions.*.order").optional().isInt({ min: 0 }).toInt(),
+  ]),
+  async (req, res, next) => {
+    const templateId = Number(req.params.id);
+    const { templateName, assetType, assetModel, frequency, assetId, description, isActive, headerConfig, sections } = req.body;
+    try {
+      const owned = await ensureTemplateOwned(templateId, req.user.id);
+      if (!owned) return res.status(404).json({ message: "Template not found" });
+
+      const conn = await pool.getConnection();
+      try {
+        await conn.beginTransaction();
+
+        // Build dynamic SET clause for scalar fields
+        const setClauses = [];
+        const setParams = [];
+        if (templateName !== undefined) { setClauses.push("template_name = ?"); setParams.push(templateName); }
+        if (assetType !== undefined) { setClauses.push("asset_type = ?"); setParams.push(assetType); }
+        if (assetModel !== undefined) { setClauses.push("asset_model = ?"); setParams.push(assetModel || null); }
+        if (frequency !== undefined) { setClauses.push("frequency = ?"); setParams.push(frequency); }
+        if (assetId !== undefined) { setClauses.push("asset_id = ?"); setParams.push(assetId || null); }
+        if (description !== undefined) { setClauses.push("description = ?"); setParams.push(description || null); }
+        if (isActive !== undefined) { setClauses.push("is_active = ?"); setParams.push(isActive ? 1 : 0); }
+        if (headerConfig !== undefined) { setClauses.push("header_config = ?"); setParams.push(JSON.stringify(normalizeHeaderConfig(headerConfig))); }
+
+        if (setClauses.length) {
+          await conn.execute(
+            `UPDATE logsheet_templates SET ${setClauses.join(", ")} WHERE id = ?`,
+            [...setParams, templateId]
+          );
+        }
+
+        // Sync assignment table if assetId changed
+        if (assetId !== undefined) {
+          await conn.execute("DELETE FROM logsheet_template_assignments WHERE template_id = ?", [templateId]);
+          if (assetId) {
+            await conn.execute(
+              `INSERT IGNORE INTO logsheet_template_assignments (template_id, asset_id, attached_by) VALUES (?, ?, ?)`,
+              [templateId, assetId, req.user.id]
+            );
+          }
+        }
+
+        if (sections) {
+          // Delete old sections (cascade deletes questions via FK)
+          await conn.execute("DELETE FROM logsheet_sections WHERE template_id = ?", [templateId]);
+
+          for (let sIdx = 0; sIdx < sections.length; sIdx += 1) {
+            const section = sections[sIdx];
+            const [secRows] = await conn.execute(
+              `INSERT INTO logsheet_sections (template_id, section_name, order_index)
+               VALUES (?, ?, ?) RETURNING id`,
+              [templateId, section.name, Number.isFinite(section.order) ? section.order : sIdx]
+            );
+            const sectionId = secRows[0]?.id;
+
+            if (section.questions?.length) {
+              const questionValues = section.questions.map((q, qIdx) => [
+                sectionId,
+                q.questionText,
+                q.specification || null,
+                q.answerType,
+                normalizeRule(q.rule) ? JSON.stringify(normalizeRule(q.rule)) : null,
+                q.priority && priorityLevels.includes(q.priority) ? q.priority : "medium",
+                q.mandatory ? 1 : 0,
+                Number.isFinite(q.order) ? q.order : qIdx,
+              ]);
+              await conn.query(
+                `INSERT INTO logsheet_questions (section_id, question_text, specification, answer_type, rule_json, priority, is_mandatory, order_index)
+                 VALUES ?`,
+                [questionValues]
+              );
+            }
+          }
+        }
+
+        await conn.commit();
+        res.status(204).send();
+      } catch (err) {
+        await conn.rollback();
+        throw err;
+      } finally {
+        conn.release();
+      }
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// ── Grid view: full data structure for DG-log-sheet monthly grid ──────────────
+router.get(
+  "/:id/grid",
+  validate([
+    param("id").isInt({ min: 1 }),
+    query("assetId").optional().isInt({ min: 1 }).toInt(),
+    query("month").optional().isInt({ min: 1, max: 12 }).toInt(),
+    query("year").optional().isInt({ min: 2000, max: 2100 }).toInt(),
+  ]),
+  async (req, res, next) => {
+    const templateId = Number(req.params.id);
+    const now = new Date();
+    const {
+      assetId,
+      month = now.getMonth() + 1,
+      year = now.getFullYear(),
+    } = req.query;
+
+    try {
+      const template = await ensureTemplateOwned(templateId, req.user.id);
+      if (!template) return res.status(404).json({ message: "Template not found" });
+
+      // Full template with sections + questions
+      const [tmplRows] = await pool.query(
+        `SELECT lt.id, lt.company_id AS companyId, lt.template_name AS templateName,
+                lt.asset_type AS assetType, lt.asset_model AS assetModel, lt.frequency,
+                lt.asset_id AS defaultAssetId, lt.header_config AS headerConfig, lt.description
+         FROM logsheet_templates lt WHERE lt.id = ?`,
+        [templateId]
+      );
+      const tmpl = tmplRows[0];
+      if (!tmpl) return res.status(404).json({ message: "Template not found" });
+      tmpl.headerConfig = safeParse(tmpl.headerConfig) ?? {};
+
+      const [sections] = await pool.query(
+        `SELECT id, section_name AS sectionName, order_index AS orderIndex
+         FROM logsheet_sections WHERE template_id = ? ORDER BY order_index ASC, id ASC`,
+        [templateId]
+      );
+
+      const sectionIds = sections.map((s) => s.id);
+      let questions = [];
+      if (sectionIds.length) {
+        const [qRows] = await pool.query(
+          `SELECT id, section_id AS sectionId, question_text AS questionText, specification,
+                  answer_type AS answerType, rule_json AS ruleJson, priority, is_mandatory AS isMandatory,
+                  order_index AS orderIndex
+           FROM logsheet_questions
+           WHERE section_id IN (${sectionIds.map(() => "?").join(",")})
+           ORDER BY order_index ASC, id ASC`,
+          sectionIds
+        );
+        questions = qRows;
+      }
+
+      const structuredTemplate = {
+        ...tmpl,
+        sections: sections.map((s) => ({
+          ...s,
+          questions: questions
+            .filter((q) => q.sectionId === s.id)
+            .map((q) => ({ ...q, rule: safeParse(q.ruleJson) ?? undefined })),
+        })),
+      };
+
+      // Resolve effective assetId
+      const effectiveAssetId = assetId || tmpl.defaultAssetId;
+
+      // Asset info (optional — may not be linked)
+      let asset = null;
+      if (effectiveAssetId) {
+        const [aRows] = await pool.query(
+          `SELECT id, asset_name AS assetName, asset_type AS assetType, asset_id AS assetTag
+           FROM assets WHERE id = ?`,
+          [effectiveAssetId]
+        );
+        asset = aRows[0] || null;
+      }
+
+      // Find the entry for this asset+month+year
+      const entryParams = [templateId, Number(month), Number(year)];
+      let entryWhere = "le.template_id = ? AND le.month = ? AND le.year = ?";
+      if (effectiveAssetId) {
+        entryWhere += " AND le.asset_id = ?";
+        entryParams.push(effectiveAssetId);
+      }
+
+      const [entryRows] = await pool.query(
+        `SELECT le.id, le.asset_id AS assetId, le.shift, le.header_values AS headerValues,
+                le.submitted_at AS submittedAt, le.status,
+                cu.full_name AS submittedByName
+         FROM logsheet_entries le
+         LEFT JOIN company_users cu ON cu.id = le.company_user_id
+         WHERE ${entryWhere}
+         ORDER BY le.submitted_at DESC NULLS LAST
+         LIMIT 1`,
+        entryParams
+      );
+
+      const entry = entryRows[0] || null;
+      let answers = [];
+
+      if (entry) {
+        entry.headerValues = safeParse(entry.headerValues) ?? {};
+        const [ansRows] = await pool.query(
+          `SELECT question_id AS questionId, date_column AS day, answer_value AS value,
+                  is_issue AS isIssue, issue_reason AS issueReason
+           FROM logsheet_answers WHERE entry_id = ?
+           ORDER BY question_id ASC, date_column ASC`,
+          [entry.id]
+        );
+        answers = ansRows;
+      }
+
+      // Build answer map: { [questionId]: { [day]: { value, isIssue, issueReason } } }
+      const answerMap = {};
+      for (const a of answers) {
+        if (!answerMap[a.questionId]) answerMap[a.questionId] = {};
+        answerMap[a.questionId][a.day] = {
+          value: a.value,
+          isIssue: !!a.isIssue,
+          issueReason: a.issueReason || null,
+        };
+      }
+
+      res.json({
+        template: structuredTemplate,
+        asset,
+        month: Number(month),
+        year: Number(year),
+        entry: entry
+          ? {
+              id: entry.id,
+              shift: entry.shift,
+              submittedAt: entry.submittedAt,
+              status: entry.status,
+              submittedByName: entry.submittedByName,
+              headerValues: entry.headerValues,
+            }
+          : null,
+        answerMap,
+        daysInMonth: new Date(Number(year), Number(month), 0).getDate(),
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// ── Delete template ────────────────────────────────────────────────────────────
+router.delete(
+  "/:id",
+  validate([param("id").isInt({ min: 1 })]),
+  async (req, res, next) => {
+    const templateId = Number(req.params.id);
+    try {
+      const owned = await ensureTemplateOwned(templateId, req.user.id);
+      if (!owned) return res.status(404).json({ message: "Template not found" });
+
+      await pool.execute("DELETE FROM logsheet_templates WHERE id = ?", [templateId]);
+      res.status(204).send();
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 export default router;
+

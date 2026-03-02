@@ -35,7 +35,8 @@ router.post("/", validate(clientRules), async (req, res, next) => {
     const { clientName, email, phone, state, pincode, gst, company, address, status } = req.body;
     const [result] = await pool.execute(
       `INSERT INTO clients (client_name, email, phone, state_name, pincode, gst_number, company_name, address, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       RETURNING id`,
       [clientName, email, phone, state, pincode, gst, company, address, status]
     );
 

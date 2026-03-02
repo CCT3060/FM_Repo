@@ -43,12 +43,13 @@ router.post("/", validate(createUserRules), async (req, res, next) => {
     const passwordHash = await bcrypt.hash(password, 10);
     const [result] = await pool.execute(
       `INSERT INTO users (full_name, email, phone, role, status, client_id, password_hash)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       RETURNING id`,
       [fullName, email, phone, role, status, clientId, passwordHash]
     );
     res.status(201).json({ id: result.insertId, fullName, email, phone, role, status, clientId });
   } catch (err) {
-    if (err?.code === "ER_NO_REFERENCED_ROW_2") {
+    if (err?.code === "23503") {
       return res.status(400).json({ message: "Client does not exist" });
     }
     return next(err);
@@ -84,7 +85,7 @@ router.put(
 
       return res.json({ id: Number(id), fullName, email, phone, role, status, clientId });
     } catch (err) {
-      if (err?.code === "ER_NO_REFERENCED_ROW_2") {
+      if (err?.code === "23503") {
         return res.status(400).json({ message: "Client does not exist" });
       }
       return next(err);

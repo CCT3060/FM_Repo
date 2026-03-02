@@ -17,7 +17,11 @@ router.post(
     try {
       const { email, password } = req.body;
       const [rows] = await pool.query(
-        `SELECT id, full_name AS fullName, email, status, password_hash AS passwordHash
+        `SELECT id,
+                full_name AS "fullName",
+                email,
+                status,
+                password_hash AS "passwordHash"
          FROM users
          WHERE email = ?
          LIMIT 1`,
@@ -30,6 +34,10 @@ router.post(
       const user = rows[0];
       if (user.status !== "Active") {
         return res.status(403).json({ message: "User is inactive" });
+      }
+
+      if (!user.passwordHash) {
+        return res.status(401).json({ message: "Invalid credentials" });
       }
 
       const isMatch = await bcrypt.compare(password, user.passwordHash);

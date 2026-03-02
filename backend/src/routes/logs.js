@@ -58,7 +58,7 @@ router.post(
       if (!owned) return res.status(404).json({ message: "Asset not found" });
 
       const [result] = await pool.execute(
-        "INSERT INTO asset_logs (asset_id, note, created_by) VALUES (?, ?, ?)",
+        "INSERT INTO asset_logs (asset_id, note, created_by) VALUES (?, ?, ?) RETURNING id",
         [assetId, note, req.user.id]
       );
 
