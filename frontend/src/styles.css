@@ -608,13 +608,14 @@ tr:last-child td {
 
 .client-main-area {
   flex: 1;
+  min-width: 0;
   margin-left: 0;
   padding: 32px;
 }
 
 .client-main-area.page {
   margin-left: 0;
-  max-width: 1200px;
+  max-width: none;
 }
 
 .pill-btn {

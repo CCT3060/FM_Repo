@@ -75,8 +75,7 @@ const ChecklistQuestionRow = ({
 
   return (
     <div
-      className="card"
-      style={{ padding: "12px", border: "1px solid #e2e8f0", display: "flex", gap: "12px", alignItems: "flex-start" }}
+      style={{ padding: "10px 16px", borderBottom: "1px solid #f1f5f9", display: "flex", gap: "10px", alignItems: "flex-start", background: "#fff" }}
       draggable
       onDragStart={() => onDragStart(question.id)}
       onDragOver={(e) => {
@@ -88,50 +87,90 @@ const ChecklistQuestionRow = ({
         onDrop(question.id);
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", paddingTop: "6px", color: "#94a3b8" }}>
+      <div style={{ display: "flex", alignItems: "center", paddingTop: "24px", color: "#94a3b8", flexShrink: 0, cursor: "grab" }}>
         <GripVertical size={18} />
       </div>
 
-      <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1.2fr 0.8fr 0.4fr", gap: "10px", alignItems: "center" }}>
-        <div className="form-group" style={{ marginBottom: 0 }}>
-          <label style={{ fontSize: "12px", color: "#475569" }}>Question Text</label>
-          <input
-            value={question.text}
-            onChange={(e) => onChange(question.id, { text: e.target.value })}
-            className="form-input"
-            placeholder="Describe the check to perform"
-            required
-          />
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "8px", minWidth: 0 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "3fr 1.5fr auto", gap: "10px", alignItems: "center" }}>
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label style={{ fontSize: "12px", color: "#475569" }}>Question Text</label>
+            <input
+              value={question.text}
+              onChange={(e) => onChange(question.id, { text: e.target.value })}
+              className="form-input"
+              placeholder="Describe the check to perform"
+              required
+            />
+          </div>
+
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label style={{ fontSize: "12px", color: "#475569" }}>Answer Type</label>
+            <select
+              value={selectedType}
+              onChange={(e) => handleTypeChange(e.target.value)}
+              className="form-select"
+              required
+            >
+              <option value="" disabled>Select type</option>
+              {answerOptions.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
+
+          <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", color: "#334155", whiteSpace: "nowrap" }}>
+            <input
+              type="checkbox"
+              checked={question.isMandatory}
+              onChange={(e) => onChange(question.id, { isMandatory: e.target.checked })}
+              disabled={selectedType === "label"}
+            />
+            Mandatory
+          </label>
         </div>
 
-        <div className="form-group" style={{ marginBottom: 0 }}>
-          <label style={{ fontSize: "12px", color: "#475569" }}>Answer Type</label>
-          <select
-            value={selectedType}
-            onChange={(e) => handleTypeChange(e.target.value)}
-            className="form-select"
-            required
-          >
-            <option value="" disabled>Select type</option>
-            {answerOptions.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
-        </div>
-
-        <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", color: "#334155" }}>
-          <input
-            type="checkbox"
-            checked={question.isMandatory}
-            onChange={(e) => onChange(question.id, { isMandatory: e.target.checked })}
-            disabled={selectedType === "label"}
-          />
-          Mandatory
-        </label>
-      </div>
+        {/* ── Behaviour flags row ── */}
+        {selectedType && selectedType !== "label" && (
+          <div style={{ display: "flex", gap: "20px", flexWrap: "wrap", padding: "6px 10px", background: "#f8fafc", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "#475569", cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={!!question.allowFlagIssue}
+                onChange={(e) => onChange(question.id, { allowFlagIssue: e.target.checked })}
+              />
+              Allow Flag Issue
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "#475569", cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={question.allowRemark !== false}
+                onChange={(e) => onChange(question.id, { allowRemark: e.target.checked })}
+              />
+              Allow Remark
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "#475569", cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={!!question.allowImage}
+                onChange={(e) => onChange(question.id, { allowImage: e.target.checked })}
+              />
+              Allow Image
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "#64748b", fontStyle: "italic", cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={!!question.requireReason}
+                onChange={(e) => onChange(question.id, { requireReason: e.target.checked })}
+                disabled={!question.allowFlagIssue}
+              />
+              Require reason if flagged
+            </label>
+          </div>
+        )}
 
       {selectedType && (
-        <div style={{ width: "100%", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
           {["single_select", "dropdown", "multi_select"].includes(selectedType) && (
             <div className="form-group" style={{ marginBottom: 0 }}>
               <label style={{ fontSize: "12px", color: "#475569" }}>Options (one per line)</label>
@@ -189,6 +228,8 @@ const ChecklistQuestionRow = ({
           )}
         </div>
       )}
+
+      </div>{/* end column flex */}
 
       <button
         type="button"

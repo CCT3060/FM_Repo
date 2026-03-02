@@ -3,6 +3,7 @@ import {
   login,
   getCompanies,
   createCompany,
+  updateCompany,
   deleteCompany,
   getAssets,
   createAsset,
@@ -19,8 +20,34 @@ import {
   getAssetTypes,
   createAssetType,
   getUsers,
+  getCompanyUsers,
+  createCompanyUser,
+  updateCompanyUser,
+  deleteCompanyUser,
+  getChecklistTemplates,
+  createChecklistTemplate,
+  getChecklistTemplate,
+  updateChecklistTemplate,
+  deleteChecklistTemplate,
+  getLogsheetTemplate,
+  updateLogsheetTemplate,
+  deleteLogsheetTemplate,
+  getLogsheetTemplates,
+  createLogsheetTemplate,
+  assignLogsheetTemplate,
+  getLogsheetEntriesByTemplate,
+  submitLogsheetEntry,
+  getRecentLogsheetEntries,
+  getRecentChecklistSubmissions,
+  getLogsheetEntryDetail,
+  getChecklistSubmissionDetail,
+  getCompanyOverview,
+  getLogsheetIssuesReport,
 } from "../api";
 import ChecklistBuilder from "../components/ChecklistBuilder";
+import LogsheetModule from "../components/LogsheetModule.jsx";
+import ChecklistTemplateModule from "../components/ChecklistTemplateModule.jsx";
+import SubmissionsPanel from "../components/SubmissionsPanel.jsx";
 
 const TOKEN_KEY = "company_portal_token";
 
@@ -47,6 +74,16 @@ const emptyCompany = {
   deliveryModule: true,
   allowGuestBooking: false, // mapped to OJT training toggle
   status: "Active",
+};
+
+const emptyUser = {
+  fullName: "",
+  email: "",
+  phone: "",
+  designation: "",
+  role: "employee",
+  status: "Active",
+  password: "",
 };
 
 const emptyAsset = {
@@ -123,6 +160,8 @@ const CompanyPortal = () => {
   const [companyError, setCompanyError] = useState(null);
   const [companyLoading, setCompanyLoading] = useState(false);
   const [nav, setNav] = useState("dashboard");
+  const [checklistSubNav, setChecklistSubNav] = useState("templates");
+  const [logsheetSubNav, setLogsheetSubNav] = useState("templates");
   const [showAddForm, setShowAddForm] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -146,6 +185,63 @@ const CompanyPortal = () => {
   const [logForm, setLogForm] = useState({ assetId: "", note: "" });
   const [logError, setLogError] = useState(null);
   const [portalUsers, setPortalUsers] = useState([]);
+
+  // Company table UI state
+  const [tableSearch, setTableSearch] = useState("");
+  const [tableEntries, setTableEntries] = useState(25);
+  const [tablePage, setTablePage] = useState(0);
+  const [sortField, setSortField] = useState("companyName");
+  const [sortDir, setSortDir] = useState("asc");
+  const [viewCompanyId, setViewCompanyId] = useState(null);
+  const [editCompanyId, setEditCompanyId] = useState(null);
+  const [editCompanyForm, setEditCompanyForm] = useState(emptyCompany);
+  const [editCompanyLoading, setEditCompanyLoading] = useState(false);
+  const [editCompanyError, setEditCompanyError] = useState(null);
+
+  // Company Users (Admin) state
+  const [adminCompanyId, setAdminCompanyId] = useState(null);
+  const [companyOverview, setCompanyOverview] = useState(null);
+  const [overviewLoading, setOverviewLoading] = useState(false);
+  const [recentEntries, setRecentEntries] = useState([]);
+  const [recentEntriesLoading, setRecentEntriesLoading] = useState(false);
+  const [recentChecklists, setRecentChecklists] = useState([]);
+  const [recentChecklistsLoading, setRecentChecklistsLoading] = useState(false);
+  const [dashboardTab, setDashboardTab] = useState("logsheets");
+  const [logsheetShowAll, setLogsheetShowAll] = useState(false);
+  const [checklistShowAll, setChecklistShowAll] = useState(false);
+  const [detailModal, setDetailModal] = useState({ open: false, type: null, data: null, loading: false, error: null });
+
+  const openDetail = async (type, id) => {
+    setDetailModal({ open: true, type, data: null, loading: true, error: null });
+    try {
+      const data = type === "logsheet"
+        ? await getLogsheetEntryDetail(token, id)
+        : await getChecklistSubmissionDetail(token, id);
+      setDetailModal({ open: true, type, data, loading: false, error: null });
+    } catch (err) {
+      setDetailModal({ open: true, type, data: null, loading: false, error: err.message || "Failed to load details" });
+    }
+  };
+  const [issuesReport, setIssuesReport] = useState({ issues: [], summary: null });
+  const [issuesReportLoading, setIssuesReportLoading] = useState(false);
+  const [companyUsers, setCompanyUsers] = useState([]);
+  const [companyUsersLoading, setCompanyUsersLoading] = useState(false);
+  const [companyUsersError, setCompanyUsersError] = useState(null);
+  const [showAddUserModal, setShowAddUserModal] = useState(false);
+  const [editUserId, setEditUserId] = useState(null);
+  const [userForm, setUserForm] = useState(emptyUser);
+  const [userFormLoading, setUserFormLoading] = useState(false);
+  const [userFormError, setUserFormError] = useState(null);
+  const [userTableSearch, setUserTableSearch] = useState("");
+  const [userTablePage, setUserTablePage] = useState(0);
+  const [userTableEntries, setUserTableEntries] = useState(10);
+  const [userSortField, setUserSortField] = useState("fullName");
+  const [userSortDir, setUserSortDir] = useState("asc");
+  // Asset table UI state
+  const [assetTablePage, setAssetTablePage] = useState(0);
+  const [assetTableEntries, setAssetTableEntries] = useState(25);
+  const [assetSortField, setAssetSortField] = useState("assetName");
+  const [assetSortDir, setAssetSortDir] = useState("asc");
 
   const selectedCompany = useMemo(
     () => companies.find((c) => c.id === selectedCompanyId) || companies[0],
@@ -211,6 +307,54 @@ const CompanyPortal = () => {
     const companyId = selectedCompanyId || companies[0]?.id;
     return assets.filter((a) => String(a.companyId) === String(companyId));
   }, [assets, companies, selectedCompanyId]);
+
+  // --- Company table computed values ---
+  const companyStats = useMemo(() => ({
+    total: companies.length,
+    active: companies.filter((c) => (c.status || "Active").toLowerCase() === "active").length,
+    inactive: companies.filter((c) => (c.status || "Active").toLowerCase() !== "active").length,
+    totalEmployees: companies.reduce((sum, c) => sum + (Number(c.employeeCount) || 0), 0),
+  }), [companies]);
+
+  const toggleSort = (field) => {
+    if (sortField === field) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortField(field); setSortDir("asc"); }
+    setTablePage(0);
+  };
+
+  const sortedFilteredCompanies = useMemo(() => {
+    const term = tableSearch.trim().toLowerCase();
+    const filtered = companies.filter((c) => {
+      if (!term) return true;
+      return (
+        c.companyName?.toLowerCase().includes(term) ||
+        c.companyCode?.toLowerCase().includes(term) ||
+        c.city?.toLowerCase().includes(term) ||
+        c.description?.toLowerCase().includes(term)
+      );
+    });
+    return [...filtered].sort((a, b) => {
+      let av = a[sortField] || "";
+      let bv = b[sortField] || "";
+      if (typeof av === "string") av = av.toLowerCase();
+      if (typeof bv === "string") bv = bv.toLowerCase();
+      if (av < bv) return sortDir === "asc" ? -1 : 1;
+      if (av > bv) return sortDir === "asc" ? 1 : -1;
+      return 0;
+    });
+  }, [companies, tableSearch, sortField, sortDir]);
+
+  const tablePages = useMemo(() => {
+    const total = sortedFilteredCompanies.length;
+    const totalPages = Math.max(1, Math.ceil(total / tableEntries));
+    const startIndex = tablePage * tableEntries;
+    return { total, totalPages, startIndex };
+  }, [sortedFilteredCompanies, tableEntries, tablePage]);
+
+  const pagedCompanies = useMemo(
+    () => sortedFilteredCompanies.slice(tablePages.startIndex, tablePages.startIndex + tableEntries),
+    [sortedFilteredCompanies, tablePages.startIndex, tableEntries]
+  );
 
   const loadCompanies = async (authToken) => {
     setCompanyLoading(true);
@@ -328,15 +472,43 @@ const CompanyPortal = () => {
   }, [nav, logForm.assetId]);
 
   useEffect(() => {
-    if (token && (nav === "assets" || nav === "departments")) {
+    if (token && (nav === "assets" || nav === "departments" || nav === "companies")) {
       const companyId = selectedCompanyId || companies[0]?.id;
-      if (companyId) {
+      if (nav === "companies") {
+        // Load all departments (no companyId filter) for dept count in table
+        if (token) {
+          setDepartmentLoading(true);
+          getDepartments(token, "").then((list) => {
+            setDepartments(list);
+          }).catch(() => {}).finally(() => setDepartmentLoading(false));
+        }
+      } else if (companyId) {
         loadDepartments(token, companyId).catch(() => {});
         setDepartmentForm((prev) => ({ ...prev, companyId }));
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, nav, selectedCompanyId, companies]);
+
+  // Load recent logsheet entries whenever logged in
+  useEffect(() => {
+    if (!token) return;
+    setRecentEntriesLoading(true);
+    getRecentLogsheetEntries(token)
+      .then((data) => setRecentEntries(data))
+      .catch(() => {})
+      .finally(() => setRecentEntriesLoading(false));
+    setRecentChecklistsLoading(true);
+    getRecentChecklistSubmissions(token)
+      .then((data) => setRecentChecklists(data))
+      .catch(() => {})
+      .finally(() => setRecentChecklistsLoading(false));
+    setIssuesReportLoading(true);
+    getLogsheetIssuesReport(token, "limit=100")
+      .then((data) => setIssuesReport(data))
+      .catch(() => {})
+      .finally(() => setIssuesReportLoading(false));
+  }, [token]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -743,6 +915,120 @@ const CompanyPortal = () => {
     }
   };
 
+  const openEditCompany = (c) => {
+    setEditCompanyId(c.id);
+    setEditCompanyForm({ ...emptyCompany, ...c });
+    setEditCompanyError(null);
+  };
+
+  const handleEditCompanyChange = (e) => {
+    const { name, value, type, checked } = e.target;
+    setEditCompanyForm((prev) => ({ ...prev, [name]: type === "checkbox" ? checked : value }));
+  };
+
+  const handleUpdateCompany = async (e) => {
+    e.preventDefault();
+    if (!token || !editCompanyId) return;
+    setEditCompanyLoading(true);
+    setEditCompanyError(null);
+    try {
+      const updated = await updateCompany(token, editCompanyId, editCompanyForm);
+      setCompanies((prev) =>
+        prev.map((c) => (c.id === editCompanyId ? { ...emptyCompany, ...c, ...updated } : c))
+      );
+      setEditCompanyId(null);
+    } catch (err) {
+      setEditCompanyError(err.message || "Could not update company");
+    } finally {
+      setEditCompanyLoading(false);
+    }
+  };
+
+  // ── Company Users (Admin) ─────────────────────────────────────────────────
+  const loadCompanyUsers = async (companyId) => {
+    if (!token || !companyId) return;
+    setCompanyUsersLoading(true);
+    setCompanyUsersError(null);
+    try {
+      const list = await getCompanyUsers(token, companyId);
+      setCompanyUsers(list);
+    } catch (err) {
+      setCompanyUsersError(err.message || "Could not load users");
+    } finally {
+      setCompanyUsersLoading(false);
+    }
+  };
+
+  const openAdminView = (companyId) => {
+    setAdminCompanyId(companyId);
+    setUserTableSearch("");
+    setUserTablePage(0);
+    setCompanyOverview(null);
+    loadCompanyUsers(companyId);
+    setOverviewLoading(true);
+    getCompanyOverview(token, companyId)
+      .then((d) => setCompanyOverview(d))
+      .catch(() => {})
+      .finally(() => setOverviewLoading(false));
+  };
+
+  const handleUserFormChange = (e) => {
+    const { name, value } = e.target;
+    setUserForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleOpenAddUser = () => {
+    setEditUserId(null);
+    setUserForm(emptyUser);
+    setUserFormError(null);
+    setShowAddUserModal(true);
+  };
+
+  const handleOpenEditUser = (u) => {
+    setEditUserId(u.id);
+    setUserForm({ fullName: u.fullName, email: u.email, phone: u.phone || "", designation: u.designation || "", role: u.role || "employee", status: u.status, password: "" });
+    setUserFormError(null);
+    setShowAddUserModal(true);
+  };
+
+  const handleSubmitUser = async (e) => {
+    e.preventDefault();
+    if (!token || !adminCompanyId) return;
+    setUserFormLoading(true);
+    setUserFormError(null);
+    try {
+      const payload = { ...userForm, companyId: adminCompanyId };
+      if (editUserId) {
+        const updated = await updateCompanyUser(token, editUserId, payload);
+        setCompanyUsers((prev) => prev.map((u) => (u.id === editUserId ? { ...u, ...updated } : u)));
+      } else {
+        if (!userForm.password) { setUserFormError("Password is required for new users"); setUserFormLoading(false); return; }
+        const created = await createCompanyUser(token, payload);
+        setCompanyUsers((prev) => [created, ...prev]);
+        // refresh companies list so employee count updates in the table
+        loadCompanies(token).catch(() => {});
+      }
+      setShowAddUserModal(false);
+    } catch (err) {
+      setUserFormError(err.message || "Could not save user");
+    } finally {
+      setUserFormLoading(false);
+    }
+  };
+
+  const handleDeleteCompanyUser = async (id) => {
+    if (!token) return;
+    if (!window.confirm("Delete this user?")) return;
+    try {
+      await deleteCompanyUser(token, id);
+      setCompanyUsers((prev) => prev.filter((u) => u.id !== id));
+      // refresh companies list so employee count updates
+      loadCompanies(token).catch(() => {});
+    } catch (err) {
+      setCompanyUsersError(err.message || "Delete failed");
+    }
+  };
+
   if (!token) {
     return (
       <div className="page" style={{ maxWidth: "480px" }}>
@@ -792,6 +1078,182 @@ const CompanyPortal = () => {
 
   return (
     <div className="client-portal-shell">
+      {/* ── Submission Detail Modal ───────────────────────────────────────── */}
+      {detailModal.open && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}
+          onClick={(e) => { if (e.target === e.currentTarget) setDetailModal({ open: false, type: null, data: null, loading: false, error: null }); }}>
+          <div style={{ background: "#fff", borderRadius: "14px", width: "100%", maxWidth: "860px", maxHeight: "90vh", display: "flex", flexDirection: "column", boxShadow: "0 30px 80px rgba(0,0,0,0.25)" }}>
+            {/* Modal header */}
+            <div style={{ padding: "16px 24px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div>
+                <div style={{ fontWeight: 800, fontSize: "17px", color: "#0f172a" }}>
+                  {detailModal.loading ? "Loading…" : (detailModal.data?.templateName || (detailModal.type === "logsheet" ? "Logsheet Entry" : "Checklist Submission"))}
+                </div>
+                {detailModal.data && (
+                  <div style={{ fontSize: "13px", color: "#64748b", marginTop: "3px" }}>
+                    {detailModal.data.assetName && <span>Asset: <strong>{detailModal.data.assetName}</strong></span>}
+                    {detailModal.data.companyName && <span style={{ marginLeft: "12px" }}>Company: {detailModal.data.companyName}</span>}
+                  </div>
+                )}
+              </div>
+              <button onClick={() => setDetailModal({ open: false, type: null, data: null, loading: false, error: null })}
+                style={{ background: "#f1f5f9", border: "none", borderRadius: "8px", width: "34px", height: "34px", cursor: "pointer", fontSize: "18px", color: "#64748b", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+            </div>
+
+            {/* Modal body */}
+            <div style={{ overflowY: "auto", flex: 1, padding: "20px 24px" }}>
+              {detailModal.loading && <div style={{ textAlign: "center", padding: "60px", color: "#94a3b8", fontSize: "14px" }}>Loading submission details…</div>}
+              {detailModal.error && <div style={{ color: "#dc2626", padding: "20px", fontWeight: 600 }}>⚠ {detailModal.error}</div>}
+              {detailModal.data && detailModal.type === "logsheet" && (() => {
+                const d = detailModal.data;
+                const MONAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+                const isTabular = d.layoutType === "tabular" || (d.data && typeof d.data === "object");
+                return (
+                  <div>
+                    {/* Summary row */}
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "12px", marginBottom: "20px" }}>
+                      {[
+                        { label: "Period", value: `${MONAMES[(d.month || 1) - 1]} ${d.year}${d.shift ? ` · Shift ${d.shift}` : ""}` },
+                        { label: "Frequency", value: d.frequency || "—" },
+                        { label: "Submitted By", value: d.submittedBy || "—" },
+                        { label: "Submitted At", value: d.submittedAt ? new Date(d.submittedAt).toLocaleString() : "—" },
+                        { label: "Status", value: d.status || "submitted" },
+                      ].map((f) => (
+                        <div key={f.label} style={{ background: "#f8fafc", borderRadius: "8px", padding: "12px 16px", border: "1px solid #e2e8f0" }}>
+                          <div style={{ fontSize: "11px", color: "#94a3b8", fontWeight: 600, textTransform: "uppercase", marginBottom: "4px" }}>{f.label}</div>
+                          <div style={{ fontWeight: 700, color: "#0f172a", fontSize: "14px" }}>{f.value}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {/* Tabular data */}
+                    {isTabular && d.data?.readings && (
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: "14px", color: "#0f172a", marginBottom: "12px" }}>Tabular Readings</div>
+                        <div style={{ background: "#f8fafc", borderRadius: "8px", padding: "14px", fontSize: "13px", fontFamily: "monospace", whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: "300px", overflowY: "auto", border: "1px solid #e2e8f0" }}>
+                          {JSON.stringify(d.data, null, 2)}
+                        </div>
+                      </div>
+                    )}
+                    {/* Standard Q&A answers */}
+                    {!isTabular && d.answers && d.answers.length > 0 && (() => {
+                      const grouped = d.answers.reduce((acc, a) => {
+                        const sec = a.sectionName || "General";
+                        if (!acc[sec]) acc[sec] = [];
+                        const dayParts = acc[sec];
+                        const existing = dayParts.find((x) => x.questionId === a.questionId);
+                        if (existing) {
+                          existing.days = existing.days || {};
+                          existing.days[a.dateColumn] = { value: a.answerValue, isIssue: a.isIssue };
+                        } else {
+                          dayParts.push({ questionId: a.questionId, questionText: a.questionText, answerType: a.answerType, spec: a.specification, days: { [a.dateColumn]: { value: a.answerValue, isIssue: a.isIssue } } });
+                        }
+                        return acc;
+                      }, {});
+                      return (
+                        <div>
+                          {Object.entries(grouped).map(([section, qs]) => (
+                            <div key={section} style={{ marginBottom: "20px" }}>
+                              <div style={{ fontWeight: 700, fontSize: "13px", color: "#1e40af", background: "#dbeafe", padding: "6px 12px", borderRadius: "6px", marginBottom: "8px" }}>{section}</div>
+                              <div style={{ overflowX: "auto" }}>
+                                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
+                                  <thead>
+                                    <tr style={{ background: "#f8fafc" }}>
+                                      <th style={{ padding: "8px 12px", textAlign: "left", fontWeight: 600, color: "#475569", borderBottom: "1px solid #e2e8f0", minWidth: "200px" }}>Question</th>
+                                      {[...new Set(d.answers.map((a) => a.dateColumn))].sort((a, b) => a - b).map((day) => (
+                                        <th key={day} style={{ padding: "8px 6px", textAlign: "center", fontWeight: 600, color: "#475569", borderBottom: "1px solid #e2e8f0", minWidth: "32px" }}>{day}</th>
+                                      ))}
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {qs.map((q, qi) => (
+                                      <tr key={q.questionId || qi} style={{ borderBottom: "1px solid #f1f5f9", background: qi % 2 === 0 ? "#fff" : "#fafafa" }}>
+                                        <td style={{ padding: "7px 12px", fontWeight: 500, color: "#334155" }}>{q.questionText}{q.spec && <span style={{ color: "#94a3b8", fontSize: "11px", display: "block" }}>{q.spec}</span>}</td>
+                                        {[...new Set(d.answers.map((a) => a.dateColumn))].sort((a, b) => a - b).map((day) => {
+                                          const cell = q.days?.[day];
+                                          return (
+                                            <td key={day} style={{ padding: "7px 4px", textAlign: "center", background: cell?.isIssue ? "#fef2f2" : "transparent", color: cell?.isIssue ? "#dc2626" : "#0f172a" }}>
+                                              {cell?.value ?? ""}
+                                            </td>
+                                          );
+                                        })}
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
+                    {!isTabular && (!d.answers || d.answers.length === 0) && (
+                      <div style={{ color: "#94a3b8", textAlign: "center", padding: "32px", fontSize: "13px" }}>No answers recorded for this entry.</div>
+                    )}
+                  </div>
+                );
+              })()}
+              {detailModal.data && detailModal.type === "checklist" && (() => {
+                const d = detailModal.data;
+                const statusColors = { completed: ["#f0fdf4","#16a34a"], partial: ["#fffbeb","#ca8a04"], pending: ["#f1f5f9","#64748b"], submitted: ["#eff6ff","#2563eb"] };
+                const [sbg, stx] = statusColors[d.status] || ["#f1f5f9","#64748b"];
+                return (
+                  <div>
+                    {/* Summary */}
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "12px", marginBottom: "20px" }}>
+                      {[
+                        { label: "Status", value: <span style={{ padding: "3px 10px", borderRadius: "20px", background: sbg, color: stx, fontWeight: 700, fontSize: "13px", textTransform: "capitalize" }}>{d.status}</span> },
+                        { label: "Completion", value: `${d.completionPct || 0}%` },
+                        { label: "Submitted By", value: d.submittedBy || "—" },
+                        { label: "Submitted At", value: d.submittedAt ? new Date(d.submittedAt).toLocaleString() : "—" },
+                        { label: "Frequency", value: d.frequency || "—" },
+                      ].map((f) => (
+                        <div key={f.label} style={{ background: "#f8fafc", borderRadius: "8px", padding: "12px 16px", border: "1px solid #e2e8f0" }}>
+                          <div style={{ fontSize: "11px", color: "#94a3b8", fontWeight: 600, textTransform: "uppercase", marginBottom: "4px" }}>{f.label}</div>
+                          <div style={{ fontWeight: 700, color: "#0f172a", fontSize: "14px" }}>{f.value}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {/* Q&A table */}
+                    {d.answers && d.answers.length > 0 && (
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+                        <thead>
+                          <tr style={{ background: "#f8fafc" }}>
+                            <th style={{ padding: "10px 14px", textAlign: "left", fontWeight: 600, color: "#475569", borderBottom: "1px solid #e2e8f0" }}>#</th>
+                            <th style={{ padding: "10px 14px", textAlign: "left", fontWeight: 600, color: "#475569", borderBottom: "1px solid #e2e8f0", minWidth: "240px" }}>Question</th>
+                            <th style={{ padding: "10px 14px", textAlign: "left", fontWeight: 600, color: "#475569", borderBottom: "1px solid #e2e8f0" }}>Type</th>
+                            <th style={{ padding: "10px 14px", textAlign: "left", fontWeight: 600, color: "#475569", borderBottom: "1px solid #e2e8f0" }}>Answer</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {d.answers.map((a, idx) => {
+                            const val = a.answerJson?.value ?? a.optionSelected ?? "—";
+                            const isIssue = a.answerJson?.flagIssue || (typeof val === "string" && val.toLowerCase() === "no");
+                            return (
+                              <tr key={a.id || idx} style={{ borderBottom: "1px solid #f1f5f9", background: isIssue ? "#fef2f2" : (idx % 2 === 0 ? "#fff" : "#fafafa") }}>
+                                <td style={{ padding: "10px 14px", color: "#94a3b8", fontWeight: 600 }}>{idx + 1}</td>
+                                <td style={{ padding: "10px 14px", color: "#334155", fontWeight: 500 }}>{a.questionText}</td>
+                                <td style={{ padding: "10px 14px", color: "#64748b", fontSize: "12px" }}>{a.inputType || a.answerType || "—"}</td>
+                                <td style={{ padding: "10px 14px", fontWeight: 600, color: isIssue ? "#dc2626" : "#0f172a" }}>
+                                  {isIssue && <span style={{ marginRight: "4px" }}>⚠</span>}
+                                  {String(val !== null && val !== undefined ? val : "—")}
+                                  {a.answerJson?.remark && <span style={{ display: "block", fontSize: "11px", color: "#64748b", fontWeight: 400 }}>{a.answerJson.remark}</span>}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    )}
+                    {(!d.answers || d.answers.length === 0) && (
+                      <div style={{ color: "#94a3b8", textAlign: "center", padding: "32px", fontSize: "13px" }}>No answers recorded for this submission.</div>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
       <aside className="client-side-panel">
         <div className="client-side-header">
           <div className="client-avatar">CP</div>
@@ -817,22 +1279,717 @@ const CompanyPortal = () => {
       </aside>
 
       <div className="page client-main-area">
-        {nav === "companies" && !showAddForm && (
-          <div className="page-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div>
-              <h1>Companies</h1>
-              <p>View all companies and their status.</p>
-            </div>
-            <button className="pill-btn" type="button" onClick={() => setShowAddForm(true)}>+ Add Company</button>
-          </div>
-        )}
 
-        {nav === "dashboard" && (
-          <div className="page-header">
-            <h1>Client Portal</h1>
-            <p>Create companies, onboard their users and departments, and view company details.</p>
-          </div>
-        )}
+        {nav === "companies" && !showAddForm && adminCompanyId && (() => {
+          const adminCompany = companies.find((c) => c.id === adminCompanyId);
+          const userStats = {
+            total: companyUsers.length,
+            active: companyUsers.filter((u) => (u.status || "Active").toLowerCase() === "active").length,
+            inactive: companyUsers.filter((u) => (u.status || "Active").toLowerCase() !== "active").length,
+          };
+          const term = userTableSearch.trim().toLowerCase();
+          const filteredUsers = companyUsers.filter((u) =>
+            !term || u.fullName?.toLowerCase().includes(term) || u.email?.toLowerCase().includes(term) || (u.designation || "").toLowerCase().includes(term)
+          );
+          const sortedUsers = [...filteredUsers].sort((a, b) => {
+            let av = a[userSortField] || ""; let bv = b[userSortField] || "";
+            if (typeof av === "string") av = av.toLowerCase(); if (typeof bv === "string") bv = bv.toLowerCase();
+            if (av < bv) return userSortDir === "asc" ? -1 : 1;
+            if (av > bv) return userSortDir === "asc" ? 1 : -1;
+            return 0;
+          });
+          const totalPages = Math.max(1, Math.ceil(sortedUsers.length / userTableEntries));
+          const startIndex = userTablePage * userTableEntries;
+          const pagedUsers = sortedUsers.slice(startIndex, startIndex + userTableEntries);
+          const toggleUserSort = (f) => {
+            if (userSortField === f) setUserSortDir((d) => (d === "asc" ? "desc" : "asc"));
+            else { setUserSortField(f); setUserSortDir("asc"); }
+            setUserTablePage(0);
+          };
+          const UserTH = ({ field, children, sortable = true }) => (
+            <th onClick={sortable ? () => toggleUserSort(field) : undefined}
+              style={{ padding: "12px 16px", textAlign: "left", color: "#475569", fontWeight: "600", fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.05em", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", cursor: sortable ? "pointer" : "default", whiteSpace: "nowrap", userSelect: "none" }}>
+              {children}{sortable && <span style={{ color: userSortField === field ? "#7c3aed" : "#94a3b8", fontSize: "11px", marginLeft: "4px" }}>{userSortField === field ? (userSortDir === "asc" ? "▲" : "▼") : "⇅"}</span>}
+            </th>
+          );
+          return (
+            <>
+              {/* Header */}
+              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "22px" }}>
+                <div>
+                  <h1 style={{ fontSize: "24px", fontWeight: "800", color: "#0f172a", marginBottom: "4px", letterSpacing: "-0.5px" }}>
+                    Users — {adminCompany?.companyName || "Company"}
+                  </h1>
+                  <p style={{ fontSize: "13px", color: "#94a3b8" }}>
+                    Companies&nbsp;<span style={{ color: "#cbd5e1" }}>/</span>&nbsp;
+                    <button onClick={() => setAdminCompanyId(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#3b82f6", fontWeight: 500, fontSize: "13px", padding: 0 }}>{adminCompany?.companyName || "Company"}</button>
+                    &nbsp;<span style={{ color: "#cbd5e1" }}>/</span>&nbsp;<span style={{ color: "#0f172a" }}>Users</span>
+                  </p>
+                </div>
+                <button onClick={handleOpenAddUser}
+                  style={{ display: "flex", alignItems: "center", gap: "8px", background: "#2563eb", color: "#fff", border: "none", borderRadius: "8px", padding: "10px 20px", fontWeight: "600", fontSize: "14px", cursor: "pointer", boxShadow: "0 1px 3px rgba(37,99,235,0.4)" }}>
+                  + Add User
+                </button>
+              </div>
+
+              {/* Stat Cards */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px", marginBottom: "24px" }}>
+                {[
+                  { label: "Total Users", value: userStats.total, sub: "All users", subColor: "#64748b", iconBg: "#ede9fe", iconColor: "#7c3aed", icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> },
+                  { label: "Active Users", value: userStats.active, sub: "✓ Active", subColor: "#22c55e", iconBg: "#f0fdf4", iconColor: "#22c55e", icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> },
+                  { label: "Inactive Users", value: userStats.inactive, sub: "⏸ Inactive", subColor: "#f59e0b", iconBg: "#fffbeb", iconColor: "#f59e0b", icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> },
+                ].map((s) => (
+                  <div key={s.label} style={{ background: "#fff", borderRadius: "12px", padding: "20px 24px", border: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                    <div>
+                      <p style={{ color: "#64748b", fontSize: "14px", marginBottom: "10px", fontWeight: "500" }}>{s.label}</p>
+                      <p style={{ fontSize: "34px", fontWeight: "800", color: "#0f172a", lineHeight: 1, letterSpacing: "-1px" }}>{s.value}</p>
+                      <p style={{ color: s.subColor, fontSize: "13px", marginTop: "10px", fontWeight: "500" }}>{s.sub}</p>
+                    </div>
+                    <div style={{ width: "50px", height: "50px", background: s.iconBg, borderRadius: "10px", display: "flex", alignItems: "center", justifyContent: "center", color: s.iconColor, flexShrink: 0 }}>{s.icon}</div>
+                  </div>
+                ))}
+              </div>
+
+              {companyUsersError && <div style={{ background: "#fef2f2", color: "#dc2626", padding: "10px 14px", borderRadius: "8px", marginBottom: "12px", fontSize: "14px" }}>⚠️ {companyUsersError}</div>}
+
+              {/* Users Table */}
+              <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
+                <div style={{ padding: "16px 20px", borderBottom: "1px solid #e2e8f0" }}>
+                  <h2 style={{ fontSize: "17px", fontWeight: "700", color: "#0f172a" }}>Users List</h2>
+                </div>
+                <div style={{ padding: "12px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "16px", flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <span style={{ color: "#64748b", fontSize: "14px" }}>Show</span>
+                    <select value={userTableEntries} onChange={(e) => { setUserTableEntries(Number(e.target.value)); setUserTablePage(0); }}
+                      style={{ padding: "5px 8px", border: "1px solid #e2e8f0", borderRadius: "6px", fontSize: "14px", background: "#fff" }}>
+                      {[10, 25, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                    <span style={{ color: "#64748b", fontSize: "14px" }}>entries</span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <span style={{ color: "#64748b", fontSize: "14px" }}>Search:</span>
+                    <input value={userTableSearch} onChange={(e) => { setUserTableSearch(e.target.value); setUserTablePage(0); }}
+                      style={{ padding: "6px 10px", border: "1px solid #e2e8f0", borderRadius: "6px", fontSize: "14px", width: "200px", outline: "none" }} />
+                  </div>
+                </div>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
+                    <thead>
+                      <tr>
+                        <UserTH field="sno" sortable={false}>S.No</UserTH>
+                        <UserTH field="fullName">User</UserTH>
+                        <UserTH field="email">Email</UserTH>
+                        <UserTH field="phone">Phone</UserTH>
+                        <UserTH field="designation">Designation</UserTH>
+                        <UserTH field="role">Role</UserTH>
+                        <UserTH field="status">Status</UserTH>
+                        <UserTH field="action" sortable={false}>Action</UserTH>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {companyUsersLoading ? (
+                        <tr><td colSpan="8" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>Loading…</td></tr>
+                      ) : pagedUsers.length === 0 ? (
+                        <tr><td colSpan="8" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>No users yet. Click "+ Add User" to add the first admin.</td></tr>
+                      ) : pagedUsers.map((u, idx) => {
+                        const statusLower = (u.status || "Active").toLowerCase();
+                        const initials = (u.fullName || "U").slice(0, 1).toUpperCase();
+                        return (
+                          <tr key={u.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                            <td style={{ padding: "14px 16px", color: "#64748b", fontWeight: "600" }}>{startIndex + idx + 1}</td>
+                            <td style={{ padding: "14px 16px" }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                                <div style={{ width: "36px", height: "36px", borderRadius: "50%", background: "#ede9fe", display: "flex", alignItems: "center", justifyContent: "center", color: "#7c3aed", fontWeight: "700", fontSize: "15px", flexShrink: 0 }}>{initials}</div>
+                                <span style={{ fontWeight: "600", color: "#0f172a" }}>{u.fullName}</span>
+                              </div>
+                            </td>
+                            <td style={{ padding: "14px 16px" }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "#475569", fontSize: "13px" }}>
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+                                {u.email}
+                              </div>
+                            </td>
+                            <td style={{ padding: "14px 16px", color: "#475569", fontSize: "13px" }}>{u.phone || "-"}</td>
+                            <td style={{ padding: "14px 16px", color: "#475569", fontSize: "13px" }}>{u.designation || "-"}</td>
+                            <td style={{ padding: "14px 16px" }}>
+                              <span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: u.role === "admin" ? "#ede9fe" : u.role === "supervisor" ? "#fef3c7" : u.role === "technician" ? "#ecfeff" : "#f1f5f9", color: u.role === "admin" ? "#7c3aed" : u.role === "supervisor" ? "#d97706" : u.role === "technician" ? "#0891b2" : "#475569", textTransform: "capitalize" }}>
+                                {u.role || "employee"}
+                              </span>
+                            </td>
+                            <td style={{ padding: "14px 16px" }}>
+                              <span style={{ padding: "4px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: "600", background: statusLower === "active" ? "#f0fdf4" : "#fffbeb", color: statusLower === "active" ? "#16a34a" : "#d97706" }}>{u.status || "Active"}</span>
+                            </td>
+                            <td style={{ padding: "14px 16px" }}>
+                              <div style={{ display: "flex", gap: "5px" }}>
+                                <button title="Edit" onClick={() => handleOpenEditUser(u)} style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#fef9c3", color: "#ca8a04", border: "none", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                                </button>
+                                <button title="Delete" onClick={() => handleDeleteCompanyUser(u.id)} style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#fee2e2", color: "#dc2626", border: "none", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{ padding: "12px 20px", borderTop: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px" }}>
+                  <span style={{ color: "#64748b", fontSize: "13px" }}>
+                    {sortedUsers.length === 0 ? "No entries" : `Showing ${startIndex + 1} to ${Math.min(startIndex + userTableEntries, sortedUsers.length)} of ${sortedUsers.length} entries`}
+                  </span>
+                  <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+                    <button onClick={() => setUserTablePage((p) => Math.max(0, p - 1))} disabled={userTablePage === 0}
+                      style={{ padding: "6px 12px", border: "1px solid #e2e8f0", borderRadius: "6px", background: "#fff", cursor: userTablePage === 0 ? "not-allowed" : "pointer", color: userTablePage === 0 ? "#cbd5e1" : "#475569", fontSize: "13px", fontWeight: "500" }}>Previous</button>
+                    <span style={{ padding: "6px 12px", background: "#2563eb", color: "#fff", borderRadius: "6px", fontSize: "13px", fontWeight: "600", minWidth: "34px", textAlign: "center" }}>{userTablePage + 1}</span>
+                    <button onClick={() => setUserTablePage((p) => Math.min(totalPages - 1, p + 1))} disabled={userTablePage >= totalPages - 1}
+                      style={{ padding: "6px 12px", border: "1px solid #e2e8f0", borderRadius: "6px", background: "#fff", cursor: userTablePage >= totalPages - 1 ? "not-allowed" : "pointer", color: userTablePage >= totalPages - 1 ? "#cbd5e1" : "#475569", fontSize: "13px", fontWeight: "500" }}>Next</button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Add / Edit User Modal */}
+              {showAddUserModal && (
+                <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.5)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }} onClick={() => setShowAddUserModal(false)}>
+                  <div style={{ background: "#fff", borderRadius: "16px", padding: "28px", maxWidth: "480px", width: "100%", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }} onClick={(e) => e.stopPropagation()}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+                      <h2 style={{ fontSize: "18px", fontWeight: "700", color: "#0f172a" }}>{editUserId ? "Edit User" : "Add User"}</h2>
+                      <button onClick={() => setShowAddUserModal(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: "22px", lineHeight: 1 }}>✕</button>
+                    </div>
+                    {userFormError && <div style={{ background: "#fef2f2", color: "#dc2626", padding: "10px 14px", borderRadius: "8px", marginBottom: "14px", fontSize: "13.5px" }}>⚠️ {userFormError}</div>}
+                    <form onSubmit={handleSubmitUser}>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
+                        <div style={{ gridColumn: "span 2" }}>
+                          <label style={{ display: "block", fontSize: "12.5px", fontWeight: "600", color: "#475569", marginBottom: "5px" }}>Full Name<span style={{ color: "#ef4444", marginLeft: "2px" }}>*</span></label>
+                          <input name="fullName" value={userForm.fullName} onChange={handleUserFormChange} className="form-input" placeholder="Full Name" required style={{ width: "100%" }} />
+                        </div>
+                        <div style={{ gridColumn: "span 2" }}>
+                          <label style={{ display: "block", fontSize: "12.5px", fontWeight: "600", color: "#475569", marginBottom: "5px" }}>Email<span style={{ color: "#ef4444", marginLeft: "2px" }}>*</span></label>
+                          <input name="email" type="email" value={userForm.email} onChange={handleUserFormChange} className="form-input" placeholder="email@example.com" required style={{ width: "100%" }} />
+                        </div>
+                        <div>
+                          <label style={{ display: "block", fontSize: "12.5px", fontWeight: "600", color: "#475569", marginBottom: "5px" }}>Phone</label>
+                          <input name="phone" value={userForm.phone} onChange={handleUserFormChange} className="form-input" placeholder="Phone number" style={{ width: "100%" }} />
+                        </div>
+                        <div>
+                          <label style={{ display: "block", fontSize: "12.5px", fontWeight: "600", color: "#475569", marginBottom: "5px" }}>Designation</label>
+                          <input name="designation" value={userForm.designation} onChange={handleUserFormChange} className="form-input" placeholder="e.g. Manager" style={{ width: "100%" }} />
+                        </div>
+                        <div>
+                          <label style={{ display: "block", fontSize: "12.5px", fontWeight: "600", color: "#475569", marginBottom: "5px" }}>Role<span style={{ color: "#ef4444", marginLeft: "2px" }}>*</span></label>
+                          <select name="role" value={userForm.role} onChange={handleUserFormChange} className="form-select" style={{ width: "100%" }}>
+                            <option value="admin">Admin</option>
+                            <option value="supervisor">Supervisor</option>
+                            <option value="technician">Technician</option>
+                            <option value="cleaner">Cleaner</option>
+                            <option value="security">Security</option>
+                            <option value="driver">Driver</option>
+                            <option value="fleet_operator">Fleet Operator</option>
+                            <option value="employee">Employee</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label style={{ display: "block", fontSize: "12.5px", fontWeight: "600", color: "#475569", marginBottom: "5px" }}>Status</label>
+                          <select name="status" value={userForm.status} onChange={handleUserFormChange} className="form-select" style={{ width: "100%" }}>
+                            <option value="Active">Active</option>
+                            <option value="Inactive">Inactive</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label style={{ display: "block", fontSize: "12.5px", fontWeight: "600", color: "#475569", marginBottom: "5px" }}>Password{!editUserId && <span style={{ color: "#ef4444", marginLeft: "2px" }}>*</span>}{editUserId && <span style={{ color: "#94a3b8", fontWeight: "400", marginLeft: "4px" }}>(leave blank to keep)</span>}</label>
+                          <input name="password" type="password" value={userForm.password} onChange={handleUserFormChange} className="form-input" placeholder={editUserId ? "Leave blank to keep" : "Min 8 characters"} style={{ width: "100%" }} />
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end", marginTop: "20px" }}>
+                        <button type="button" onClick={() => setShowAddUserModal(false)} className="btn-cancel">Cancel</button>
+                        <button type="submit" className="btn-submit" disabled={userFormLoading}>{userFormLoading ? "Saving…" : (editUserId ? "Save Changes" : "Add User")}</button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
+
+              {/* ── Company Data Overview ── */}
+              <div style={{ marginTop: "32px" }}>
+                <h2 style={{ fontSize: "18px", fontWeight: "700", color: "#0f172a", marginBottom: "16px", display: "flex", alignItems: "center", gap: "8px" }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2563eb" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+                  Data Overview
+                </h2>
+
+                {overviewLoading ? (
+                  <div style={{ padding: "40px", textAlign: "center", color: "#94a3b8", background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0" }}>Loading overview…</div>
+                ) : !companyOverview ? (
+                  <div style={{ padding: "40px", textAlign: "center", color: "#94a3b8", background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0" }}>No data available.</div>
+                ) : (() => {
+                  const ov = companyOverview;
+                  const FREQ_COLORS = { daily: ["#dcfce7","#16a34a"], weekly: ["#dbeafe","#1d4ed8"], monthly: ["#fef9c3","#ca8a04"], quarterly: ["#ede9fe","#7c3aed"], half_yearly: ["#fce7f3","#be185d"], yearly: ["#ffedd5","#c2410c"] };
+                  const freqLabel = { daily:"Daily", weekly:"Weekly", monthly:"Monthly", quarterly:"Quarterly", half_yearly:"Half-Yearly", yearly:"Yearly" };
+                  return (
+                    <>
+                      {/* Stat cards */}
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "14px", marginBottom: "24px" }}>
+                        {[
+                          { label: "Assets", value: ov.assets?.length ?? 0, iconBg: "#eff6ff", iconColor: "#2563eb", icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg> },
+                          { label: "Departments", value: ov.departments?.length ?? 0, iconBg: "#f0fdf4", iconColor: "#16a34a", icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> },
+                          { label: "Logsheet Templates", value: ov.logsheets?.length ?? 0, iconBg: "#ede9fe", iconColor: "#7c3aed", icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg> },
+                          { label: "Checklist Templates", value: ov.checklists?.length ?? 0, iconBg: "#fef3c7", iconColor: "#d97706", icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg> },
+                        ].map((s) => (
+                          <div key={s.label} style={{ background: "#fff", borderRadius: "12px", padding: "18px 20px", border: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                            <div>
+                              <p style={{ color: "#64748b", fontSize: "13px", marginBottom: "6px", fontWeight: "500" }}>{s.label}</p>
+                              <p style={{ fontSize: "30px", fontWeight: "800", color: "#0f172a", lineHeight: 1, letterSpacing: "-1px" }}>{s.value}</p>
+                            </div>
+                            <div style={{ width: "44px", height: "44px", background: s.iconBg, borderRadius: "10px", display: "flex", alignItems: "center", justifyContent: "center", color: s.iconColor, flexShrink: 0 }}>{s.icon}</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Assets table */}
+                      {ov.assets?.length > 0 && (
+                        <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden", marginBottom: "20px" }}>
+                          <div style={{ padding: "14px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", gap: "8px" }}>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2563eb" strokeWidth="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+                            <h3 style={{ fontSize: "15px", fontWeight: "700", color: "#0f172a" }}>Assets ({ov.assets.length})</h3>
+                          </div>
+                          <div style={{ overflowX: "auto" }}>
+                            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+                              <thead>
+                                <tr style={{ background: "#f8fafc" }}>
+                                  {["#","Asset Name","Asset Type","Model","Department","Status"].map((h) => (
+                                    <th key={h} style={{ padding: "10px 16px", textAlign: "left", color: "#475569", fontWeight: "600", fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.04em", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>{h}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {ov.assets.map((a, i) => (
+                                  <tr key={a.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                                    <td style={{ padding: "10px 16px", color: "#94a3b8", fontWeight: "600" }}>{i + 1}</td>
+                                    <td style={{ padding: "10px 16px", fontWeight: "600", color: "#0f172a" }}>{a.asset_name || a.assetName}</td>
+                                    <td style={{ padding: "10px 16px", color: "#475569" }}>{a.asset_type || a.assetType || "-"}</td>
+                                    <td style={{ padding: "10px 16px", color: "#475569" }}>{a.asset_model || a.assetModel || "-"}</td>
+                                    <td style={{ padding: "10px 16px", color: "#475569" }}>{a.department_name || a.departmentName || "-"}</td>
+                                    <td style={{ padding: "10px 16px" }}>
+                                      <span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: (a.status || "active").toLowerCase() === "active" ? "#f0fdf4" : "#f1f5f9", color: (a.status || "active").toLowerCase() === "active" ? "#16a34a" : "#64748b" }}>
+                                        {a.status || "Active"}
+                                      </span>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Logsheet templates table */}
+                      {ov.logsheets?.length > 0 && (
+                        <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden", marginBottom: "20px" }}>
+                          <div style={{ padding: "14px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", gap: "8px" }}>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                            <h3 style={{ fontSize: "15px", fontWeight: "700", color: "#0f172a" }}>Logsheet Templates ({ov.logsheets.length})</h3>
+                          </div>
+                          <div style={{ overflowX: "auto" }}>
+                            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+                              <thead>
+                                <tr style={{ background: "#f8fafc" }}>
+                                  {["#","Template Name","Asset","Frequency","Log Entries","Asset Type"].map((h) => (
+                                    <th key={h} style={{ padding: "10px 16px", textAlign: "left", color: "#475569", fontWeight: "600", fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.04em", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>{h}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {ov.logsheets.map((t, i) => {
+                                  const freq = t.frequency || "daily";
+                                  const [fbg, ftx] = FREQ_COLORS[freq] || ["#f1f5f9","#475569"];
+                                  return (
+                                    <tr key={t.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                                      <td style={{ padding: "10px 16px", color: "#94a3b8", fontWeight: "600" }}>{i + 1}</td>
+                                      <td style={{ padding: "10px 16px", fontWeight: "600", color: "#0f172a" }}>{t.template_name || t.templateName}</td>
+                                      <td style={{ padding: "10px 16px", color: "#475569" }}>{t.asset_name || t.assetName || "-"}</td>
+                                      <td style={{ padding: "10px 16px" }}>
+                                        <span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: fbg, color: ftx }}>{freqLabel[freq] || freq}</span>
+                                      </td>
+                                      <td style={{ padding: "10px 16px", color: "#475569" }}>{t.entryCount ?? t.entry_count ?? 0}</td>
+                                      <td style={{ padding: "10px 16px", color: "#475569" }}>{t.asset_type || t.assetType || "-"}</td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Checklist templates table */}
+                      {ov.checklists?.length > 0 && (
+                        <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
+                          <div style={{ padding: "14px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", gap: "8px" }}>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#d97706" strokeWidth="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                            <h3 style={{ fontSize: "15px", fontWeight: "700", color: "#0f172a" }}>Checklist Templates ({ov.checklists.length})</h3>
+                          </div>
+                          <div style={{ overflowX: "auto" }}>
+                            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+                              <thead>
+                                <tr style={{ background: "#f8fafc" }}>
+                                  {["#","Template Name","Asset Type","Questions","Status"].map((h) => (
+                                    <th key={h} style={{ padding: "10px 16px", textAlign: "left", color: "#475569", fontWeight: "600", fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.04em", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>{h}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {ov.checklists.map((c, i) => (
+                                  <tr key={c.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                                    <td style={{ padding: "10px 16px", color: "#94a3b8", fontWeight: "600" }}>{i + 1}</td>
+                                    <td style={{ padding: "10px 16px", fontWeight: "600", color: "#0f172a" }}>{c.template_name || c.templateName}</td>
+                                    <td style={{ padding: "10px 16px", color: "#475569" }}>{c.asset_type || c.assetType || "-"}</td>
+                                    <td style={{ padding: "10px 16px", color: "#475569" }}>{c.questionCount ?? c.question_count ?? 0}</td>
+                                    <td style={{ padding: "10px 16px" }}>
+                                      <span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: (c.status || "active").toLowerCase() === "active" ? "#f0fdf4" : "#f1f5f9", color: (c.status || "active").toLowerCase() === "active" ? "#16a34a" : "#64748b" }}>
+                                        {c.status || "Active"}
+                                      </span>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+
+                      {ov.assets?.length === 0 && ov.logsheets?.length === 0 && ov.checklists?.length === 0 && (
+                        <div style={{ padding: "32px", textAlign: "center", color: "#94a3b8", background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", fontSize: "14px" }}>
+                          This company has no assets, logsheet templates, or checklist templates yet.
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+              </div>
+
+            </>
+          );
+        })()}
+
+        {nav === "companies" && !showAddForm && !adminCompanyId && (() => {
+          const ABtns = ({ bg, col, title, onClick, children }) => (
+            <button title={title} onClick={onClick} style={{ width: "30px", height: "30px", borderRadius: "6px", background: bg, color: col, border: "none", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{children}</button>
+          );
+          const SortIcon = ({ field }) => (
+            <span style={{ color: sortField === field ? "#2563eb" : "#94a3b8", fontSize: "11px", marginLeft: "4px" }}>
+              {sortField === field ? (sortDir === "asc" ? "▲" : "▼") : "⇅"}
+            </span>
+          );
+          const TH = ({ field, children, sortable = true }) => (
+            <th onClick={sortable ? () => toggleSort(field) : undefined}
+              style={{ padding: "12px 16px", textAlign: "left", color: "#475569", fontWeight: "600", fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.05em", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", cursor: sortable ? "pointer" : "default", whiteSpace: "nowrap", userSelect: "none" }}>
+              {children}{sortable && <SortIcon field={field} />}
+            </th>
+          );
+          return (
+            <>
+              {/* ── Header ── */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "24px" }}>
+                <div>
+                  <h1 style={{ fontSize: "26px", fontWeight: "800", color: "#0f172a", marginBottom: "4px", letterSpacing: "-0.5px" }}>Company Management</h1>
+                  <p style={{ color: "#64748b", fontSize: "14px" }}>Manage your client companies and their configurations</p>
+                </div>
+                <button type="button" onClick={() => setShowAddForm(true)}
+                  style={{ display: "flex", alignItems: "center", gap: "8px", background: "#2563eb", color: "#fff", border: "none", borderRadius: "8px", padding: "10px 20px", fontWeight: "600", fontSize: "14px", cursor: "pointer", boxShadow: "0 1px 3px rgba(37,99,235,0.4)" }}>
+                  + Add Company
+                </button>
+              </div>
+
+              {/* ── Stat Cards ── */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px", marginBottom: "24px" }}>
+                {[
+                  { label: "Total Companies", value: companyStats.total, sub: "All registered companies", subColor: "#64748b", iconBg: "#eff6ff", iconColor: "#2563eb", icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg> },
+                  { label: "Active Companies", value: companyStats.active, sub: "✓ Active", subColor: "#22c55e", iconBg: "#f0fdf4", iconColor: "#22c55e", icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> },
+                  { label: "Total Employees", value: companyStats.totalEmployees, sub: "Across all companies", subColor: "#64748b", iconBg: "#eff6ff", iconColor: "#2563eb", icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> },
+                  { label: "Inactive Companies", value: companyStats.inactive, sub: "⏸ Inactive", subColor: "#f59e0b", iconBg: "#fffbeb", iconColor: "#f59e0b", icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg> },
+                ].map((s) => (
+                  <div key={s.label} style={{ background: "#fff", borderRadius: "12px", padding: "20px 24px", border: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                    <div>
+                      <p style={{ color: "#64748b", fontSize: "14px", marginBottom: "10px", fontWeight: "500" }}>{s.label}</p>
+                      <p style={{ fontSize: "34px", fontWeight: "800", color: "#0f172a", lineHeight: 1, letterSpacing: "-1px" }}>{s.value}</p>
+                      <p style={{ color: s.subColor, fontSize: "13px", marginTop: "10px", fontWeight: "500" }}>{s.sub}</p>
+                    </div>
+                    <div style={{ width: "50px", height: "50px", background: s.iconBg, borderRadius: "10px", display: "flex", alignItems: "center", justifyContent: "center", color: s.iconColor, flexShrink: 0 }}>{s.icon}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* ── Companies Table Card ── */}
+              <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
+                <div style={{ padding: "16px 20px", borderBottom: "1px solid #e2e8f0" }}>
+                  <h2 style={{ fontSize: "17px", fontWeight: "700", color: "#0f172a" }}>Companies List</h2>
+                </div>
+                <div style={{ padding: "12px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "16px", flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <span style={{ color: "#64748b", fontSize: "14px" }}>Show</span>
+                    <select value={tableEntries} onChange={(e) => { setTableEntries(Number(e.target.value)); setTablePage(0); }}
+                      style={{ padding: "5px 8px", border: "1px solid #e2e8f0", borderRadius: "6px", fontSize: "14px", background: "#fff" }}>
+                      {[10, 25, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                    <span style={{ color: "#64748b", fontSize: "14px" }}>entries</span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <span style={{ color: "#64748b", fontSize: "14px" }}>Search:</span>
+                    <input value={tableSearch} onChange={(e) => { setTableSearch(e.target.value); setTablePage(0); }}
+                      style={{ padding: "6px 10px", border: "1px solid #e2e8f0", borderRadius: "6px", fontSize: "14px", width: "200px", outline: "none" }} />
+                  </div>
+                </div>
+
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
+                    <thead>
+                      <tr>
+                        <TH field="sno" sortable={false}>S.No</TH>
+                        <TH field="companyName">Company</TH>
+                        <TH field="contact" sortable={false}>Contact</TH>
+                        <TH field="city">Location</TH>
+                        <TH field="modules" sortable={false}>Modules</TH>
+                        <TH field="stats" sortable={false}>Stats</TH>
+                        <TH field="status">Status</TH>
+                        <TH field="actions" sortable={false}>Action</TH>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pagedCompanies.length === 0 ? (
+                        <tr><td colSpan="8" style={{ padding: "40px", textAlign: "center", color: "#94a3b8", fontSize: "14px" }}>
+                          {companyLoading ? "Loading companies…" : "No companies found."}
+                        </td></tr>
+                      ) : (
+                        pagedCompanies.map((c, idx) => {
+                          const companyDepts = departments.filter((d) => String(d.companyId) === String(c.id));
+                          const employeeCount = Number(c.employeeCount) || 0;
+                          const modules = [c.qsrModule && "Asset Mgmt", c.premealModule && "FM Checklist", c.deliveryModule && "Fleet", c.allowGuestBooking && "OJT Training"].filter(Boolean);
+                          const statusLower = (c.status || "Active").toLowerCase();
+                          return (
+                            <tr key={c.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                              <td style={{ padding: "14px 16px", color: "#64748b", fontWeight: "600" }}>{tablePages.startIndex + idx + 1}</td>
+                              <td style={{ padding: "14px 16px" }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                                  <div style={{ width: "40px", height: "40px", borderRadius: "8px", background: "#e0e7ff", display: "flex", alignItems: "center", justifyContent: "center", color: "#4338ca", fontWeight: "700", fontSize: "14px", flexShrink: 0 }}>
+                                    {c.companyName?.slice(0, 2).toUpperCase() || "CO"}
+                                  </div>
+                                  <div>
+                                    <div style={{ fontWeight: "600", color: "#0f172a", fontSize: "14px" }}>{c.companyName}</div>
+                                    <div style={{ color: "#94a3b8", fontSize: "12px" }}>{c.companyCode}</div>
+                                  </div>
+                                </div>
+                              </td>
+                              <td style={{ padding: "14px 16px" }}>
+                                <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                                  <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "#475569", fontSize: "13px" }}>
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+                                    {c.description?.slice(0, 18) || "—"}
+                                  </div>
+                                  <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "#94a3b8", fontSize: "13px" }}>
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.14 11.93A19.75 19.75 0 0 1 1.09 3.21a2 2 0 0 1 1.76-2.18h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L7.61 8.18a16 16 0 0 0 7.18 7.18l.82-.82a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+                                    {c.pincode || "-"}
+                                  </div>
+                                </div>
+                              </td>
+                              <td style={{ padding: "14px 16px" }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "#475569", fontSize: "13px" }}>
+                                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                                  {[c.city, c.state].filter(Boolean).join(", ") || "-"}
+                                </div>
+                              </td>
+                              <td style={{ padding: "14px 16px" }}>
+                                <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
+                                  {modules.length === 0 ? (
+                                    <span style={{ color: "#94a3b8", fontSize: "12px" }}>—</span>
+                                  ) : modules.map((m) => (
+                                    <span key={m} style={{ background: "#f1f5f9", color: "#475569", padding: "3px 8px", borderRadius: "4px", fontSize: "12px", fontWeight: "500" }}>{m}</span>
+                                  ))}
+                                </div>
+                              </td>
+                              <td style={{ padding: "14px 16px" }}>
+                                <div style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "13px", color: "#475569" }}>
+                                  <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+                                    {employeeCount} Employees
+                                  </div>
+                                  <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="5" r="3"/><line x1="12" y1="8" x2="12" y2="12"/><circle cx="5" cy="18" r="3"/><circle cx="19" cy="18" r="3"/><line x1="12" y1="12" x2="5" y2="15"/><line x1="12" y1="12" x2="19" y2="15"/></svg>
+                                    {companyDepts.length} Departments
+                                  </div>
+                                </div>
+                              </td>
+                              <td style={{ padding: "14px 16px" }}>
+                                <span style={{ padding: "4px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: "600", background: statusLower === "active" ? "#f0fdf4" : "#fffbeb", color: statusLower === "active" ? "#16a34a" : "#d97706" }}>
+                                  {c.status || "Active"}
+                                </span>
+                              </td>
+                              <td style={{ padding: "14px 16px" }}>
+                                <div style={{ display: "flex", gap: "5px", alignItems: "center" }}>
+                                  <ABtns bg="#dbeafe" col="#2563eb" title="View Details" onClick={() => setViewCompanyId(c.id)}>
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                                  </ABtns>
+                                  <ABtns bg="#dbeafe" col="#2563eb" title="Departments" onClick={() => { setSelectedCompanyId(c.id); setNav("departments"); }}>
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="5" r="3"/><line x1="12" y1="8" x2="12" y2="12"/><circle cx="5" cy="18" r="3"/><circle cx="19" cy="18" r="3"/><line x1="12" y1="12" x2="5" y2="15"/><line x1="12" y1="12" x2="19" y2="15"/></svg>
+                                  </ABtns>
+                                  <ABtns bg="#dcfce7" col="#16a34a" title="Checklists" onClick={() => { setSelectedCompanyId(c.id); setNav("checklists"); }}>
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                                  </ABtns>
+                                  <ABtns bg="#f3e8ff" col="#7c3aed" title="Admin Users" onClick={() => openAdminView(c.id)}>
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                                  </ABtns>
+                                  <ABtns bg="#fef9c3" col="#ca8a04" title="Edit" onClick={() => openEditCompany(c)}>
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                                  </ABtns>
+                                  <ABtns bg="#fee2e2" col="#dc2626" title="Delete" onClick={() => handleDeleteCompany(c.id)}>
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                                  </ABtns>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Pagination Footer */}
+                <div style={{ padding: "12px 20px", borderTop: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px" }}>
+                  <span style={{ color: "#64748b", fontSize: "13px" }}>
+                    {tablePages.total === 0 ? "No entries" : `Showing ${tablePages.startIndex + 1} to ${Math.min(tablePages.startIndex + tableEntries, tablePages.total)} of ${tablePages.total} entries`}
+                  </span>
+                  <div style={{ display: "flex", gap: "4px" }}>
+                    <button onClick={() => setTablePage((p) => Math.max(0, p - 1))} disabled={tablePage === 0}
+                      style={{ padding: "6px 12px", border: "1px solid #e2e8f0", borderRadius: "6px", background: "#fff", cursor: tablePage === 0 ? "not-allowed" : "pointer", color: tablePage === 0 ? "#cbd5e1" : "#475569", fontSize: "13px", fontWeight: "500" }}>Previous</button>
+                    <button onClick={() => setTablePage((p) => Math.min(tablePages.totalPages - 1, p + 1))} disabled={tablePage >= tablePages.totalPages - 1}
+                      style={{ padding: "6px 12px", border: "1px solid #e2e8f0", borderRadius: "6px", background: "#fff", cursor: tablePage >= tablePages.totalPages - 1 ? "not-allowed" : "pointer", color: tablePage >= tablePages.totalPages - 1 ? "#cbd5e1" : "#475569", fontSize: "13px", fontWeight: "500" }}>Next</button>
+                  </div>
+                </div>
+              </div>
+
+              {/* ── View Company Modal ── */}
+              {viewCompanyId && (() => {
+                const vc = companies.find((c) => c.id === viewCompanyId);
+                if (!vc) return null;
+                return (
+                  <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }} onClick={() => setViewCompanyId(null)}>
+                    <div style={{ background: "#fff", borderRadius: "16px", padding: "28px", maxWidth: "580px", width: "100%", maxHeight: "85vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }} onClick={(e) => e.stopPropagation()}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                          <div style={{ width: "44px", height: "44px", borderRadius: "10px", background: "#e0e7ff", display: "flex", alignItems: "center", justifyContent: "center", color: "#4338ca", fontWeight: "700", fontSize: "16px" }}>{vc.companyName?.slice(0, 2).toUpperCase()}</div>
+                          <div>
+                            <h2 style={{ fontSize: "20px", fontWeight: "700", color: "#0f172a" }}>{vc.companyName}</h2>
+                            <span style={{ fontSize: "12px", color: "#94a3b8" }}>{vc.companyCode}</span>
+                          </div>
+                        </div>
+                        <button onClick={() => setViewCompanyId(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: "22px", lineHeight: 1 }}>✕</button>
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", fontSize: "14px" }}>
+                        {[["Description", vc.description], ["City", vc.city], ["State", vc.state], ["Country", vc.country], ["Pincode", vc.pincode], ["GST Number", vc.gstNumber], ["PAN Number", vc.panNumber], ["CIN Number", vc.cinNumber], ["Billing Cycle", vc.billingCycle], ["Payment Terms", vc.paymentTermsDays ? `${vc.paymentTermsDays} days` : null], ["Max Employees", vc.maxEmployees || "Unlimited"], ["Status", vc.status || "Active"]].map(([label, val]) => (
+                          <div key={label}>
+                            <div style={{ color: "#94a3b8", fontSize: "12px", marginBottom: "2px", fontWeight: "500" }}>{label}</div>
+                            <div style={{ fontWeight: "600", color: "#0f172a" }}>{val || "—"}</div>
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{ marginTop: "16px" }}>
+                        <div style={{ color: "#94a3b8", fontSize: "12px", marginBottom: "6px", fontWeight: "500" }}>Modules</div>
+                        <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                          {[vc.qsrModule && "QSR / Asset Mgmt", vc.premealModule && "FM e Checklist", vc.deliveryModule && "Fleet Management", vc.allowGuestBooking && "OJT Training"].filter(Boolean).map((m) => (
+                            <span key={m} style={{ background: "#eff6ff", color: "#2563eb", padding: "4px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: "600" }}>{m}</span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* ── Edit Company Modal ── */}
+              {editCompanyId && (
+                <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }} onClick={() => setEditCompanyId(null)}>
+                  <div style={{ background: "#fff", borderRadius: "16px", padding: "28px", maxWidth: "700px", width: "100%", maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }} onClick={(e) => e.stopPropagation()}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+                      <h2 style={{ fontSize: "20px", fontWeight: "700", color: "#0f172a" }}>Edit Company</h2>
+                      <button onClick={() => setEditCompanyId(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: "22px", lineHeight: 1 }}>✕</button>
+                    </div>
+                    {editCompanyError && <div style={{ background: "#fef2f2", color: "#dc2626", padding: "10px 14px", borderRadius: "8px", marginBottom: "16px", fontSize: "14px" }}>⚠️ {editCompanyError}</div>}
+                    <form onSubmit={handleUpdateCompany}>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
+                        <div className="form-group" style={{ gridColumn: "span 2" }}>
+                          <label>Company Name</label>
+                          <input name="companyName" value={editCompanyForm.companyName} onChange={handleEditCompanyChange} className="form-input" required />
+                        </div>
+                        <div className="form-group">
+                          <label>Company Code</label>
+                          <input name="companyCode" value={editCompanyForm.companyCode} onChange={handleEditCompanyChange} className="form-input" required />
+                        </div>
+                        <div className="form-group">
+                          <label>Status</label>
+                          <select name="status" value={editCompanyForm.status} onChange={handleEditCompanyChange} className="form-select">
+                            <option value="Active">Active</option>
+                            <option value="Inactive">Inactive</option>
+                          </select>
+                        </div>
+                        <div className="form-group">
+                          <label>City</label>
+                          <input name="city" value={editCompanyForm.city} onChange={handleEditCompanyChange} className="form-input" />
+                        </div>
+                        <div className="form-group">
+                          <label>State</label>
+                          <input name="state" value={editCompanyForm.state} onChange={handleEditCompanyChange} className="form-input" />
+                        </div>
+                        <div className="form-group">
+                          <label>Country</label>
+                          <input name="country" value={editCompanyForm.country} onChange={handleEditCompanyChange} className="form-input" />
+                        </div>
+                        <div className="form-group">
+                          <label>Pincode</label>
+                          <input name="pincode" value={editCompanyForm.pincode} onChange={handleEditCompanyChange} className="form-input" />
+                        </div>
+                        <div className="form-group">
+                          <label>GST Number</label>
+                          <input name="gstNumber" value={editCompanyForm.gstNumber} onChange={handleEditCompanyChange} className="form-input" />
+                        </div>
+                        <div className="form-group">
+                          <label>Billing Cycle</label>
+                          <select name="billingCycle" value={editCompanyForm.billingCycle} onChange={handleEditCompanyChange} className="form-select">
+                            <option value="Monthly">Monthly</option>
+                            <option value="Quarterly">Quarterly</option>
+                            <option value="Yearly">Yearly</option>
+                          </select>
+                        </div>
+                        <div className="form-group">
+                          <label>Max Employees</label>
+                          <input type="number" name="maxEmployees" value={editCompanyForm.maxEmployees} onChange={handleEditCompanyChange} className="form-input" min="0" />
+                        </div>
+                        <div className="form-group" style={{ gridColumn: "span 2" }}>
+                          <label>Description</label>
+                          <input name="description" value={editCompanyForm.description} onChange={handleEditCompanyChange} className="form-input" />
+                        </div>
+                      </div>
+                      <div style={{ marginTop: "16px" }}>
+                        <label style={{ display: "block", color: "#475569", fontWeight: "600", fontSize: "13px", marginBottom: "10px" }}>Module Access</label>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "10px" }}>
+                          {[["qsrModule", "QSR / Asset Management"], ["premealModule", "FM e Checklist"], ["deliveryModule", "Fleet Management"], ["allowGuestBooking", "OJT Training"]].map(([key, label]) => (
+                            <label key={key} style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", fontSize: "14px", color: "#475569" }}>
+                              <input type="checkbox" name={key} checked={!!editCompanyForm[key]} onChange={handleEditCompanyChange} />
+                              {label}
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end", marginTop: "24px" }}>
+                        <button type="button" onClick={() => setEditCompanyId(null)} className="btn-cancel">Cancel</button>
+                        <button type="submit" className="btn-submit" disabled={editCompanyLoading}>{editCompanyLoading ? "Saving…" : "Save Changes"}</button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
+            </>
+          );
+        })()}
 
         {companyError && (
           <div style={{ background: "#3b0e0e", color: "#f87171", padding: "10px 14px", borderRadius: "6px", marginBottom: "12px", fontSize: "14px" }}>
@@ -841,169 +1998,211 @@ const CompanyPortal = () => {
         )}
 
         {assetError && nav === "assets" && (
-          <div style={{ background: "#3b0e0e", color: "#f87171", padding: "10px 14px", borderRadius: "6px", marginBottom: "12px", fontSize: "14px" }}>
+          <div style={{ background: "#fef2f2", color: "#dc2626", padding: "10px 14px", borderRadius: "8px", marginBottom: "12px", fontSize: "14px", border: "1px solid #fecaca" }}>
             ⚠️ {assetError}
           </div>
         )}
 
-        {nav === "companies" && !showAddForm && (
-          <div className="card" style={{ padding: "16px" }}>
-            <div className="company-list-toolbar">
-              <div className="search-container" style={{ width: "100%" }}>
-                <input
-                  className="search-input"
-                  placeholder="Search companies..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  style={{ paddingLeft: "12px" }}
-                />
-              </div>
-              <div className="company-filters">
-                <button className={statusFilter === "all" ? "filter-chip active" : "filter-chip"} onClick={() => setStatusFilter("all")} type="button">All Companies</button>
-                <button className={statusFilter === "active" ? "filter-chip active" : "filter-chip"} onClick={() => setStatusFilter("active")} type="button">Active</button>
-                <button className={statusFilter === "pending" ? "filter-chip active" : "filter-chip"} onClick={() => setStatusFilter("pending")} type="button">Pending</button>
-                <button className={statusFilter === "inactive" ? "filter-chip active" : "filter-chip"} onClick={() => setStatusFilter("inactive")} type="button">Inactive</button>
-              </div>
-            </div>
 
-            <div className="company-card-list">
-              {filteredCompanies.length === 0 ? (
-                <div className="empty-state">{companyLoading ? "Loading…" : "No companies yet."}</div>
-              ) : (
-                filteredCompanies.map((c) => (
-                  <div className="company-card" key={c.id}>
-                    <div className="company-card-avatar">{c.companyName?.slice(0, 2).toUpperCase() || "CO"}</div>
-                    <div className="company-card-body">
-                      <div className="company-card-row">
-                        <div className="company-card-name">{c.companyName}</div>
-                        <span className={`status-pill ${(c.status || "Active").toLowerCase()}`}>{c.status || "Active"}</span>
-                      </div>
-                      <div className="company-card-sub">{c.description || "No description"}</div>
-                    </div>
-                    <button className="company-card-action" title="View" onClick={() => setSelectedCompanyId(c.id)}>›</button>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        )}
-
-        {nav === "assets" && (
-          <>
-            <div className="page-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div>
-                <h1>Assets</h1>
-                <p>Manage assets across Soft, Technical, and Fleet categories.</p>
-              </div>
-              <button
-                className="pill-btn"
-                type="button"
-                onClick={() => {
-                  const defaultCompany = selectedCompanyId || companies[0]?.id || "";
-                  setAssetForm({ ...emptyAsset, companyId: defaultCompany });
-                  setEditingAssetId(null);
-                  setShowAssetModal(true);
-                }}
-                disabled={!companies.length}
-              >
-                + Add Asset
-              </button>
-            </div>
-
-            <div className="card" style={{ padding: "12px", marginBottom: "12px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+        {nav === "assets" && (() => {
+          const assetTotalCount = assets.length;
+          const assetActiveCount = assets.filter((a) => (a.status || "Active").toLowerCase() === "active").length;
+          const assetInactiveCount = assetTotalCount - assetActiveCount;
+          const assetTypesCount = assetTypes.length || 3;
+          const sortedAssets = [...filteredAssets].sort((a, b) => {
+            let av = a[assetSortField] || ""; let bv = b[assetSortField] || "";
+            if (typeof av === "string") av = av.toLowerCase(); if (typeof bv === "string") bv = bv.toLowerCase();
+            if (av < bv) return assetSortDir === "asc" ? -1 : 1;
+            if (av > bv) return assetSortDir === "asc" ? 1 : -1;
+            return 0;
+          });
+          const assetTotalPages = Math.max(1, Math.ceil(sortedAssets.length / assetTableEntries));
+          const assetStartIndex = assetTablePage * assetTableEntries;
+          const pagedAssets = sortedAssets.slice(assetStartIndex, assetStartIndex + assetTableEntries);
+          const toggleAssetSort = (f) => {
+            if (assetSortField === f) setAssetSortDir((d) => (d === "asc" ? "desc" : "asc"));
+            else { setAssetSortField(f); setAssetSortDir("asc"); }
+            setAssetTablePage(0);
+          };
+          const ATH = ({ field, children, sortable = true }) => (
+            <th onClick={sortable ? () => toggleAssetSort(field) : undefined}
+              style={{ padding: "12px 16px", textAlign: "left", color: "#475569", fontWeight: "600", fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.05em", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", cursor: sortable ? "pointer" : "default", whiteSpace: "nowrap", userSelect: "none" }}>
+              {children}{sortable && <span style={{ color: assetSortField === field ? "#2563eb" : "#94a3b8", fontSize: "11px", marginLeft: "4px" }}>{assetSortField === field ? (assetSortDir === "asc" ? "▲" : "▼") : "⇅"}</span>}
+            </th>
+          );
+          return (
+            <>
+              {/* Header */}
+              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "22px" }}>
                 <div>
-                  <h3 style={{ margin: 0 }}>Asset Type Master</h3>
-                  <p style={{ margin: 0, color: "#94a3b8", fontSize: "13px" }}>Create reusable asset types for consistent data.</p>
+                  <h1 style={{ fontSize: "26px", fontWeight: "800", color: "#0f172a", marginBottom: "4px", letterSpacing: "-0.5px" }}>Asset Management</h1>
+                  <p style={{ color: "#64748b", fontSize: "14px" }}>Manage assets across Soft, Technical, and Fleet categories.</p>
                 </div>
-                <div style={{ fontSize: "13px", color: "#94a3b8" }}>Total types: {assetTypes.length || 3}</div>
-              </div>
-              <form onSubmit={handleCreateAssetType} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "10px", alignItems: "end" }}>
-                <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label>Type Code</label>
-                  <input className="form-input" value={assetTypeDraft.code} onChange={(e) => setAssetTypeDraft({ ...assetTypeDraft, code: e.target.value })} placeholder="e.g. kitchen" required />
-                </div>
-                <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label>Type Label</label>
-                  <input className="form-input" value={assetTypeDraft.label} onChange={(e) => setAssetTypeDraft({ ...assetTypeDraft, label: e.target.value })} placeholder="Kitchen Equipment" required />
-                </div>
-                <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label>Category (optional)</label>
-                  <input className="form-input" value={assetTypeDraft.category} onChange={(e) => setAssetTypeDraft({ ...assetTypeDraft, category: e.target.value })} placeholder="Grouping or module" />
-                </div>
-                <button type="submit" className="pill-btn" style={{ height: "40px" }} disabled={assetLoading}>
-                  {assetLoading ? "Saving…" : "Add Type"}
+                <button type="button"
+                  onClick={() => { const defaultCompany = selectedCompanyId || companies[0]?.id || ""; setAssetForm({ ...emptyAsset, companyId: defaultCompany }); setEditingAssetId(null); setShowAssetModal(true); }}
+                  disabled={!companies.length}
+                  style={{ display: "flex", alignItems: "center", gap: "8px", background: companies.length ? "#2563eb" : "#94a3b8", color: "#fff", border: "none", borderRadius: "8px", padding: "10px 20px", fontWeight: "600", fontSize: "14px", cursor: companies.length ? "pointer" : "not-allowed", boxShadow: "0 1px 3px rgba(37,99,235,0.4)" }}>
+                  + Add Asset
                 </button>
-              </form>
-            </div>
+              </div>
 
-            <div className="card" style={{ padding: "16px", marginBottom: "16px" }}>
-              <div className="company-list-toolbar" style={{ gap: "12px" }}>
-                <div className="search-container" style={{ width: "100%" }}>
-                  <input
-                    className="search-input"
-                    placeholder="Search assets..."
-                    value={assetSearch}
-                    onChange={(e) => setAssetSearch(e.target.value)}
-                    style={{ paddingLeft: "12px" }}
-                  />
+              {/* Stat Cards */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px", marginBottom: "24px" }}>
+                {[
+                  { label: "Total Assets", value: assetTotalCount, sub: "All registered assets", subColor: "#64748b", iconBg: "#dbeafe", iconColor: "#2563eb", icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg> },
+                  { label: "Active Assets", value: assetActiveCount, sub: "✓ Active", subColor: "#22c55e", iconBg: "#f0fdf4", iconColor: "#22c55e", icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> },
+                  { label: "Inactive Assets", value: assetInactiveCount, sub: "⏸ Inactive", subColor: "#f59e0b", iconBg: "#fffbeb", iconColor: "#f59e0b", icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg> },
+                  { label: "Asset Types", value: assetTypesCount, sub: "Registered types", subColor: "#64748b", iconBg: "#f3e8ff", iconColor: "#7c3aed", icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg> },
+                ].map((s) => (
+                  <div key={s.label} style={{ background: "#fff", borderRadius: "12px", padding: "20px 24px", border: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                    <div>
+                      <p style={{ color: "#64748b", fontSize: "14px", marginBottom: "10px", fontWeight: "500" }}>{s.label}</p>
+                      <p style={{ fontSize: "34px", fontWeight: "800", color: "#0f172a", lineHeight: 1, letterSpacing: "-1px" }}>{s.value}</p>
+                      <p style={{ color: s.subColor, fontSize: "13px", marginTop: "10px", fontWeight: "500" }}>{s.sub}</p>
+                    </div>
+                    <div style={{ width: "50px", height: "50px", background: s.iconBg, borderRadius: "10px", display: "flex", alignItems: "center", justifyContent: "center", color: s.iconColor, flexShrink: 0 }}>{s.icon}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Asset Type Master */}
+              <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden", marginBottom: "20px" }}>
+                <div style={{ padding: "14px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <h2 style={{ fontSize: "16px", fontWeight: "700", color: "#0f172a", marginBottom: "2px" }}>Asset Type Master</h2>
+                    <p style={{ color: "#64748b", fontSize: "13px", margin: 0 }}>Create reusable asset types for consistent data.</p>
+                  </div>
+                  <span style={{ background: "#eff6ff", color: "#2563eb", padding: "4px 12px", borderRadius: "20px", fontSize: "12px", fontWeight: "600" }}>Total: {assetTypes.length || 3}</span>
                 </div>
-                <div className="company-filters" style={{ flexWrap: "wrap" }}>
-                  <button className={assetTypeFilter === "all" ? "filter-chip active" : "filter-chip"} onClick={() => setAssetTypeFilter("all")} type="button">All</button>
-                  {(assetTypes.length ? assetTypes : [
-                    { code: "soft", label: "Soft Services" },
-                    { code: "technical", label: "Technical" },
-                    { code: "fleet", label: "Fleet" },
-                  ]).map((t) => (
-                    <button key={t.code} className={assetTypeFilter === t.code ? "filter-chip active" : "filter-chip"} onClick={() => setAssetTypeFilter(t.code)} type="button">{t.label}</button>
-                  ))}
+                <div style={{ padding: "16px 20px" }}>
+                  <form onSubmit={handleCreateAssetType} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px", alignItems: "end" }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                      <label style={{ fontSize: "12.5px", fontWeight: 600, color: "#475569" }}>Type Code</label>
+                      <input className="form-input" value={assetTypeDraft.code} onChange={(e) => setAssetTypeDraft({ ...assetTypeDraft, code: e.target.value })} placeholder="e.g. kitchen" required />
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                      <label style={{ fontSize: "12.5px", fontWeight: 600, color: "#475569" }}>Type Label</label>
+                      <input className="form-input" value={assetTypeDraft.label} onChange={(e) => setAssetTypeDraft({ ...assetTypeDraft, label: e.target.value })} placeholder="Kitchen Equipment" required />
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                      <label style={{ fontSize: "12.5px", fontWeight: 600, color: "#475569" }}>Category (optional)</label>
+                      <input className="form-input" value={assetTypeDraft.category} onChange={(e) => setAssetTypeDraft({ ...assetTypeDraft, category: e.target.value })} placeholder="Grouping or module" />
+                    </div>
+                    <button type="submit" style={{ height: "40px", background: assetLoading ? "#93c5fd" : "#2563eb", color: "#fff", border: "none", borderRadius: "8px", fontWeight: 600, fontSize: "14px", cursor: "pointer" }} disabled={assetLoading}>
+                      {assetLoading ? "Saving…" : "Add Type"}
+                    </button>
+                  </form>
                 </div>
               </div>
 
-              <div style={{ overflowX: "auto" }}>
-                <table className="asset-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
-                  <thead>
-                    <tr style={{ textAlign: "left", color: "#475569" }}>
-                      <th style={{ padding: "10px" }}>Asset Name</th>
-                      <th style={{ padding: "10px" }}>Type</th>
-                      <th style={{ padding: "10px" }}>Company</th>
-                      <th style={{ padding: "10px" }}>Department</th>
-                      <th style={{ padding: "10px" }}>Location</th>
-                      <th style={{ padding: "10px" }}>Status</th>
-                      <th style={{ padding: "10px" }}>Created</th>
-                      <th style={{ padding: "10px" }}>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredAssets.length === 0 ? (
-                      <tr><td colSpan="7" style={{ padding: "12px", color: "#94a3b8" }}>{assetLoading ? "Loading…" : "No assets yet."}</td></tr>
-                    ) : (
-                      filteredAssets.map((a) => (
-                        <tr key={a.id} style={{ borderTop: "1px solid #e2e8f0" }}>
-                          <td style={{ padding: "10px" }}>{a.assetName}</td>
-                          <td style={{ padding: "10px" }}>{assetTypeLabelMap[a.assetType] || assetTypeLabels[a.assetType] || a.assetType}</td>
-                          <td style={{ padding: "10px" }}>{a.companyName || ""}</td>
-                          <td style={{ padding: "10px" }}>{a.departmentName || "—"}</td>
-                          <td style={{ padding: "10px" }}>{[a.building, a.floor, a.room].filter(Boolean).join(", ") || "—"}</td>
-                          <td style={{ padding: "10px" }}><span className={`status-pill ${(a.status || "Active").toLowerCase()}`}>{a.status || "Active"}</span></td>
-                          <td style={{ padding: "10px" }}>{a.createdAt ? new Date(a.createdAt).toLocaleDateString() : "—"}</td>
-                          <td style={{ padding: "10px", display: "flex", gap: "8px" }}>
-                            <button className="pill-btn" type="button" onClick={() => handleEditAsset(a)} style={{ padding: "6px 10px" }}>Edit</button>
-                            <button className="btn-cancel" type="button" onClick={() => handleDeleteAsset(a.id)} style={{ padding: "6px 10px" }}>Delete</button>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
+              {/* Assets List DataTable */}
+              <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
+                <div style={{ padding: "16px 20px", borderBottom: "1px solid #e2e8f0" }}>
+                  <h2 style={{ fontSize: "17px", fontWeight: "700", color: "#0f172a" }}>Assets List</h2>
+                </div>
+                {/* Toolbar */}
+                <div style={{ padding: "12px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "16px", flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                    <span style={{ color: "#64748b", fontSize: "14px" }}>Show</span>
+                    <select value={assetTableEntries} onChange={(e) => { setAssetTableEntries(Number(e.target.value)); setAssetTablePage(0); }}
+                      style={{ padding: "5px 8px", border: "1px solid #e2e8f0", borderRadius: "6px", fontSize: "14px", background: "#fff" }}>
+                      {[10, 25, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                    <span style={{ color: "#64748b", fontSize: "14px" }}>entries</span>
+                    <div style={{ display: "flex", gap: "4px", marginLeft: "8px", flexWrap: "wrap" }}>
+                      {[{ code: "all", label: "All" }, ...(assetTypes.length ? assetTypes : [{ code: "soft", label: "Soft Services" }, { code: "technical", label: "Technical" }, { code: "fleet", label: "Fleet" }])].map((t) => (
+                        <button key={t.code} type="button" onClick={() => { setAssetTypeFilter(t.code); setAssetTablePage(0); }}
+                          style={{ padding: "4px 12px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "1px solid", borderColor: assetTypeFilter === t.code ? "#2563eb" : "#e2e8f0", background: assetTypeFilter === t.code ? "#eff6ff" : "#fff", color: assetTypeFilter === t.code ? "#2563eb" : "#64748b" }}>{t.label}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <span style={{ color: "#64748b", fontSize: "14px" }}>Search:</span>
+                    <input value={assetSearch} onChange={(e) => { setAssetSearch(e.target.value); setAssetTablePage(0); }}
+                      style={{ padding: "6px 10px", border: "1px solid #e2e8f0", borderRadius: "6px", fontSize: "14px", width: "200px", outline: "none" }} />
+                  </div>
+                </div>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
+                    <thead>
+                      <tr>
+                        <ATH field="sno" sortable={false}>S.No</ATH>
+                        <ATH field="assetName">Asset Name</ATH>
+                        <ATH field="assetType">Type</ATH>
+                        <ATH field="companyName">Company</ATH>
+                        <ATH field="departmentName">Department</ATH>
+                        <ATH field="building">Location</ATH>
+                        <ATH field="status">Status</ATH>
+                        <ATH field="createdAt">Created</ATH>
+                        <ATH field="actions" sortable={false}>Actions</ATH>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pagedAssets.length === 0 ? (
+                        <tr><td colSpan="9" style={{ padding: "40px", textAlign: "center", color: "#94a3b8", fontSize: "14px" }}>{assetLoading ? "Loading…" : "No assets yet. Click \"+ Add Asset\" to get started."}</td></tr>
+                      ) : pagedAssets.map((a, idx) => {
+                        const statusLower = (a.status || "Active").toLowerCase();
+                        const typeLabel = assetTypeLabelMap[a.assetType] || assetTypeLabels[a.assetType] || a.assetType;
+                        const typeBg = a.assetType === "soft" ? { bg: "#f0fdf4", col: "#16a34a" } : a.assetType === "technical" ? { bg: "#eff6ff", col: "#2563eb" } : { bg: "#fdf4ff", col: "#7c3aed" };
+                        return (
+                          <tr key={a.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                            <td style={{ padding: "14px 16px", color: "#64748b", fontWeight: "600" }}>{assetStartIndex + idx + 1}</td>
+                            <td style={{ padding: "14px 16px" }}>
+                              <div style={{ fontWeight: "600", color: "#0f172a", fontSize: "14px" }}>{a.assetName}</div>
+                              {a.assetUniqueId && <div style={{ color: "#94a3b8", fontSize: "12px" }}>{a.assetUniqueId}</div>}
+                            </td>
+                            <td style={{ padding: "14px 16px" }}>
+                              <span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: typeBg.bg, color: typeBg.col }}>{typeLabel}</span>
+                            </td>
+                            <td style={{ padding: "14px 16px", color: "#475569", fontSize: "13px" }}>{a.companyName || "—"}</td>
+                            <td style={{ padding: "14px 16px", color: "#475569", fontSize: "13px" }}>{a.departmentName || "—"}</td>
+                            <td style={{ padding: "14px 16px", color: "#475569", fontSize: "13px" }}>{[a.building, a.floor, a.room].filter(Boolean).join(", ") || "—"}</td>
+                            <td style={{ padding: "14px 16px" }}>
+                              <span style={{ padding: "4px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: "600", background: statusLower === "active" ? "#f0fdf4" : "#fffbeb", color: statusLower === "active" ? "#16a34a" : "#d97706" }}>{a.status || "Active"}</span>
+                            </td>
+                            <td style={{ padding: "14px 16px", color: "#64748b", fontSize: "13px" }}>{a.createdAt ? new Date(a.createdAt).toLocaleDateString() : "—"}</td>
+                            <td style={{ padding: "14px 16px" }}>
+                              <div style={{ display: "flex", gap: "5px" }}>
+                                <button title="Edit" type="button" onClick={() => handleEditAsset(a)}
+                                  style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#fef9c3", color: "#ca8a04", border: "none", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                                </button>
+                                <button title="Delete" type="button" onClick={() => handleDeleteAsset(a.id)}
+                                  style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#fee2e2", color: "#dc2626", border: "none", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                {/* Pagination */}
+                <div style={{ padding: "12px 20px", borderTop: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px" }}>
+                  <span style={{ color: "#64748b", fontSize: "13px" }}>
+                    {sortedAssets.length === 0 ? "No entries" : `Showing ${assetStartIndex + 1} to ${Math.min(assetStartIndex + assetTableEntries, sortedAssets.length)} of ${sortedAssets.length} entries`}
+                  </span>
+                  <div style={{ display: "flex", gap: "4px" }}>
+                    <button onClick={() => setAssetTablePage((p) => Math.max(0, p - 1))} disabled={assetTablePage === 0}
+                      style={{ padding: "6px 12px", border: "1px solid #e2e8f0", borderRadius: "6px", background: "#fff", cursor: assetTablePage === 0 ? "not-allowed" : "pointer", color: assetTablePage === 0 ? "#cbd5e1" : "#475569", fontSize: "13px", fontWeight: "500" }}>Previous</button>
+                    <span style={{ padding: "6px 12px", background: "#2563eb", color: "#fff", borderRadius: "6px", fontSize: "13px", fontWeight: "600", minWidth: "34px", textAlign: "center" }}>{assetTablePage + 1}</span>
+                    <button onClick={() => setAssetTablePage((p) => Math.min(assetTotalPages - 1, p + 1))} disabled={assetTablePage >= assetTotalPages - 1}
+                      style={{ padding: "6px 12px", border: "1px solid #e2e8f0", borderRadius: "6px", background: "#fff", cursor: assetTablePage >= assetTotalPages - 1 ? "not-allowed" : "pointer", color: assetTablePage >= assetTotalPages - 1 ? "#cbd5e1" : "#475569", fontSize: "13px", fontWeight: "500" }}>Next</button>
+                  </div>
+                </div>
               </div>
-            </div>
 
             {showAssetModal && (
-              <div className="card" style={{ padding: "20px", marginBottom: "16px" }}>
-                <div className="page-header" style={{ marginBottom: "12px" }}>
-                  <h3 style={{ marginBottom: "4px" }}>{editingAssetId ? "Edit Asset" : "Add Asset"}</h3>
-                  <p style={{ margin: 0 }}>Fill in details based on the selected asset category.</p>
+              <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.5)", zIndex: 200, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "40px 16px", overflowY: "auto" }} onClick={() => { setShowAssetModal(false); setEditingAssetId(null); }}>
+              <div style={{ background: "#fff", borderRadius: "16px", padding: "28px", maxWidth: "780px", width: "100%", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }} onClick={(e) => e.stopPropagation()}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+                  <div>
+                    <h2 style={{ fontSize: "20px", fontWeight: "700", color: "#0f172a", marginBottom: "4px" }}>{editingAssetId ? "Edit Asset" : "Add Asset"}</h2>
+                    <p style={{ color: "#64748b", fontSize: "13px", margin: 0 }}>Fill in details based on the selected asset category.</p>
+                  </div>
+                  <button onClick={() => { setShowAssetModal(false); setEditingAssetId(null); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: "22px", lineHeight: 1 }}>✕</button>
                 </div>
                 <form onSubmit={handleSubmitAsset}>
                   <div className="form-group">
@@ -1062,6 +2261,7 @@ const CompanyPortal = () => {
                     </div>
                   </div>
 
+                  {assetForm.assetType !== "fleet" && (
                   <div className="form-section" style={{ marginBottom: "12px" }}>
                     <h3 style={{ marginBottom: "8px" }}>Location</h3>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px" }}>
@@ -1070,6 +2270,7 @@ const CompanyPortal = () => {
                       <div className="form-group"><label>Room/Area</label><input name="room" value={assetForm.room} onChange={handleAssetChange} className="form-input" /></div>
                     </div>
                   </div>
+                  )}
 
                   <div className="form-group">
                     <label>Asset Description</label>
@@ -1140,15 +2341,17 @@ const CompanyPortal = () => {
                     </div>
                   </div>
 
-                  <div className="modal-actions" style={{ justifyContent: "flex-start" }}>
-                    <button type="button" className="btn-cancel" onClick={() => { setShowAssetModal(false); setEditingAssetId(null); }}>Cancel</button>
-                    <button type="submit" className="btn-submit" disabled={assetLoading}>{assetLoading ? "Saving…" : editingAssetId ? "Update Asset" : "Add Asset"}</button>
+                  <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end", marginTop: "8px" }}>
+                    <button type="button" onClick={() => { setShowAssetModal(false); setEditingAssetId(null); }} style={{ padding: "9px 20px", border: "1px solid #e2e8f0", borderRadius: "8px", background: "#fff", color: "#475569", fontWeight: 600, cursor: "pointer", fontSize: "14px" }}>Cancel</button>
+                    <button type="submit" disabled={assetLoading} style={{ padding: "9px 24px", borderRadius: "8px", border: "none", background: assetLoading ? "#93c5fd" : "#2563eb", color: "#fff", fontWeight: 600, cursor: assetLoading ? "default" : "pointer", fontSize: "14px" }}>{assetLoading ? "Saving…" : editingAssetId ? "Update Asset" : "Add Asset"}</button>
                   </div>
                 </form>
               </div>
+              </div>
             )}
-          </>
-        )}
+            </>
+          );
+        })()}
 
         {nav === "departments" && (
           <>
@@ -1259,246 +2462,493 @@ const CompanyPortal = () => {
         )}
 
         {nav === "checklists" && (
-          <ChecklistBuilder token={token} assets={assets} users={portalUsers} />
+          <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
+            {/* Sub-navigation tabs */}
+            <div style={{ display: "flex", gap: "4px", marginBottom: "24px", borderBottom: "2px solid #e2e8f0" }}>
+              {[{ k: "templates", label: "Templates" }, { k: "submissions", label: "Submissions & Reports" }].map(({ k, label }) => (
+                <button key={k} type="button" onClick={() => setChecklistSubNav(k)}
+                  style={{ padding: "10px 20px", background: "none", border: "none", borderBottom: checklistSubNav === k ? "3px solid #2563eb" : "3px solid transparent", marginBottom: "-2px", fontSize: "14px", fontWeight: 600, color: checklistSubNav === k ? "#2563eb" : "#64748b", cursor: "pointer" }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {checklistSubNav === "templates" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "32px" }}>
+                {/* Per-asset checklist builder (existing functionality) */}
+                <ChecklistBuilder token={token} assets={assets} users={portalUsers} />
+
+                {/* Checklist Templates CRUD (admin-level) */}
+                <ChecklistTemplateModule
+                  token={token}
+                  companies={companies}
+                  assets={assets}
+                  companyId={selectedCompanyId || companies[0]?.id}
+                  fetchTemplates={getChecklistTemplates}
+                  createTemplate={createChecklistTemplate}
+                  fetchTemplate={getChecklistTemplate}
+                  updateTemplate={updateChecklistTemplate}
+                  deleteTemplate={deleteChecklistTemplate}
+                  canBuild={true}
+                />
+              </div>
+            )}
+
+            {checklistSubNav === "submissions" && (
+              <SubmissionsPanel token={token} type="checklists" />
+            )}
+          </div>
         )}
 
         {nav === "logsheets" && (
-          <>
-            <div className="page-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div>
-                <h1>Asset Logs</h1>
-                <p>Quick notes per asset.</p>
-              </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
+            {/* Sub-navigation tabs */}
+            <div style={{ display: "flex", gap: "4px", marginBottom: "24px", borderBottom: "2px solid #e2e8f0" }}>
+              {[{ k: "templates", label: "Templates" }, { k: "submissions", label: "Submissions & Reports" }].map(({ k, label }) => (
+                <button key={k} type="button" onClick={() => setLogsheetSubNav(k)}
+                  style={{ padding: "10px 20px", background: "none", border: "none", borderBottom: logsheetSubNav === k ? "3px solid #2563eb" : "3px solid transparent", marginBottom: "-2px", fontSize: "14px", fontWeight: 600, color: logsheetSubNav === k ? "#2563eb" : "#64748b", cursor: "pointer" }}>
+                  {label}
+                </button>
+              ))}
             </div>
 
-            {logError && (
-              <div style={{ background: "#3b0e0e", color: "#f87171", padding: "10px 14px", borderRadius: "6px", marginBottom: "12px", fontSize: "14px" }}>
-                ⚠️ {logError}
-              </div>
+            {logsheetSubNav === "templates" && (
+              <LogsheetModule
+                token={token}
+                assets={assets}
+                companies={companies}
+                fetchTemplates={(tok, params) => getLogsheetTemplates(tok, params)}
+                fetchTemplate={(tok, id) => getLogsheetTemplate(tok, id)}
+                createTemplate={(tok, data) => createLogsheetTemplate(tok, data)}
+                updateTemplate={(tok, id, data) => updateLogsheetTemplate(tok, id, data)}
+                deleteTemplate={(tok, id) => deleteLogsheetTemplate(tok, id)}
+                assignTemplate={(tok, templateId, assetId) => assignLogsheetTemplate(tok, templateId, assetId)}
+                fetchEntries={(tok, templateId, params) => getLogsheetEntriesByTemplate(tok, templateId, params)}
+                submitEntry={(tok, templateId, data) => submitLogsheetEntry(tok, templateId, data)}
+                canBuild={true}
+              />
             )}
 
-            <div className="card" style={{ padding: "16px", marginBottom: "16px" }}>
-              <form onSubmit={handleCreateLog}>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: "12px" }}>
-                  <div className="form-group">
-                    <label>Asset</label>
-                    <select name="assetId" value={logForm.assetId} onChange={handleLogChange} className="form-select" required>
-                      <option value="" disabled>Select asset</option>
-                      {assetOptions.map((a) => (
-                        <option key={a.id} value={a.id}>{a.assetName}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="form-group">
-                    <label>Note</label>
-                    <input name="note" value={logForm.note} onChange={handleLogChange} className="form-input" placeholder="Enter a note" />
-                  </div>
-                </div>
-                <div className="modal-actions" style={{ justifyContent: "flex-start" }}>
-                  <button type="submit" className="btn-submit">Save Log</button>
-                </div>
-              </form>
-            </div>
-
-            <div className="card" style={{ padding: "16px" }}>
-              <div className="page-header" style={{ marginBottom: "8px" }}>
-                <h3 style={{ marginBottom: "4px" }}>Recent Logs</h3>
-                <p style={{ margin: 0 }}>Latest entries for the selected asset.</p>
-              </div>
-              {logs.length === 0 ? (
-                <p style={{ color: "#94a3b8" }}>No logs yet for this asset.</p>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                  {logs.map((l) => (
-                    <div key={l.id} style={{ border: "1px solid #e2e8f0", padding: "10px", borderRadius: "6px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <div>
-                        <div style={{ fontWeight: 600 }}>{l.note}</div>
-                        <div style={{ fontSize: "12px", color: "#94a3b8" }}>{l.createdAt ? new Date(l.createdAt).toLocaleString() : ""}</div>
-                      </div>
-                      <button className="btn-cancel" type="button" onClick={() => handleDeleteLog(l.id)} style={{ padding: "6px 10px" }}>Delete</button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </>
+            {logsheetSubNav === "submissions" && (
+              <SubmissionsPanel token={token} type="logsheets" />
+            )}
+          </div>
         )}
 
         {nav === "companies" && showAddForm && (
-          <form onSubmit={handleCreateCompany} className="card" style={{ padding: "20px", marginBottom: "16px" }}>
-            <div className="form-group">
-              <label>Company Name</label>
-              <input
-                name="companyName"
-                value={companyForm.companyName}
-                onChange={handleCompanyChange}
-                className="form-input"
-                placeholder="Acme Foods Pvt Ltd"
-              />
+          <div style={{ background: "#f1f5f9", minHeight: "100%", padding: "0 0 32px 0" }}>
+            {/* Page Header */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 0 16px 0" }}>
+              <h2 style={{ fontSize: "20px", fontWeight: 700, color: "#1e293b", margin: 0, letterSpacing: "-0.3px" }}>Add Company</h2>
+              <span style={{ fontSize: "13px", color: "#94a3b8", fontWeight: 400 }}>
+                Companies&nbsp;<span style={{ color: "#cbd5e1" }}>/</span>&nbsp;
+                <span style={{ color: "#3b82f6", fontWeight: 500 }}>Add Company</span>
+              </span>
             </div>
 
-            <div className="form-group">
-              <label>Company Code (for login)</label>
-              <input
-                name="companyCode"
-                value={companyForm.companyCode}
-                onChange={handleCompanyChange}
-                className="form-input"
-                placeholder="Unique code e.g. ACME2024"
-              />
-            </div>
-
-            <div className="form-group">
-              <label>Description</label>
-              <input
-                name="description"
-                value={companyForm.description}
-                onChange={handleCompanyChange}
-                className="form-input"
-                placeholder="Short description"
-              />
-            </div>
-
-            <div className="form-section" style={{ marginBottom: "16px" }}>
-              <h3 style={{ marginBottom: "12px" }}>Address Information</h3>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-                <div className="form-group">
-                  <label>Address Line 1</label>
-                  <input name="addressLine1" value={companyForm.addressLine1} onChange={handleCompanyChange} className="form-input" placeholder="Street address" />
+            <form onSubmit={handleCreateCompany}>
+              {/* Basic Information */}
+              <div style={{ background: "#fff", borderRadius: "10px", border: "1px solid #e2e8f0", marginBottom: "16px", overflow: "hidden" }}>
+                <div style={{ padding: "16px 20px 12px 20px", borderBottom: "1px solid #f1f5f9" }}>
+                  <span style={{ fontWeight: 700, fontSize: "14px", color: "#1e293b", letterSpacing: "0.01em" }}>Basic Information</span>
                 </div>
-                <div className="form-group">
-                  <label>Address Line 2</label>
-                  <input name="addressLine2" value={companyForm.addressLine2} onChange={handleCompanyChange} className="form-input" placeholder="Building, floor, etc." />
-                </div>
-                <div className="form-group">
-                  <label>City</label>
-                  <input name="city" value={companyForm.city} onChange={handleCompanyChange} className="form-input" placeholder="City" />
-                </div>
-                <div className="form-group">
-                  <label>State</label>
-                  <input name="state" value={companyForm.state} onChange={handleCompanyChange} className="form-input" placeholder="State" />
-                </div>
-                <div className="form-group">
-                  <label>Country</label>
-                  <input name="country" value={companyForm.country} onChange={handleCompanyChange} className="form-input" placeholder="Country" />
-                </div>
-                <div className="form-group">
-                  <label>Pincode</label>
-                  <input name="pincode" value={companyForm.pincode} onChange={handleCompanyChange} className="form-input" placeholder="Postal code" />
+                <div style={{ padding: "20px", display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "18px 24px" }}>
+                  <div>
+                    <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>
+                      Company Code<span style={{ color: "#ef4444", marginLeft: "2px" }}>*</span>
+                    </label>
+                    <input name="companyCode" value={companyForm.companyCode} onChange={handleCompanyChange} className="form-input" placeholder="e.g. ACME-001" style={{ width: "100%", boxSizing: "border-box" }} />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>
+                      Company Name<span style={{ color: "#ef4444", marginLeft: "2px" }}>*</span>
+                    </label>
+                    <input name="companyName" value={companyForm.companyName} onChange={handleCompanyChange} className="form-input" placeholder="Business Name" required style={{ width: "100%", boxSizing: "border-box" }} />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>Description</label>
+                    <input name="description" value={companyForm.description} onChange={handleCompanyChange} className="form-input" placeholder="Short description" style={{ width: "100%", boxSizing: "border-box" }} />
+                  </div>
                 </div>
               </div>
-            </div>
 
-            <div className="form-section" style={{ marginBottom: "16px" }}>
-              <h3 style={{ marginBottom: "12px" }}>Business Details</h3>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "12px" }}>
-                <div className="form-group">
-                  <label>GST Number</label>
-                  <input name="gstNumber" value={companyForm.gstNumber} onChange={handleCompanyChange} className="form-input" placeholder="22AAAAA0000A1Z5" />
+              {/* Address Information */}
+              <div style={{ background: "#fff", borderRadius: "10px", border: "1px solid #e2e8f0", marginBottom: "16px", overflow: "hidden" }}>
+                <div style={{ padding: "16px 20px 12px 20px", borderBottom: "1px solid #f1f5f9" }}>
+                  <span style={{ fontWeight: 700, fontSize: "14px", color: "#1e293b", letterSpacing: "0.01em" }}>Address Information</span>
                 </div>
-                <div className="form-group">
-                  <label>PAN Number</label>
-                  <input name="panNumber" value={companyForm.panNumber} onChange={handleCompanyChange} className="form-input" placeholder="AAAAA0000A" />
+                <div style={{ padding: "20px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "18px 24px" }}>
+                  <div>
+                    <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>Address Line 1</label>
+                    <input name="addressLine1" value={companyForm.addressLine1} onChange={handleCompanyChange} className="form-input" placeholder="Street Address" style={{ width: "100%", boxSizing: "border-box" }} />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>Address Line 2</label>
+                    <input name="addressLine2" value={companyForm.addressLine2} onChange={handleCompanyChange} className="form-input" placeholder="Apartment, Suite, etc." style={{ width: "100%", boxSizing: "border-box" }} />
+                  </div>
                 </div>
-                <div className="form-group">
-                  <label>CIN Number</label>
-                  <input name="cinNumber" value={companyForm.cinNumber} onChange={handleCompanyChange} className="form-input" placeholder="Corporate Identity Number" />
+                <div style={{ padding: "0 20px 20px 20px", display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "18px 24px" }}>
+                  <div>
+                    <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>City</label>
+                    <input name="city" value={companyForm.city} onChange={handleCompanyChange} className="form-input" placeholder="City" style={{ width: "100%", boxSizing: "border-box" }} />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>State</label>
+                    <input name="state" value={companyForm.state} onChange={handleCompanyChange} className="form-input" placeholder="State" style={{ width: "100%", boxSizing: "border-box" }} />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>Country</label>
+                    <input name="country" value={companyForm.country} onChange={handleCompanyChange} className="form-input" placeholder="India" style={{ width: "100%", boxSizing: "border-box" }} />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>Pincode</label>
+                    <input name="pincode" value={companyForm.pincode} onChange={handleCompanyChange} className="form-input" placeholder="Pincode" style={{ width: "100%", boxSizing: "border-box" }} />
+                  </div>
                 </div>
               </div>
-            </div>
 
-            <div className="form-section" style={{ marginBottom: "16px" }}>
-              <h3 style={{ marginBottom: "12px" }}>Contract Details</h3>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "12px" }}>
-                <div className="form-group">
-                  <label>Contract Start Date</label>
-                  <input type="date" name="contractStartDate" value={companyForm.contractStartDate} onChange={handleCompanyChange} className="form-input" />
+              {/* Business Details */}
+              <div style={{ background: "#fff", borderRadius: "10px", border: "1px solid #e2e8f0", marginBottom: "16px", overflow: "hidden" }}>
+                <div style={{ padding: "16px 20px 12px 20px", borderBottom: "1px solid #f1f5f9" }}>
+                  <span style={{ fontWeight: 700, fontSize: "14px", color: "#1e293b", letterSpacing: "0.01em" }}>Business Details</span>
                 </div>
-                <div className="form-group">
-                  <label>Contract End Date</label>
-                  <input type="date" name="contractEndDate" value={companyForm.contractEndDate} onChange={handleCompanyChange} className="form-input" />
-                </div>
-                <div className="form-group">
-                  <label>Billing Cycle</label>
-                  <select name="billingCycle" value={companyForm.billingCycle} onChange={handleCompanyChange} className="form-select">
-                    <option>Monthly</option>
-                    <option>Quarterly</option>
-                    <option>Yearly</option>
-                  </select>
-                </div>
-                <div className="form-group">
-                  <label>Payment Terms (Days)</label>
-                  <input type="number" name="paymentTermsDays" value={companyForm.paymentTermsDays} onChange={handleCompanyChange} className="form-input" min="0" />
-                </div>
-                <div className="form-group">
-                  <label>Max Employees</label>
-                  <input type="number" name="maxEmployees" value={companyForm.maxEmployees} onChange={handleCompanyChange} className="form-input" placeholder="Leave empty for unlimited" />
+                <div style={{ padding: "20px", display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "18px 24px" }}>
+                  <div>
+                    <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>GST Number</label>
+                    <input name="gstNumber" value={companyForm.gstNumber} onChange={handleCompanyChange} className="form-input" placeholder="e.g. 22AAAAA0000A1Z5" style={{ width: "100%", boxSizing: "border-box" }} />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>PAN Number</label>
+                    <input name="panNumber" value={companyForm.panNumber} onChange={handleCompanyChange} className="form-input" placeholder="e.g. AAAAA0000A" style={{ width: "100%", boxSizing: "border-box" }} />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>CIN Number</label>
+                    <input name="cinNumber" value={companyForm.cinNumber} onChange={handleCompanyChange} className="form-input" placeholder="Corporate Identity Number" style={{ width: "100%", boxSizing: "border-box" }} />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>Status</label>
+                    <select name="status" value={companyForm.status} onChange={handleCompanyChange} className="form-select" style={{ width: "100%", boxSizing: "border-box" }}>
+                      <option value="Active">Active</option>
+                      <option value="Inactive">Inactive</option>
+                    </select>
+                  </div>
                 </div>
               </div>
-            </div>
 
-            <div className="form-section" style={{ marginBottom: "16px" }}>
-              <h3 style={{ marginBottom: "12px" }}>Module Access</h3>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px" }}>
-                <label className="checkbox-row" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <input type="checkbox" name="qsrModule" checked={companyForm.qsrModule} onChange={handleCompanyChange} />
-                  <span>Asset Management</span>
-                </label>
-                <label className="checkbox-row" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <input type="checkbox" name="premealModule" checked={companyForm.premealModule} onChange={handleCompanyChange} />
-                  <span>FM e Checklist</span>
-                </label>
-                <label className="checkbox-row" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <input type="checkbox" name="deliveryModule" checked={companyForm.deliveryModule} onChange={handleCompanyChange} />
-                  <span>Fleet Management</span>
-                </label>
-                <label className="checkbox-row" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <input type="checkbox" name="allowGuestBooking" checked={companyForm.allowGuestBooking} onChange={handleCompanyChange} />
-                  <span>OJT Training</span>
-                </label>
+              {/* Contract Details */}
+              <div style={{ background: "#fff", borderRadius: "10px", border: "1px solid #e2e8f0", marginBottom: "16px", overflow: "hidden" }}>
+                <div style={{ padding: "16px 20px 12px 20px", borderBottom: "1px solid #f1f5f9" }}>
+                  <span style={{ fontWeight: 700, fontSize: "14px", color: "#1e293b", letterSpacing: "0.01em" }}>Contract Details</span>
+                </div>
+                <div style={{ padding: "20px", display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "18px 24px" }}>
+                  <div>
+                    <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>Contract Start Date</label>
+                    <input type="date" name="contractStartDate" value={companyForm.contractStartDate} onChange={handleCompanyChange} className="form-input" style={{ width: "100%", boxSizing: "border-box" }} />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>Contract End Date</label>
+                    <input type="date" name="contractEndDate" value={companyForm.contractEndDate} onChange={handleCompanyChange} className="form-input" style={{ width: "100%", boxSizing: "border-box" }} />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>Billing Cycle</label>
+                    <select name="billingCycle" value={companyForm.billingCycle} onChange={handleCompanyChange} className="form-select" style={{ width: "100%", boxSizing: "border-box" }}>
+                      <option>Monthly</option>
+                      <option>Quarterly</option>
+                      <option>Yearly</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>Payment Terms (Days)</label>
+                    <input type="number" name="paymentTermsDays" value={companyForm.paymentTermsDays} onChange={handleCompanyChange} className="form-input" min="0" placeholder="e.g. 30" style={{ width: "100%", boxSizing: "border-box" }} />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>Max Employees</label>
+                    <input type="number" name="maxEmployees" value={companyForm.maxEmployees} onChange={handleCompanyChange} className="form-input" placeholder="Leave empty for unlimited" style={{ width: "100%", boxSizing: "border-box" }} />
+                  </div>
+                </div>
               </div>
-            </div>
 
-            <div className="modal-actions" style={{ justifyContent: "flex-start" }}>
-              <button type="button" className="btn-cancel" onClick={() => setShowAddForm(false)}>Cancel</button>
-              <button type="submit" className="btn-submit" disabled={companyLoading}>
-                {companyLoading ? "Saving…" : "Add Company"}
-              </button>
-            </div>
-          </form>
-        )}
+              {/* Module Access */}
+              <div style={{ background: "#fff", borderRadius: "10px", border: "1px solid #e2e8f0", marginBottom: "20px", overflow: "hidden" }}>
+                <div style={{ padding: "16px 20px 12px 20px", borderBottom: "1px solid #f1f5f9" }}>
+                  <span style={{ fontWeight: 700, fontSize: "14px", color: "#1e293b", letterSpacing: "0.01em" }}>Module Access</span>
+                </div>
+                <div style={{ padding: "20px", display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "14px 24px" }}>
+                  {[
+                    { name: "qsrModule", label: "Asset Management" },
+                    { name: "premealModule", label: "FM e Checklist" },
+                    { name: "deliveryModule", label: "Fleet Management" },
+                    { name: "allowGuestBooking", label: "OJT Training" },
+                  ].map(({ name, label }) => (
+                    <label key={name} style={{ display: "flex", alignItems: "center", gap: "9px", cursor: "pointer", padding: "10px 14px", border: "1px solid #e2e8f0", borderRadius: "8px", background: companyForm[name] ? "#eff6ff" : "#f8fafc", transition: "background 0.15s" }}>
+                      <input
+                        type="checkbox"
+                        name={name}
+                        checked={companyForm[name]}
+                        onChange={handleCompanyChange}
+                        style={{ width: "15px", height: "15px", accentColor: "#3b82f6", cursor: "pointer" }}
+                      />
+                      <span style={{ fontSize: "13px", fontWeight: 500, color: companyForm[name] ? "#1d4ed8" : "#475569" }}>{label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
 
-        {nav === "dashboard" && (
-          <div className="card" style={{ padding: "20px" }}>
-            <p style={{ color: "#64748b" }}>Select Companies from the left menu to view and add companies.</p>
+              {/* Action Buttons */}
+              <div style={{ display: "flex", gap: "10px" }}>
+                <button
+                  type="button"
+                  onClick={() => setShowAddForm(false)}
+                  style={{ padding: "9px 22px", fontSize: "13.5px", fontWeight: 600, borderRadius: "7px", border: "1px solid #e2e8f0", background: "#fff", color: "#64748b", cursor: "pointer" }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={companyLoading}
+                  style={{ padding: "9px 26px", fontSize: "13.5px", fontWeight: 600, borderRadius: "7px", border: "none", background: companyLoading ? "#93c5fd" : "#3b82f6", color: "#fff", cursor: companyLoading ? "default" : "pointer" }}
+                >
+                  {companyLoading ? "Saving…" : "Add Company"}
+                </button>
+              </div>
+            </form>
           </div>
         )}
 
-        {nav === "companies" && !showAddForm && (
-          <div className="card" style={{ padding: "16px", marginTop: "16px" }}>
-            <div className="page-header" style={{ marginBottom: "12px" }}>
-              <h3 style={{ marginBottom: "4px" }}>Company Details</h3>
-              <p style={{ margin: 0 }}>View the full profile for the selected company.</p>
-            </div>
-            {!selectedCompany ? (
-              <p style={{ color: "#94a3b8" }}>Select a company to view details.</p>
-            ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px", fontSize: "14px" }}>
-                <div><strong>Company</strong><div>{selectedCompany.companyName}</div></div>
-                <div><strong>Company Code</strong><div>{selectedCompany.companyCode || "—"}</div></div>
-                <div><strong>Address</strong><div>{selectedCompany.addressLine1 || "—"}</div><div>{selectedCompany.addressLine2}</div><div>{[selectedCompany.city, selectedCompany.state, selectedCompany.country].filter(Boolean).join(", ")}</div><div>{selectedCompany.pincode}</div></div>
-                <div><strong>GST</strong><div>{selectedCompany.gstNumber || "—"}</div></div>
-                <div><strong>PAN</strong><div>{selectedCompany.panNumber || "—"}</div></div>
-                <div><strong>CIN</strong><div>{selectedCompany.cinNumber || "—"}</div></div>
-                <div><strong>Billing Cycle</strong><div>{selectedCompany.billingCycle || "—"}</div></div>
-                <div><strong>Payment Terms</strong><div>{selectedCompany.paymentTermsDays ? `${selectedCompany.paymentTermsDays} days` : "—"}</div></div>
-                <div><strong>Max Employees</strong><div>{selectedCompany.maxEmployees || "Unlimited"}</div></div>
-                <div><strong>Modules</strong><div>{[selectedCompany.qsrModule && "Asset Management", selectedCompany.premealModule && "FM e Checklist", selectedCompany.deliveryModule && "Fleet Management", selectedCompany.allowGuestBooking && "OJT Training"].filter(Boolean).join(", ") || "None"}</div></div>
-                <div><strong>Status</strong><div>{selectedCompany.status || "Active"}</div></div>
+        {nav === "dashboard" && (() => {
+          const FREQ_LABELS = { daily: "Daily", weekly: "Weekly", monthly: "Monthly", quarterly: "Quarterly", half_yearly: "Half-Yearly", yearly: "Yearly" };
+          const FREQ_COLORS = { daily: ["#dcfce7","#16a34a"], weekly: ["#dbeafe","#1d4ed8"], monthly: ["#fef9c3","#ca8a04"], quarterly: ["#ede9fe","#7c3aed"], half_yearly: ["#fce7f3","#be185d"], yearly: ["#ffedd5","#c2410c"] };
+          const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+          return (
+            <div>
+              {/* Header */}
+              <div style={{ marginBottom: "24px" }}>
+                <h1 style={{ fontSize: "26px", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px", marginBottom: "4px" }}>Client Portal Dashboard</h1>
+                <p style={{ color: "#64748b", fontSize: "14px" }}>{new Date().toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}</p>
               </div>
-            )}
-          </div>
-        )}
+
+              {/* Quick stat cards */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px", marginBottom: "28px" }}>
+                {[
+                  { label: "Total Companies", value: companies.length, sub: "Registered", iconBg: "#eff6ff", iconCol: "#2563eb", icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg> },
+                  { label: "Total Assets", value: assets.length, sub: "Across all companies", iconBg: "#f0fdf4", iconCol: "#22c55e", icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 19.07a10 10 0 0 1 0-14.14"/></svg> },
+                  { label: "Logsheet Entries", value: recentEntries.length, sub: "Recent submissions", iconBg: "#ede9fe", iconCol: "#7c3aed", icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> },
+                  { label: "Companies Active", value: companies.filter((c) => (c.status || "Active").toLowerCase() === "active").length, sub: "Active", iconBg: "#fef3c7", iconCol: "#d97706", icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> },
+                ].map((s) => (
+                  <div key={s.label} style={{ background: "#fff", borderRadius: "12px", padding: "20px 24px", border: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                    <div>
+                      <p style={{ color: "#64748b", fontSize: "14px", marginBottom: "10px", fontWeight: 500 }}>{s.label}</p>
+                      <p style={{ fontSize: "34px", fontWeight: 800, color: "#0f172a", lineHeight: 1, letterSpacing: "-1px" }}>{s.value}</p>
+                      <p style={{ color: "#64748b", fontSize: "13px", marginTop: "10px", fontWeight: 500 }}>{s.sub}</p>
+                    </div>
+                    <div style={{ width: "50px", height: "50px", background: s.iconBg, borderRadius: "10px", display: "flex", alignItems: "center", justifyContent: "center", color: s.iconCol, flexShrink: 0 }}>{s.icon}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Recent Filled Checklists & Logsheets (tabbed) */}
+              <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
+                <div style={{ padding: "16px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                    <h2 style={{ fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>Recent Fill Submissions</h2>
+                  </div>
+                  <div style={{ display: "flex", gap: "4px" }}>
+                    {[{ key: "checklists", label: "Checklists" }, { key: "logsheets", label: "Logsheets" }].map((tab) => (
+                      <button
+                        key={tab.key}
+                        onClick={() => setDashboardTab(tab.key)}
+                        style={{
+                          padding: "5px 14px", borderRadius: "8px", fontSize: "13px", fontWeight: 600, cursor: "pointer", border: "none",
+                          background: dashboardTab === tab.key ? "#7c3aed" : "#f1f5f9",
+                          color: dashboardTab === tab.key ? "#fff" : "#64748b",
+                        }}
+                      >{tab.label}</button>
+                    ))}
+                  </div>
+                </div>
+                <div style={{ overflowX: "auto" }}>
+                  {dashboardTab === "logsheets" ? (
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
+                      <thead>
+                        <tr style={{ background: "#f8fafc" }}>
+                          {["#","Template","Asset","Company","Period","Frequency","Filled By","Submitted"].map((h) => (
+                            <th key={h} style={{ padding: "11px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.04em", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {recentEntriesLoading ? (
+                          <tr><td colSpan="8" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>Loading…</td></tr>
+                        ) : recentEntries.length === 0 ? (
+                          <tr><td colSpan="8" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>
+                            No logsheets filled yet.{" "}
+                            <button onClick={() => setNav("logsheets")} style={{ color: "#2563eb", background: "none", border: "none", cursor: "pointer", fontWeight: 600, fontSize: "14px" }}>Go to Logsheets →</button>
+                          </td></tr>
+                        ) : (logsheetShowAll ? recentEntries : recentEntries.slice(0, 5)).map((e, i) => {
+                          const freq = e.frequency || "daily";
+                          const [fbg, ftx] = FREQ_COLORS[freq] || ["#f1f5f9","#475569"];
+                          return (
+                            <tr key={e.id} onClick={() => openDetail("logsheet", e.id)}
+                              style={{ borderBottom: "1px solid #f1f5f9", cursor: "pointer" }}
+                              onMouseEnter={(ev) => (ev.currentTarget.style.background = "#f0f9ff")}
+                              onMouseLeave={(ev) => (ev.currentTarget.style.background = "")}
+                            >
+                              <td style={{ padding: "12px 16px", color: "#94a3b8", fontWeight: 600 }}>{i + 1}</td>
+                              <td style={{ padding: "12px 16px", fontWeight: 600, color: "#0f172a" }}>{e.templateName}</td>
+                              <td style={{ padding: "12px 16px", color: "#475569" }}>{e.assetName || "—"}</td>
+                              <td style={{ padding: "12px 16px", color: "#475569" }}>{e.companyName || "—"}</td>
+                              <td style={{ padding: "12px 16px", color: "#475569", whiteSpace: "nowrap" }}>{MONTH_NAMES[(e.month || 1) - 1]} {e.year}{e.shift ? ` · Shift ${e.shift}` : ""}</td>
+                              <td style={{ padding: "12px 16px" }}><span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: fbg, color: ftx }}>{FREQ_LABELS[freq] || freq}</span></td>
+                              <td style={{ padding: "12px 16px", color: "#475569", fontSize: "13px" }}>{e.submittedBy || "—"}</td>
+                              <td style={{ padding: "12px 16px", color: "#94a3b8", fontSize: "12px", whiteSpace: "nowrap" }}>{e.submittedAt ? new Date(e.submittedAt).toLocaleString() : "—"}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
+                      <thead>
+                        <tr style={{ background: "#f8fafc" }}>
+                          {["#","Template","Asset","Company","Status","Filled By","Submitted"].map((h) => (
+                            <th key={h} style={{ padding: "11px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.04em", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {recentChecklistsLoading ? (
+                          <tr><td colSpan="7" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>Loading…</td></tr>
+                        ) : recentChecklists.length === 0 ? (
+                          <tr><td colSpan="7" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>
+                            No checklists filled yet.{" "}
+                            <button onClick={() => setNav("checklists")} style={{ color: "#2563eb", background: "none", border: "none", cursor: "pointer", fontWeight: 600, fontSize: "14px" }}>Go to Checklists →</button>
+                          </td></tr>
+                        ) : (checklistShowAll ? recentChecklists : recentChecklists.slice(0, 5)).map((c, i) => {
+                          const statusColors = { completed: ["#f0fdf4","#16a34a"], partial: ["#fffbeb","#ca8a04"], pending: ["#f1f5f9","#64748b"] };
+                          const [sbg, stx] = statusColors[c.status] || ["#f1f5f9","#64748b"];
+                          return (
+                            <tr key={c.id} onClick={() => openDetail("checklist", c.id)}
+                              style={{ borderBottom: "1px solid #f1f5f9", cursor: "pointer" }}
+                              onMouseEnter={(ev) => (ev.currentTarget.style.background = "#f0f9ff")}
+                              onMouseLeave={(ev) => (ev.currentTarget.style.background = "")}
+                            >
+                              <td style={{ padding: "12px 16px", color: "#94a3b8", fontWeight: 600 }}>{i + 1}</td>
+                              <td style={{ padding: "12px 16px", fontWeight: 600, color: "#0f172a" }}>{c.templateName}</td>
+                              <td style={{ padding: "12px 16px", color: "#475569" }}>{c.assetName || "—"}</td>
+                              <td style={{ padding: "12px 16px", color: "#475569" }}>{c.companyName || "—"}</td>
+                              <td style={{ padding: "12px 16px" }}><span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: sbg, color: stx, textTransform: "capitalize" }}>{c.status || "submitted"}</span></td>
+                              <td style={{ padding: "12px 16px", color: "#475569", fontSize: "13px" }}>{c.submittedBy || "—"}</td>
+                              <td style={{ padding: "12px 16px", color: "#94a3b8", fontSize: "12px", whiteSpace: "nowrap" }}>{c.submittedAt ? new Date(c.submittedAt).toLocaleString() : "—"}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+                {/* Load More */}
+                {dashboardTab === "logsheets" && !logsheetShowAll && recentEntries.length > 5 && (
+                  <div style={{ padding: "12px 20px", borderTop: "1px solid #e2e8f0", textAlign: "center" }}>
+                    <button onClick={() => setLogsheetShowAll(true)} style={{ padding: "8px 24px", borderRadius: "8px", border: "1px solid #e2e8f0", background: "#f8fafc", color: "#475569", fontWeight: 600, fontSize: "13px", cursor: "pointer" }}>
+                      Load More ({recentEntries.length - 5} more)
+                    </button>
+                  </div>
+                )}
+                {dashboardTab === "checklists" && !checklistShowAll && recentChecklists.length > 5 && (
+                  <div style={{ padding: "12px 20px", borderTop: "1px solid #e2e8f0", textAlign: "center" }}>
+                    <button onClick={() => setChecklistShowAll(true)} style={{ padding: "8px 24px", borderRadius: "8px", border: "1px solid #e2e8f0", background: "#f8fafc", color: "#475569", fontWeight: 600, fontSize: "13px", cursor: "pointer" }}>
+                      Load More ({recentChecklists.length - 5} more)
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* ── Logsheet Issues Report ── */}
+              <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #fecaca", overflow: "hidden", marginTop: "24px" }}>
+                <div style={{ padding: "16px 20px", borderBottom: "1px solid #fecaca", background: "#fef2f2", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "12px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                    <h2 style={{ fontSize: "16px", fontWeight: 700, color: "#991b1b", margin: 0 }}>Logsheet Issues Report</h2>
+                    {issuesReport.summary && (
+                      <span style={{ fontSize: "12px", color: "#dc2626", background: "#fee2e2", padding: "2px 10px", borderRadius: "20px", fontWeight: 700 }}>
+                        {issuesReport.summary.total || 0} flagged readings
+                      </span>
+                    )}
+                  </div>
+                  {/* Summary badges */}
+                  {issuesReport.summary && (
+                    <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                      {[
+                        { label: "Critical", val: issuesReport.summary.critical, bg: "#fef2f2", col: "#dc2626" },
+                        { label: "High",     val: issuesReport.summary.high,     bg: "#fff7ed", col: "#ea580c" },
+                        { label: "Medium",   val: issuesReport.summary.medium,   bg: "#fffbeb", col: "#ca8a04" },
+                        { label: "Low",      val: issuesReport.summary.low,      bg: "#f0fdf4", col: "#16a34a" },
+                      ].map((s) => (
+                        <span key={s.label} style={{ fontSize: "12px", fontWeight: 700, padding: "3px 10px", borderRadius: "20px", background: s.bg, color: s.col }}>
+                          {s.label}: {s.val || 0}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+                    <thead>
+                      <tr style={{ background: "#fef2f2" }}>
+                        {["#", "Parameter / Question", "Section", "Value", "Issue Reason", "Day", "Asset", "Template", "Period", "Priority", "Submitted By"].map((h) => (
+                          <th key={h} style={{ padding: "10px 12px", textAlign: "left", color: "#991b1b", fontWeight: 600, fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.04em", borderBottom: "1px solid #fecaca", whiteSpace: "nowrap" }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {issuesReportLoading ? (
+                        <tr><td colSpan="11" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>Loading issues…</td></tr>
+                      ) : issuesReport.issues.length === 0 ? (
+                        <tr><td colSpan="11" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>
+                          No issues detected. All logsheet readings are within normal range. ✓
+                        </td></tr>
+                      ) : issuesReport.issues.map((iss, i) => {
+                        const priorityColors = { critical: ["#fef2f2","#dc2626"], high: ["#fff7ed","#ea580c"], medium: ["#fffbeb","#ca8a04"], low: ["#f0fdf4","#16a34a"] };
+                        const [pbg, ptx] = priorityColors[iss.priority] || ["#f8fafc","#64748b"];
+                        return (
+                          <tr key={iss.id} style={{ borderBottom: "1px solid #fef2f2", background: i % 2 === 0 ? "#fff" : "#fffbfb" }}>
+                            <td style={{ padding: "10px 12px", color: "#94a3b8", fontWeight: 600 }}>{i + 1}</td>
+                            <td style={{ padding: "10px 12px" }}>
+                              <div style={{ fontWeight: 600, color: "#0f172a" }}>{iss.questionText}</div>
+                              {iss.specification && <div style={{ fontSize: "11px", color: "#94a3b8" }}>{iss.specification}</div>}
+                            </td>
+                            <td style={{ padding: "10px 12px", color: "#64748b", fontSize: "12px" }}>{iss.sectionName || "—"}</td>
+                            <td style={{ padding: "10px 12px" }}>
+                              <span style={{ fontWeight: 700, color: "#dc2626", background: "#fee2e2", padding: "2px 8px", borderRadius: "4px" }}>{iss.value ?? "—"}</span>
+                            </td>
+                            <td style={{ padding: "10px 12px", color: "#64748b", fontSize: "12px", maxWidth: "180px" }}>{iss.issueReason || "Out of range"}</td>
+                            <td style={{ padding: "10px 12px", color: "#475569", fontWeight: 600 }}>Day {iss.day}</td>
+                            <td style={{ padding: "10px 12px", color: "#475569" }}>{iss.assetName || "—"}</td>
+                            <td style={{ padding: "10px 12px", fontWeight: 600, color: "#0f172a" }}>{iss.templateName}</td>
+                            <td style={{ padding: "10px 12px", color: "#475569", whiteSpace: "nowrap" }}>{MONTH_NAMES[(iss.month || 1) - 1]} {iss.year}{iss.shift ? ` · S${iss.shift}` : ""}</td>
+                            <td style={{ padding: "10px 12px" }}>
+                              <span style={{ fontSize: "11px", fontWeight: 700, padding: "2px 8px", borderRadius: "12px", background: pbg, color: ptx, textTransform: "capitalize" }}>{iss.priority || "medium"}</span>
+                            </td>
+                            <td style={{ padding: "10px 12px", color: "#64748b", fontSize: "12px" }}>{iss.submittedBy || "—"}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                {issuesReport.issues.length > 0 && (
+                  <div style={{ padding: "10px 20px", borderTop: "1px solid #fecaca", fontSize: "12px", color: "#991b1b", background: "#fef2f2" }}>
+                    Showing {issuesReport.issues.length} flagged readings. Red cells in the grid view (View → Logsheets) show the exact day and parameter.
+                  </div>
+                )}
+              </div>
+
+            </div>
+          );
+        })()}
+
+
       </div>
     </div>
   );

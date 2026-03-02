@@ -5,6 +5,10 @@ import logo from "./images/image.png";
 import ClientManagement from "./pages/ClientManagement";
 import UserManagement from "./pages/UserManagement";
 import CompanyPortal from "./pages/CompanyPortal";
+import CompanyLogin from "./pages/CompanyLogin";
+import CompanyEmployeePortal from "./pages/CompanyEmployeePortal";
+import AssetScanPage from "./pages/AssetScanPage";
+import SubmissionsPage from "./pages/SubmissionsPage";
 import "./styles.css";
 import {
   getClients, createClient, updateClient, deleteClient,
@@ -30,7 +34,11 @@ const AdminShell = () => {
   }, []);
 
   const clientOptions = useMemo(
-    () => clients.map((c) => ({ value: c.id, label: c.clientName })),
+    () =>
+      clients.map((c) => ({
+        value: c.id,
+        label: c.company?.trim() || c.clientName || "Unnamed Client",
+      })),
     [clients]
   );
 
@@ -133,7 +141,10 @@ function App() {
   return (
     <Routes>
       <Route path="/client" element={<CompanyPortal />} />
-      <Route path="/company" element={<Navigate to="/client" replace />} />
+      <Route path="/company" element={<CompanyLogin />} />
+      <Route path="/company/portal" element={<CompanyEmployeePortal />} />
+      <Route path="/company/submissions" element={<SubmissionsPage />} />
+      <Route path="/asset-scan/:assetId" element={<AssetScanPage />} />
       <Route path="*" element={<AdminShell />} />
     </Routes>
   );

@@ -35,6 +35,10 @@ const makeQuestion = () => ({
   answerType: "yes_no",
   isMandatory: false,
   config: null,
+  allowFlagIssue: true,
+  allowRemark: true,
+  allowImage: false,
+  requireReason: false,
 });
 
 const ChecklistBuilder = ({ token, assets, users = [] }) => {
@@ -178,6 +182,10 @@ const ChecklistBuilder = ({ token, assets, users = [] }) => {
         isRequired: !!q.isMandatory,
         order: idx,
         config: normalizeConfig(q),
+        allowFlagIssue: q.allowFlagIssue !== false,
+        allowRemark: q.allowRemark !== false,
+        allowImage: !!q.allowImage,
+        requireReason: !!q.requireReason,
       })),
     };
 
@@ -201,43 +209,38 @@ const ChecklistBuilder = ({ token, assets, users = [] }) => {
   };
 
   return (
-    <div className="card" style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "16px" }}>
-      <div className="page-header" style={{ marginBottom: 0 }}>
-        <div>
-          <h1 style={{ marginBottom: "4px" }}>Checklist Creation</h1>
-          <p style={{ margin: 0 }}>Create asset-wise checklists with ordered questions.</p>
-        </div>
+    <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+      {/* Page Header */}
+      <div>
+        <h1 style={{ fontSize: "26px", fontWeight: "800", color: "#0f172a", marginBottom: "4px", letterSpacing: "-0.5px" }}>Checklist Creation</h1>
+        <p style={{ color: "#64748b", fontSize: "14px" }}>Create asset-wise checklists with ordered questions.</p>
       </div>
 
       {error && (
-        <div style={{ background: "#3b0e0e", color: "#f87171", padding: "10px 14px", borderRadius: "6px", fontSize: "14px" }}>
-          <AlertCircle size={16} style={{ marginRight: "6px" }} /> {error}
+        <div style={{ background: "#fef2f2", color: "#dc2626", padding: "10px 14px", borderRadius: "8px", fontSize: "13.5px", border: "1px solid #fecaca", display: "flex", alignItems: "center", gap: "8px" }}>
+          <AlertCircle size={15} /> {error}
         </div>
       )}
       {success && (
-        <div style={{ background: "#022c22", color: "#34d399", padding: "10px 14px", borderRadius: "6px", fontSize: "14px" }}>
-          {success}
+        <div style={{ background: "#f0fdf4", color: "#16a34a", padding: "10px 14px", borderRadius: "8px", fontSize: "13.5px", border: "1px solid #bbf7d0" }}>
+          ✓ {success}
         </div>
       )}
 
-      <form onSubmit={handleSave} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-          <div className="form-group">
-            <label>Asset Category</label>
-            <select value={category} onChange={(e) => setCategory(e.target.value)} className="form-select">
+      <form onSubmit={handleSave} style={{ display: "flex", flexDirection: "column", gap: "0" }}>
+        {/* Asset selectors */}
+        <div style={{ background: "#fff", borderRadius: "10px", border: "1px solid #e2e8f0", marginBottom: "16px", padding: "20px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px 24px" }}>
+          <div>
+            <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>Asset Category</label>
+            <select value={category} onChange={(e) => setCategory(e.target.value)} className="form-select" style={{ width: "100%" }}>
               {categories.map((opt) => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
               ))}
             </select>
           </div>
-          <div className="form-group">
-            <label>Asset</label>
-            <select
-              value={assetId}
-              onChange={(e) => setAssetId(e.target.value)}
-              className="form-select"
-              required
-            >
+          <div>
+            <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>Asset</label>
+            <select value={assetId} onChange={(e) => setAssetId(e.target.value)} className="form-select" required style={{ width: "100%" }}>
               <option value="" disabled>
                 {filteredAssets.length ? "Select asset" : "No assets for this category"}
               </option>
@@ -246,135 +249,118 @@ const ChecklistBuilder = ({ token, assets, users = [] }) => {
               ))}
             </select>
           </div>
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "1.2fr 0.8fr", gap: "12px" }}>
-          <div className="form-group">
-            <label>Checklist Name</label>
-            <input
-              value={checklistName}
-              onChange={(e) => setChecklistName(e.target.value)}
-              className="form-input"
-              placeholder="Daily Opening Checklist"
-              required
-            />
-          </div>
-          <div className="form-group">
-            <label>Description (optional)</label>
-            <input
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              className="form-input"
-              placeholder="Purpose or scope"
-            />
-          </div>
-        </div>
-
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div>
-            <h3 style={{ margin: 0 }}>Questions</h3>
-            <p style={{ margin: 0, color: "#94a3b8", fontSize: "13px" }}>Drag to reorder. Configure options for select types; numbers support min/max; labels are read-only.</p>
+            <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>Checklist Name</label>
+            <input value={checklistName} onChange={(e) => setChecklistName(e.target.value)} className="form-input" placeholder="Daily Opening Checklist" required style={{ width: "100%" }} />
           </div>
-          <button type="button" className="add-btn" onClick={handleAddQuestion} style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
-            <PlusCircle size={18} />
-            Add Question
-          </button>
+          <div>
+            <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>Description (optional)</label>
+            <input value={description} onChange={(e) => setDescription(e.target.value)} className="form-input" placeholder="Purpose or scope" style={{ width: "100%" }} />
+          </div>
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-          {questions.map((q, idx) => (
-            <ChecklistQuestionRow
-              key={q.id}
-              question={q}
-              onChange={handleUpdateQuestion}
-              onRemove={handleRemoveQuestion}
-              onDragStart={(dragId) => setDraggingId(dragId)}
-              onDragOver={() => {}}
-              onDrop={() => {
-                reorder(draggingId, q.id);
-                setDraggingId(null);
-              }}
-            />
-          ))}
+        {/* Questions */}
+        <div style={{ background: "#fff", borderRadius: "10px", border: "1px solid #e2e8f0", marginBottom: "16px", overflow: "hidden" }}>
+          <div style={{ padding: "14px 20px", borderBottom: "1px solid #f1f5f9", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a" }}>Questions</span>
+            <button type="button" onClick={handleAddQuestion}
+              style={{ display: "inline-flex", alignItems: "center", gap: "6px", background: "#2563eb", color: "#fff", border: "none", borderRadius: "7px", padding: "7px 14px", fontWeight: 600, fontSize: "13px", cursor: "pointer" }}>
+              <PlusCircle size={15} /> Add Question
+            </button>
+          </div>
+          <div style={{ padding: "8px 0" }}>
+            {questions.map((q) => (
+              <ChecklistQuestionRow
+                key={q.id}
+                question={q}
+                onChange={handleUpdateQuestion}
+                onRemove={handleRemoveQuestion}
+                onDragStart={(dragId) => setDraggingId(dragId)}
+                onDragOver={() => {}}
+                onDrop={() => { reorder(draggingId, q.id); setDraggingId(null); }}
+              />
+            ))}
+          </div>
         </div>
 
-        <div className="modal-actions" style={{ justifyContent: "flex-start", marginTop: "4px" }}>
-          <button type="submit" className="btn-submit" disabled={saving}>
+        <div>
+          <button type="submit" disabled={saving}
+            style={{ padding: "9px 26px", fontSize: "13.5px", fontWeight: 600, borderRadius: "7px", border: "none", background: saving ? "#93c5fd" : "#2563eb", color: "#fff", cursor: saving ? "default" : "pointer" }}>
             {saving ? "Saving…" : "Save Checklist"}
           </button>
         </div>
       </form>
 
-      <div className="card" style={{ padding: "12px", border: "1px solid #e2e8f0" }}>
-        <div className="page-header" style={{ marginBottom: "8px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <ListChecks size={18} />
-            <h3 style={{ margin: 0 }}>Existing Checklists</h3>
-          </div>
-          <p style={{ margin: 0, color: "#94a3b8", fontSize: "13px" }}>Asset-specific, ordered questions preserved.</p>
+      {/* Existing Checklists */}
+      <div style={{ background: "#fff", borderRadius: "10px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
+        <div style={{ padding: "14px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", gap: "8px" }}>
+          <ListChecks size={17} style={{ color: "#2563eb" }} />
+          <span style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a" }}>Existing Checklists</span>
         </div>
         {loading ? (
-          <p style={{ color: "#94a3b8" }}>Loading…</p>
+          <div style={{ padding: "32px 20px", color: "#94a3b8", fontSize: "14px" }}>Loading…</div>
         ) : checklists.length === 0 ? (
-          <p style={{ color: "#94a3b8" }}>No checklists yet for the selected asset.</p>
+          <div style={{ padding: "32px 20px", color: "#94a3b8", fontSize: "14px" }}>No checklists yet for the selected asset.</div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-            {checklists.map((c) => (
-              <div key={c.id} className="card" style={{ padding: "12px", border: "1px solid #e2e8f0" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div>
-                    <div style={{ fontWeight: 600 }}>{c.name}</div>
-                    <div style={{ color: "#94a3b8", fontSize: "12px" }}>{c.assetCategory ? categories.find((cat) => cat.value === c.assetCategory)?.label : ""}</div>
-                    {c.description && <div style={{ color: "#475569", fontSize: "13px" }}>{c.description}</div>}
-                  </div>
-                  <div style={{ fontSize: "12px", color: "#94a3b8" }}>{(c.items || []).length} questions</div>
-                </div>
-                <ol style={{ margin: "8px 0 0 18px", color: "#475569", display: "flex", flexDirection: "column", gap: "4px" }}>
-                  {(c.items || []).map((i) => (
-                    <li key={i.id || `${i.title}-${i.orderIndex || 0}`} style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                      <span>{i.title}</span>
-                      <span style={{ color: "#94a3b8", fontSize: "12px" }}>({answerTypeLabels[i.answerType] || "Yes / No"}{i.isRequired ? ", mandatory" : ""})</span>
-                    </li>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
+              <thead>
+                <tr>
+                  {["Name", "Asset", "Status", "Actions"].map((h) => (
+                    <th key={h} style={{ padding: "11px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.05em", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>{h}</th>
                   ))}
-                </ol>
-                <div style={{ marginTop: "10px", borderTop: "1px solid #e2e8f0", paddingTop: "10px", display: "grid", gridTemplateColumns: "1.2fr 0.8fr", gap: "10px", alignItems: "center" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                    <UsersRound size={16} />
-                    <span style={{ fontSize: "13px", color: "#475569" }}>Assigned to:</span>
-                    {(assignees[c.id] || []).length === 0 ? (
-                      <span style={{ color: "#94a3b8", fontSize: "13px" }}>No users yet</span>
-                    ) : (
-                      <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-                        {(assignees[c.id] || []).map((u) => (
-                          <span key={u.userId} style={{ background: "#f1f5f9", padding: "4px 8px", borderRadius: "999px", fontSize: "12px" }}>
-                            {u.fullName || u.email}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                    <select
-                      multiple
-                      size={3}
-                      value={assignSelection[c.id] || []}
-                      onChange={(e) => {
-                        const selected = Array.from(e.target.selectedOptions).map((o) => o.value);
-                        setAssignSelection((prev) => ({ ...prev, [c.id]: selected }));
-                      }}
-                      className="form-select"
-                    >
-                      {users.map((u) => (
-                        <option key={u.id} value={u.id}>{u.fullName || u.email}</option>
-                      ))}
-                    </select>
-                    <button type="button" className="pill-btn" onClick={() => handleAssign(c.id)} disabled={!users.length} style={{ whiteSpace: "nowrap" }}>
-                      Assign
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))}
+                </tr>
+              </thead>
+              <tbody>
+                {checklists.map((c) => {
+                  const assetName = assets.find((a) => String(a.id) === String(c.assetId))?.assetName || "—";
+                  const catLabel = categories.find((cat) => cat.value === c.assetCategory)?.label || c.assetCategory || "—";
+                  return (
+                    <tr key={c.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                      <td style={{ padding: "13px 16px" }}>
+                        <div style={{ fontWeight: 600, color: "#0f172a", fontSize: "14px" }}>{c.name}</div>
+                        {c.description && <div style={{ color: "#94a3b8", fontSize: "12px", marginTop: "2px" }}>{c.description}</div>}
+                        <div style={{ color: "#94a3b8", fontSize: "12px", marginTop: "2px" }}>{(c.items || []).length} question{(c.items || []).length !== 1 ? "s" : ""}</div>
+                      </td>
+                      <td style={{ padding: "13px 16px", color: "#475569" }}>{assetName}</td>
+                      <td style={{ padding: "13px 16px" }}>
+                        <span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: "#f0fdf4", color: "#16a34a" }}>Active</span>
+                      </td>
+                      <td style={{ padding: "13px 16px" }}>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+                            <UsersRound size={13} style={{ color: "#64748b", flexShrink: 0 }} />
+                            <span style={{ fontSize: "12px", color: "#64748b" }}>Assigned:</span>
+                            {(assignees[c.id] || []).length === 0 ? (
+                              <span style={{ color: "#94a3b8", fontSize: "12px" }}>None</span>
+                            ) : (
+                              (assignees[c.id] || []).map((u) => (
+                                <span key={u.userId} style={{ background: "#eff6ff", color: "#2563eb", padding: "2px 8px", borderRadius: "999px", fontSize: "11px", fontWeight: 500 }}>
+                                  {u.fullName || u.email}
+                                </span>
+                              ))
+                            )}
+                          </div>
+                          {users.length > 0 && (
+                            <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                              <select multiple size={2} value={assignSelection[c.id] || []}
+                                onChange={(e) => { const sel = Array.from(e.target.selectedOptions).map((o) => o.value); setAssignSelection((prev) => ({ ...prev, [c.id]: sel })); }}
+                                className="form-select" style={{ fontSize: "12px", padding: "3px 6px", minWidth: "120px" }}>
+                                {users.map((u) => <option key={u.id} value={u.id}>{u.fullName || u.email}</option>)}
+                              </select>
+                              <button type="button" onClick={() => handleAssign(c.id)}
+                                style={{ padding: "5px 12px", background: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe", borderRadius: "6px", fontSize: "12px", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>
+                                Assign
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </div>

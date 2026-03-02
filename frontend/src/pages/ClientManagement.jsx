@@ -23,15 +23,22 @@ const ClientManagement = ({ clients, onAddClient, onEditClient, onDeleteClient }
     return { total: clients.length, active, inactive };
   }, [clients]);
 
+  const getDisplayName = (client) => {
+    const name = client?.company?.trim() || client?.clientName?.trim();
+    return name || "Unnamed Client";
+  };
+
   const filteredClients = useMemo(() => {
     const term = search.toLowerCase();
-    return clients.filter((c) =>
-      term
-        ? c.clientName?.toLowerCase().includes(term) ||
+    return clients.filter((c) => {
+      if (!term) return true;
+      const label = getDisplayName(c).toLowerCase();
+      return (
+        label.includes(term) ||
         c.email?.toLowerCase().includes(term) ||
         c.company?.toLowerCase().includes(term)
-        : true
-    );
+      );
+    });
   }, [clients, search]);
 
   const openAdd = () => {
@@ -167,7 +174,7 @@ const ClientManagement = ({ clients, onAddClient, onEditClient, onDeleteClient }
                   <td>
                     <div className="user-cell">
                       <div className="avatar gray"><Building2 size={18} /></div>
-                      <span className="user-name-text">{c.clientName}</span>
+                      <span className="user-name-text">{getDisplayName(c)}</span>
                     </div>
                   </td>
                   <td>

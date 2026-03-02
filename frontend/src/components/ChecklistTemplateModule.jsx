@@ -1,0 +1,796 @@
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+
+const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:4000";
+
+/* ─────────────────────────────────────────────────────────────────
+   Constants
+───────────────────────────────────────────────────────────────── */
+const INPUT_TYPES = [
+  { value: "text", label: "Text / Remark" },
+  { value: "yes_no", label: "Yes / No" },
+  { value: "ok_not_ok", label: "OK / Not OK" },
+  { value: "number", label: "Number / Reading" },
+  { value: "dropdown", label: "Dropdown" },
+  { value: "photo", label: "Photo Upload" },
+  { value: "signature", label: "Signature" },
+  { value: "remark", label: "Remark Only" },
+];
+
+const FREQUENCIES = ["Daily", "Weekly", "Monthly", "Custom"];
+
+const ASSET_CATEGORIES = [
+  { value: "soft", label: "Soft Services" },
+  { value: "technical", label: "Technical" },
+  { value: "fleet", label: "Fleet" },
+  { value: "building", label: "Building" },
+  { value: "room", label: "Room" },
+  { value: "generic", label: "Generic" },
+];
+
+const emptyQuestion = () => ({
+  _id: Math.random().toString(36).slice(2),
+  questionText: "",
+  inputType: "yes_no",
+  isRequired: true,
+  options: [],
+  _optionsText: "",
+  rule: { flagOn: "", minValue: "", maxValue: "", severity: "warning", action: "" },
+});
+
+/* ─────────────────────────────────────────────────────────────────
+   Shared UI atoms
+───────────────────────────────────────────────────────────────── */
+const Label = ({ children, required }) => (
+  <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>
+    {children}{required && <span style={{ color: "#ef4444", marginLeft: "3px" }}>*</span>}
+  </label>
+);
+
+const Inp = (props) => (
+  <input {...props} style={{ width: "100%", boxSizing: "border-box", padding: "8px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13.5px", outline: "none", ...(props.style || {}) }} />
+);
+
+const Sel = ({ children, ...props }) => (
+  <select {...props} style={{ width: "100%", boxSizing: "border-box", padding: "8px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13.5px", background: "#fff", outline: "none", ...(props.style || {}) }}>
+    {children}
+  </select>
+);
+
+const SBtn = ({ children, color = "#2563eb", bg, outline, onClick, disabled, style = {} }) => (
+  <button type="button" onClick={onClick} disabled={disabled}
+    style={{ display: "inline-flex", alignItems: "center", gap: "5px", padding: "7px 16px", borderRadius: "7px", fontSize: "13px", fontWeight: 600, cursor: disabled ? "not-allowed" : "pointer", border: outline ? `1px solid ${color}` : "none", background: bg || (outline ? "#fff" : color), color: outline ? color : "#fff", opacity: disabled ? 0.6 : 1, ...style }}>
+    {children}
+  </button>
+);
+
+const Badge = ({ children, bg = "#eff6ff", col = "#2563eb" }) => (
+  <span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: bg, color: col }}>{children}</span>
+);
+
+const Card = ({ children, style = {} }) => (
+  <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", ...style }}>{children}</div>
+);
+
+const CardHeader = ({ children, action }) => (
+  <div style={{ padding: "14px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+    <span style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a" }}>{children}</span>
+    {action && <div>{action}</div>}
+  </div>
+);
+
+const Alert = ({ type = "error", children }) => {
+  const styles = type === "error"
+    ? { bg: "#fef2f2", col: "#dc2626", border: "#fecaca" }
+    : { bg: "#f0fdf4", col: "#16a34a", border: "#bbf7d0" };
+  return (
+    <div style={{ background: styles.bg, color: styles.col, padding: "10px 14px", borderRadius: "8px", fontSize: "13.5px", border: `1px solid ${styles.border}`, marginBottom: "12px" }}>
+      {children}
+    </div>
+  );
+};
+
+/* ─────────────────────────────────────────────────────────────────
+   Template View Modal (read-only)
+───────────────────────────────────────────────────────────────── */
+function ViewModal({ template, onClose }) {
+  if (!template) return null;
+  const questions = Array.isArray(template.questions) ? template.questions : [];
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
+      <div style={{ background: "#fff", borderRadius: "14px", width: "100%", maxWidth: "760px", maxHeight: "90vh", display: "flex", flexDirection: "column", boxShadow: "0 25px 60px rgba(0,0,0,0.2)" }}>
+        <div style={{ padding: "18px 24px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div>
+            <div style={{ fontWeight: 800, fontSize: "17px", color: "#0f172a" }}>{template.templateName}</div>
+            <div style={{ color: "#64748b", fontSize: "13px", marginTop: "4px" }}>
+              {template.assetType}{template.category ? ` · ${template.category}` : ""}{template.frequency ? ` · ${template.frequency}` : ""}
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: "#f1f5f9", border: "none", borderRadius: "8px", width: "32px", height: "32px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div style={{ overflowY: "auto", padding: "20px 24px", flex: 1 }}>
+          {template.description && <p style={{ color: "#64748b", fontSize: "13px", marginBottom: "16px" }}>{template.description}</p>}
+          {questions.length === 0 && (
+            <p style={{ color: "#94a3b8", fontSize: "14px" }}>No questions configured for this template.</p>
+          )}
+          {questions.length > 0 && (
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+              <thead>
+                <tr>
+                  {["#", "Question", "Input Type", "Required", "Options", "Flag Rule"].map((h) => (
+                    <th key={h} style={{ padding: "8px 12px", textAlign: "left", color: "#64748b", fontWeight: 600, fontSize: "11px", textTransform: "uppercase", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {questions.map((q, qi) => {
+                  const r = q.rule || {};
+                  let ruleSummary = "—";
+                  if (q.inputType === "yes_no") ruleSummary = r.action ? `Flag if No → ${r.action}` : (r.severity ? `Flag if No (${r.severity})` : "—");
+                  else if (q.inputType === "ok_not_ok") ruleSummary = r.action ? `Flag if Not OK → ${r.action}` : (r.severity ? `Flag if Not OK (${r.severity})` : "—");
+                  else if (q.inputType === "number") ruleSummary = (r.minValue !== "" || r.maxValue !== "") ? `Range: ${r.minValue || "•"} – ${r.maxValue || "•"}` : "—";
+                  else if (q.inputType === "dropdown") ruleSummary = r.flagOn ? `Flag if: ${r.flagOn}` : "—";
+                  return (
+                    <tr key={q.id || qi} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                      <td style={{ padding: "9px 12px", color: "#94a3b8" }}>{qi + 1}</td>
+                      <td style={{ padding: "9px 12px", fontWeight: 600, color: "#0f172a" }}>{q.questionText}</td>
+                      <td style={{ padding: "9px 12px" }}>
+                        <Badge bg="#eff6ff" col="#2563eb">{q.inputType}</Badge>
+                      </td>
+                      <td style={{ padding: "9px 12px", color: (q.isRequired || q.is_required) ? "#16a34a" : "#94a3b8" }}>
+                        {(q.isRequired || q.is_required) ? "Yes" : "No"}
+                      </td>
+                      <td style={{ padding: "9px 12px", color: "#64748b", fontSize: "12px" }}>
+                        {Array.isArray(q.options) && q.options.length ? q.options.join(", ") : "—"}
+                      </td>
+                      <td style={{ padding: "9px 12px", fontSize: "12px", color: ruleSummary === "—" ? "#94a3b8" : (r.severity === "critical" ? "#dc2626" : "#ca8a04") }}>
+                        {ruleSummary !== "—" && <span style={{ marginRight: "4px" }}>⚠</span>}{ruleSummary}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+        <div style={{ padding: "14px 24px", borderTop: "1px solid #e2e8f0" }}>
+          <SBtn onClick={onClose} outline color="#64748b" bg="#fff">Close</SBtn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   Question Row Editor
+───────────────────────────────────────────────────────────────── */
+function QuestionRow({ q, idx, onChange, onRemove }) {
+  const update = (field, val) => onChange(idx, { ...q, [field]: val });
+  const updateRule = (field, val) => update("rule", { ...(q.rule || {}), [field]: val });
+  const rule = q.rule || {};
+  const hasRule = ["yes_no", "ok_not_ok", "number", "dropdown"].includes(q.inputType);
+
+  // Auto-set flagOn for binary types
+  const flagOnLabel = q.inputType === "yes_no" ? "No" : q.inputType === "ok_not_ok" ? "Not OK" : null;
+
+  return (
+    <div style={{ background: "#f8fafc", borderRadius: "8px", padding: "12px 14px", border: "1px solid #e2e8f0", marginBottom: "8px" }}>
+      {/* Main row */}
+      <div style={{ display: "grid", gridTemplateColumns: "3fr 1.4fr 60px 32px", gap: "10px", alignItems: "flex-start" }}>
+        <div>
+          <Label required>Question</Label>
+          <Inp value={q.questionText} onChange={(e) => update("questionText", e.target.value)} placeholder="e.g. Check oil level" />
+        </div>
+        <div>
+          <Label>Input Type</Label>
+          <Sel value={q.inputType} onChange={(e) => update("inputType", e.target.value)}>
+            {INPUT_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </Sel>
+        </div>
+        <div>
+          <Label>Required</Label>
+          <label style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "10px", cursor: "pointer", fontSize: "13px", color: "#475569" }}>
+            <input type="checkbox" checked={q.isRequired} onChange={(e) => update("isRequired", e.target.checked)} />
+            Yes
+          </label>
+        </div>
+        <div style={{ paddingTop: "22px" }}>
+          <button type="button" onClick={() => onRemove(idx)}
+            style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#fee2e2", color: "#dc2626", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+          </button>
+        </div>
+      </div>
+
+      {/* Dropdown options */}
+      {q.inputType === "dropdown" && (
+        <div style={{ marginTop: "8px" }}>
+          <Label>Options (comma-separated)</Label>
+          <Inp value={q._optionsText || ""} onChange={(e) => update("_optionsText", e.target.value)} placeholder="e.g. Good, Fair, Poor" />
+        </div>
+      )}
+
+      {/* Flag Rule section */}
+      {hasRule && (
+        <div style={{ marginTop: "10px", borderTop: "1px dashed #e2e8f0", paddingTop: "10px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: rule._showRule ? "10px" : "0" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer", fontSize: "12.5px", fontWeight: 600, color: rule._showRule ? "#d97706" : "#64748b", userSelect: "none" }}>
+              <input type="checkbox" checked={!!rule._showRule}
+                onChange={(e) => updateRule("_showRule", e.target.checked)}
+                style={{ cursor: "pointer", accentColor: "#d97706" }} />
+              ⚠ Add Flag / Alert Rule
+            </label>
+            {rule._showRule && rule.severity && (
+              <span style={{ padding: "2px 9px", borderRadius: "20px", fontSize: "11px", fontWeight: 700,
+                background: rule.severity === "critical" ? "#fee2e2" : "#fef3c7",
+                color: rule.severity === "critical" ? "#dc2626" : "#d97706" }}>
+                {rule.severity === "critical" ? "🔴 Critical" : "🟡 Warning"}
+              </span>
+            )}
+          </div>
+
+          {rule._showRule && (
+            <div style={{ background: "#fffbeb", border: "1px solid #fcd34d", borderRadius: "8px", padding: "12px 14px", display: "flex", flexDirection: "column", gap: "10px" }}>
+              {/* Condition description for binary types */}
+              {flagOnLabel && (
+                <div style={{ fontSize: "12.5px", color: "#92400e", background: "#fef3c7", padding: "7px 12px", borderRadius: "6px", fontWeight: 500 }}>
+                  ⚠ This question will be <strong>flagged</strong> automatically when the answer is <strong>"{flagOnLabel}"</strong>.
+                </div>
+              )}
+
+              {/* Number range */}
+              {q.inputType === "number" && (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                  <div>
+                    <Label>Min Acceptable Value</Label>
+                    <Inp type="number" value={rule.minValue || ""} onChange={(e) => updateRule("minValue", e.target.value)} placeholder="e.g. 0" />
+                    <span style={{ fontSize: "11px", color: "#94a3b8" }}>Flag if value is below this</span>
+                  </div>
+                  <div>
+                    <Label>Max Acceptable Value</Label>
+                    <Inp type="number" value={rule.maxValue || ""} onChange={(e) => updateRule("maxValue", e.target.value)} placeholder="e.g. 90" />
+                    <span style={{ fontSize: "11px", color: "#94a3b8" }}>Flag if value is above this</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Dropdown flag-on options */}
+              {q.inputType === "dropdown" && (
+                <div>
+                  <Label>Flag when answer is (comma-separated options)</Label>
+                  <Inp value={rule.flagOn || ""} onChange={(e) => updateRule("flagOn", e.target.value)}
+                    placeholder={`e.g. Poor, Fail${q._optionsText ? " (from: " + q._optionsText + ")" : ""}`} />
+                  <span style={{ fontSize: "11px", color: "#94a3b8" }}>Enter the option values that should trigger a flag</span>
+                </div>
+              )}
+
+              {/* Severity + Action — common to all */}
+              <div style={{ display: "grid", gridTemplateColumns: "140px 1fr", gap: "10px" }}>
+                <div>
+                  <Label>Severity</Label>
+                  <Sel value={rule.severity || "warning"} onChange={(e) => updateRule("severity", e.target.value)}>
+                    <option value="warning">🟡 Warning</option>
+                    <option value="critical">🔴 Critical</option>
+                  </Sel>
+                </div>
+                <div>
+                  <Label>Action / Alert Message</Label>
+                  <Inp value={rule.action || ""} onChange={(e) => updateRule("action", e.target.value)}
+                    placeholder="e.g. Stop operation and notify supervisor" />
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   Template Builder (create / edit)
+───────────────────────────────────────────────────────────────── */
+function TemplateBuilder({ token, companies, assets: assetsProp = [], onBack, onSaved, createTemplate, updateTemplate, editTemplate }) {
+  const isEdit = !!editTemplate;
+
+  const [form, setForm] = useState(() => {
+    if (editTemplate) {
+      return {
+        companyId: editTemplate.companyId || companies[0]?.id || "",
+        templateName: editTemplate.templateName || "",
+        assetType: editTemplate.assetType || "generic",
+        assetId: editTemplate.assetId ? String(editTemplate.assetId) : "",
+        category: editTemplate.category || "",
+        description: editTemplate.description || "",
+        frequency: editTemplate.frequency || "Daily",
+        shift: editTemplate.shift || "",
+        status: editTemplate.status || "active",
+      };
+    }
+    return {
+      companyId: companies[0]?.id || "",
+      templateName: "",
+      assetType: "generic",
+      assetId: "",
+      category: "",
+      description: "",
+      frequency: "Daily",
+      shift: "",
+      status: "active",
+    };
+  });
+
+  const [questions, setQuestions] = useState(() => {
+    const qs = Array.isArray(editTemplate?.questions) ? editTemplate.questions : [];
+    if (qs.length) {
+      return qs.map((q) => ({
+        _id: Math.random().toString(36).slice(2),
+        questionText: q.questionText || "",
+        inputType: q.inputType || "yes_no",
+        isRequired: q.isRequired ?? q.is_required ?? true,
+        options: q.options || [],
+        _optionsText: Array.isArray(q.options) ? q.options.join(", ") : "",
+        rule: q.rule
+          ? { ...q.rule, _showRule: !!(q.rule.action || q.rule.minValue || q.rule.maxValue || q.rule.flagOn) }
+          : { flagOn: "", minValue: "", maxValue: "", severity: "warning", action: "", _showRule: false },
+      }));
+    }
+    return [emptyQuestion()];
+  });
+
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const [assets, setAssets] = useState(assetsProp);
+
+  // Fetch assets for the selected company from the API
+  useEffect(() => {
+    if (!token) return;
+    const companyId = form.companyId || (companies[0]?.id ?? "");
+    if (!companyId) return;
+    let cancelled = false;
+    setAssets([]);
+    fetch(`${API_BASE}/api/assets?companyId=${companyId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.ok ? r.json() : [])
+      .then((data) => { if (!cancelled) setAssets(Array.isArray(data) ? data : []); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [token, form.companyId]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reset assetId when company or assetType changes
+  useEffect(() => {
+    setForm((p) => ({ ...p, assetId: "" }));
+  }, [form.companyId, form.assetType]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  const filteredChecklistAssets = useMemo(
+    () => assets.filter((a) => !form.assetType || form.assetType === "generic" || (a.assetType || a.asset_type) === form.assetType),
+    [assets, form.assetType]
+  );
+
+  const addQuestion = () => setQuestions((prev) => [...prev, emptyQuestion()]);
+
+  const updateQuestion = (idx, updated) => {
+    setQuestions((prev) => prev.map((q, i) => i === idx ? updated : q));
+  };
+
+  const removeQuestion = (idx) => {
+    if (questions.length === 1) return;
+    setQuestions((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const handleSave = async () => {
+    setError(null);
+    if (!isEdit && !form.companyId) return setError("Select a company");
+    if (!form.templateName.trim()) return setError("Template name is required");
+    if (!form.assetType.trim()) return setError("Asset type is required");
+    for (const [i, q] of questions.entries()) {
+      if (!q.questionText.trim()) return setError(`Question ${i + 1} text is required`);
+    }
+
+    const payload = {
+      templateName: form.templateName.trim(),
+      assetType: form.assetType,
+      assetId: form.assetId ? Number(form.assetId) : undefined,
+      category: form.category.trim() || undefined,
+      description: form.description.trim() || undefined,
+      frequency: form.frequency,
+      shift: form.shift.trim() || undefined,
+      status: form.status,
+      questions: questions.map((q, idx) => ({
+        questionText: q.questionText.trim(),
+        inputType: q.inputType,
+        isRequired: q.isRequired,
+        orderIndex: idx,
+        options: q.inputType === "dropdown"
+          ? (q._optionsText || "").split(",").map((s) => s.trim()).filter(Boolean)
+          : undefined,
+        rule: q.rule?._showRule
+          ? {
+              flagOn: q.inputType === "yes_no" ? "No"
+                : q.inputType === "ok_not_ok" ? "Not OK"
+                : (q.rule.flagOn?.trim() || undefined),
+              minValue: q.inputType === "number" && q.rule.minValue !== "" ? Number(q.rule.minValue) : undefined,
+              maxValue: q.inputType === "number" && q.rule.maxValue !== "" ? Number(q.rule.maxValue) : undefined,
+              severity: q.rule.severity || "warning",
+              action: q.rule.action?.trim() || undefined,
+            }
+          : undefined,
+      })),
+    };
+
+    if (!isEdit) payload.companyId = Number(form.companyId);
+
+    setSaving(true);
+    try {
+      if (isEdit) {
+        await updateTemplate(token, editTemplate.id, payload);
+        onSaved(editTemplate.id);
+      } else {
+        const created = await createTemplate(token, payload);
+        onSaved(created.id);
+      }
+    } catch (err) {
+      setError(err.message || "Could not save template");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "20px" }}>
+        <button type="button" onClick={onBack}
+          style={{ width: "34px", height: "34px", borderRadius: "8px", background: "#f1f5f9", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#475569" }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <div>
+          <h1 style={{ fontSize: "22px", fontWeight: 800, color: "#0f172a", marginBottom: "2px" }}>
+            {isEdit ? "Edit Checklist Template" : "Create Checklist Template"}
+          </h1>
+          <p style={{ color: "#64748b", fontSize: "13px", margin: 0 }}>Define questions for a reusable checklist — assign to assets, departments, or users.</p>
+        </div>
+      </div>
+
+      {error && <Alert type="error">⚠ {error}</Alert>}
+
+      {/* Basic Info */}
+      <Card style={{ marginBottom: "16px" }}>
+        <CardHeader>Template Details</CardHeader>
+        <div style={{ padding: "20px", display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px 20px" }}>
+          {!isEdit && (
+            <div>
+              <Label required>Company</Label>
+              <Sel value={form.companyId} onChange={(e) => setForm((p) => ({ ...p, companyId: e.target.value }))}>
+                {companies.map((c) => <option key={c.id} value={c.id}>{c.companyName}</option>)}
+              </Sel>
+            </div>
+          )}
+          <div style={{ gridColumn: isEdit ? "1 / span 2" : "span 2" }}>
+            <Label required>Template Name</Label>
+            <Inp value={form.templateName} onChange={(e) => setForm((p) => ({ ...p, templateName: e.target.value }))} placeholder='e.g. "Daily Safety Check", "AMC Inspection Form"' />
+          </div>
+          <div>
+            <Label required>Asset Type</Label>
+            <Sel value={form.assetType} onChange={(e) => setForm((p) => ({ ...p, assetType: e.target.value }))}>
+              {ASSET_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+            </Sel>
+          </div>
+          <div>
+            <Label>Link to Specific Asset</Label>
+            <Sel value={form.assetId} onChange={(e) => setForm((p) => ({ ...p, assetId: e.target.value }))}>
+              <option value="">— No specific asset —</option>
+              {filteredChecklistAssets.map((a) => (
+                <option key={a.id} value={a.id}>{a.assetName || a.asset_name}</option>
+              ))}
+            </Sel>
+            {assets.length > 0 && filteredChecklistAssets.length === 0 && (
+              <p style={{ fontSize: "11px", color: "#f59e0b", marginTop: "4px" }}>No {form.assetType} assets found for this company.</p>
+            )}
+            {assets.length === 0 && form.companyId && (
+              <p style={{ fontSize: "11px", color: "#94a3b8", marginTop: "4px" }}>Loading assets…</p>
+            )}
+          </div>
+          <div>
+            <Label>Category</Label>
+            <Inp value={form.category} onChange={(e) => setForm((p) => ({ ...p, category: e.target.value }))} placeholder="e.g. Safety, Preventive, AMC" />
+          </div>
+          <div>
+            <Label>Frequency</Label>
+            <Sel value={form.frequency} onChange={(e) => setForm((p) => ({ ...p, frequency: e.target.value }))}>
+              {FREQUENCIES.map((f) => <option key={f} value={f}>{f}</option>)}
+            </Sel>
+          </div>
+          <div>
+            <Label>Shift</Label>
+            <Inp value={form.shift} onChange={(e) => setForm((p) => ({ ...p, shift: e.target.value }))} placeholder="e.g. Morning, Night" />
+          </div>
+          <div>
+            <Label>Status</Label>
+            <Sel value={form.status} onChange={(e) => setForm((p) => ({ ...p, status: e.target.value }))}>
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+            </Sel>
+          </div>
+          <div style={{ gridColumn: "span 3" }}>
+            <Label>Description</Label>
+            <Inp value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} placeholder="Purpose / scope of this checklist" />
+          </div>
+        </div>
+      </Card>
+
+      {/* Questions */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+        <span style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a" }}>Questions ({questions.length})</span>
+        <SBtn onClick={addQuestion}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Add Question
+        </SBtn>
+      </div>
+
+      {questions.map((q, idx) => (
+        <QuestionRow key={q._id} q={q} idx={idx} onChange={updateQuestion} onRemove={removeQuestion} />
+      ))}
+
+      <div style={{ display: "flex", gap: "10px", marginTop: "8px" }}>
+        <SBtn onClick={onBack} outline color="#64748b" bg="#fff">Cancel</SBtn>
+        <SBtn onClick={handleSave} disabled={saving}>{saving ? "Saving…" : isEdit ? "Update Template" : "Save Template"}</SBtn>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   Template List
+───────────────────────────────────────────────────────────────── */
+function TemplateList({ token, companies, fetchTemplates, onBuild, onEdit, onDelete, canBuild, companyId }) {
+  const [templates, setTemplates] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [search, setSearch] = useState("");
+  const [filterType, setFilterType] = useState("");
+  const [viewTemplate, setViewTemplate] = useState(null);
+  const [deletingId, setDeletingId] = useState(null);
+
+  const loadTemplates = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const params = companyId ? `companyId=${companyId}&includeQuestions=true` : "includeQuestions=true";
+      const data = await fetchTemplates(token, params);
+      setTemplates(Array.isArray(data) ? data : []);
+    } catch (err) {
+      setError(err.message || "Could not load templates");
+    } finally {
+      setLoading(false);
+    }
+  }, [token, fetchTemplates, companyId]);
+
+  useEffect(() => { loadTemplates(); }, [loadTemplates]);
+
+  const filtered = useMemo(() =>
+    templates.filter((t) => {
+      if (filterType && t.assetType !== filterType) return false;
+      if (search && !t.templateName?.toLowerCase().includes(search.toLowerCase())) return false;
+      return true;
+    }),
+    [templates, search, filterType]
+  );
+
+  const handleDelete = async (id, name) => {
+    if (!onDelete) return;
+    if (!window.confirm(`Delete checklist template "${name}"? This cannot be undone.`)) return;
+    setDeletingId(id);
+    try {
+      await onDelete(id);
+      setTemplates((prev) => prev.filter((t) => t.id !== id));
+    } catch (err) {
+      alert(err.message || "Could not delete template");
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  return (
+    <div>
+      {viewTemplate && <ViewModal template={viewTemplate} onClose={() => setViewTemplate(null)} />}
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "22px" }}>
+        <div>
+          <h1 style={{ fontSize: "26px", fontWeight: 800, color: "#0f172a", marginBottom: "4px", letterSpacing: "-0.5px" }}>Checklist Templates</h1>
+          <p style={{ color: "#64748b", fontSize: "14px", margin: 0 }}>Build reusable inspection checklists for assets, departments, and users.</p>
+        </div>
+        {canBuild && onBuild && (
+          <SBtn onClick={onBuild}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            New Template
+          </SBtn>
+        )}
+      </div>
+
+      {error && <Alert type="error">⚠ {error}</Alert>}
+
+      {/* Stats */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px", marginBottom: "24px" }}>
+        {[
+          { label: "Total Templates", value: templates.length, bg: "#eff6ff", col: "#2563eb" },
+          { label: "Active", value: templates.filter((t) => t.status === "active" || t.isActive).length, bg: "#f0fdf4", col: "#16a34a" },
+          { label: "Total Questions", value: templates.reduce((acc, t) => acc + (Array.isArray(t.questions) ? t.questions.length : 0), 0), bg: "#fffbeb", col: "#d97706" },
+        ].map((s) => (
+          <div key={s.label} style={{ background: "#fff", borderRadius: "12px", padding: "18px 22px", border: "1px solid #e2e8f0" }}>
+            <p style={{ color: "#64748b", fontSize: "13px", marginBottom: "8px", fontWeight: 500 }}>{s.label}</p>
+            <p style={{ fontSize: "30px", fontWeight: 800, color: "#0f172a", lineHeight: 1 }}>{s.value}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Table */}
+      <Card>
+        <CardHeader>All Templates</CardHeader>
+        <div style={{ padding: "10px 16px", borderBottom: "1px solid #e2e8f0", display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+          <Sel value={filterType} onChange={(e) => setFilterType(e.target.value)} style={{ width: "160px" }}>
+            <option value="">All Asset Types</option>
+            {ASSET_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+          </Sel>
+          <Inp value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name…" style={{ width: "220px" }} />
+          <SBtn onClick={loadTemplates} outline color="#64748b" bg="#fff" style={{ marginLeft: "auto" }}>Refresh</SBtn>
+        </div>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
+            <thead>
+              <tr>
+                {["#", "Template Name", "Asset Type", "Category", "Frequency", "Questions", "Status", "Actions"].map((h) => (
+                  <th key={h} style={{ padding: "12px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.05em", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {loading && (
+                <tr><td colSpan="8" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>Loading templates…</td></tr>
+              )}
+              {!loading && filtered.length === 0 && (
+                <tr><td colSpan="8" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>
+                  No checklist templates found.{canBuild && onBuild && (
+                    <> <button onClick={onBuild} style={{ color: "#2563eb", background: "none", border: "none", cursor: "pointer", fontWeight: 600, fontSize: "14px" }}>Create your first →</button></>
+                  )}
+                </td></tr>
+              )}
+              {!loading && filtered.map((t, i) => {
+                const qs = Array.isArray(t.questions) ? t.questions : [];
+                return (
+                  <tr key={t.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                    <td style={{ padding: "13px 16px", color: "#64748b" }}>{i + 1}</td>
+                    <td style={{ padding: "13px 16px" }}>
+                      <div style={{ fontWeight: 700, color: "#0f172a" }}>{t.templateName}</div>
+                      {t.description && <div style={{ color: "#94a3b8", fontSize: "12px", marginTop: "2px" }}>{t.description}</div>}
+                    </td>
+                    <td style={{ padding: "13px 16px" }}>
+                      <Badge bg="#eff6ff" col="#2563eb">{t.assetType}</Badge>
+                    </td>
+                    <td style={{ padding: "13px 16px", color: "#64748b", fontSize: "13px" }}>{t.category || "—"}</td>
+                    <td style={{ padding: "13px 16px", color: "#64748b", fontSize: "13px" }}>{t.frequency || "—"}</td>
+                    <td style={{ padding: "13px 16px", color: "#475569" }}>{qs.length}</td>
+                    <td style={{ padding: "13px 16px" }}>
+                      <Badge
+                        bg={(t.status === "active" || t.isActive) ? "#f0fdf4" : "#fef2f2"}
+                        col={(t.status === "active" || t.isActive) ? "#16a34a" : "#dc2626"}>
+                        {t.status || (t.isActive ? "active" : "inactive")}
+                      </Badge>
+                    </td>
+                    <td style={{ padding: "13px 16px" }}>
+                      <div style={{ display: "flex", gap: "5px", flexWrap: "wrap", alignItems: "center" }}>
+                        {/* View */}
+                        <button onClick={() => setViewTemplate(t)} title="View template"
+                          style={{ padding: "5px 9px", background: "#f0fdf4", color: "#16a34a", border: "1px solid #bbf7d0", borderRadius: "6px", fontSize: "12px", cursor: "pointer", fontWeight: 600 }}>
+                          👁 View
+                        </button>
+                        {/* Edit */}
+                        {canBuild && onEdit && (
+                          <button onClick={() => onEdit(t)} title="Edit template"
+                            style={{ padding: "5px 9px", background: "#fffbeb", color: "#d97706", border: "1px solid #fde68a", borderRadius: "6px", fontSize: "12px", cursor: "pointer", fontWeight: 600 }}>
+                            ✏ Edit
+                          </button>
+                        )}
+                        {/* Delete */}
+                        {canBuild && onDelete && (
+                          <button onClick={() => handleDelete(t.id, t.templateName)} title="Delete template" disabled={deletingId === t.id}
+                            style={{ padding: "5px 9px", background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca", borderRadius: "6px", fontSize: "12px", cursor: "pointer", fontWeight: 600, opacity: deletingId === t.id ? 0.6 : 1 }}>
+                            🗑 {deletingId === t.id ? "…" : "Del"}
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   ChecklistTemplateModule root
+───────────────────────────────────────────────────────────────── */
+export default function ChecklistTemplateModule({
+  token,
+  companies = [],
+  assets = [],
+  fetchTemplates,
+  createTemplate,
+  fetchTemplate,
+  updateTemplate,
+  deleteTemplate,
+  canBuild = true,
+  companyId,
+}) {
+  const [view, setView] = useState("list");
+  const [editTarget, setEditTarget] = useState(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const handleEdit = async (template) => {
+    if (fetchTemplate) {
+      try {
+        const full = await fetchTemplate(token, template.id);
+        setEditTarget(full);
+      } catch (_) {
+        setEditTarget(template);
+      }
+    } else {
+      setEditTarget(template);
+    }
+    setView("editor");
+  };
+
+  const handleDelete = async (id) => {
+    if (!deleteTemplate) return;
+    await deleteTemplate(token, id);
+  };
+
+  if (view === "builder" && canBuild) {
+    return (
+      <TemplateBuilder
+        token={token}
+        companies={companies}
+        assets={assets}
+        onBack={() => setView("list")}
+        onSaved={() => { setRefreshKey((k) => k + 1); setView("list"); }}
+        createTemplate={createTemplate}
+        updateTemplate={updateTemplate}
+      />
+    );
+  }
+
+  if (view === "editor" && canBuild && editTarget) {
+    return (
+      <TemplateBuilder
+        token={token}
+        companies={companies}
+        assets={assets}
+        onBack={() => { setEditTarget(null); setView("list"); }}
+        onSaved={() => { setEditTarget(null); setRefreshKey((k) => k + 1); setView("list"); }}
+        editTemplate={editTarget}
+        updateTemplate={updateTemplate}
+        createTemplate={createTemplate}
+      />
+    );
+  }
+
+  return (
+    <TemplateList
+      key={refreshKey}
+      token={token}
+      companies={companies}
+      fetchTemplates={fetchTemplates}
+      companyId={companyId}
+      onBuild={canBuild && createTemplate ? () => setView("builder") : null}
+      onEdit={canBuild && updateTemplate ? handleEdit : null}
+      onDelete={canBuild && deleteTemplate ? handleDelete : null}
+      canBuild={canBuild}
+    />
+  );
+}

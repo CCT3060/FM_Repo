@@ -117,7 +117,8 @@ const UserManagement = ({ clients, users, clientOptions, onAddUser, onEditUser, 
 
   const getClientName = (clientId) => {
     const client = clients.find((c) => String(c.id) === String(clientId));
-    return client ? client.clientName : "Unknown Client";
+    if (!client) return "Unknown Client";
+    return client.company?.trim() || client.clientName || "Unknown Client";
   };
 
   return (
@@ -187,41 +188,43 @@ const UserManagement = ({ clients, users, clientOptions, onAddUser, onEditUser, 
                 </td>
               </tr>
             ) : (
-              filteredUsers.map((u, index) => (
-                <tr key={u.id}>
-                  <td>
-                    <div className="user-cell">
-                      <div className={`avatar ${getAvatarColor(index)}`}>{getInitials(u.fullName)}</div>
-                      <span className="user-name-text">{u.fullName}</span>
-                    </div>
-                  </td>
-                  <td>
-                    <div className="icon-text"><Mail size={16} />{u.email}</div>
-                  </td>
-                  <td>
-                    <div className="icon-text">
-                      <Building2 size={16} />
-                      {u.clientName || getClientName(u.clientId)}
-                    </div>
-                  </td>
-                  <td>
-                    <span className="badge role">{u.role || "User"}</span>
-                  </td>
-                  <td>
-                    <span className={`badge status-${u.status.toLowerCase()}`}>{u.status}</span>
-                  </td>
-                  <td>
-                    <div className="actions">
-                      <button className="action-btn" title="Edit" onClick={() => openEdit(u)}>
-                        <Edit size={18} />
-                      </button>
-                      <button className="action-btn delete" title="Delete" onClick={() => handleDelete(u)}>
-                        <Trash2 size={18} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))
+              filteredUsers.map((u, index) => {
+                const rowKey = u.id ?? `${u.email || "user"}-${index}`;
+                return (
+                  <tr key={rowKey}>
+                    <td>
+                      <div className="user-cell">
+                        <div className={`avatar ${getAvatarColor(index)}`}>{getInitials(u.fullName)}</div>
+                        <span className="user-name-text">{u.fullName}</span>
+                      </div>
+                    </td>
+                    <td>
+                      <div className="icon-text"><Mail size={16} />{u.email}</div>
+                    </td>
+                    <td>
+                      <div className="icon-text">
+                        <Building2 size={16} />
+                        {u.clientName || getClientName(u.clientId)}
+                      </div>
+                    </td>
+                    <td>
+                      <span className="badge role">{u.role || "User"}</span>
+                    </td>
+                    <td>
+                      <span className={`badge status-${(u.status || "active").toLowerCase()}`}>{u.status || "Active"}</span>                    </td>
+                    <td>
+                      <div className="actions">
+                        <button className="action-btn" title="Edit" onClick={() => openEdit(u)}>
+                          <Edit size={18} />
+                        </button>
+                        <button className="action-btn delete" title="Delete" onClick={() => handleDelete(u)}>
+                          <Trash2 size={18} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>
