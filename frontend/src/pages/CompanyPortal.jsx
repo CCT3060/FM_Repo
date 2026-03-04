@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef, useCallback } from "react";
 import {
   login,
   getCompanies,
@@ -48,6 +48,7 @@ import ChecklistBuilder from "../components/ChecklistBuilder";
 import LogsheetModule from "../components/LogsheetModule.jsx";
 import ChecklistTemplateModule from "../components/ChecklistTemplateModule.jsx";
 import SubmissionsPanel from "../components/SubmissionsPanel.jsx";
+import WarningsPanel from "../components/WarningsPanel.jsx";
 
 const TOKEN_KEY = "company_portal_token";
 
@@ -224,6 +225,20 @@ const CompanyPortal = () => {
   };
   const [issuesReport, setIssuesReport] = useState({ issues: [], summary: null });
   const [issuesReportLoading, setIssuesReportLoading] = useState(false);
+  // Warnings nav badge
+  const [warnOpenCount, setWarnOpenCount] = useState(0);
+  // Notification bell + toasts
+  const [bellOpen,    setBellOpen]    = useState(false);
+  const [recentAlerts, setRecentAlerts] = useState([]); // [{id,severity,assetName,description,createdAt}]
+  const [toasts,      setToasts]      = useState([]);   // [{id,text,severity}]
+  const prevWarnCount = useRef(0);
+  const toastId = useRef(0);
+
+  const pushToast = useCallback((text, severity = "high") => {
+    const id = ++toastId.current;
+    setToasts((t) => [...t, { id, text, severity }]);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 6000);
+  }, []);
   const [companyUsers, setCompanyUsers] = useState([]);
   const [companyUsersLoading, setCompanyUsersLoading] = useState(false);
   const [companyUsersError, setCompanyUsersError] = useState(null);
@@ -474,14 +489,15 @@ const CompanyPortal = () => {
   useEffect(() => {
     if (token && (nav === "assets" || nav === "departments" || nav === "companies")) {
       const companyId = selectedCompanyId || companies[0]?.id;
-      if (nav === "companies") {
-        // Load all departments (no companyId filter) for dept count in table
-        if (token) {
-          setDepartmentLoading(true);
-          getDepartments(token, "").then((list) => {
-            setDepartments(list);
-          }).catch(() => {}).finally(() => setDepartmentLoading(false));
-        }
+      if (nav === "companies" || nav === "departments") {
+        // Load ALL departments so filteredDepartments memo can filter client-side
+        setDepartmentLoading(true);
+        getDepartments(token, "").then((list) => {
+          setDepartments(list);
+          if (companyId) {
+            setDepartmentForm((prev) => ({ ...prev, companyId }));
+          }
+        }).catch(() => {}).finally(() => setDepartmentLoading(false));
       } else if (companyId) {
         loadDepartments(token, companyId).catch(() => {});
         setDepartmentForm((prev) => ({ ...prev, companyId }));
@@ -490,7 +506,39 @@ const CompanyPortal = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, nav, selectedCompanyId, companies]);
 
-  // Load recent logsheet entries whenever logged in
+  // ── Poll for new flags every 30 s — show toast when count increases ─────────
+  useEffect(() => {
+    if (!token) return;
+    const poll = async () => {
+      const cid = selectedCompanyId || companies[0]?.id;
+      if (!cid) return;
+      try {
+        const res = await fetch(
+          `${import.meta.env.VITE_API_URL || "http://localhost:4000"}/api/flags/admin/list?companyId=${cid}&status=open&limit=5`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (!res.ok) return;
+        const data = await res.json();
+        const newCount = data?.total ?? 0;
+        const prev    = prevWarnCount.current;
+        prevWarnCount.current = newCount;
+        setWarnOpenCount(newCount);
+        if (data?.data?.length) setRecentAlerts(data.data.slice(0, 5));
+        if (newCount > prev) {
+          const diff = newCount - prev;
+          const newest = data?.data?.[0];
+          const msg = newest
+            ? `${diff} new warning${diff > 1 ? "s" : ""}: ${newest.severity?.toUpperCase()} – ${newest.assetName || "unknown asset"}`
+            : `${diff} new warning${diff > 1 ? "s" : ""} raised`;
+          pushToast(msg, newest?.severity || "high");
+        }
+      } catch (_) { /* silent */ }
+    };
+    const id = setInterval(poll, 30000);
+    return () => clearInterval(id);
+  }, [token, selectedCompanyId, companies, pushToast]);
+
+  // ── Initial data load on login ────────────────────────────────────────────
   useEffect(() => {
     if (!token) return;
     setRecentEntriesLoading(true);
@@ -508,6 +556,20 @@ const CompanyPortal = () => {
       .then((data) => setIssuesReport(data))
       .catch(() => {})
       .finally(() => setIssuesReportLoading(false));
+    // Pre-load open flag count for nav badge — use admin endpoint
+    const cid = selectedCompanyId || companies[0]?.id;
+    if (cid) {
+      fetch(`${import.meta.env.VITE_API_URL || "http://localhost:4000"}/api/flags/admin/list?companyId=${cid}&status=open&limit=1`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+        .then((r) => r.json())
+        .then((res) => {
+          const count = res?.total ?? 0;
+          prevWarnCount.current = count;
+          setWarnOpenCount(count);
+        })
+        .catch(() => {});
+    }
   }, [token]);
 
   const handleLogin = async (e) => {
@@ -1257,9 +1319,62 @@ const CompanyPortal = () => {
       <aside className="client-side-panel">
         <div className="client-side-header">
           <div className="client-avatar">CP</div>
-          <div>
+          <div style={{ flex: 1 }}>
             <div className="client-side-title">Client Portal</div>
             <div className="client-side-sub">Manage companies</div>
+          </div>
+          {/* Notification bell */}
+          <div style={{ position: "relative", marginLeft: "4px" }}>
+            <button
+              onClick={() => setBellOpen((o) => !o)}
+              style={{ background: "none", border: "none", cursor: "pointer", padding: "4px", borderRadius: "6px", position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}
+              title="Warnings & Alerts"
+            >
+              <span style={{ fontSize: "18px" }}>🔔</span>
+              {warnOpenCount > 0 && (
+                <span style={{ position: "absolute", top: "-2px", right: "-2px", background: "#dc2626", color: "#fff", borderRadius: "50%", fontSize: "9px", fontWeight: 800, width: "16px", height: "16px", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>
+                  {warnOpenCount > 99 ? "99+" : warnOpenCount}
+                </span>
+              )}
+            </button>
+            {/* Bell dropdown */}
+            {bellOpen && (
+              <div style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, width: "300px", background: "#fff", border: "1px solid #e2e8f0", borderRadius: "10px", boxShadow: "0 10px 30px rgba(0,0,0,0.15)", zIndex: 9999, overflow: "hidden" }}>
+                <div style={{ padding: "12px 16px", borderBottom: "1px solid #f1f5f9", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <span style={{ fontWeight: 700, fontSize: "13px", color: "#0f172a" }}>⚠️ Active Warnings</span>
+                  <button onClick={() => { setBellOpen(false); setNav("warnings"); setShowAddForm(false); }}
+                    style={{ background: "none", border: "none", color: "#2563eb", fontSize: "12px", fontWeight: 700, cursor: "pointer" }}>View all →</button>
+                </div>
+                {recentAlerts.length === 0 && (
+                  <div style={{ padding: "20px", textAlign: "center", color: "#94a3b8", fontSize: "13px" }}>No open warnings</div>
+                )}
+                {recentAlerts.map((a) => {
+                  const sevColor = { critical: "#dc2626", high: "#ea580c", medium: "#d97706", low: "#16a34a" }[a.severity] || "#475569";
+                  const sevBg    = { critical: "#fee2e2", high: "#fff7ed",  medium: "#fefce8",  low: "#f0fdf4"  }[a.severity] || "#f8fafc";
+                  return (
+                    <div key={a.id} style={{ padding: "10px 16px", borderBottom: "1px solid #f8fafc", cursor: "pointer" }}
+                      onClick={() => { setBellOpen(false); setNav("warnings"); setShowAddForm(false); }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = "#f8fafc")}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = "")}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <span style={{ background: sevBg, color: sevColor, fontSize: "10px", fontWeight: 800, padding: "2px 7px", borderRadius: "10px", textTransform: "uppercase" }}>{a.severity}</span>
+                        <span style={{ fontWeight: 600, fontSize: "12px", color: "#0f172a", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.assetName || "Unknown asset"}</span>
+                      </div>
+                      <div style={{ fontSize: "11px", color: "#64748b", marginTop: "3px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.description || "No description"}</div>
+                      <div style={{ fontSize: "10px", color: "#94a3b8", marginTop: "2px" }}>{a.createdAt ? new Date(a.createdAt).toLocaleString() : ""}</div>
+                    </div>
+                  );
+                })}
+                {warnOpenCount > 5 && (
+                  <div style={{ padding: "10px 16px", textAlign: "center", borderTop: "1px solid #f1f5f9" }}>
+                    <button onClick={() => { setBellOpen(false); setNav("warnings"); setShowAddForm(false); }}
+                      style={{ background: "none", border: "none", color: "#2563eb", fontWeight: 700, fontSize: "12px", cursor: "pointer" }}>
+                      +{warnOpenCount - recentAlerts.length} more — View all
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
         <nav className="client-side-nav">
@@ -1269,6 +1384,18 @@ const CompanyPortal = () => {
           <button className={nav === "assets" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("assets"); setShowAddForm(false); }}>Assets</button>
           <button className={nav === "checklists" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("checklists"); setShowAddForm(false); }}>Checklists</button>
           <button className={nav === "logsheets" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("logsheets"); setShowAddForm(false); }}>Logsheets</button>
+          <button
+            className={nav === "warnings" ? "client-side-item active" : "client-side-item"}
+            onClick={() => { setNav("warnings"); setShowAddForm(false); }}
+            style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "6px" }}
+          >
+            <span>Warnings</span>
+            {warnOpenCount > 0 && (
+              <span style={{ background: nav === "warnings" ? "#fff" : "#dc2626", color: nav === "warnings" ? "#dc2626" : "#fff", borderRadius: "20px", fontSize: "10px", fontWeight: 800, padding: "1px 7px", minWidth: "18px", textAlign: "center" }}>
+                {warnOpenCount}
+              </span>
+            )}
+          </button>
           <button className="client-side-item" disabled>Contacts</button>
           <button className="client-side-item" disabled>Documents</button>
         </nav>
@@ -2534,6 +2661,34 @@ const CompanyPortal = () => {
             )}
           </div>
         )}
+
+        {nav === "warnings" && (
+          <WarningsPanel
+            token={token}
+            companyId={selectedCompanyId || companies[0]?.id || null}
+            companies={companies.map((c) => ({ id: c.id, companyName: c.companyName || c.company || "(unnamed)" }))}
+          />
+        )}
+
+        {/* ── Toast notifications (fixed overlay on every page) ── */}
+        <div style={{ position: "fixed", bottom: "24px", right: "24px", zIndex: 99999, display: "flex", flexDirection: "column", gap: "10px", pointerEvents: "none" }}>
+          {toasts.map((t) => {
+            const bg  = { critical: "#fee2e2", high: "#fff7ed", medium: "#fefce8", low: "#f0fdf4" }[t.severity] || "#fff";
+            const col = { critical: "#991b1b", high: "#9a3412", medium: "#854d0e", low: "#166534" }[t.severity] || "#0f172a";
+            const bdr = { critical: "#fca5a5", high: "#fdba74",  medium: "#fde68a", low: "#86efac" }[t.severity] || "#e2e8f0";
+            return (
+              <div key={t.id} style={{ background: bg, border: `1px solid ${bdr}`, color: col, borderRadius: "10px", padding: "12px 16px", boxShadow: "0 4px 20px rgba(0,0,0,0.12)", fontSize: "13px", fontWeight: 600, maxWidth: "340px", pointerEvents: "auto", display: "flex", alignItems: "flex-start", gap: "8px", animation: "slideInRight 0.3s ease" }}>
+                <span style={{ fontSize: "16px", flexShrink: 0 }}>⚠️</span>
+                <div>
+                  <div style={{ fontWeight: 800, marginBottom: "2px", fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.04em" }}>New Warning</div>
+                  <div>{t.text}</div>
+                  <button onClick={() => { setNav("warnings"); setShowAddForm(false); setToasts((ts) => ts.filter((x) => x.id !== t.id)); }}
+                    style={{ marginTop: "6px", background: "none", border: "none", color: col, fontWeight: 700, fontSize: "11px", cursor: "pointer", padding: 0, textDecoration: "underline" }}>View warnings →</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
 
         {nav === "companies" && showAddForm && (
           <div style={{ background: "#f1f5f9", minHeight: "100%", padding: "0 0 32px 0" }}>

@@ -23,9 +23,173 @@ import { body, param, query } from "express-validator";
 import pool from "../db.js";
 import { validate } from "../validators.js";
 import { requireCompanyAuth } from "../middleware/companyAuth.js";
+import { requireAuth } from "../middleware/auth.js";
 import { createFlag, updateAssetHealth } from "../utils/flagsHelper.js";
 
 const router = Router();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADMIN PORTAL ROUTES  (use main-admin JWT, NOT company JWT)
+// Must be declared BEFORE router.use(requireCompanyAuth) to avoid that guard
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Shared fields (same as below but available before the const re-declaration)
+const ADMIN_FLAG_FIELDS = `
+  f.id,
+  f.company_id       AS "companyId",
+  f.asset_id         AS "assetId",
+  a.asset_name       AS "assetName",
+  a.building,
+  a.floor,
+  f.source,
+  f.checklist_id     AS "checklistId",
+  f.submission_id    AS "submissionId",
+  f.question_id      AS "questionId",
+  f.severity,
+  f.status,
+  f.description,
+  f.work_order_id    AS "workOrderId",
+  f.escalated,
+  f.escalated_at     AS "escalatedAt",
+  f.resolved_at      AS "resolvedAt",
+  f.created_at       AS "createdAt",
+  f.updated_at       AS "updatedAt",
+  rcu.full_name      AS "raisedByName"
+`;
+
+// GET /flags/admin/list?companyId=X&status=open&severity=critical&limit=50&offset=0
+router.get(
+  "/admin/list",
+  requireAuth,
+  validate([
+    query("companyId").isInt({ min: 1 }).withMessage("companyId required"),
+    query("status").optional().isString(),
+    query("severity").optional().isString(),
+    query("source").optional().isString(),
+    query("limit").optional().isInt({ min: 1, max: 500 }),
+    query("offset").optional().isInt({ min: 0 }),
+  ]),
+  async (req, res, next) => {
+    try {
+      const { companyId, status, severity, source, limit = 100, offset = 0 } = req.query;
+      const conditions = ["f.company_id = ?"];
+      const params     = [Number(companyId)];
+      if (status)   { conditions.push("f.status = ?");   params.push(status); }
+      if (severity) { conditions.push("f.severity = ?"); params.push(severity); }
+      if (source)   { conditions.push("f.source = ?");   params.push(source); }
+
+      const where = conditions.join(" AND ");
+      const [flags] = await pool.query(
+        `SELECT ${ADMIN_FLAG_FIELDS}
+         FROM flags f
+         LEFT JOIN assets        a   ON a.id = f.asset_id
+         LEFT JOIN company_users rcu ON rcu.id = f.raised_by
+         WHERE ${where}
+         ORDER BY f.severity DESC, f.created_at DESC
+         LIMIT ? OFFSET ?`,
+        [...params, Number(limit), Number(offset)]
+      );
+      const [[countRow]] = await pool.query(
+        `SELECT COUNT(*) AS total FROM flags f WHERE ${where}`, params
+      );
+      res.json({ total: Number(countRow?.total ?? 0), limit: Number(limit), offset: Number(offset), data: flags });
+    } catch (err) { next(err); }
+  }
+);
+
+// GET /flags/admin/summary?companyId=X
+router.get(
+  "/admin/summary",
+  requireAuth,
+  validate([query("companyId").isInt({ min: 1 }).withMessage("companyId required")]),
+  async (req, res, next) => {
+    try {
+      const companyId = Number(req.query.companyId);
+      const [bySeverity] = await pool.query(
+        `SELECT severity, COUNT(*) AS cnt FROM flags
+         WHERE company_id = ? AND status IN ('open','in_progress') GROUP BY severity`,
+        [companyId]
+      );
+      const [[totals]] = await pool.query(
+        `SELECT
+           COUNT(*)                                                        AS total,
+           COUNT(*) FILTER (WHERE status IN ('open','in_progress'))       AS open,
+           COUNT(*) FILTER (WHERE severity='critical'
+                              AND status IN ('open','in_progress'))       AS critical,
+           COUNT(*) FILTER (WHERE escalated=TRUE
+                              AND status IN ('open','in_progress'))       AS escalated
+         FROM flags WHERE company_id = ?`,
+        [companyId]
+      );
+      res.json({
+        totals: {
+          total:     Number(totals?.total     ?? 0),
+          open:      Number(totals?.open      ?? 0),
+          critical:  Number(totals?.critical  ?? 0),
+          escalated: Number(totals?.escalated ?? 0),
+        },
+        bySeverity: bySeverity.map((r) => ({ severity: r.severity, count: Number(r.cnt) })),
+      });
+    } catch (err) { next(err); }
+  }
+);
+
+// PUT /flags/admin/:id/status?companyId=X
+router.put(
+  "/admin/:id/status",
+  requireAuth,
+  validate([
+    param("id").isInt({ min: 1 }),
+    query("companyId").isInt({ min: 1 }),
+    body("status").isIn(["open","in_progress","resolved","closed","ignored"]),
+    body("remark").optional().isString().trim(),
+  ]),
+  async (req, res, next) => {
+    const conn = await pool.getConnection();
+    try {
+      const { id } = req.params;
+      const companyId = Number(req.query.companyId);
+      const { status, remark } = req.body;
+
+      await conn.beginTransaction();
+      const [[existing]] = await conn.query(
+        "SELECT id, status, asset_id AS \"assetId\" FROM flags WHERE id = ? AND company_id = ?",
+        [Number(id), companyId]
+      );
+      if (!existing) {
+        await conn.rollback();
+        return res.status(404).json({ message: "Flag not found" });
+      }
+      const setClauses = ["status = ?", "updated_at = NOW()"];
+      const setParams  = [status];
+      if (status === "resolved" || status === "closed") setClauses.push("resolved_at = NOW()");
+
+      await conn.query(
+        `UPDATE flags SET ${setClauses.join(", ")} WHERE id = ?`,
+        [...setParams, Number(id)]
+      );
+      if (status !== existing.status) {
+        await conn.query(
+          `INSERT INTO flag_history (flag_id, old_status, new_status, updated_by, remark)
+           VALUES (?, ?, ?, NULL, ?)`,
+          [Number(id), existing.status, status, remark || "Updated by portal admin"]
+        ).catch(() => {}); // flag_history may not have nullable updated_by — ignore gracefully
+      }
+      await updateAssetHealth(existing.assetId, conn).catch(() => {});
+      await conn.commit();
+      res.json({ success: true, flagId: Number(id), status });
+    } catch (err) {
+      await conn.rollback().catch(() => {});
+      next(err);
+    } finally {
+      conn.release();
+    }
+  }
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// END ADMIN ROUTES  — company-user routes below
+// ─────────────────────────────────────────────────────────────────────────────
 router.use(requireCompanyAuth);
 
 const cid = (req) => req.companyUser.companyId;
@@ -169,7 +333,7 @@ router.get("/summary", async (req, res, next) => {
     );
 
     const [bySupervisor] = await pool.query(
-      `SELECT scu.full_name AS supervisorName, COUNT(*) AS cnt
+      `SELECT scu.full_name AS "supervisorName", COUNT(*) AS cnt
        FROM flags f
        LEFT JOIN company_users scu ON scu.id = f.supervisor_id
        WHERE ${where} AND f.status IN ('open', 'in_progress')
@@ -180,7 +344,7 @@ router.get("/summary", async (req, res, next) => {
     );
 
     const [byAssetType] = await pool.query(
-      `SELECT a.asset_type AS assetType, COUNT(*) AS cnt
+      `SELECT a.asset_type AS "assetType", COUNT(*) AS cnt
        FROM flags f
        JOIN assets a ON a.id = f.asset_id
        WHERE ${where} AND f.status IN ('open', 'in_progress')
@@ -499,9 +663,9 @@ router.get("/dashboard", async (req, res, next) => {
       ),
       // Repeat violations – questions flagged 3+ times in 30 days
       pool.query(
-        `SELECT question_id AS questionId, COUNT(*) AS cnt,
+        `SELECT question_id AS "questionId", COUNT(*) AS cnt,
                 MIN(description) AS description,
-                a.asset_name AS assetName
+                a.asset_name AS "assetName"
          FROM flags f
          LEFT JOIN assets a ON a.id = f.asset_id
          WHERE f.company_id = ? AND f.question_id IS NOT NULL
@@ -514,20 +678,20 @@ router.get("/dashboard", async (req, res, next) => {
       ),
       // Asset with most flags (last 30 days)
       pool.query(
-        `SELECT f.asset_id AS assetId, a.asset_name AS assetName,
-                a.health_status AS healthStatus, a.risk_level AS riskLevel,
-                COUNT(*) AS flagCount
+        `SELECT f.asset_id AS "assetId", a.asset_name AS "assetName",
+                a.health_status AS "healthStatus", a.risk_level AS "riskLevel",
+                COUNT(*) AS "flagCount"
          FROM flags f
          JOIN assets a ON a.id = f.asset_id
          WHERE f.company_id = ? AND f.created_at >= NOW() - INTERVAL '30 days'
          GROUP BY f.asset_id, a.asset_name, a.health_status, a.risk_level
-         ORDER BY flagCount DESC
+         ORDER BY "flagCount" DESC
          LIMIT 5`,
         [companyId]
       ),
       // MTTR – mean hours to resolve (resolved flags)
       pool.query(
-        `SELECT ROUND(AVG(EXTRACT(EPOCH FROM (resolved_at - created_at)) / 3600), 1) AS mttrHours
+        `SELECT ROUND(AVG(EXTRACT(EPOCH FROM (resolved_at - created_at)) / 3600), 1) AS "mttrHours"
          FROM flags
          WHERE company_id = ? AND status = 'resolved' AND resolved_at IS NOT NULL
            AND created_at >= NOW() - INTERVAL '30 days'`,
@@ -535,7 +699,7 @@ router.get("/dashboard", async (req, res, next) => {
       ),
       // Asset risk levels
       pool.query(
-        `SELECT risk_level AS riskLevel, COUNT(*) AS cnt
+        `SELECT risk_level AS "riskLevel", COUNT(*) AS cnt
          FROM assets a
          JOIN companies c ON c.id = a.company_id
          WHERE a.company_id = ?
@@ -545,11 +709,11 @@ router.get("/dashboard", async (req, res, next) => {
       // Most recent 10 open flags
       pool.query(
         `SELECT f.id, f.severity, f.status, f.description,
-                f.entered_value AS enteredValue, f.expected_rule AS expectedRule,
-                f.repeat_count AS repeatCount,
-                f.created_at AS createdAt,
-                a.asset_name AS assetName,
-                rcu.full_name AS raisedByName
+                f.entered_value AS "enteredValue", f.expected_rule AS "expectedRule",
+                f.repeat_count AS "repeatCount",
+                f.created_at AS "createdAt",
+                a.asset_name AS "assetName",
+                rcu.full_name AS "raisedByName"
          FROM flags f
          LEFT JOIN assets a ON a.id = f.asset_id
          LEFT JOIN company_users rcu ON rcu.id = f.raised_by

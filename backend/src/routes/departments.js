@@ -29,8 +29,8 @@ router.get(
       }
 
       const [rows] = await pool.query(
-        `SELECT d.id, d.company_id AS companyId, c.company_name AS companyName,
-                d.name, d.description, d.created_at AS createdAt
+        `SELECT d.id, d.company_id AS "companyId", c.company_name AS "companyName",
+                d.name, d.description, d.created_at AS "createdAt"
          FROM departments d
          JOIN companies c ON d.company_id = c.id
          ${where}

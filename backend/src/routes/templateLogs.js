@@ -15,7 +15,7 @@ const headerFields = ["siteName", "location", "capacity", "assetId", "monthYear"
 
 const ensureTemplateOwned = async (templateId, userId) => {
   const [rows] = await pool.query(
-    `SELECT lt.id, lt.company_id AS companyId
+    `SELECT lt.id, lt.company_id AS "companyId"
      FROM logsheet_templates lt
      JOIN companies c ON lt.company_id = c.id
      WHERE lt.id = ? AND c.user_id = ?`,
@@ -26,7 +26,7 @@ const ensureTemplateOwned = async (templateId, userId) => {
 
 const ensureAssetOwned = async (assetId, userId) => {
   const [rows] = await pool.query(
-    `SELECT a.id, a.company_id AS companyId
+    `SELECT a.id, a.company_id AS "companyId"
      FROM assets a
      JOIN companies c ON a.company_id = c.id
      WHERE a.id = ? AND c.user_id = ?`,
@@ -228,10 +228,10 @@ router.get(
       if (assetType) { where += " AND lt.asset_type = ?"; params.push(assetType); }
 
       const [templates] = await pool.query(
-        `SELECT lt.id, lt.company_id AS companyId, lt.template_name AS templateName, lt.asset_type AS assetType,
-                lt.asset_model AS assetModel, lt.frequency, lt.asset_id AS assetId,
-                a.asset_name AS assetName,
-                lt.header_config AS headerConfig, lt.description, lt.is_active AS isActive, lt.created_at AS createdAt
+        `SELECT lt.id, lt.company_id AS "companyId", lt.template_name AS "templateName", lt.asset_type AS "assetType",
+                lt.asset_model AS "assetModel", lt.frequency, lt.asset_id AS "assetId",
+                a.asset_name AS "assetName",
+                lt.header_config AS "headerConfig", lt.description, lt.is_active AS "isActive", lt.created_at AS "createdAt"
          FROM logsheet_templates lt
          JOIN companies c ON lt.company_id = c.id
          LEFT JOIN assets a ON a.id = lt.asset_id
@@ -247,7 +247,7 @@ router.get(
 
       const templateIds = templates.map((t) => t.id);
       const [sections] = await pool.query(
-        `SELECT id, template_id AS templateId, section_name AS sectionName, order_index AS orderIndex
+        `SELECT id, template_id AS "templateId", section_name AS "sectionName", order_index AS "orderIndex"
          FROM logsheet_sections
          WHERE template_id IN (${templateIds.map(() => "?").join(",")})
          ORDER BY order_index ASC, id ASC`,
@@ -258,8 +258,8 @@ router.get(
       let questions = [];
       if (sectionIds.length) {
         const [rows] = await pool.query(
-            `SELECT id, section_id AS sectionId, question_text AS questionText, specification, answer_type AS answerType,
-              rule_json AS ruleJson, priority, is_mandatory AS isMandatory, order_index AS orderIndex
+            `SELECT id, section_id AS "sectionId", question_text AS "questionText", specification, answer_type AS "answerType",
+              rule_json AS "ruleJson", priority, is_mandatory AS "isMandatory", order_index AS "orderIndex"
            FROM logsheet_questions
            WHERE section_id IN (${sectionIds.map(() => "?").join(",")})
            ORDER BY order_index ASC, id ASC`,
@@ -334,8 +334,8 @@ router.get(
       if (!asset) return res.status(404).json({ message: "Asset not found" });
 
       const [templates] = await pool.query(
-        `SELECT lta.template_id AS templateId, lt.template_name AS templateName, lt.asset_type AS assetType,
-                lt.is_active AS isActive, lt.header_config AS headerConfig
+        `SELECT lta.template_id AS "templateId", lt.template_name AS "templateName", lt.asset_type AS "assetType",
+                lt.is_active AS "isActive", lt.header_config AS "headerConfig"
          FROM logsheet_template_assignments lta
          JOIN logsheet_templates lt ON lta.template_id = lt.id
          WHERE lta.asset_id = ?
@@ -347,7 +347,7 @@ router.get(
 
       const templateIds = templates.map((t) => t.templateId);
       const [sections] = await pool.query(
-        `SELECT id, template_id AS templateId, section_name AS sectionName, order_index AS orderIndex
+        `SELECT id, template_id AS "templateId", section_name AS "sectionName", order_index AS "orderIndex"
          FROM logsheet_sections
          WHERE template_id IN (${templateIds.map(() => "?").join(",")})
          ORDER BY order_index ASC, id ASC`,
@@ -357,8 +357,8 @@ router.get(
       let questions = [];
       if (sectionIds.length) {
         const [rows] = await pool.query(
-          `SELECT id, section_id AS sectionId, question_text AS questionText, specification, answer_type AS answerType,
-                  rule_json AS ruleJson, is_mandatory AS isMandatory, order_index AS orderIndex
+          `SELECT id, section_id AS "sectionId", question_text AS "questionText", specification, answer_type AS "answerType",
+                  rule_json AS "ruleJson", is_mandatory AS "isMandatory", order_index AS "orderIndex"
            FROM logsheet_questions
            WHERE section_id IN (${sectionIds.map(() => "?").join(",")})
            ORDER BY order_index ASC, id ASC`,
@@ -467,7 +467,7 @@ router.get("/entries/:id", async (req, res, next) => {
 router.get("/entries/issues", async (req, res, next) => {
   const { from, to, assetId, templateId: filterTemplateId, limit = 200, offset = 0 } = req.query;
   try {
-    let where = "c.user_id = ? AND la.is_issue = TRUE";
+    let where = "c.user_id = ? AND la.is_issue = 1";
     const params = [req.user.id];
     if (assetId) { where += " AND a.id = ?"; params.push(assetId); }
     if (filterTemplateId) { where += " AND lt.id = ?"; params.push(filterTemplateId); }
@@ -477,15 +477,15 @@ router.get("/entries/issues", async (req, res, next) => {
 
     const [rows] = await pool.query(
       `SELECT la.id, la.date_column AS day, la.answer_value AS value,
-              la.is_issue AS isIssue, la.issue_reason AS issueReason,
-              lq.question_text AS questionText, lq.specification, lq.answer_type AS answerType, lq.priority,
-              ls.section_name AS sectionName,
-              le.id AS entryId, le.month, le.year, le.shift,
-              le.submitted_at AS submittedAt,
-              lt.id AS templateId, lt.template_name AS templateName, lt.frequency,
-              a.id AS assetId, a.asset_name AS assetName,
-              c.id AS companyId, c.company_name AS companyName,
-              cu.full_name AS submittedBy
+              la.is_issue AS "isIssue", la.issue_reason AS "issueReason",
+              lq.question_text AS "questionText", lq.specification, lq.answer_type AS "answerType", lq.priority,
+              ls.section_name AS "sectionName",
+              le.id AS "entryId", le.month, le.year, le.shift,
+              le.submitted_at AS "submittedAt",
+              lt.id AS "templateId", lt.template_name AS "templateName", lt.frequency,
+              a.id AS "assetId", a.asset_name AS "assetName",
+              c.id AS "companyId", c.company_name AS "companyName",
+              cu.full_name AS "submittedBy"
        FROM logsheet_answers la
        JOIN logsheet_entries le ON le.id = la.entry_id
        JOIN logsheet_questions lq ON lq.id = la.question_id
@@ -513,7 +513,7 @@ router.get("/entries/issues", async (req, res, next) => {
        JOIN logsheet_sections ls ON ls.id = lq.section_id
        JOIN logsheet_templates lt ON lt.id = le.template_id
        JOIN companies c ON c.id = lt.company_id
-       WHERE c.user_id = ? AND la.is_issue = TRUE`,
+       WHERE c.user_id = ? AND la.is_issue = 1`,
       [req.user.id]
     );
 
@@ -551,7 +551,7 @@ router.post(
       }
 
       const [questionRows] = await pool.query(
-        `SELECT q.id, q.answer_type, q.rule_json, q.priority, q.question_text AS questionText
+        `SELECT q.id, q.answer_type, q.rule_json, q.priority, q.question_text AS "questionText"
          FROM logsheet_questions q
          JOIN logsheet_sections s ON q.section_id = s.id
          WHERE s.template_id = ?`,
@@ -623,7 +623,7 @@ router.post(
 
         // ── Advanced Flag Intelligence: fire orchestrator asynchronously ──────
         const [[assetCompany]] = await pool.query(
-          `SELECT company_id AS companyId FROM assets WHERE id = ? LIMIT 1`,
+          `SELECT company_id AS "companyId" FROM assets WHERE id = ? LIMIT 1`,
           [assetId]
         ).catch(() => [[null]]);
         if (assetCompany?.companyId) {
@@ -678,9 +678,9 @@ router.get(
       if (year) { where += " AND le.year = ?"; params.push(year); }
 
       const [entries] = await pool.query(
-        `SELECT le.id, le.asset_id AS assetId, le.template_id AS templateId, le.submitted_by AS submittedBy,
-                le.entry_date AS entryDate, le.month, le.year, le.shift, le.header_values AS headerValues,
-                le.submitted_at AS submittedAt
+        `SELECT le.id, le.asset_id AS "assetId", le.template_id AS "templateId", le.submitted_by AS "submittedBy",
+                le.entry_date AS "entryDate", le.month, le.year, le.shift, le.header_values AS "headerValues",
+                le.submitted_at AS "submittedAt"
          FROM logsheet_entries le
          ${where}
          ORDER BY le.submitted_at DESC
@@ -692,8 +692,8 @@ router.get(
 
       const entryIds = entries.map((e) => e.id);
       const [answers] = await pool.query(
-        `SELECT id, entry_id AS entryId, question_id AS questionId, date_column AS dateColumn, answer_value AS answerValue,
-                is_issue AS isIssue, issue_reason AS issueReason
+        `SELECT id, entry_id AS "entryId", question_id AS "questionId", date_column AS "dateColumn", answer_value AS "answerValue",
+                is_issue AS "isIssue", issue_reason AS "issueReason"
          FROM logsheet_answers
          WHERE entry_id IN (${entryIds.map(() => "?").join(",")})
          ORDER BY entry_id ASC, question_id ASC, date_column ASC`,
@@ -724,11 +724,11 @@ router.get(
       if (!template) return res.status(404).json({ message: "Template not found" });
 
       const [rows] = await pool.query(
-        `SELECT lt.id, lt.company_id AS companyId, lt.template_name AS templateName, lt.asset_type AS assetType,
-                lt.asset_model AS assetModel, lt.frequency, lt.asset_id AS assetId,
-                a.asset_name AS assetName,
-                lt.header_config AS headerConfig, lt.description,
-                lt.is_active AS isActive, lt.created_at AS createdAt
+        `SELECT lt.id, lt.company_id AS "companyId", lt.template_name AS "templateName", lt.asset_type AS "assetType",
+                lt.asset_model AS "assetModel", lt.frequency, lt.asset_id AS "assetId",
+                a.asset_name AS "assetName",
+                lt.header_config AS "headerConfig", lt.description,
+                lt.is_active AS "isActive", lt.created_at AS "createdAt"
          FROM logsheet_templates lt
          LEFT JOIN assets a ON a.id = lt.asset_id
          WHERE lt.id = ?`,
@@ -738,7 +738,7 @@ router.get(
       if (!tmpl) return res.status(404).json({ message: "Template not found" });
 
       const [sections] = await pool.query(
-        `SELECT id, section_name AS sectionName, order_index AS orderIndex
+        `SELECT id, section_name AS "sectionName", order_index AS "orderIndex"
          FROM logsheet_sections WHERE template_id = ? ORDER BY order_index ASC, id ASC`,
         [templateId]
       );
@@ -747,9 +747,9 @@ router.get(
       let questions = [];
       if (sectionIds.length) {
         const [qRows] = await pool.query(
-          `SELECT id, section_id AS sectionId, question_text AS questionText, specification,
-                  answer_type AS answerType, rule_json AS ruleJson, priority, is_mandatory AS isMandatory,
-                  order_index AS orderIndex
+          `SELECT id, section_id AS "sectionId", question_text AS "questionText", specification,
+                  answer_type AS "answerType", rule_json AS "ruleJson", priority, is_mandatory AS "isMandatory",
+                  order_index AS "orderIndex"
            FROM logsheet_questions
            WHERE section_id IN (${sectionIds.map(() => "?").join(",")})
            ORDER BY order_index ASC, id ASC`,
@@ -909,9 +909,9 @@ router.get(
 
       // Full template with sections + questions
       const [tmplRows] = await pool.query(
-        `SELECT lt.id, lt.company_id AS companyId, lt.template_name AS templateName,
-                lt.asset_type AS assetType, lt.asset_model AS assetModel, lt.frequency,
-                lt.asset_id AS defaultAssetId, lt.header_config AS headerConfig, lt.description
+        `SELECT lt.id, lt.company_id AS "companyId", lt.template_name AS "templateName",
+                lt.asset_type AS "assetType", lt.asset_model AS "assetModel", lt.frequency,
+                lt.asset_id AS "defaultAssetId", lt.header_config AS "headerConfig", lt.description
          FROM logsheet_templates lt WHERE lt.id = ?`,
         [templateId]
       );
@@ -920,7 +920,7 @@ router.get(
       tmpl.headerConfig = safeParse(tmpl.headerConfig) ?? {};
 
       const [sections] = await pool.query(
-        `SELECT id, section_name AS sectionName, order_index AS orderIndex
+        `SELECT id, section_name AS "sectionName", order_index AS "orderIndex"
          FROM logsheet_sections WHERE template_id = ? ORDER BY order_index ASC, id ASC`,
         [templateId]
       );
@@ -929,9 +929,9 @@ router.get(
       let questions = [];
       if (sectionIds.length) {
         const [qRows] = await pool.query(
-          `SELECT id, section_id AS sectionId, question_text AS questionText, specification,
-                  answer_type AS answerType, rule_json AS ruleJson, priority, is_mandatory AS isMandatory,
-                  order_index AS orderIndex
+          `SELECT id, section_id AS "sectionId", question_text AS "questionText", specification,
+                  answer_type AS "answerType", rule_json AS "ruleJson", priority, is_mandatory AS "isMandatory",
+                  order_index AS "orderIndex"
            FROM logsheet_questions
            WHERE section_id IN (${sectionIds.map(() => "?").join(",")})
            ORDER BY order_index ASC, id ASC`,
@@ -957,7 +957,7 @@ router.get(
       let asset = null;
       if (effectiveAssetId) {
         const [aRows] = await pool.query(
-          `SELECT id, asset_name AS assetName, asset_type AS assetType, asset_id AS assetTag
+          `SELECT id, asset_name AS "assetName", asset_type AS "assetType", asset_id AS "assetTag"
            FROM assets WHERE id = ?`,
           [effectiveAssetId]
         );
@@ -973,9 +973,9 @@ router.get(
       }
 
       const [entryRows] = await pool.query(
-        `SELECT le.id, le.asset_id AS assetId, le.shift, le.header_values AS headerValues,
-                le.submitted_at AS submittedAt, le.status,
-                cu.full_name AS submittedByName
+        `SELECT le.id, le.asset_id AS "assetId", le.shift, le.header_values AS "headerValues",
+                le.submitted_at AS "submittedAt", le.status,
+                cu.full_name AS "submittedByName"
          FROM logsheet_entries le
          LEFT JOIN company_users cu ON cu.id = le.company_user_id
          WHERE ${entryWhere}
@@ -990,8 +990,8 @@ router.get(
       if (entry) {
         entry.headerValues = safeParse(entry.headerValues) ?? {};
         const [ansRows] = await pool.query(
-          `SELECT question_id AS questionId, date_column AS day, answer_value AS value,
-                  is_issue AS isIssue, issue_reason AS issueReason
+          `SELECT question_id AS "questionId", date_column AS day, answer_value AS value,
+                  is_issue AS "isIssue", issue_reason AS "issueReason"
            FROM logsheet_answers WHERE entry_id = ?
            ORDER BY question_id ASC, date_column ASC`,
           [entry.id]

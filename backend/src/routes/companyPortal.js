@@ -108,6 +108,91 @@ router.get("/dashboard", async (req, res, next) => {
   }
 });
 
+/* ── Dashboard Chart Stats ──────────────────────────────────────────────────── */
+router.get("/dashboard/chart-stats", async (req, res, next) => {
+  try {
+    const companyId = cid(req);
+    const now = new Date();
+    const today = now.toISOString().split("T")[0];
+    const { period = "day", startDate, endDate } = req.query;
+
+    let dateFrom, dateTo;
+    if (startDate && endDate) {
+      dateFrom = startDate;
+      dateTo   = endDate;
+    } else {
+      if (period === "day") {
+        dateFrom = today;
+        dateTo   = today;
+      } else if (period === "week") {
+        const d = new Date(now);
+        d.setDate(now.getDate() - now.getDay());
+        dateFrom = d.toISOString().split("T")[0];
+        const e = new Date(d); e.setDate(d.getDate() + 6);
+        dateTo = e.toISOString().split("T")[0];
+      } else if (period === "month") {
+        const y = now.getFullYear(), m = now.getMonth() + 1;
+        dateFrom = `${y}-${String(m).padStart(2,"0")}-01`;
+        const last = new Date(y, m, 0).getDate();
+        dateTo = `${y}-${String(m).padStart(2,"0")}-${String(last).padStart(2,"0")}`;
+      } else {
+        // year
+        dateFrom = `${now.getFullYear()}-01-01`;
+        dateTo   = `${now.getFullYear()}-12-31`;
+      }
+    }
+
+    // Run all 4 queries separately so one failure doesn't kill the rest
+    const safe = async (fn) => { try { return await fn(); } catch (e) { console.error("[chart-stats]", e.message); return [[{ cnt: 0 }]]; } };
+
+    const [[ltRows]]  = await safe(() => pool.query(
+      `SELECT COUNT(*) AS cnt FROM logsheet_templates WHERE company_id = ?`,
+      [companyId]
+    ));
+    const [[ctRows]]  = await safe(() => pool.query(
+      `SELECT COUNT(*) AS cnt FROM checklist_templates WHERE company_id = ?`,
+      [companyId]
+    ));
+    const [[subLSRows]] = await safe(() => pool.query(
+      // logsheet_entries.submitted_at is NOT NULL — safe to cast directly
+      `SELECT COUNT(*) AS cnt
+       FROM logsheet_entries le
+       JOIN logsheet_templates lt ON lt.id = le.template_id
+       WHERE lt.company_id = ?
+         AND le.submitted_at::date BETWEEN ? AND ?`,
+      [companyId, dateFrom, dateTo]
+    ));
+    const [[subCSRows]] = await safe(() => pool.query(
+      // checklist_submissions.submitted_at IS nullable — fall back to created_at
+      `SELECT COUNT(*) AS cnt
+       FROM checklist_submissions cs
+       JOIN checklist_templates ct ON ct.id = cs.template_id
+       WHERE ct.company_id = ?
+         AND COALESCE(cs.submitted_at, cs.created_at)::date BETWEEN ? AND ?`,
+      [companyId, dateFrom, dateTo]
+    ));
+
+    const totalLogsheets   = Number(ltRows?.cnt   || 0);
+    const totalChecklists  = Number(ctRows?.cnt   || 0);
+    const filledLogsheets  = Number(subLSRows?.cnt || 0);
+    const filledChecklists = Number(subCSRows?.cnt || 0);
+
+    res.json({
+      totalLogsheets,
+      totalChecklists,
+      filledLogsheets,
+      filledChecklists,
+      pendingLogsheets:  Math.max(0, totalLogsheets  - filledLogsheets),
+      pendingChecklists: Math.max(0, totalChecklists - filledChecklists),
+      period,
+      dateFrom,
+      dateTo,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 /* ── Departments ────────────────────────────────────────────────────────────── */
 router.get("/departments", async (req, res, next) => {
   try {
@@ -215,31 +300,44 @@ router.get("/assets/:id", async (req, res, next) => {
 
     const meta = asset.metadata == null ? {} : (typeof asset.metadata === "string" ? JSON.parse(asset.metadata) : asset.metadata);
 
-    // Templates that match this asset's type
-    const [checklists] = await pool.query(
-      `SELECT id, 'checklist' AS "templateType", template_name AS "templateName", description
-       FROM checklist_templates WHERE company_id = ? AND asset_type = ?
-       UNION ALL
-       SELECT id, 'logsheet' AS "templateType", template_name AS "templateName", description
-       FROM logsheet_templates WHERE company_id = ? AND asset_type = ?
-       ORDER BY "templateName" LIMIT 50`,
-      [cid(req), asset.assetType, cid(req), asset.assetType]
-    );
+    // Templates that match this asset's type – wrap in try/catch so a missing
+    // column or table never kills the main asset response
+    let checklists = [];
+    try {
+      const [rows] = await pool.query(
+        `SELECT id, 'checklist' AS "templateType", template_name AS "templateName", description
+         FROM checklist_templates WHERE company_id = ? AND asset_type = ?
+         UNION ALL
+         SELECT id, 'logsheet' AS "templateType", template_name AS "templateName", description
+         FROM logsheet_templates WHERE company_id = ? AND asset_type = ?
+         ORDER BY 3 LIMIT 50`,
+        [cid(req), asset.assetType, cid(req), asset.assetType]
+      );
+      checklists = rows;
+    } catch (e) {
+      console.error("[assets/:id] templates query failed:", e.message);
+    }
 
     // Assignments for templates of this asset type
-    const [assignments] = await pool.query(
-      `SELECT tua.id, COALESCE(ct.template_name, lt.template_name) AS "templateName",
-              tua.template_type AS "templateType",
-              cu.full_name AS "assignedToName",
-              tua.created_at AS "assignedAt"
-       FROM template_user_assignments tua
-       JOIN company_users cu ON tua.assigned_to = cu.id
-       LEFT JOIN checklist_templates ct ON tua.template_type = 'checklist' AND tua.template_id = ct.id AND ct.asset_type = ?
-       LEFT JOIN logsheet_templates lt ON tua.template_type = 'logsheet' AND tua.template_id = lt.id AND lt.asset_type = ?
-       WHERE tua.company_id = ? AND (ct.id IS NOT NULL OR lt.id IS NOT NULL)
-       ORDER BY tua.created_at DESC LIMIT 50`,
-      [asset.assetType, asset.assetType, cid(req)]
-    );
+    let assignments = [];
+    try {
+      const [rows] = await pool.query(
+        `SELECT tua.id, COALESCE(ct.template_name, lt.template_name) AS "templateName",
+                tua.template_type AS "templateType",
+                cu.full_name AS "assignedToName",
+                tua.created_at AS "assignedAt"
+         FROM template_user_assignments tua
+         JOIN company_users cu ON tua.assigned_to = cu.id
+         LEFT JOIN checklist_templates ct ON tua.template_type = 'checklist' AND tua.template_id = ct.id AND ct.asset_type = ?
+         LEFT JOIN logsheet_templates lt ON tua.template_type = 'logsheet' AND tua.template_id = lt.id AND lt.asset_type = ?
+         WHERE tua.company_id = ? AND (ct.id IS NOT NULL OR lt.id IS NOT NULL)
+         ORDER BY tua.created_at DESC LIMIT 50`,
+        [asset.assetType, asset.assetType, cid(req)]
+      );
+      assignments = rows;
+    } catch (e) {
+      console.error("[assets/:id] assignments query failed:", e.message);
+    }
 
     res.json({ ...asset, metadata: meta, checklists, assignments });
   } catch (err) {
@@ -925,15 +1023,40 @@ router.get("/employees", async (req, res, next) => {
     const [rows] = await pool.query(
       `SELECT cu.id, cu.company_id AS "companyId",
               cu.full_name AS "fullName", cu.email, cu.phone,
-              cu.designation, cu.role, cu.status, cu.username,
+              cu.designation, cu.role, cu.shift, cu.status, cu.username,
               cu.supervisor_id AS "supervisorId",
               s.full_name AS "supervisorName",
+              s.role AS "supervisorRole",
               cu.created_at AS "createdAt"
        FROM company_users cu
        LEFT JOIN company_users s ON s.id = cu.supervisor_id
        WHERE cu.company_id = ?
-       ORDER BY cu.full_name`,
+       ORDER BY cu.role ASC, cu.full_name ASC`,
       [cid(req)]
+    );
+    res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ── Users by role list (for parent dropdowns) ─────────────────────────────── */
+router.get("/employees/by-role", async (req, res, next) => {
+  try {
+    const { role } = req.query;  // single role or comma-separated list
+    const roles = (role || "").split(",").map((r) => r.trim()).filter(Boolean);
+    let where = "WHERE company_id = ?";
+    const params = [cid(req)];
+    if (roles.length) {
+      where += ` AND role IN (${roles.map(() => "?").join(",")})`;
+      params.push(...roles);
+    }
+    const [rows] = await pool.query(
+      `SELECT id, full_name AS "fullName", email, role, shift, designation
+       FROM company_users
+       ${where}
+       ORDER BY full_name`,
+      params
     );
     res.json(rows);
   } catch (err) {
@@ -975,7 +1098,7 @@ router.get("/my-team", async (req, res, next) => {
 
 router.post("/employees", async (req, res, next) => {
   try {
-    const { fullName, email, phone, designation, role = "employee", status = "Active", password, username, supervisorId } = req.body;
+    const { fullName, email, phone, designation, role = "employee", status = "Active", password, username, supervisorId, shift } = req.body;
     if (!fullName || !email) return res.status(400).json({ message: "fullName and email are required" });
 
     // Only admin role can add employees; supervisors can add helpers under themselves
@@ -992,15 +1115,15 @@ router.post("/employees", async (req, res, next) => {
     if (password) passwordHash = await bcrypt.hash(password, 10);
 
     const [rows] = await pool.query(
-      `INSERT INTO company_users (company_id, full_name, email, phone, designation, role, status, password_hash, username, supervisor_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO company_users (company_id, full_name, email, phone, designation, role, shift, status, password_hash, username, supervisor_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        RETURNING id,
                  company_id    AS "companyId",
                  full_name     AS "fullName",
-                 email, phone, designation, role, status, username,
+                 email, phone, designation, role, shift, status, username,
                  supervisor_id AS "supervisorId",
                  created_at    AS "createdAt"`,
-      [cid(req), fullName, email, phone || null, designation || null, role, status, passwordHash, username || null, resolvedSupervisorId]
+      [cid(req), fullName, email, phone || null, designation || null, role, shift || null, status, passwordHash, username || null, resolvedSupervisorId]
     );
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -1015,7 +1138,7 @@ router.post("/employees", async (req, res, next) => {
 router.put("/employees/:id", async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { fullName, email, phone, designation, role, status, password, username, supervisorId } = req.body;
+    const { fullName, email, phone, designation, role, status, password, username, supervisorId, shift } = req.body;
 
     if (req.companyUser.role !== "admin" && req.companyUser.role !== "supervisor") {
       return res.status(403).json({ message: "Not authorised" });
@@ -1044,9 +1167,11 @@ router.put("/employees/:id", async (req, res, next) => {
     let passwordClause = "";
     let usernameClause = username !== undefined ? ", username = ?" : "";
     let supervisorClause = resolvedSupervisorId !== undefined ? ", supervisor_id = ?" : "";
+    let shiftClause = shift !== undefined ? ", shift = ?" : "";
     const params = [fullName, email, phone || null, designation || null, role || "employee", status || "Active"];
     if (username !== undefined) params.push(username || null);
     if (resolvedSupervisorId !== undefined) params.push(resolvedSupervisorId);
+    if (shift !== undefined) params.push(shift || null);
     if (password) {
       const hash = await bcrypt.hash(password, 10);
       passwordClause = ", password_hash = ?";
@@ -1056,11 +1181,11 @@ router.put("/employees/:id", async (req, res, next) => {
 
     const [rows] = await pool.query(
       `UPDATE company_users
-       SET full_name = ?, email = ?, phone = ?, designation = ?, role = ?, status = ?${usernameClause}${supervisorClause}${passwordClause}, updated_at = NOW()
+       SET full_name = ?, email = ?, phone = ?, designation = ?, role = ?, status = ?${usernameClause}${supervisorClause}${shiftClause}${passwordClause}, updated_at = NOW()
        WHERE id = ?
        RETURNING id,
                  full_name     AS "fullName",
-                 email, phone, designation, role, status, username,
+                 email, phone, designation, role, shift, status, username,
                  supervisor_id AS "supervisorId"`,
       params
     );
@@ -1312,6 +1437,246 @@ router.get("/template-user-assignments/mine", async (req, res, next) => {
        WHERE tua.assigned_to = ? AND tua.company_id = ?
        ORDER BY tua.created_at DESC`,
       [req.companyUser.id, cid(req)]
+    );
+    res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WORK ORDERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+const generateWONumber = () =>
+  `WO-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+
+/* GET /work-orders  – list all work orders for this company */
+router.get("/work-orders", async (req, res, next) => {
+  try {
+    const companyId = cid(req);
+    const { status, priority, assignedTo, limit = 200, offset = 0 } = req.query;
+
+    let where = "WHERE wo.company_id = ?";
+    const params = [companyId];
+
+    if (status)     { where += " AND wo.status = ?";      params.push(status); }
+    if (priority)   { where += " AND wo.priority = ?";    params.push(priority); }
+    if (assignedTo) { where += " AND wo.cp_assigned_to = ?"; params.push(Number(assignedTo)); }
+
+    const [rows] = await pool.query(
+      `SELECT wo.id, wo.work_order_number AS "workOrderNumber",
+              wo.asset_id AS "assetId", wo.asset_name AS "assetName",
+              wo.location, wo.issue_source AS "issueSource",
+              wo.issue_description AS "issueDescription",
+              wo.priority, wo.status,
+              wo.flag_id AS "flagId",
+              wo.cp_assigned_to AS "assignedTo",
+              wo.assigned_note AS "assignedNote",
+              cu.full_name AS "assignedToName",
+              wo.cp_created_by AS "createdBy",
+              cb.full_name AS "createdByName",
+              wo.created_at AS "createdAt",
+              f.severity AS "flagSeverity", f.source AS "flagSource"
+       FROM work_orders wo
+       LEFT JOIN company_users cu ON cu.id = wo.cp_assigned_to
+       LEFT JOIN company_users cb ON cb.id = wo.cp_created_by
+       LEFT JOIN flags f ON f.id = wo.flag_id
+       ${where}
+       ORDER BY wo.created_at DESC
+       LIMIT ? OFFSET ?`,
+      [...params, Number(limit), Number(offset)]
+    );
+
+    const [[countRow]] = await pool.query(
+      `SELECT COUNT(*) AS total FROM work_orders wo ${where}`,
+      params
+    );
+
+    res.json({ total: Number(countRow?.total ?? 0), data: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* POST /work-orders  – create a work order (optionally linked to a flag) */
+router.post("/work-orders", async (req, res, next) => {
+  try {
+    const companyId = cid(req);
+    const { role, id: userId } = req.companyUser;
+    if (role !== "admin" && role !== "supervisor") {
+      return res.status(403).json({ message: "Not authorised" });
+    }
+
+    const {
+      assetId,
+      issueDescription,
+      priority = "medium",
+      flagId,
+      assignedTo,
+      assignedNote,
+    } = req.body;
+
+    if (!issueDescription) {
+      return res.status(400).json({ message: "issueDescription is required" });
+    }
+
+    // Resolve asset
+    let assetName = null;
+    let location = null;
+    if (assetId) {
+      const [[asset]] = await pool.query(
+        "SELECT asset_name AS \"assetName\", building, floor, room FROM assets WHERE id = ? AND company_id = ?",
+        [assetId, companyId]
+      );
+      if (!asset) return res.status(404).json({ message: "Asset not found" });
+      assetName = asset.assetName;
+      location = [asset.building, asset.floor, asset.room].filter(Boolean).join(", ") || null;
+    }
+
+    const workOrderNumber = generateWONumber();
+    const issueSource = flagId ? "flag" : "manual";
+
+    const [result] = await pool.execute(
+      `INSERT INTO work_orders
+         (work_order_number, company_id, asset_id, asset_name, location,
+          issue_source, issue_description, priority, status,
+          flag_id, cp_assigned_to, assigned_note, cp_created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)`,
+      [
+        workOrderNumber, companyId, assetId || null, assetName, location,
+        issueSource, issueDescription, priority,
+        flagId || null, assignedTo || null, assignedNote || null, userId,
+      ]
+    );
+    const woId = result.insertId ?? result[0]?.id;
+
+    // Log history
+    await pool.execute(
+      `INSERT INTO work_order_history (work_order_id, status, updated_by, remarks)
+       VALUES (?, 'open', NULL, ?)`,
+      [woId, `Work order created${flagId ? " from flag" : ""}`]
+    );
+
+    // If linked to a flag, update the flag's work_order_id
+    if (flagId) {
+      await pool.execute(
+        "UPDATE flags SET work_order_id = ?, status = 'in_progress', updated_at = NOW() WHERE id = ? AND company_id = ?",
+        [woId, flagId, companyId]
+      );
+    }
+
+    res.status(201).json({ id: woId, workOrderNumber });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* PUT /work-orders/:id/assign  – assign or re-assign a work order */
+router.put("/work-orders/:id/assign", async (req, res, next) => {
+  try {
+    const companyId = cid(req);
+    const { role, id: userId } = req.companyUser;
+    if (role !== "admin" && role !== "supervisor") {
+      return res.status(403).json({ message: "Not authorised" });
+    }
+
+    const woId = Number(req.params.id);
+    const { assignedTo, assignedNote } = req.body;
+
+    if (!assignedTo) {
+      return res.status(400).json({ message: "assignedTo (company user id) is required" });
+    }
+
+    // Verify WO belongs to this company
+    const [[wo]] = await pool.query(
+      "SELECT id FROM work_orders WHERE id = ? AND company_id = ?",
+      [woId, companyId]
+    );
+    if (!wo) return res.status(404).json({ message: "Work order not found" });
+
+    // Verify assignee belongs to this company
+    const [[assignee]] = await pool.query(
+      `SELECT id, full_name AS "fullName" FROM company_users WHERE id = ? AND company_id = ?`,
+      [assignedTo, companyId]
+    );
+    if (!assignee) return res.status(404).json({ message: "Assignee not found in this company" });
+
+    await pool.execute(
+      "UPDATE work_orders SET cp_assigned_to = ?, assigned_note = ?, status = 'in_progress' WHERE id = ?",
+      [assignedTo, assignedNote || null, woId]
+    );
+
+    await pool.execute(
+      `INSERT INTO work_order_history (work_order_id, status, updated_by, remarks)
+       VALUES (?, 'in_progress', NULL, ?)`,
+      [woId, `Assigned to ${assignee.fullName}`]
+    );
+
+    res.json({ success: true, assignedToName: assignee.fullName });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* PUT /work-orders/:id/status  – update work order status */
+router.put("/work-orders/:id/status", async (req, res, next) => {
+  try {
+    const companyId = cid(req);
+    const { role, id: userId } = req.companyUser;
+    if (role !== "admin" && role !== "supervisor") {
+      return res.status(403).json({ message: "Not authorised" });
+    }
+
+    const woId = Number(req.params.id);
+    const { status, remark } = req.body;
+
+    const VALID = ["open", "in_progress", "completed", "closed"];
+    if (!VALID.includes(status)) {
+      return res.status(400).json({ message: "Invalid status" });
+    }
+
+    const [[wo]] = await pool.query(
+      "SELECT id, flag_id AS \"flagId\" FROM work_orders WHERE id = ? AND company_id = ?",
+      [woId, companyId]
+    );
+    if (!wo) return res.status(404).json({ message: "Work order not found" });
+
+    const closedAt = (status === "completed" || status === "closed") ? new Date() : null;
+    await pool.execute(
+      `UPDATE work_orders SET status = ?, closed_at = ? WHERE id = ?`,
+      [status, closedAt, woId]
+    );
+
+    await pool.execute(
+      `INSERT INTO work_order_history (work_order_id, status, updated_by, remarks) VALUES (?, ?, NULL, ?)`,
+      [woId, status, remark || null]
+    );
+
+    // If the linked flag is still open and WO is completed, auto-resolve it
+    if (wo.flagId && (status === "completed" || status === "closed")) {
+      await pool.execute(
+        "UPDATE flags SET status = 'resolved', resolved_at = NOW(), updated_at = NOW() WHERE id = ? AND status IN ('open','in_progress')",
+        [wo.flagId]
+      );
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* GET /work-orders/users  – list company users available for assignment */
+router.get("/work-orders/users", async (req, res, next) => {
+  try {
+    const companyId = cid(req);
+    const [rows] = await pool.query(
+      `SELECT id, full_name AS "fullName", email, role, designation, status
+       FROM company_users
+       WHERE company_id = ? AND status = 'Active'
+       ORDER BY full_name ASC`,
+      [companyId]
     );
     res.json(rows);
   } catch (err) {

@@ -4,7 +4,7 @@ async function request(method, path, body, options = {}) {
     const headers = { "Content-Type": "application/json" };
     if (options.authToken) headers.Authorization = `Bearer ${options.authToken}`;
     const opts = { method, headers };
-    if (body !== undefined) opts.body = JSON.stringify(body);
+    if (body !== undefined && body !== null) opts.body = JSON.stringify(body);
     const res = await fetch(`${BASE}${path}`, opts);
     if (res.status === 204) return null;
 
@@ -106,6 +106,10 @@ export const getTemplatesForAsset = (token, assetId) => request("GET", `/api/log
 // ── Company Employee Portal ────────────────────────────────────────────────────
 export const companyLogin = (data) => request("POST", "/api/company-auth/login", data);
 export const getCompanyPortalMe = (token) => request("GET", "/api/company-portal/me", undefined, { authToken: token });
+export const getCompanyPortalChartStats = (token, params = {}) => {
+  const q = new URLSearchParams(params).toString();
+  return request("GET", `/api/company-portal/dashboard/chart-stats${q ? "?" + q : ""}`, null, { authToken: token });
+};
 export const getCompanyPortalDashboard = (token) => request("GET", "/api/company-portal/dashboard", undefined, { authToken: token });
 export const getCompanyPortalDepartments = (token) => request("GET", "/api/company-portal/departments", undefined, { authToken: token });
 export const createCompanyPortalDepartment = (token, data) => request("POST", "/api/company-portal/departments", data, { authToken: token });

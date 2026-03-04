@@ -265,6 +265,10 @@ alter table assets
   add column if not exists risk_level      varchar(16)  not null default 'low'
                              check (risk_level in ('low','medium','high','critical'));
 
+-- ── 11. Per-question flag rule config on checklist questions ─────────────────
+alter table checklist_template_questions
+  add column if not exists flag_rule_json jsonb default null;
+
 -- ── Indexes for performance ───────────────────────────────────────────────────
 create index if not exists idx_flags_asset_created  on flags (asset_id, created_at desc);
 create index if not exists idx_flags_company_status on flags (company_id, status);

@@ -154,7 +154,7 @@ const ClientManagement = ({ clients, onAddClient, onEditClient, onDeleteClient }
         <table>
           <thead>
             <tr>
-              <th>Company Name</th>
+              <th>Client Name</th>
               <th>Contact Info</th>
               <th>Address</th>
               <th>Status</th>
@@ -245,7 +245,7 @@ const ClientManagement = ({ clients, onAddClient, onEditClient, onDeleteClient }
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
                 <div className="form-group">
-                  <label>Company Name</label>
+                  <label>Client Name</label>
                   <input name="company" placeholder="Acme Ltd." value={form.company}
                     onChange={handleChange} className="form-input" />
                 </div>

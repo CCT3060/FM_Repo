@@ -90,11 +90,11 @@ router.get(
       }
 
       const [rows] = await pool.query(
-        `SELECT a.id, a.company_id AS companyId, c.company_name AS companyName,
-                  a.asset_name AS assetName, a.asset_unique_id AS assetUniqueId, a.asset_type AS assetType,
-                a.building, a.floor, a.room, a.status, a.qr_code AS qrCode,
-                  a.department_id AS departmentId, d.name AS departmentName,
-                a.created_by AS createdBy, a.created_at AS createdAt, ad.metadata, ad.documents
+        `SELECT a.id, a.company_id AS "companyId", c.company_name AS "companyName",
+                  a.asset_name AS "assetName", a.asset_unique_id AS "assetUniqueId", a.asset_type AS "assetType",
+                a.building, a.floor, a.room, a.status, a.qr_code AS "qrCode",
+                  a.department_id AS "departmentId", d.name AS "departmentName",
+                a.created_by AS "createdBy", a.created_at AS "createdAt", ad.metadata, ad.documents
          FROM assets a
          JOIN companies c ON a.company_id = c.id
                 LEFT JOIN departments d ON a.department_id = d.id

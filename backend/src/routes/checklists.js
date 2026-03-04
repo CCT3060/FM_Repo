@@ -11,7 +11,7 @@ router.use(requireAuth);
 
 const getOwnedAsset = async (assetId, userId) => {
   const [rows] = await pool.query(
-    `SELECT a.id, a.asset_type AS assetType FROM assets a
+    `SELECT a.id, a.asset_type AS "assetType" FROM assets a
      JOIN companies c ON a.company_id = c.id
      WHERE a.id = ? AND c.user_id = ?`,
     [assetId, userId]
@@ -49,7 +49,7 @@ router.get(
       if (!asset) return res.status(404).json({ message: "Asset not found" });
 
       const [rows] = await pool.query(
-        `SELECT ac.id, ac.asset_id AS assetId, ac.name, ac.description, ac.asset_category AS assetCategory, ac.created_at AS createdAt
+        `SELECT ac.id, ac.asset_id AS "assetId", ac.name, ac.description, ac.asset_category AS "assetCategory", ac.created_at AS "createdAt"
          FROM asset_checklists ac
          WHERE ac.asset_id = ?
          ORDER BY ac.created_at DESC`,
@@ -60,8 +60,8 @@ router.get(
 
       const checklistIds = rows.map((r) => r.id);
       const [items] = await pool.query(
-        `SELECT id, checklist_id AS checklistId, title, answer_type AS answerType, is_required AS isRequired, order_index AS orderIndex, config,
-                allow_image AS allowImage, allow_remark AS allowRemark, allow_flag AS allowFlagIssue, require_reason AS requireReason
+        `SELECT id, checklist_id AS "checklistId", title, answer_type AS "answerType", is_required AS "isRequired", order_index AS "orderIndex", config,
+                allow_image AS "allowImage", allow_remark AS "allowRemark", allow_flag AS "allowFlagIssue", require_reason AS "requireReason"
          FROM asset_checklist_items
          WHERE checklist_id IN (${checklistIds.map(() => "?").join(",")})
          ORDER BY order_index ASC, id ASC`,
@@ -165,7 +165,7 @@ router.get(
     try {
       const { id } = req.params;
       const [rows] = await pool.query(
-        `SELECT aca.user_id AS userId, u.full_name AS fullName, u.email
+        `SELECT aca.user_id AS "userId", u.full_name AS "fullName", u.email
          FROM asset_checklist_assignments aca
          JOIN asset_checklists ac ON ac.id = aca.checklist_id
          JOIN assets a ON a.id = ac.asset_id
@@ -224,7 +224,7 @@ router.post(
       );
 
       const [assigned] = await pool.query(
-        `SELECT aca.user_id AS userId, u.full_name AS fullName, u.email
+        `SELECT aca.user_id AS "userId", u.full_name AS "fullName", u.email
          FROM asset_checklist_assignments aca
          JOIN users u ON u.id = aca.user_id
          WHERE aca.checklist_id = ?
@@ -259,13 +259,13 @@ router.get(
       params.push(Number(limit), Number(offset));
 
       const [rows] = await pool.query(
-        `SELECT r.id, r.submission_id AS submissionId, r.item_id AS itemId,
-                i.title AS itemTitle, i.answer_type AS answerType,
-                r.answer, r.reason, r.remark, r.image_url AS imageUrl, r.answered_at AS answeredAt,
-                s.checklist_id AS checklistId, ac.name AS checklistName,
-                s.asset_id AS assetId, a.name AS assetName,
-                s.submitted_by AS submittedBy, s.submitted_by_name AS submittedByName,
-                s.created_at AS submittedAt
+        `SELECT r.id, r.submission_id AS "submissionId", r.item_id AS "itemId",
+                i.title AS "itemTitle", i.answer_type AS "answerType",
+                r.answer, r.reason, r.remark, r.image_url AS "imageUrl", r.answered_at AS "answeredAt",
+                s.checklist_id AS "checklistId", ac.name AS checklistName,
+                s.asset_id AS "assetId", a.name AS assetName,
+                s.submitted_by AS "submittedBy", s.submitted_by_name AS "submittedByName",
+                s.created_at AS "submittedAt"
          FROM asset_checklist_item_responses r
          JOIN asset_checklist_submissions s ON s.id = r.submission_id
          JOIN asset_checklist_items i ON i.id = r.item_id
@@ -307,7 +307,7 @@ router.post(
     try {
       // verify checklist belongs to this admin's company
       const [clRows] = await pool.query(
-        `SELECT ac.id, ac.name, a.company_id AS companyId
+        `SELECT ac.id, ac.name, a.company_id AS "companyId"
          FROM asset_checklists ac
          JOIN assets a ON a.id = ac.asset_id
          JOIN companies c ON c.id = a.company_id
@@ -319,8 +319,8 @@ router.post(
 
       // fetch all items to validate and calc stats
       const [items] = await pool.query(
-        `SELECT id, title, answer_type AS answerType, is_required AS isRequired,
-                allow_flag AS allowFlag, require_reason AS requireReason
+        `SELECT id, title, answer_type AS "answerType", is_required AS "isRequired",
+                allow_flag AS "allowFlag", require_reason AS "requireReason"
          FROM asset_checklist_items WHERE checklist_id = ?`,
         [id]
       );
@@ -438,10 +438,10 @@ router.get(
       if (status) { where += " AND s.status = ?"; params.push(status); }
 
       const [subs] = await pool.query(
-        `SELECT s.id, s.checklist_id AS checklistId, s.asset_id AS assetId,
-                s.submitted_by AS submittedBy, s.submitted_by_name AS submittedByName,
-                s.status, s.completion_pct AS completionPct, s.total_issues AS totalIssues,
-                s.submitted_at AS submittedAt, s.created_at AS createdAt
+        `SELECT s.id, s.checklist_id AS "checklistId", s.asset_id AS "assetId",
+                s.submitted_by AS "submittedBy", s.submitted_by_name AS "submittedByName",
+                s.status, s.completion_pct AS "completionPct", s.total_issues AS "totalIssues",
+                s.submitted_at AS "submittedAt", s.created_at AS "createdAt"
          FROM asset_checklist_submissions s
          WHERE ${where}
          ORDER BY s.created_at DESC
@@ -453,9 +453,9 @@ router.get(
 
       const subIds = subs.map((s) => s.id);
       const [responses] = await pool.query(
-        `SELECT r.id, r.submission_id AS submissionId, r.item_id AS itemId,
-                i.title AS itemTitle, i.answer_type AS answerType,
-                r.answer, r.flag_issue AS flagIssue, r.reason, r.remark, r.image_url AS imageUrl, r.answered_at AS answeredAt
+        `SELECT r.id, r.submission_id AS "submissionId", r.item_id AS "itemId",
+                i.title AS "itemTitle", i.answer_type AS "answerType",
+                r.answer, r.flag_issue AS "flagIssue", r.reason, r.remark, r.image_url AS "imageUrl", r.answered_at AS "answeredAt"
          FROM asset_checklist_item_responses r
          JOIN asset_checklist_items i ON i.id = r.item_id
          WHERE r.submission_id IN (${subIds.map(() => "?").join(",")})
@@ -482,7 +482,7 @@ router.delete(
     const { id } = req.params;
     try {
       const [rows] = await pool.query(
-        `SELECT ac.asset_id AS assetId
+        `SELECT ac.asset_id AS "assetId"
          FROM asset_checklists ac
          JOIN assets a ON ac.asset_id = a.id
          JOIN companies c ON a.company_id = c.id

@@ -31,7 +31,7 @@ const assignmentTargets = ["asset", "location", "department", "user"];
 
 const ensureTemplateOwned = async (templateId, userId) => {
   const [rows] = await pool.query(
-    `SELECT ct.id, ct.company_id AS companyId
+    `SELECT ct.id, ct.company_id AS "companyId"
      FROM checklist_templates ct
      JOIN companies c ON ct.company_id = c.id
      WHERE ct.id = ? AND c.user_id = ?`,
@@ -42,7 +42,7 @@ const ensureTemplateOwned = async (templateId, userId) => {
 
 const ensureAssetOwned = async (assetId, userId) => {
   const [rows] = await pool.query(
-    `SELECT a.id, a.company_id AS companyId
+    `SELECT a.id, a.company_id AS "companyId"
      FROM assets a
      JOIN companies c ON a.company_id = c.id
      WHERE a.id = ? AND c.user_id = ?`,
@@ -71,6 +71,20 @@ router.post(
     body("questions.*.orderIndex").optional().isInt(),
     body("questions.*.options").optional().isArray(),
     body("questions.*.meta").optional().isObject(),
+    body("questions.*.flagRule").optional().isObject(),
+    body("questions.*.flagRule.enabled").optional().isBoolean().toBoolean(),
+    body("questions.*.flagRule.operator").optional().isString(),
+    body("questions.*.flagRule.triggerValue").optional(),
+    body("questions.*.flagRule.value1").optional().toFloat(),
+    body("questions.*.flagRule.value2").optional().toFloat(),
+    body("questions.*.flagRule.pctThreshold").optional().toFloat(),
+    body("questions.*.flagRule.compareTo").optional().isIn(["value","previous","rolling_avg","baseline","another_question"]),
+    body("questions.*.flagRule.severity").optional().isIn(["low","medium","high","critical"]),
+    body("questions.*.flagRule.autoCreateWo").optional().isBoolean().toBoolean(),
+    body("questions.*.flagRule.clientVisible").optional().isBoolean().toBoolean(),
+    body("questions.*.flagRule.rollingWindow").optional().isInt({ min: 1, max: 30 }),
+    body("questions.*.flagRule.baselineValue").optional().toFloat(),
+    body("questions.*.flagRule.label").optional().isString(),
   ]),
   async (req, res, next) => {
     const {
@@ -124,14 +138,28 @@ router.post(
         Number.isInteger(q.orderIndex) ? q.orderIndex : idx,
         q.options ? JSON.stringify(q.options) : null,
         JSON.stringify({ ...(q.meta || {}), ...(q.rule ? { rule: q.rule } : {}) }) || null,
+        q.flagRule ? JSON.stringify(q.flagRule) : null,
       ]);
 
       await conn.query(
         `INSERT INTO checklist_template_questions
-           (template_id, question_text, input_type, is_required, order_index, options_json, meta)
+           (template_id, question_text, input_type, is_required, order_index, options_json, meta, flag_rule_json)
          VALUES ?`,
         [values]
       );
+
+      // Fetch inserted question IDs to link flag_rule_conditions
+      const [insertedQs] = await conn.query(
+        `SELECT id, order_index AS orderIndex FROM checklist_template_questions
+         WHERE template_id = ? ORDER BY order_index ASC, id ASC`,
+        [templateId]
+      );
+      const questionsWithIds = questions.map((q, idx) => ({
+        ...q,
+        id: insertedQs[idx]?.id,
+      }));
+
+      await syncQuestionFlagRules(templateId, companyId, questionsWithIds, conn);
 
       res.status(201).json({ id: templateId });
     } catch (err) {
@@ -172,10 +200,10 @@ router.get(
       }
 
       const [templates] = await pool.query(
-        `SELECT ct.id, ct.company_id AS companyId, ct.template_name AS templateName, ct.asset_type AS assetType,
-          ct.asset_id AS assetId, a.asset_name AS assetName,
-          ct.category, ct.description, ct.frequency, ct.shift, ct.status, ct.is_active AS isActive,
-          ct.questions, ct.created_at AS createdAt
+        `SELECT ct.id, ct.company_id AS "companyId", ct.template_name AS "templateName", ct.asset_type AS "assetType",
+          ct.asset_id AS "assetId", a.asset_name AS "assetName",
+          ct.category, ct.description, ct.frequency, ct.shift, ct.status, ct.is_active AS "isActive",
+          ct.questions, ct.created_at AS "createdAt"
          FROM checklist_templates ct
          JOIN companies c ON ct.company_id = c.id
          LEFT JOIN assets a ON ct.asset_id = a.id
@@ -188,8 +216,8 @@ router.get(
 
       const templateIds = templates.map((t) => t.id);
       const [questions] = await pool.query(
-        `SELECT id, template_id AS templateId, question_text AS questionText, input_type AS inputType,
-                is_required AS isRequired, order_index AS orderIndex, options_json AS optionsJson, meta
+        `SELECT id, template_id AS "templateId", question_text AS "questionText", input_type AS "inputType",
+                is_required AS "isRequired", order_index AS "orderIndex", options_json AS "optionsJson", meta
          FROM checklist_template_questions
          WHERE template_id IN (${templateIds.map(() => "?").join(",")})
          ORDER BY order_index ASC, id ASC`,
@@ -283,9 +311,9 @@ router.get(
       }
 
       const [rows] = await pool.query(
-        `SELECT ca.id, ca.template_id AS templateId, ca.assigned_to_type AS assignedToType, ca.assigned_to_id AS assignedToId,
-                ca.frequency, ca.start_date AS startDate, ca.due_time AS dueTime, ca.status, ca.attached_at AS attachedAt,
-                ct.template_name AS templateName, ct.asset_type AS assetType, ct.category
+        `SELECT ca.id, ca.template_id AS "templateId", ca.assigned_to_type AS "assignedToType", ca.assigned_to_id AS "assignedToId",
+                ca.frequency, ca.start_date AS "startDate", ca.due_time AS "dueTime", ca.status, ca.attached_at AS "attachedAt",
+                ct.template_name AS "templateName", ct.asset_type AS "assetType", ct.category
          FROM checklist_assignments ca
          JOIN checklist_templates ct ON ca.template_id = ct.id
          JOIN companies c ON ct.company_id = c.id
@@ -311,9 +339,9 @@ router.get(
       if (!asset) return res.status(404).json({ message: "Asset not found" });
 
       const [templates] = await pool.query(
-        `SELECT ca.id AS assignmentId, ca.template_id AS templateId, ct.template_name AS templateName, ct.asset_type AS assetType,
-                ct.frequency, ct.shift, ct.status, ct.is_active AS isActive, ca.frequency AS assignmentFrequency,
-                ca.start_date AS startDate, ca.due_time AS dueTime
+        `SELECT ca.id AS "assignmentId", ca.template_id AS "templateId", ct.template_name AS "templateName", ct.asset_type AS "assetType",
+                ct.frequency, ct.shift, ct.status, ct.is_active AS "isActive", ca.frequency AS "assignmentFrequency",
+                ca.start_date AS "startDate", ca.due_time AS "dueTime"
          FROM checklist_assignments ca
          JOIN checklist_templates ct ON ca.template_id = ct.id
          WHERE ca.assigned_to_type = 'asset' AND ca.assigned_to_id = ? AND ca.status = 'active'
@@ -325,8 +353,8 @@ router.get(
 
       const templateIds = templates.map((t) => t.templateId);
       const [questions] = await pool.query(
-        `SELECT id, template_id AS templateId, question_text AS questionText, input_type AS inputType,
-                is_required AS isRequired, order_index AS orderIndex, options_json AS optionsJson, meta
+        `SELECT id, template_id AS "templateId", question_text AS "questionText", input_type AS "inputType",
+                is_required AS "isRequired", order_index AS "orderIndex", options_json AS "optionsJson", meta
          FROM checklist_template_questions
          WHERE template_id IN (${templateIds.map(() => "?").join(",")})
          ORDER BY order_index ASC, id ASC`,
@@ -357,9 +385,9 @@ router.get(
 
 const ensureAssignmentOwned = async (assignmentId, userId) => {
   const [rows] = await pool.query(
-    `SELECT ca.id, ca.template_id AS templateId, ca.assigned_to_type AS assignedToType, ca.assigned_to_id AS assignedToId,
-            ca.frequency, ca.start_date AS startDate, ca.due_time AS dueTime, ca.status,
-            ct.company_id AS companyId, ct.asset_type AS assetType, ct.category, ct.template_name AS templateName
+    `SELECT ca.id, ca.template_id AS "templateId", ca.assigned_to_type AS "assignedToType", ca.assigned_to_id AS "assignedToId",
+            ca.frequency, ca.start_date AS "startDate", ca.due_time AS "dueTime", ca.status,
+            ct.company_id AS "companyId", ct.asset_type AS "assetType", ct.category, ct.template_name AS "templateName"
      FROM checklist_assignments ca
      JOIN checklist_templates ct ON ca.template_id = ct.id
      JOIN companies c ON ct.company_id = c.id
@@ -371,8 +399,8 @@ const ensureAssignmentOwned = async (assignmentId, userId) => {
 
 const fetchQuestionsForTemplate = async (templateId) => {
   const [questions] = await pool.query(
-    `SELECT id, question_text AS questionText, input_type AS inputType, is_required AS isRequired,
-            order_index AS orderIndex, options_json AS optionsJson, meta
+    `SELECT id, question_text AS "questionText", input_type AS "inputType", is_required AS "isRequired",
+            order_index AS "orderIndex", options_json AS "optionsJson", meta, flag_rule_json AS "flagRuleJson"
      FROM checklist_template_questions
      WHERE template_id = ?
      ORDER BY order_index ASC, id ASC`,
@@ -380,13 +408,90 @@ const fetchQuestionsForTemplate = async (templateId) => {
   );
   return questions.map((q) => {
     const parsedMeta = q.meta ? JSON.parse(q.meta) : {};
+    const flagRule = q.flagRuleJson
+      ? (typeof q.flagRuleJson === 'string' ? JSON.parse(q.flagRuleJson) : q.flagRuleJson)
+      : undefined;
     return {
       ...q,
-      options: q.optionsJson ? JSON.parse(q.optionsJson) : undefined,
-      meta: parsedMeta,
-      rule: parsedMeta.rule || undefined,
+      options:     q.optionsJson ? JSON.parse(q.optionsJson) : undefined,
+      meta:        parsedMeta,
+      rule:        parsedMeta.rule || undefined,
+      flagRule:    flagRule || undefined,
+      flagRuleJson: undefined, // remove raw column from output
     };
   });
+};
+
+/**
+ * Auto-sync question-level flagRules into flag_rule_groups + flag_rule_conditions.
+ * Called after every template create / update.
+ * One flag_rule_groups record is created per question that has flagRule.enabled = true.
+ */
+const syncQuestionFlagRules = async (templateId, companyId, questionsWithIds, conn) => {
+  // Delete all existing auto-generated rule groups for this template
+  await conn.query(
+    `DELETE FROM flag_rule_groups
+     WHERE checklist_template_id = ? AND company_id = ? AND (created_by IS NULL OR created_by = 0)`,
+    [templateId, companyId]
+  ).catch(() => {}); // table may not exist yet during first migration run
+
+  const enabledRules = questionsWithIds.filter(
+    (q) => q.flagRule && q.flagRule.enabled !== false
+  );
+  if (!enabledRules.length) return;
+
+  for (const q of enabledRules) {
+    const fr = q.flagRule;
+    const severity = fr.severity || 'medium';
+    const label    = fr.label || q.questionText || `Q${q.id} flag rule`;
+
+    try {
+      // Create group
+      const [grpResult] = await conn.query(
+        `INSERT INTO flag_rule_groups
+           (company_id, checklist_template_id, name, logic_operator, applies_to,
+            severity_override, auto_create_wo, auto_wo_threshold,
+            client_visible, visibility_mode, is_active, created_by, created_at)
+         VALUES (?, ?, ?, 'AND', 'checklist', ?, ?, ?,
+                 ?, 'internal', true, 0, NOW())`,
+        [
+          companyId, templateId,
+          label.slice(0, 200),
+          severity,
+          fr.autoCreateWo   ? true  : false,
+          fr.autoWoThreshold || 'high',
+          fr.clientVisible  ? true  : false,
+        ]
+      );
+      const groupId = grpResult.insertId;
+
+      // Create condition
+      await conn.query(
+        `INSERT INTO flag_rule_conditions
+           (group_id, condition_order, source_type, question_id,
+            compare_to, rolling_window, baseline_value,
+            operator, value1, value2, pct_threshold, trigger_value,
+            created_at)
+         VALUES (?, 0, 'question', ?,
+                 ?, ?, ?,
+                 ?, ?, ?, ?, ?,
+                 NOW())`,
+        [
+          groupId, q.id,
+          fr.compareTo     || 'value',
+          fr.rollingWindow || 3,
+          fr.baselineValue ?? null,
+          fr.operator      || 'yes_no',
+          fr.value1        ?? null,
+          fr.value2        ?? null,
+          fr.pctThreshold  ?? null,
+          fr.triggerValue  ?? null,
+        ]
+      );
+    } catch (err) {
+      console.error('[syncQuestionFlagRules] error for question', q.id, err.message);
+    }
+  }
 };
 
 router.get(
@@ -620,7 +725,7 @@ router.patch(
       const { status, supervisorNote } = req.body;
 
       const [rows] = await pool.query(
-        `SELECT cs.id, cs.assignment_id AS assignmentId, ca.template_id AS templateId, ct.company_id AS companyId
+        `SELECT cs.id, cs.assignment_id AS "assignmentId", ca.template_id AS "templateId", ct.company_id AS "companyId"
          FROM checklist_submissions cs
          JOIN checklist_assignments ca ON cs.assignment_id = ca.id
          JOIN checklist_templates ct ON ca.template_id = ct.id
@@ -666,8 +771,8 @@ router.get(
       }
 
       const [rows] = await pool.query(
-        `SELECT cs.id, cs.status, cs.completion_pct AS completionPct, cs.shift, cs.submitted_by AS submittedBy,
-                cs.submitted_at AS submittedAt, cs.approved_at AS approvedAt, cs.supervisor_note AS supervisorNote
+        `SELECT cs.id, cs.status, cs.completion_pct AS "completionPct", cs.shift, cs.submitted_by AS "submittedBy",
+                cs.submitted_at AS "submittedAt", cs.approved_at AS "approvedAt", cs.supervisor_note AS "supervisorNote"
          FROM checklist_submissions cs
          ${where}
          ORDER BY cs.submitted_at DESC
@@ -714,8 +819,8 @@ router.get(
       }
 
       const [rows] = await pool.query(
-        `SELECT cs.id, cs.assignment_id AS assignmentId, cs.asset_id AS assetId, cs.status, cs.completion_pct AS completionPct,
-                cs.shift, cs.submitted_by AS submittedBy, cs.submitted_at AS submittedAt
+        `SELECT cs.id, cs.assignment_id AS "assignmentId", cs.asset_id AS "assetId", cs.status, cs.completion_pct AS "completionPct",
+                cs.shift, cs.submitted_by AS "submittedBy", cs.submitted_at AS "submittedAt"
          FROM checklist_submissions cs
          JOIN checklist_assignments ca ON cs.assignment_id = ca.id
          JOIN checklist_templates ct ON ca.template_id = ct.id
@@ -761,7 +866,7 @@ router.post(
       }
 
       const [questions] = await pool.query(
-        `SELECT id, question_text AS questionText, input_type AS inputType FROM checklist_template_questions WHERE template_id = ?`,
+        `SELECT id, question_text AS "questionText", input_type AS "inputType" FROM checklist_template_questions WHERE template_id = ?`,
         [templateId]
       );
       const questionMap = new Map(questions.map((q) => [Number(q.id), q]));
@@ -813,9 +918,9 @@ router.get(
       if (!owned) return res.status(404).json({ message: "Template not found" });
 
       const [rows] = await pool.query(
-        `SELECT ct.id, ct.company_id AS companyId, ct.template_name AS templateName, ct.asset_type AS assetType,
-                ct.category, ct.description, ct.frequency, ct.shift, ct.status, ct.is_active AS isActive,
-                ct.created_at AS createdAt
+        `SELECT ct.id, ct.company_id AS "companyId", ct.template_name AS "templateName", ct.asset_type AS "assetType",
+                ct.category, ct.description, ct.frequency, ct.shift, ct.status, ct.is_active AS "isActive",
+                ct.created_at AS "createdAt"
          FROM checklist_templates ct WHERE ct.id = ?`,
         [templateId]
       );
@@ -850,6 +955,20 @@ router.put(
     body("questions.*.orderIndex").optional().isInt(),
     body("questions.*.options").optional().isArray(),
     body("questions.*.meta").optional().isObject(),
+    body("questions.*.flagRule").optional().isObject(),
+    body("questions.*.flagRule.enabled").optional().isBoolean().toBoolean(),
+    body("questions.*.flagRule.operator").optional().isString(),
+    body("questions.*.flagRule.triggerValue").optional(),
+    body("questions.*.flagRule.value1").optional().toFloat(),
+    body("questions.*.flagRule.value2").optional().toFloat(),
+    body("questions.*.flagRule.pctThreshold").optional().toFloat(),
+    body("questions.*.flagRule.compareTo").optional().isIn(["value","previous","rolling_avg","baseline","another_question"]),
+    body("questions.*.flagRule.severity").optional().isIn(["low","medium","high","critical"]),
+    body("questions.*.flagRule.autoCreateWo").optional().isBoolean().toBoolean(),
+    body("questions.*.flagRule.clientVisible").optional().isBoolean().toBoolean(),
+    body("questions.*.flagRule.rollingWindow").optional().isInt({ min: 1, max: 30 }),
+    body("questions.*.flagRule.baselineValue").optional().toFloat(),
+    body("questions.*.flagRule.label").optional().isString(),
   ]),
   async (req, res, next) => {
     const templateId = Number(req.params.id);
@@ -887,13 +1006,31 @@ router.put(
             Number.isInteger(q.orderIndex) ? q.orderIndex : idx,
             q.options ? JSON.stringify(q.options) : null,
             JSON.stringify({ ...(q.meta || {}), ...(q.rule ? { rule: q.rule } : {}) }) || null,
+            q.flagRule ? JSON.stringify(q.flagRule) : null,
           ]);
           await pool.query(
             `INSERT INTO checklist_template_questions
-               (template_id, question_text, input_type, is_required, order_index, options_json, meta)
+               (template_id, question_text, input_type, is_required, order_index, options_json, meta, flag_rule_json)
              VALUES ?`,
             [values]
           );
+
+          // Re-fetch IDs to sync flag rules
+          const [insertedQs] = await pool.query(
+            `SELECT id, order_index AS orderIndex FROM checklist_template_questions
+             WHERE template_id = ? ORDER BY order_index ASC, id ASC`,
+            [templateId]
+          );
+          const questionsWithIds = questions.map((q, idx) => ({
+            ...q,
+            id: insertedQs[idx]?.id,
+          }));
+
+          // Load companyId for this template
+          const [[tmpl]] = await pool.query(
+            `SELECT company_id AS "companyId" FROM checklist_templates WHERE id = ?`, [templateId]
+          );
+          await syncQuestionFlagRules(templateId, tmpl.companyId, questionsWithIds, pool);
         }
       }
 

@@ -247,25 +247,25 @@ router.get(
 
       // Verify company belongs to this admin
       const [[company]] = await pool.query(
-        `SELECT id, company_name AS companyName, company_code AS companyCode, status FROM companies WHERE id = ? AND user_id = ?`,
+        `SELECT id, company_name AS "companyName", company_code AS "companyCode", status FROM companies WHERE id = ? AND user_id = ?`,
         [companyId, req.user.id]
       );
       if (!company) return res.status(404).json({ message: "Company not found" });
 
       const [assets, checklists, logsheets, departments] = await Promise.all([
         pool.query(
-          `SELECT a.id, a.asset_name AS assetName, a.asset_type AS assetType,
-                  a.asset_unique_id AS assetUniqueId, a.status, a.building, a.floor, a.room,
-                  d.name AS departmentName, a.created_at AS createdAt
+          `SELECT a.id, a.asset_name AS "assetName", a.asset_type AS "assetType",
+                  a.asset_unique_id AS "assetUniqueId", a.status, a.building, a.floor, a.room,
+                  d.name AS "departmentName", a.created_at AS "createdAt"
            FROM assets a
            LEFT JOIN departments d ON d.id = a.department_id
            WHERE a.company_id = ? ORDER BY a.asset_name`,
           [companyId]
         ),
         pool.query(
-          `SELECT ct.id, ct.template_name AS templateName, ct.asset_type AS assetType,
-                  ct.category, ct.frequency, ct.status, ct.created_at AS createdAt,
-                  COUNT(ctq.id) AS questionCount
+          `SELECT ct.id, ct.template_name AS "templateName", ct.asset_type AS "assetType",
+                  ct.category, ct.frequency, ct.status, ct.created_at AS "createdAt",
+                  COUNT(ctq.id) AS "questionCount"
            FROM checklist_templates ct
            LEFT JOIN checklist_template_questions ctq ON ctq.template_id = ct.id
            WHERE ct.company_id = ?
@@ -274,10 +274,10 @@ router.get(
           [companyId]
         ),
         pool.query(
-          `SELECT lt.id, lt.template_name AS templateName, lt.asset_type AS assetType,
-                  lt.asset_model AS assetModel, lt.frequency, lt.is_active AS isActive,
-                  a.asset_name AS assetName, lt.created_at AS createdAt,
-                  (SELECT COUNT(*) FROM logsheet_entries le WHERE le.template_id = lt.id) AS entryCount
+          `SELECT lt.id, lt.template_name AS "templateName", lt.asset_type AS "assetType",
+                  lt.asset_model AS "assetModel", lt.frequency, lt.is_active AS "isActive",
+                  a.asset_name AS "assetName", lt.created_at AS "createdAt",
+                  (SELECT COUNT(*) FROM logsheet_entries le WHERE le.template_id = lt.id) AS "entryCount"
            FROM logsheet_templates lt
            LEFT JOIN assets a ON a.id = lt.asset_id
            WHERE lt.company_id = ?

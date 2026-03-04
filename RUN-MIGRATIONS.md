@@ -17,6 +17,26 @@ The assignment system requires new database tables. Execute these SQL files in y
 - `checklist_submission_answers` table
 - Updates to `logsheet_entries` table
 
+### 3. Flag System
+**File:** `backend/sql/migrations/2026-02-28-flags-system.sql`
+**Creates:**
+- `flags` table – stores all checklist/logsheet/manual flags with severity, status, escalation
+- `flag_history` table – audit trail of every status change
+- `open_flags_count` + `health_status` columns added to `assets`
+- `flag_id` column and FK added to `work_orders`
+
+### 4. Work Orders Portal Columns
+**File:** `backend/sql/migrations/2026-03-04-work-orders-portal.sql`
+**Creates:**
+- `company_id`, `flag_id`, `assigned_note`, `closed_at` columns on `work_orders`
+- `cp_assigned_to`, `cp_created_by` columns referencing `company_users`
+
+### 5. Work Orders Fixes *(run if assign/status returns 500)*
+**File:** `backend/sql/migrations/2026-03-04-work-orders-fixes.sql`
+**Creates:**
+- Makes `asset_id` nullable on `work_orders` (allows creating WOs without a linked asset)
+- Adds `updated_at` and ensures `closed_at` columns exist
+
 ## How to Run:
 
 1. Open Supabase Dashboard

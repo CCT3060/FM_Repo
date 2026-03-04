@@ -79,6 +79,10 @@ const AdminShell = () => {
           <img src={logo} alt="Catalyst" className="brand-logo" />
         </div>
 
+        <div style={{ padding: "8px 16px 4px", fontSize: "11px", fontWeight: 700, color: "#94a3b8", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+          Root Portal
+        </div>
+
         <nav className="side-nav">
           <button
             className={activeTab === "clients" ? "side-btn active" : "side-btn"}
