@@ -515,6 +515,25 @@ export async function getTeamStats(): Promise<Array<{
 }
 
 /**
+ * Get recent checklist submissions for the company (datewise history)
+ */
+export async function getChecklistSubmissions(): Promise<Array<{
+  id: number;
+  submittedAt: string | null;
+  templateName: string;
+  templateId: number;
+  assetName: string | null;
+  assetId: number | null;
+  status: string | null;
+  completionPct: number | null;
+  submittedBy: string | null;
+}>> {
+  const response = await authenticatedFetch('/api/company-portal/checklist-submissions/recent');
+  if (!response.ok) throw new Error('Failed to fetch checklist submissions');
+  return response.json();
+}
+
+/**
  * Get all assignments made to team members with optional filters (supervisor only)
  */
 export async function getTeamAssignments(filters?: {

@@ -18,6 +18,10 @@ const safeParse = (v) => {
 // Ensure questions column exists (safe to run on every start)
 pool.query("ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS questions JSONB NULL").catch(() => {});
 
+// Ensure tabular-logsheet columns exist (migration 2026-03-02-tabular-logsheet)
+pool.query("ALTER TABLE logsheet_templates ADD COLUMN IF NOT EXISTS layout_type VARCHAR(20) NOT NULL DEFAULT 'standard'").catch(() => {});
+pool.query("ALTER TABLE logsheet_entries ADD COLUMN IF NOT EXISTS data JSONB").catch(() => {});
+
 /* ── Dashboard ──────────────────────────────────────────────────────────────── */
 router.get("/dashboard", async (req, res, next) => {
   try {

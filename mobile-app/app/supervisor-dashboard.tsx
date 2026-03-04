@@ -1,4 +1,4 @@
-import { MaterialCommunityIcons } from '@expo/vector-icons';
+﻿import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
@@ -13,7 +13,7 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
-import { getMyTeam, clearAuth, getDashboardStats, getStoredUser, getTeamStats } from '../utils/api';
+import { getMyTeam, clearAuth, getDashboardStats, getStoredUser, getTeamStats, getChecklistSubmissions } from '../utils/api';
 
 // Reusable Navigation Bar Component for Supervisor
 export const SupervisorBottomNav = ({ activeRoute }: { activeRoute: string }) => {
@@ -28,6 +28,15 @@ export const SupervisorBottomNav = ({ activeRoute }: { activeRoute: string }) =>
                 <Text style={[navStyles.navText, activeRoute === 'home' && navStyles.navTextActive]}>Home</Text>
             </TouchableOpacity>
 
+            <TouchableOpacity style={navStyles.navItem} onPress={() => router.push('/checklists')}>
+                <MaterialCommunityIcons
+                    name={activeRoute === 'checklists' ? 'clipboard-check' : 'clipboard-check-outline'}
+                    size={24}
+                    color={activeRoute === 'checklists' ? '#1E3A8A' : '#A0AEC0'}
+                />
+                <Text style={[navStyles.navText, activeRoute === 'checklists' && navStyles.navTextActive]}>Tasks</Text>
+            </TouchableOpacity>
+
             <TouchableOpacity style={navStyles.navItem} onPress={() => router.push('/assets-list')}>
                 <MaterialCommunityIcons
                     name={activeRoute === 'assets' ? 'office-building' : 'office-building-outline'}
@@ -35,15 +44,6 @@ export const SupervisorBottomNav = ({ activeRoute }: { activeRoute: string }) =>
                     color={activeRoute === 'assets' ? '#1E3A8A' : '#A0AEC0'}
                 />
                 <Text style={[navStyles.navText, activeRoute === 'assets' && navStyles.navTextActive]}>Assets</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={navStyles.navItem} onPress={() => router.push('/checklists')}>
-                <MaterialCommunityIcons
-                    name={activeRoute === 'checklists' ? 'clipboard-check' : 'clipboard-check-outline'}
-                    size={24}
-                    color={activeRoute === 'checklists' ? '#1E3A8A' : '#A0AEC0'}
-                />
-                <Text style={[navStyles.navText, activeRoute === 'checklists' && navStyles.navTextActive]}>Checklists</Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={navStyles.navItem} onPress={() => router.push('/profile')}>
@@ -89,44 +89,34 @@ const navStyles = StyleSheet.create({
 export default function SupervisorDashboardScreen() {
     const [teamStats, setTeamStats] = useState<any[]>([]);
     const [teamMembers, setTeamMembers] = useState<any[]>([]);
-    const [dashboardStats, setDashboardStats] = useState<{ totalAssets: number; activeAssets: number } | null>(null);
+    const [dashboardStats, setDashboardStats] = useState<any>(null);
     const [currentUser, setCurrentUser] = useState<any>(null);
+    const [recentSubmissions, setRecentSubmissions] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
 
-    useEffect(() => {
-        loadData();
-    }, []);
+    useEffect(() => { loadData(); }, []);
 
     const loadData = async () => {
         try {
-            const [teamStatsData, teamData, statsData, userData] = await Promise.all([
+            const [teamStatsData, teamData, statsData, userData, submissions] = await Promise.all([
                 getTeamStats().catch(() => []),
-                getMyTeam(),
+                getMyTeam().catch(() => []),
                 getDashboardStats().catch(() => null),
                 getStoredUser(),
+                getChecklistSubmissions().catch(() => []),
             ]);
             setTeamStats(teamStatsData);
             setTeamMembers(teamData);
             if (statsData) setDashboardStats(statsData);
             if (userData) setCurrentUser(userData);
+            setRecentSubmissions(submissions);
         } catch (error: any) {
-            console.error('Failed to load dashboard data:', error);
-            // If authentication error, clear tokens and go back to login
             if (error.message?.includes('authentication') || error.message?.includes('token')) {
-                Alert.alert(
-                    'Session Expired',
-                    'Please log in again',
-                    [
-                        {
-                            text: 'OK',
-                            onPress: async () => {
-                                await clearAuth();
-                                router.replace('/');
-                            },
-                        },
-                    ]
-                );
+                Alert.alert('Session Expired', 'Please log in again', [{
+                    text: 'OK',
+                    onPress: async () => { await clearAuth(); router.replace('/'); },
+                }]);
             }
         } finally {
             setIsLoading(false);
@@ -134,17 +124,26 @@ export default function SupervisorDashboardScreen() {
         }
     };
 
-    const onRefresh = () => {
-        setRefreshing(true);
-        loadData();
-    };
+    const onRefresh = () => { setRefreshing(true); loadData(); };
 
-    const totalAssigned = teamStats.reduce((sum, m) => sum + Number(m.totalCount || 0), 0);
+    // Derived stats
+    const pendingLogsheets = teamStats.reduce((s, m) => s + Number(m.logsheetCount || 0), 0);
+    const activeChecklists = teamStats.reduce((s, m) => s + Number(m.checklistCount || 0), 0);
+    const urgentAlerts = dashboardStats?.flags?.critical ?? 0;
+    const totalTasks = teamStats.reduce((s, m) => s + Number(m.totalCount || 0), 0);
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    const completedToday = recentSubmissions.filter(s => s.submittedAt?.startsWith(todayStr)).length;
+    const inProgressCount = Math.max(0, Math.min(dashboardStats?.openIssues ?? 0, totalTasks - completedToday));
+    const pendingCount = Math.max(0, totalTasks - completedToday - inProgressCount);
+    const pct = totalTasks > 0 ? Math.round((completedToday / totalTasks) * 100) : 0;
+
+    const firstName = currentUser?.fullName?.split(' ')[0] || currentUser?.fullname?.split(' ')[0] || 'Supervisor';
 
     if (isLoading) {
         return (
             <SafeAreaView style={styles.container}>
-                <View style={styles.loadingContainer}>
+                <View style={styles.loadingBox}>
                     <ActivityIndicator size="large" color="#1E3A8A" />
                     <Text style={styles.loadingText}>Loading dashboard...</Text>
                 </View>
@@ -154,436 +153,366 @@ export default function SupervisorDashboardScreen() {
 
     return (
         <SafeAreaView style={styles.container}>
-            {/* Header */}
+            {/* â”€â”€ Header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
             <View style={styles.header}>
-                <View style={styles.headerLeft}>
-                    <View style={styles.logoCircle}>
-                        <Text style={styles.logoText}>FM</Text>
-                    </View>
-                    <View>
-                        <Text style={styles.portalSub}>SUPERVISOR PORTAL</Text>
-                        <Text style={styles.greetingText}>
-                            {currentUser?.fullName
-                                ? `Welcome, ${currentUser.fullName.split(' ')[0]}!`
-                                : 'Welcome Back!'}
-                        </Text>
-                    </View>
+                <View style={styles.headerAvatar}>
+                    <MaterialCommunityIcons name="account" size={28} color="#1E3A8A" />
                 </View>
-                <TouchableOpacity style={styles.allAssignmentsBtn} onPress={() => router.push('/team-assignments')}>
-                    <MaterialCommunityIcons name="clipboard-list-outline" size={18} color="#1E3A8A" />
-                    <Text style={styles.allAssignmentsBtnText}>All</Text>
+                <View style={styles.headerText}>
+                    <Text style={styles.headerWelcome}>Welcome back,</Text>
+                    <Text style={styles.headerName}>Supervisor {firstName}</Text>
+                </View>
+                <TouchableOpacity style={styles.bellBtn} onPress={() => router.push('/warnings')}>
+                    <View style={styles.bellCircle}>
+                        <MaterialCommunityIcons name="bell-outline" size={22} color="#4A5568" />
+                        {urgentAlerts > 0 && <View style={styles.bellDot} />}
+                    </View>
                 </TouchableOpacity>
             </View>
 
-            <ScrollView 
-                style={styles.scrollContent} 
+            <ScrollView
+                style={{ flex: 1 }}
                 showsVerticalScrollIndicator={false}
-                refreshControl={
-                    <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#1E3A8A']} />
-                }
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#1E3A8A']} />}
             >
-                <View style={styles.contentPadding}>
+                <View style={styles.content}>
 
-                    {/* Quick Stats */}
+                    {/* â”€â”€ Stat Cards â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
                     <View style={styles.statsRow}>
                         <View style={[styles.statCard, { backgroundColor: '#EBF8FF' }]}>
-                            <MaterialCommunityIcons name="account-group" size={28} color="#2B6CB0" />
-                            <Text style={styles.statNumber}>{teamMembers.length}</Text>
-                            <Text style={styles.statLabel}>Team Members</Text>
+                            <View style={[styles.statIconWrap, { backgroundColor: '#BEE3F8' }]}>
+                                <MaterialCommunityIcons name="notebook-outline" size={20} color="#2B6CB0" />
+                            </View>
+                            <Text style={[styles.statNum, { color: '#2C5282' }]}>{pendingLogsheets}</Text>
+                            <Text style={styles.statLabel}>Pending{'\n'}Logsheets</Text>
+                        </View>
+                        <View style={[styles.statCard, { backgroundColor: '#F0FFF4' }]}>
+                            <View style={[styles.statIconWrap, { backgroundColor: '#C6F6D5' }]}>
+                                <MaterialCommunityIcons name="clipboard-check-outline" size={20} color="#276749" />
+                            </View>
+                            <Text style={[styles.statNum, { color: '#276749' }]}>{activeChecklists}</Text>
+                            <Text style={styles.statLabel}>Active{'\n'}Checklists</Text>
                         </View>
                         <View style={[styles.statCard, { backgroundColor: '#FFF5F5' }]}>
-                            <MaterialCommunityIcons name="clipboard-check" size={28} color="#7C3AED" />
-                            <Text style={styles.statNumber}>{totalAssigned}</Text>
-                            <Text style={styles.statLabel}>Assigned Tasks</Text>
-                        </View>
-                        <View style={[styles.statCard, { backgroundColor: '#F0FDF4' }]}>
-                            <MaterialCommunityIcons name="office-building" size={28} color="#38A169" />
-                            <Text style={styles.statNumber}>{dashboardStats?.activeAssets ?? '—'}</Text>
-                            <Text style={styles.statLabel}>Active Assets</Text>
+                            <View style={[styles.statIconWrap, { backgroundColor: '#FED7D7' }]}>
+                                <MaterialCommunityIcons name="alert-circle-outline" size={20} color="#C53030" />
+                            </View>
+                            <Text style={[styles.statNum, { color: '#C53030' }]}>{urgentAlerts}</Text>
+                            <Text style={styles.statLabel}>Urgent{'\n'}Alerts</Text>
                         </View>
                     </View>
 
-                    {/* Main Feature Cards */}
-                    <Text style={styles.sectionTitle}>Management</Text>
-
-                    {/* Assets Card */}
-                    <TouchableOpacity style={styles.card} activeOpacity={0.8} onPress={() => router.push('/assets-list')}>
-                        <View style={styles.cardTopRow}>
-                            <View style={[styles.iconBox, { backgroundColor: '#EBF8FF' }]}>
-                                <MaterialCommunityIcons name="office-building" size={24} color="#2B6CB0" />
+                    {/* â”€â”€ Daily Task Progress â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+                    <View style={styles.progressCard}>
+                        <View style={styles.progressCardHeader}>
+                            <View>
+                                <Text style={styles.progressTitle}>Daily Task Progress</Text>
+                                <Text style={styles.progressSub}>Overview of today's workload</Text>
                             </View>
-                            <MaterialCommunityIcons name="chevron-right" size={24} color="#CBD5E0" />
+                            {totalTasks > 0 && (
+                                <View style={styles.trendBadge}>
+                                    <MaterialCommunityIcons name="trending-up" size={14} color="#276749" />
+                                    <Text style={styles.trendText}>{pct}%</Text>
+                                </View>
+                            )}
                         </View>
-
-                        <Text style={styles.cardTitle}>Assets</Text>
-                        <Text style={styles.cardSubtitle}>Manage facility assets and equipment</Text>
-
-                        <View style={styles.divider} />
-
-                        <View style={styles.cardBottomRow}>
-                            <Text style={styles.largeNumber}>{dashboardStats?.activeAssets ?? '—'}</Text>
-                            <View style={[styles.pill, { backgroundColor: '#F0FDF4' }]}>
-                                <Text style={[styles.pillText, { color: '#38A169' }]}>Active</Text>
-                            </View>
-                        </View>
-                    </TouchableOpacity>
-
-                    {/* Team Assignment Overview */}
-                    <View style={styles.teamSection}>
-                        <View style={styles.teamSectionHeader}>
-                            <Text style={styles.sectionTitle}>Team Assignments</Text>
-                            <TouchableOpacity onPress={() => router.push('/team-assignments')} style={styles.viewAllBtn}>
-                                <Text style={styles.viewAllText}>View All →</Text>
-                            </TouchableOpacity>
-                        </View>
-                        {teamStats.length === 0 ? (
-                            <View style={styles.noTeamBox}>
-                                <MaterialCommunityIcons name="account-group-outline" size={32} color="#CBD5E0" />
-                                <Text style={styles.noTeamText}>No team members yet</Text>
-                            </View>
-                        ) : (
-                            teamStats.map((member: any) => (
-                                <View key={member.id} style={styles.memberStatCard}>
-                                    <View style={styles.memberStatAvatar}>
-                                        <Text style={styles.memberStatInitials}>
-                                            {String(member.fullName || '').split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()}
-                                        </Text>
-                                    </View>
-                                    <View style={styles.memberStatInfo}>
-                                        <Text style={styles.memberStatName}>{member.fullName}</Text>
-                                        <Text style={styles.memberStatRole}>{member.role}</Text>
-                                    </View>
-                                    <View style={styles.memberStatCounts}>
-                                        <View style={styles.countPill}>
-                                            <MaterialCommunityIcons name="clipboard-check-outline" size={12} color="#7C3AED" />
-                                            <Text style={styles.countText}>{member.checklistCount}</Text>
-                                        </View>
-                                        <View style={[styles.countPill, { backgroundColor: '#DBEAFE' }]}>
-                                            <MaterialCommunityIcons name="notebook-outline" size={12} color="#2563EB" />
-                                            <Text style={[styles.countText, { color: '#2563EB' }]}>{member.logsheetCount}</Text>
-                                        </View>
+                        <View style={styles.progressBody}>
+                            {/* Ring */}
+                            <View style={styles.ringOuter}>
+                                <View style={[styles.ringBorder, { borderColor: pct > 0 ? '#2563EB' : '#E2E8F0' }]}>
+                                    <View style={styles.ringInner}>
+                                        <Text style={styles.ringPct}>{pct}%</Text>
                                     </View>
                                 </View>
-                            ))
-                        )}
+                            </View>
+                            {/* Legend */}
+                            <View style={styles.legend}>
+                                <View style={styles.legendRow}>
+                                    <View style={[styles.legendDot, { backgroundColor: '#2563EB' }]} />
+                                    <Text style={styles.legendLabel}>Completed</Text>
+                                    <Text style={styles.legendCount}>{completedToday}</Text>
+                                </View>
+                                <View style={styles.legendRow}>
+                                    <View style={[styles.legendDot, { backgroundColor: '#93C5FD' }]} />
+                                    <Text style={styles.legendLabel}>In Progress</Text>
+                                    <Text style={styles.legendCount}>{inProgressCount}</Text>
+                                </View>
+                                <View style={styles.legendRow}>
+                                    <View style={[styles.legendDot, { backgroundColor: '#CBD5E0' }]} />
+                                    <Text style={styles.legendLabel}>Pending</Text>
+                                    <Text style={styles.legendCount}>{pendingCount}</Text>
+                                </View>
+                            </View>
+                        </View>
                     </View>
 
-                    {/* My Team Card */}
-                    <TouchableOpacity style={styles.card} activeOpacity={0.8}>
-                        <View style={styles.cardTopRow}>
-                            <View style={[styles.iconBox, { backgroundColor: '#ECFDF5' }]}>
-                                <MaterialCommunityIcons name="account-group" size={24} color="#059669" />
-                            </View>
-                            <MaterialCommunityIcons name="chevron-right" size={24} color="#CBD5E0" />
+                    {/* â”€â”€ Technicians on Duty â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+                    <View style={styles.techHeader}>
+                        <Text style={styles.sectionTitle}>Technicians on Duty</Text>
+                        <TouchableOpacity onPress={() => router.push('/team-assignments')}>
+                            <Text style={styles.viewAllText}>View All</Text>
+                        </TouchableOpacity>
+                    </View>
+
+                    {teamMembers.length === 0 ? (
+                        <View style={styles.emptyTeam}>
+                            <MaterialCommunityIcons name="account-group-outline" size={36} color="#CBD5E0" />
+                            <Text style={styles.emptyTeamText}>No team members yet</Text>
                         </View>
+                    ) : (
+                        teamMembers.map((member: any) => {
+                            const name = member.fullName || member.fullname || 'Unknown';
+                            const initials = name.split(' ').map((n: string) => n[0] || '').join('').slice(0, 2).toUpperCase();
+                            const memberStat = teamStats.find((s) => s.id === member.id);
+                            const taskInfo = memberStat
+                                ? `${String(member.role).replace('_', ' ')} â€¢ ${memberStat.totalCount || 0} task${memberStat.totalCount !== 1 ? 's' : ''}`
+                                : String(member.role).replace('_', ' ');
+                            return (
+                                <View key={member.id} style={styles.techCard}>
+                                    <View style={styles.techAvatar}>
+                                        <Text style={styles.techInitials}>{initials}</Text>
+                                        <View style={styles.statusDot} />
+                                    </View>
+                                    <View style={styles.techInfo}>
+                                        <Text style={styles.techName}>{name}</Text>
+                                        <Text style={styles.techRole}>{taskInfo}</Text>
+                                    </View>
+                                    <TouchableOpacity style={styles.msgBtn} onPress={() => router.push('/checklists')}>
+                                        <MaterialCommunityIcons name="message-text-outline" size={20} color="#718096" />
+                                    </TouchableOpacity>
+                                </View>
+                            );
+                        })
+                    )}
 
-                        <Text style={styles.cardTitle}>My Team</Text>
-                        <Text style={styles.cardSubtitle}>Manage technicians and assignments</Text>
-
-                        <View style={styles.divider} />
-
-                        <View style={styles.cardBottomRow}>
-                            <Text style={styles.largeNumber}>{teamMembers.length}</Text>
-                            <View style={[styles.pill, { backgroundColor: '#EFF6FF' }]}>
-                                <Text style={[styles.pillText, { color: '#1E40AF' }]}>Members</Text>
-                            </View>
-                        </View>
+                    {/* â”€â”€ Assign New Task button â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+                    <TouchableOpacity
+                        style={styles.assignBtn}
+                        activeOpacity={0.85}
+                        onPress={() => router.push('/checklists')}
+                    >
+                        <MaterialCommunityIcons name="clipboard-plus-outline" size={22} color="#FFFFFF" />
+                        <Text style={styles.assignBtnText}>Assign New Task</Text>
                     </TouchableOpacity>
 
-                    {/* Warnings Card */}
-                    <TouchableOpacity style={styles.card} activeOpacity={0.8} onPress={() => router.push('/warnings')}>
-                        <View style={styles.cardTopRow}>
-                            <View style={[styles.iconBox, { backgroundColor: '#FEF2F2' }]}>
-                                <MaterialCommunityIcons name="alert-circle" size={24} color="#DC2626" />
-                            </View>
-                            <MaterialCommunityIcons name="chevron-right" size={24} color="#CBD5E0" />
-                        </View>
-
-                        <Text style={styles.cardTitle}>Warnings & Alerts</Text>
-                        <Text style={styles.cardSubtitle}>View critical issues</Text>
-
-                        <View style={styles.divider} />
-
-                        <View style={styles.cardBottomRow}>
-                            <Text style={styles.largeNumber}>-</Text>
-                            <View style={[styles.pill, { backgroundColor: '#F0FDF4' }]}>
-                                <Text style={[styles.pillText, { color: '#16A34A' }]}>View All</Text>
-                            </View>
-                        </View>
-                    </TouchableOpacity>
-
+                    <View style={{ height: 24 }} />
                 </View>
             </ScrollView>
 
-            {/* Bottom Nav */}
             <SupervisorBottomNav activeRoute="home" />
         </SafeAreaView>
     );
 }
 
 const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        backgroundColor: '#FAFAFA',
-    },
-    loadingContainer: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        gap: 16,
-    },
-    loadingText: {
-        fontSize: 16,
-        color: '#718096',
-    },
+    container: { flex: 1, backgroundColor: '#F8FAFC' },
+    loadingBox: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 16 },
+    loadingText: { fontSize: 15, color: '#718096' },
+
+    // Header
     header: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'space-between',
         paddingHorizontal: 20,
         paddingVertical: 16,
+        paddingTop: Platform.OS === 'android' ? 40 : 16,
         backgroundColor: '#FFFFFF',
         borderBottomWidth: 1,
         borderBottomColor: '#EDF2F7',
-        marginTop: Platform.OS === 'android' ? 30 : 0,
+        gap: 14,
     },
-    headerLeft: {
-        flexDirection: 'row',
-        alignItems: 'center',
-    },
-    logoCircle: {
-        width: 44,
-        height: 44,
-        borderRadius: 22,
-        borderWidth: 1,
-        borderColor: '#1E3A8A',
-        backgroundColor: '#EFF6FF',
+    headerAvatar: {
+        width: 52,
+        height: 52,
+        borderRadius: 26,
+        backgroundColor: '#EBF8FF',
+        borderWidth: 2,
+        borderColor: '#BEE3F8',
         justifyContent: 'center',
         alignItems: 'center',
-        marginRight: 12,
     },
-    logoText: {
-        fontSize: 12,
-        fontWeight: '900',
-        color: '#1E3A8A',
-        letterSpacing: 0.5,
+    headerText: { flex: 1 },
+    headerWelcome: { fontSize: 13, color: '#718096', fontWeight: '500' },
+    headerName: { fontSize: 18, fontWeight: '800', color: '#1A202C', marginTop: 2 },
+    bellBtn: { padding: 4 },
+    bellCircle: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: '#F7FAFC',
+        borderWidth: 1,
+        borderColor: '#E2E8F0',
+        justifyContent: 'center',
+        alignItems: 'center',
     },
-    portalSub: {
-        fontSize: 10,
-        color: '#A0AEC0',
-        fontWeight: '600',
-        letterSpacing: 1,
-    },
-    greetingText: {
-        fontSize: 16,
-        fontWeight: '700',
-        color: '#1A202C',
-        marginTop: 2,
-    },
-    bellIconBtn: {
-        position: 'relative',
-        padding: 8,
-    },
-    notificationDot: {
+    bellDot: {
         position: 'absolute',
-        top: 8,
-        right: 8,
+        top: 6,
+        right: 6,
         width: 8,
         height: 8,
         borderRadius: 4,
         backgroundColor: '#E53E3E',
+        borderWidth: 1.5,
+        borderColor: '#FFFFFF',
     },
-    scrollContent: {
-        flex: 1,
-    },
-    contentPadding: {
-        padding: 20,
-        paddingBottom: 40,
-    },
-    statsRow: {
-        flexDirection: 'row',
-        gap: 12,
-        marginBottom: 24,
-    },
+
+    content: { padding: 20, paddingTop: 16, paddingBottom: 20 },
+
+    // Stat cards
+    statsRow: { flexDirection: 'row', gap: 10, marginBottom: 18 },
     statCard: {
         flex: 1,
-        padding: 16,
-        borderRadius: 12,
+        borderRadius: 14,
+        padding: 14,
+        alignItems: 'center',
+        gap: 6,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
+        elevation: 1,
+    },
+    statIconWrap: {
+        width: 38,
+        height: 38,
+        borderRadius: 10,
+        justifyContent: 'center',
         alignItems: 'center',
     },
-    statNumber: {
-        fontSize: 28,
-        fontWeight: '800',
-        color: '#1A202C',
-        marginTop: 8,
-    },
-    statLabel: {
-        fontSize: 12,
-        color: '#718096',
-        fontWeight: '600',
-        marginTop: 4,
-    },
-    sectionTitle: {
-        fontSize: 18,
-        fontWeight: '700',
-        color: '#1A202C',
-        marginBottom: 16,
-    },
-    card: {
+    statNum: { fontSize: 26, fontWeight: '800' },
+    statLabel: { fontSize: 11, color: '#4A5568', fontWeight: '600', textAlign: 'center', lineHeight: 15 },
+
+    // Progress card
+    progressCard: {
         backgroundColor: '#FFFFFF',
         borderRadius: 16,
         padding: 20,
-        marginBottom: 16,
+        marginBottom: 18,
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
+        shadowOpacity: 0.06,
         shadowRadius: 8,
         elevation: 2,
     },
-    cardTopRow: {
+    progressCardHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'flex-start',
+        marginBottom: 18,
+    },
+    progressTitle: { fontSize: 16, fontWeight: '800', color: '#1A202C' },
+    progressSub: { fontSize: 12, color: '#718096', marginTop: 3 },
+    trendBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#F0FFF4',
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 20,
+        gap: 4,
+    },
+    trendText: { fontSize: 13, fontWeight: '700', color: '#276749' },
+    progressBody: { flexDirection: 'row', alignItems: 'center', gap: 24 },
+    ringOuter: { alignItems: 'center', justifyContent: 'center' },
+    ringBorder: {
+        width: 100,
+        height: 100,
+        borderRadius: 50,
+        borderWidth: 8,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    ringInner: {
+        width: 78,
+        height: 78,
+        borderRadius: 39,
+        backgroundColor: '#FFFFFF',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    ringPct: { fontSize: 20, fontWeight: '800', color: '#1A202C' },
+    legend: { flex: 1, gap: 12 },
+    legendRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    legendDot: { width: 10, height: 10, borderRadius: 5 },
+    legendLabel: { flex: 1, fontSize: 13, color: '#4A5568', fontWeight: '500' },
+    legendCount: { fontSize: 14, fontWeight: '800', color: '#1A202C' },
+
+    // Technicians section
+    techHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
         marginBottom: 12,
     },
-    iconBox: {
-        width: 48,
-        height: 48,
-        borderRadius: 12,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    cardTitle: {
-        fontSize: 16,
-        fontWeight: '700',
-        color: '#1A202C',
-        marginBottom: 4,
-    },
-    cardSubtitle: {
-        fontSize: 13,
-        color: '#718096',
-        lineHeight: 18,
-    },
-    divider: {
-        height: 1,
-        backgroundColor: '#E2E8F0',
-        marginVertical: 16,
-    },
-    cardBottomRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-    },
-    largeNumber: {
-        fontSize: 32,
-        fontWeight: '800',
-        color: '#1A202C',
-    },
-    pill: {
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 20,
-    },
-    pillText: {
-        fontSize: 12,
-        fontWeight: '700',
-    },
-    allAssignmentsBtn: {
+    sectionTitle: { fontSize: 17, fontWeight: '800', color: '#1A202C' },
+    viewAllText: { fontSize: 14, fontWeight: '700', color: '#2563EB' },
+    emptyTeam: { alignItems: 'center', paddingVertical: 24, gap: 8 },
+    emptyTeamText: { fontSize: 13, color: '#A0AEC0' },
+    techCard: {
         flexDirection: 'row',
         alignItems: 'center',
         backgroundColor: '#FFFFFF',
-        borderRadius: 8,
-        paddingHorizontal: 10,
-        paddingVertical: 6,
-        gap: 4,
-    },
-    allAssignmentsBtnText: {
-        fontSize: 13,
-        fontWeight: '700',
-        color: '#1E3A8A',
-    },
-    teamSection: {
-        backgroundColor: '#FFFFFF',
-        borderRadius: 16,
-        padding: 16,
-        marginBottom: 16,
-        borderWidth: 1,
-        borderColor: '#E2E8F0',
-    },
-    teamSectionHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 14,
-    },
-    viewAllBtn: {
-        paddingHorizontal: 10,
-        paddingVertical: 4,
-    },
-    viewAllText: {
-        fontSize: 13,
-        fontWeight: '700',
-        color: '#2563EB',
-    },
-    noTeamBox: {
-        alignItems: 'center',
-        paddingVertical: 20,
-        gap: 8,
-    },
-    noTeamText: {
-        fontSize: 13,
-        color: '#A0AEC0',
-    },
-    memberStatCard: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingVertical: 10,
-        borderBottomWidth: 1,
-        borderBottomColor: '#F1F5F9',
+        borderRadius: 14,
+        padding: 14,
+        marginBottom: 10,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
+        elevation: 1,
         gap: 12,
     },
-    memberStatAvatar: {
-        width: 38,
-        height: 38,
-        borderRadius: 19,
+    techAvatar: {
+        width: 46,
+        height: 46,
+        borderRadius: 23,
         backgroundColor: '#EBF8FF',
         justifyContent: 'center',
         alignItems: 'center',
         flexShrink: 0,
     },
-    memberStatInitials: {
-        fontSize: 13,
-        fontWeight: '700',
-        color: '#2B6CB0',
+    techInitials: { fontSize: 15, fontWeight: '700', color: '#2B6CB0' },
+    statusDot: {
+        position: 'absolute',
+        bottom: 1,
+        right: 1,
+        width: 11,
+        height: 11,
+        borderRadius: 6,
+        backgroundColor: '#38A169',
+        borderWidth: 2,
+        borderColor: '#FFFFFF',
     },
-    memberStatInfo: { flex: 1 },
-    memberStatName: {
-        fontSize: 14,
-        fontWeight: '700',
-        color: '#1A202C',
+    techInfo: { flex: 1 },
+    techName: { fontSize: 15, fontWeight: '700', color: '#1A202C' },
+    techRole: { fontSize: 12, color: '#718096', marginTop: 2, textTransform: 'capitalize' },
+    msgBtn: {
+        width: 36,
+        height: 36,
+        borderRadius: 8,
+        backgroundColor: '#F7FAFC',
+        borderWidth: 1,
+        borderColor: '#E2E8F0',
+        justifyContent: 'center',
+        alignItems: 'center',
     },
-    memberStatRole: {
-        fontSize: 11,
-        color: '#718096',
-        textTransform: 'capitalize',
-    },
-    memberStatCounts: {
-        flexDirection: 'row',
-        gap: 6,
-        flexShrink: 0,
-    },
-    countPill: {
+
+    // Assign button
+    assignBtn: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#EDE9FE',
-        borderRadius: 12,
-        paddingHorizontal: 8,
-        paddingVertical: 3,
-        gap: 3,
+        justifyContent: 'center',
+        backgroundColor: '#2563EB',
+        borderRadius: 14,
+        paddingVertical: 16,
+        marginTop: 8,
+        gap: 10,
+        shadowColor: '#2563EB',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
+        elevation: 4,
     },
-    countText: {
-        fontSize: 12,
-        fontWeight: '700',
-        color: '#7C3AED',
-    },
+    assignBtnText: { color: '#FFFFFF', fontSize: 17, fontWeight: '800' },
 });

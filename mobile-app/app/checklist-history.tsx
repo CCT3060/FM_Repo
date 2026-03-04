@@ -1,8 +1,10 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
+    ActivityIndicator,
     Platform,
+    RefreshControl,
     SafeAreaView,
     ScrollView,
     StyleSheet,
@@ -10,88 +12,127 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import { getChecklistSubmissions } from '../utils/api';
 
-const HISTORY_DATA = [
-    {
-        id: '1',
-        title: 'Terminal 2 - Zone B',
-        subtitle: 'Daily Sanitization Check',
-        status: 'PASSED',
-        user: 'Rajesh Kumar',
-        time: 'Oct 24, 10:30 AM',
-        icon: 'spray-bottle',
-    },
-    {
-        id: '2',
-        title: 'Cargo Bay 4',
-        subtitle: 'Equipment Safety Audit',
-        status: 'FAILED',
-        user: 'Amit Singh',
-        time: 'Oct 23, 04:15 PM',
-        icon: 'alert-triangle',
-    },
-    {
-        id: '3',
-        title: 'Gate 14 Washroom',
-        subtitle: 'Hygiene Inspection',
-        status: 'PASSED',
-        user: 'Priya Mehta',
-        time: 'Oct 23, 02:00 PM',
-        icon: 'shield-check-outline',
-    },
-];
+interface Submission {
+    id: number;
+    submittedAt: string | null;
+    templateName: string;
+    templateId: number;
+    assetName: string | null;
+    assetId: number | null;
+    status: string | null;
+    completionPct: number | null;
+    submittedBy: string | null;
+}
+
+interface DayGroup {
+    label: string;
+    isoDate: string;
+    items: Submission[];
+}
+
+function formatDayLabel(isoDate: string): string {
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(today.getDate() - 1);
+    const fmt = (d: Date) => d.toISOString().split('T')[0];
+    if (isoDate === fmt(today)) return 'Today';
+    if (isoDate === fmt(yesterday)) return 'Yesterday';
+    return new Date(isoDate + 'T00:00:00').toLocaleDateString('en-US', {
+        weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
+    });
+}
+
+function groupByDate(submissions: Submission[]): DayGroup[] {
+    const map: Record<string, Submission[]> = {};
+    for (const s of submissions) {
+        const date = s.submittedAt ? s.submittedAt.split('T')[0] : 'unknown';
+        if (!map[date]) map[date] = [];
+        map[date].push(s);
+    }
+    return Object.entries(map)
+        .sort(([a], [b]) => b.localeCompare(a))
+        .map(([isoDate, items]) => ({
+            label: isoDate === 'unknown' ? 'Date Unknown' : formatDayLabel(isoDate),
+            isoDate,
+            items,
+        }));
+}
+
+function statusColor(status: string | null): { bg: string; text: string; label: string } {
+    switch ((status || '').toLowerCase()) {
+        case 'completed': return { bg: '#C6F6D5', text: '#276749', label: 'COMPLETED' };
+        case 'in_progress':
+        case 'in-progress': return { bg: '#FEFCBF', text: '#975A16', label: 'IN PROGRESS' };
+        case 'failed': return { bg: '#FED7D7', text: '#C53030', label: 'FAILED' };
+        default: return { bg: '#E2E8F0', text: '#4A5568', label: 'SUBMITTED' };
+    }
+}
 
 export default function ChecklistHistoryScreen() {
+    const [groups, setGroups] = useState<DayGroup[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
+    const [error, setError] = useState<string | null>(null);
 
-    const renderHistoryCard = (item: typeof HISTORY_DATA[0]) => {
-        const isPassed = item.status === 'PASSED';
-        const borderColor = isPassed ? '#38A169' : '#E53E3E'; // Green vs Red
-        const iconColor = isPassed ? '#553C9A' : '#C53030'; // Purple vs Dark Red
-        const iconBg = isPassed ? '#E9D8FD' : '#FED7D7';
+    useEffect(() => { loadData(); }, []);
+
+    const loadData = async () => {
+        setError(null);
+        try {
+            const data = await getChecklistSubmissions();
+            setGroups(groupByDate(data));
+        } catch (e: any) {
+            setError(e.message || 'Failed to load history');
+        } finally {
+            setIsLoading(false);
+            setRefreshing(false);
+        }
+    };
+
+    const onRefresh = () => { setRefreshing(true); loadData(); };
+    const totalCount = groups.reduce((s, g) => s + g.items.length, 0);
+
+    const renderCard = (item: Submission) => {
+        const sc = statusColor(item.status);
+        const time = item.submittedAt
+            ? new Date(item.submittedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+            : '';
+        const pct = item.completionPct != null ? Math.round(item.completionPct) : null;
 
         return (
-            <View style={styles.cardContainer} key={item.id}>
-                <View style={[styles.cardAccent, { backgroundColor: borderColor }]} />
-
-                <View style={styles.cardContent}>
+            <View style={styles.card} key={item.id}>
+                <View style={[styles.cardAccent, { backgroundColor: sc.text }]} />
+                <View style={styles.cardBody}>
                     <View style={styles.cardTopRow}>
-                        <View style={styles.cardHeaderLeft}>
-                            <View style={[styles.iconCircle, { backgroundColor: iconBg }]}>
-                                {item.icon === 'alert-triangle' ? (
-                                    <MaterialCommunityIcons name="alert" size={20} color={iconColor} />
-                                ) : (
-                                    <MaterialCommunityIcons name={item.icon as any} size={20} color={iconColor} />
-                                )}
-                            </View>
-                            <View>
-                                <Text style={styles.cardTitle}>{item.title}</Text>
-                                <Text style={styles.cardSubtitle}>{item.subtitle}</Text>
-                            </View>
+                        <View style={[styles.iconCircle, { backgroundColor: sc.bg }]}>
+                            <MaterialCommunityIcons name="clipboard-check-outline" size={20} color={sc.text} />
                         </View>
-                        <View style={[styles.statusBadge, { backgroundColor: isPassed ? '#C6F6D5' : '#FED7D7' }]}>
-                            <Text style={[styles.statusText, { color: isPassed ? '#276749' : '#C53030' }]}>
-                                {item.status}
-                            </Text>
+                        <View style={styles.cardTitleWrap}>
+                            <Text style={styles.cardTitle} numberOfLines={2}>{item.templateName}</Text>
+                            {item.assetName ? <Text style={styles.cardSubtitle}>{item.assetName}</Text> : null}
+                        </View>
+                        <View style={[styles.statusBadge, { backgroundColor: sc.bg }]}>
+                            <Text style={[styles.statusText, { color: sc.text }]}>{sc.label}</Text>
                         </View>
                     </View>
-
                     <View style={styles.divider} />
-
                     <View style={styles.metaRow}>
-                        <View style={styles.metaCol}>
-                            <Text style={styles.metaLabel}>Completed by</Text>
-                            <View style={styles.userRow}>
-                                <MaterialCommunityIcons name="account" size={14} color="#718096" />
-                                <Text style={styles.metaValue}>{item.user}</Text>
-                            </View>
+                        <View style={styles.metaItem}>
+                            <MaterialCommunityIcons name="account-outline" size={13} color="#718096" />
+                            <Text style={styles.metaText}>{item.submittedBy || '—'}</Text>
                         </View>
-                        <View style={[styles.metaCol, { alignItems: 'flex-end' }]}>
-                            <Text style={styles.metaLabel}>Date & Time</Text>
-                            <View style={styles.userRow}>
-                                <MaterialCommunityIcons name="clock-outline" size={14} color="#718096" />
-                                <Text style={styles.metaValue}>{item.time}</Text>
-                            </View>
+                        <View style={styles.metaItem}>
+                            <MaterialCommunityIcons name="clock-outline" size={13} color="#718096" />
+                            <Text style={styles.metaText}>{time || '—'}</Text>
                         </View>
+                        {pct != null && (
+                            <View style={styles.metaItem}>
+                                <MaterialCommunityIcons name="chart-pie" size={13} color="#718096" />
+                                <Text style={styles.metaText}>{pct}%</Text>
+                            </View>
+                        )}
                     </View>
                 </View>
             </View>
@@ -100,234 +141,146 @@ export default function ChecklistHistoryScreen() {
 
     return (
         <SafeAreaView style={styles.container}>
-            <View style={styles.headerContainer}>
-                <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+            {/* Header */}
+            <View style={styles.header}>
+                <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
                     <MaterialCommunityIcons name="arrow-left" size={24} color="#FFFFFF" />
                 </TouchableOpacity>
-                <View style={styles.headerTextGroup}>
+                <View style={{ flex: 1 }}>
                     <Text style={styles.headerTitle}>Checklist History</Text>
-                    <Text style={styles.headerSubtitle}>Chhatrapati Shivaji Int. Airport</Text>
+                    <Text style={styles.headerSub}>Submissions grouped by date</Text>
                 </View>
-                <View style={{ width: 32 }} />
+                <View style={styles.countBadge}>
+                    <Text style={styles.countBadgeText}>{totalCount}</Text>
+                </View>
             </View>
 
-            <ScrollView style={styles.contentScroll} showsVerticalScrollIndicator={false}>
-                <View style={styles.contentPadding}>
-
-                    <View style={styles.filterGroupHeader}>
-                        <MaterialCommunityIcons name="filter-variant" size={18} color="#718096" />
-                        <Text style={styles.filterTitle}>FILTERS</Text>
-                    </View>
-
-                    <TouchableOpacity style={styles.dropdownButton} activeOpacity={0.7}>
-                        <View style={styles.dropdownLeft}>
-                            <MaterialCommunityIcons name="domain" size={20} color="#553C9A" style={styles.dropdownIcon} />
-                            <Text style={styles.dropdownText}>All Assets</Text>
-                        </View>
-                        <MaterialCommunityIcons name="chevron-down" size={20} color="#A0AEC0" />
-                    </TouchableOpacity>
-
-                    <TouchableOpacity style={styles.dropdownButton} activeOpacity={0.7}>
-                        <View style={styles.dropdownLeft}>
-                            <MaterialCommunityIcons name="calendar-month-outline" size={20} color="#553C9A" style={styles.dropdownIcon} />
-                            <Text style={styles.dropdownText}>Last 7 Days</Text>
-                        </View>
-                        <MaterialCommunityIcons name="chevron-down" size={20} color="#A0AEC0" />
-                    </TouchableOpacity>
-
-                    <View style={styles.resultsRow}>
-                        <Text style={styles.resultsText}>Showing 14 results</Text>
-                        <TouchableOpacity>
-                            <Text style={styles.clearFiltersText}>Clear Filters</Text>
-                        </TouchableOpacity>
-                    </View>
-
-                    <View style={styles.divider} />
-
-                    {HISTORY_DATA.map(renderHistoryCard)}
-
+            {isLoading ? (
+                <View style={styles.center}>
+                    <ActivityIndicator size="large" color="#1E3A8A" />
+                    <Text style={styles.centerText}>Loading history…</Text>
                 </View>
-            </ScrollView>
+            ) : error ? (
+                <View style={styles.center}>
+                    <MaterialCommunityIcons name="alert-circle-outline" size={48} color="#E53E3E" />
+                    <Text style={styles.errorText}>{error}</Text>
+                    <TouchableOpacity style={styles.retryBtn} onPress={loadData}>
+                        <Text style={styles.retryText}>Retry</Text>
+                    </TouchableOpacity>
+                </View>
+            ) : (
+                <ScrollView
+                    style={{ flex: 1 }}
+                    contentContainerStyle={styles.scroll}
+                    showsVerticalScrollIndicator={false}
+                    refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#1E3A8A']} />}
+                >
+                    {groups.length === 0 ? (
+                        <View style={[styles.center, { marginTop: 60 }]}>
+                            <MaterialCommunityIcons name="clipboard-text-outline" size={64} color="#CBD5E0" />
+                            <Text style={styles.emptyTitle}>No submissions yet</Text>
+                            <Text style={styles.emptyText}>Filled checklists will appear here grouped by date</Text>
+                        </View>
+                    ) : (
+                        groups.map((group) => (
+                            <View key={group.isoDate}>
+                                <View style={styles.dateHeader}>
+                                    <MaterialCommunityIcons name="calendar-today" size={14} color="#1E3A8A" />
+                                    <Text style={styles.dateHeaderText}>{group.label}</Text>
+                                    <View style={styles.dateHeaderLine} />
+                                    <View style={styles.dateCountPill}>
+                                        <Text style={styles.dateCountText}>{group.items.length}</Text>
+                                    </View>
+                                </View>
+                                {group.items.map(renderCard)}
+                            </View>
+                        ))
+                    )}
+                    <View style={{ height: 40 }} />
+                </ScrollView>
+            )}
         </SafeAreaView>
     );
 }
 
 const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        backgroundColor: '#FAFAFA',
-    },
-    headerContainer: {
+    container: { flex: 1, backgroundColor: '#F7FAFC' },
+    header: {
         flexDirection: 'row',
         alignItems: 'center',
         paddingHorizontal: 16,
-        paddingVertical: 16,
-        backgroundColor: '#1E3A8A', // Deep blue
-        marginTop: Platform.OS === 'android' ? 30 : 0,
+        paddingVertical: 14,
+        backgroundColor: '#1E3A8A',
+        paddingTop: Platform.OS === 'android' ? 44 : 14,
+        gap: 12,
     },
-    backButton: {
-        padding: 4,
-        marginRight: 10,
+    backBtn: { padding: 4 },
+    headerTitle: { color: '#FFFFFF', fontSize: 18, fontWeight: '700' },
+    headerSub: { color: '#93C5FD', fontSize: 12, marginTop: 2 },
+    countBadge: {
+        backgroundColor: 'rgba(255,255,255,0.2)',
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 12,
     },
-    headerTextGroup: {
-        flex: 1,
-    },
-    headerTitle: {
-        color: '#FFFFFF',
-        fontSize: 18,
-        fontWeight: '700',
-        marginBottom: 2,
-    },
-    headerSubtitle: {
-        color: '#A0AEC0',
-        fontSize: 12,
-    },
-    contentScroll: {
-        flex: 1,
-    },
-    contentPadding: {
-        padding: 16,
-        paddingBottom: 40,
-    },
-    filterGroupHeader: {
+    countBadgeText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },
+    scroll: { padding: 16, paddingBottom: 60 },
+    center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 },
+    centerText: { fontSize: 14, color: '#718096', marginTop: 12 },
+    errorText: { fontSize: 14, color: '#E53E3E', marginTop: 12, textAlign: 'center' },
+    retryBtn: { marginTop: 16, backgroundColor: '#1E3A8A', paddingHorizontal: 24, paddingVertical: 10, borderRadius: 8 },
+    retryText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14 },
+    emptyTitle: { fontSize: 18, fontWeight: '700', color: '#1A202C', marginTop: 16, marginBottom: 8 },
+    emptyText: { fontSize: 14, color: '#718096', textAlign: 'center', lineHeight: 20 },
+    dateHeader: {
         flexDirection: 'row',
         alignItems: 'center',
-        marginBottom: 16,
+        marginTop: 20,
+        marginBottom: 10,
+        gap: 6,
     },
-    filterTitle: {
-        fontSize: 14,
-        fontWeight: '700',
-        color: '#718096',
-        marginLeft: 8,
-        letterSpacing: 0.5,
+    dateHeaderText: { fontSize: 13, fontWeight: '700', color: '#1E3A8A' },
+    dateHeaderLine: { flex: 1, height: 1, backgroundColor: '#E2E8F0' },
+    dateCountPill: {
+        backgroundColor: '#DBEAFE',
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        borderRadius: 10,
     },
-    dropdownButton: {
+    dateCountText: { fontSize: 11, fontWeight: '700', color: '#1E3A8A' },
+    card: {
         flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
         backgroundColor: '#FFFFFF',
+        borderRadius: 12,
+        marginBottom: 10,
+        overflow: 'hidden',
         borderWidth: 1,
         borderColor: '#E2E8F0',
-        borderRadius: 24,
-        paddingHorizontal: 16,
-        paddingVertical: 12,
-        marginBottom: 12,
-    },
-    dropdownLeft: {
-        flexDirection: 'row',
-        alignItems: 'center',
-    },
-    dropdownIcon: {
-        marginRight: 12,
-    },
-    dropdownText: {
-        fontSize: 15,
-        color: '#1A202C',
-        fontWeight: '500',
-    },
-    resultsRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginTop: 8,
-        marginBottom: 16,
-    },
-    resultsText: {
-        fontSize: 13,
-        color: '#718096',
-    },
-    clearFiltersText: {
-        fontSize: 13,
-        fontWeight: '600',
-        color: '#553C9A', // Purple
-    },
-    divider: {
-        height: 1,
-        backgroundColor: '#EDF2F7',
-        marginBottom: 16,
-    },
-    cardContainer: {
-        backgroundColor: '#FFFFFF',
-        borderRadius: 16,
-        marginBottom: 16,
-        flexDirection: 'row',
-        overflow: 'hidden',
         shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 4,
-        elevation: 2,
-        borderWidth: 1,
-        borderColor: '#F3F4F6',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.04,
+        shadowRadius: 3,
+        elevation: 1,
     },
-    cardAccent: {
-        width: 6,
-        height: '100%',
-    },
-    cardContent: {
-        flex: 1,
-        padding: 16,
-    },
-    cardTopRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'flex-start',
-        marginBottom: 16,
-    },
-    cardHeaderLeft: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        flex: 1,
-        paddingRight: 8,
-    },
+    cardAccent: { width: 4 },
+    cardBody: { flex: 1, padding: 14 },
+    cardTopRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: 10 },
     iconCircle: {
         width: 40,
         height: 40,
-        borderRadius: 20,
+        borderRadius: 10,
         justifyContent: 'center',
         alignItems: 'center',
-        marginRight: 12,
+        flexShrink: 0,
     },
-    cardTitle: {
-        fontSize: 16,
-        fontWeight: '700',
-        color: '#1A202C',
-        marginBottom: 2,
-    },
-    cardSubtitle: {
-        fontSize: 13,
-        color: '#718096',
-    },
-    statusBadge: {
-        paddingHorizontal: 8,
-        paddingVertical: 4,
-        borderRadius: 6,
-    },
-    statusText: {
-        fontSize: 11,
-        fontWeight: '800',
-        letterSpacing: 0.5,
-    },
-    metaRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-    },
-    metaCol: {
-        flex: 1,
-    },
-    metaLabel: {
-        fontSize: 12,
-        color: '#718096',
-        marginBottom: 4,
-    },
-    userRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-    },
-    metaValue: {
-        fontSize: 13,
-        fontWeight: '600',
-        color: '#1A202C',
-        marginLeft: 6,
-    },
+    cardTitleWrap: { flex: 1 },
+    cardTitle: { fontSize: 14, fontWeight: '700', color: '#1A202C' },
+    cardSubtitle: { fontSize: 12, color: '#718096', marginTop: 3 },
+    statusBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20, flexShrink: 0 },
+    statusText: { fontSize: 10, fontWeight: '700' },
+    divider: { height: 1, backgroundColor: '#F1F5F9', marginBottom: 10 },
+    metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 14 },
+    metaItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+    metaText: { fontSize: 12, color: '#718096' },
 });
+
