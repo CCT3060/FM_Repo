@@ -1245,6 +1245,23 @@ export default function CompanyEmployeePortal() {
       .catch((e) => { setChartError(e?.message || "Failed to load chart data"); setChartStats(null); });
   }, [token, chartFilter, chartCustomStart, chartCustomEnd]);
 
+  // Re-fetch dashboard data whenever the user navigates back to the dashboard tab
+  // (ensures newly submitted logsheets/checklists appear without a full page reload)
+  useEffect(() => {
+    if (!token || nav !== "dashboard") return;
+    load("dashboard", () => getCompanyPortalDashboard(token)).then((d) => d && setDashboard(d));
+    setRecentEntriesLoading(true);
+    getCompanyPortalRecentLogsheetEntries(token)
+      .then((d) => d && setRecentEntries(d))
+      .catch(() => {})
+      .finally(() => setRecentEntriesLoading(false));
+    setRecentChecklistsLoading(true);
+    getCompanyPortalRecentChecklistSubmissions(token)
+      .then((d) => d && setRecentChecklists(d))
+      .catch(() => {})
+      .finally(() => setRecentChecklistsLoading(false));
+  }, [nav, token]);
+
   useEffect(() => {
     if (!token || nav === "dashboard") return;
     if (nav === "departments") load("departments", () => getCompanyPortalDepartments(token)).then((d) => d && setDepartments(d));

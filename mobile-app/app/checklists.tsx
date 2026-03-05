@@ -17,23 +17,24 @@ import {
 } from 'react-native';
 import {
     getMyAssignments,
-    getUnassignedTemplates,
+    getMyUnassignedToTeam,
     getMyTeam,
     supervisorAssignTemplate,
     reassignTemplate,
     getStoredUser,
 } from '../utils/api';
-import { SupervisorBottomNav } from './supervisor-dashboard';
 
 interface Template {
     id: number;
-    assignmentId?: number;   // present if this came from my-assignments
+    assignmentId?: number;
     templateType: 'checklist' | 'logsheet';
     templateName: string;
     description?: string;
     assetType?: string;
     assetId?: number | null;
     assetName?: string | null;
+    frequency?: string;
+    location?: string;
     createdAt?: string;
     assignedAt?: string;
     assignedBy?: string;
@@ -51,13 +52,63 @@ interface TeamMember {
 type ActiveTab = 'assigned' | 'unassigned';
 type TypeFilter = 'all' | 'checklist' | 'logsheet';
 
+function getPriority(frequency?: string): { label: string; bg: string; color: string } {
+    const f = (frequency || '').toLowerCase();
+    if (f === 'daily' || f === 'shift') return { label: 'HIGH PRIORITY', bg: '#FEE2E2', color: '#DC2626' };
+    if (f === 'weekly') return { label: 'NORMAL PRIORITY', bg: '#F1F5F9', color: '#475569' };
+    if (f === 'monthly' || f === 'quarterly' || f === 'yearly') return { label: 'LOW PRIORITY', bg: '#F1F5F9', color: '#94A3B8' };
+    return { label: 'NORMAL PRIORITY', bg: '#F1F5F9', color: '#475569' };
+}
+
+// Bottom nav for Tasks screens
+function TasksBottomNav({ activeRoute }: { activeRoute: string }) {
+    return (
+        <View style={navStyles.container}>
+            <TouchableOpacity style={navStyles.tab} onPress={() => router.push('/checklists' as any)}>
+                <MaterialCommunityIcons
+                    name={activeRoute === 'tasks' ? 'clipboard-check' : 'clipboard-check-outline'}
+                    size={24}
+                    color={activeRoute === 'tasks' ? '#2563EB' : '#94A3B8'}
+                />
+                <Text style={[navStyles.label, activeRoute === 'tasks' && navStyles.labelActive]}>Tasks</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={navStyles.tab} onPress={() => router.push('/assets-list' as any)}>
+                <MaterialCommunityIcons name="archive-outline" size={24} color="#94A3B8" />
+                <Text style={navStyles.label}>Assets</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={navStyles.tab} onPress={() => router.push('/team-assignments' as any)}>
+                <MaterialCommunityIcons name="account-group-outline" size={24} color="#94A3B8" />
+                <Text style={navStyles.label}>Team</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={navStyles.tab} onPress={() => router.push('/profile' as any)}>
+                <MaterialCommunityIcons name="account-circle-outline" size={24} color="#94A3B8" />
+                <Text style={navStyles.label}>Profile</Text>
+            </TouchableOpacity>
+        </View>
+    );
+}
+
+const navStyles = StyleSheet.create({
+    container: {
+        flexDirection: 'row',
+        backgroundColor: '#FFFFFF',
+        borderTopWidth: 1,
+        borderTopColor: '#E2E8F0',
+        paddingBottom: Platform.OS === 'ios' ? 20 : 8,
+        paddingTop: 8,
+    },
+    tab: { flex: 1, alignItems: 'center', gap: 3 },
+    label: { fontSize: 11, color: '#94A3B8', fontWeight: '500' },
+    labelActive: { color: '#2563EB' },
+});
+
 export default function ChecklistManagementScreen() {
     const [assignedTemplates, setAssignedTemplates] = useState<Template[]>([]);
     const [unassignedTemplates, setUnassignedTemplates] = useState<Template[]>([]);
     const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
-    const [isSupervisor, setIsSupervisor] = useState<boolean | null>(null); // null = unknown yet
+    const [isSupervisor, setIsSupervisor] = useState<boolean | null>(null);
 
-    const [activeTab, setActiveTab] = useState<ActiveTab>('assigned');
+    const [activeTab, setActiveTab] = useState<ActiveTab>('unassigned');
     const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
     const [searchQuery, setSearchQuery] = useState('');
 
@@ -70,7 +121,6 @@ export default function ChecklistManagementScreen() {
     const [assignNote, setAssignNote] = useState('');
     const [isAssigning, setIsAssigning] = useState(false);
 
-    // Reload whenever this screen gains focus — covers initial mount AND returning from assignment-form
     useFocusEffect(
         useCallback(() => {
             loadData();
@@ -80,15 +130,11 @@ export default function ChecklistManagementScreen() {
     const loadData = async () => {
         try {
             setError(null);
-
-            // Determine user role first (from local cache — no extra network call)
             const storedUser = await getStoredUser();
             const supervisor = storedUser?.role === 'supervisor';
             setIsSupervisor(supervisor);
 
-            // Always load personal assignments
             const myAssignments = await getMyAssignments();
-
             setAssignedTemplates(
                 (myAssignments as any[]).map((a: any) => ({
                     id: a.templateId,
@@ -99,6 +145,8 @@ export default function ChecklistManagementScreen() {
                     assetType: a.assetType,
                     assetId: a.assetId ?? null,
                     assetName: a.assetName ?? null,
+                    frequency: a.frequency,
+                    location: a.location || a.assetName || a.assetType || '',
                     assignedAt: a.assignedAt,
                     assignedBy: a.assignedBy,
                     note: a.note,
@@ -106,31 +154,31 @@ export default function ChecklistManagementScreen() {
                 }))
             );
 
-            // Supervisor-only: load unassigned templates + team roster
             if (supervisor) {
                 const [unassigned, team] = await Promise.all([
-                    getUnassignedTemplates(),
+                    getMyUnassignedToTeam(),
                     getMyTeam(),
                 ]);
-
                 setUnassignedTemplates(
                     (unassigned as any[]).map((t: any) => ({
-                        id: t.id,
+                        id: t.templateId,
+                        assignmentId: t.assignmentId,
                         templateType: t.templateType,
                         templateName: t.templateName || 'Untitled',
                         description: t.description,
                         assetType: t.assetType,
-                        createdAt: t.createdAt,
-                        source: 'unassigned' as const,
+                        assetId: t.assetId ?? null,
+                        frequency: t.frequency,
+                        location: t.location || t.assetType || '',
+                        assignedAt: t.assignedAt,
+                        note: t.note,
+                        source: 'assigned' as const,
                     }))
                 );
-
                 setTeamMembers(team as TeamMember[]);
             } else {
-                // Employees have no unassigned templates to browse
                 setUnassignedTemplates([]);
                 setTeamMembers([]);
-                // Always show the "Assigned to Me" tab for employees
                 setActiveTab('assigned');
             }
         } catch (err: any) {
@@ -156,11 +204,6 @@ export default function ChecklistManagementScreen() {
         }
         return true;
     });
-
-    const assignedChecklistCount = assignedTemplates.filter((t) => t.templateType === 'checklist').length;
-    const assignedLogsheetCount  = assignedTemplates.filter((t) => t.templateType === 'logsheet').length;
-    const unassignedChecklistCount = unassignedTemplates.filter((t) => t.templateType === 'checklist').length;
-    const unassignedLogsheetCount  = unassignedTemplates.filter((t) => t.templateType === 'logsheet').length;
 
     const handleFillNow = (template: Template) => {
         router.push({
@@ -191,10 +234,8 @@ export default function ChecklistManagementScreen() {
         setIsAssigning(true);
         try {
             if (selectedTemplate.source === 'assigned' && selectedTemplate.assignmentId) {
-                // Reassign an existing assignment to a team member
                 await reassignTemplate(selectedTemplate.assignmentId, memberId, assignNote || undefined);
             } else {
-                // Create a fresh assignment to the team member
                 await supervisorAssignTemplate(
                     selectedTemplate.templateType,
                     selectedTemplate.id,
@@ -214,65 +255,43 @@ export default function ChecklistManagementScreen() {
     };
 
     const renderCard = (item: Template) => {
+        const priority = getPriority(item.frequency);
         const isChecklist = item.templateType === 'checklist';
-        const dateLabel = item.assignedAt
-            ? `Assigned ${new Date(item.assignedAt).toLocaleDateString()}`
-            : item.createdAt
-            ? `Added ${new Date(item.createdAt).toLocaleDateString()}`
-            : '';
+        const locationText = item.location || item.assetType || '';
 
         return (
-            <View key={`${item.source}-${item.id}-${item.assignmentId}`} style={styles.cardContainer}>
-                <View style={styles.cardHeader}>
-                    <View style={[styles.iconCircle, { backgroundColor: isChecklist ? '#EDE9FE' : '#DBEAFE' }]}>
-                        <MaterialCommunityIcons
-                            name={isChecklist ? 'clipboard-check-outline' : 'notebook-outline'}
-                            size={22}
-                            color={isChecklist ? '#7C3AED' : '#2563EB'}
-                        />
+            <View key={`${item.source}-${item.id}-${item.assignmentId}`} style={styles.card}>
+                {/* Badges row */}
+                <View style={styles.badgeRow}>
+                    <View style={[styles.priorityBadge, { backgroundColor: priority.bg }]}>
+                        <Text style={[styles.priorityBadgeText, { color: priority.color }]}>{priority.label}</Text>
                     </View>
-                    <View style={styles.cardTitleContainer}>
-                        <Text style={styles.cardTitle} numberOfLines={2}>{item.templateName}</Text>
-                        {item.assetType ? <Text style={styles.cardSubtitle}>{item.assetType}</Text> : null}
-                    </View>
-                    <View style={[styles.typeBadge, { backgroundColor: isChecklist ? '#EDE9FE' : '#DBEAFE' }]}>
-                        <Text style={[styles.typeBadgeText, { color: isChecklist ? '#7C3AED' : '#2563EB' }]}>
-                            {isChecklist ? 'Checklist' : 'Logsheet'}
-                        </Text>
+                    <View style={styles.typeBadge}>
+                        <Text style={styles.typeBadgeText}>{isChecklist ? 'CHECKLIST' : 'LOGSHEET'}</Text>
                     </View>
                 </View>
 
-                {item.description ? (
-                    <Text style={styles.descriptionText} numberOfLines={2}>{item.description}</Text>
-                ) : null}
+                {/* Title */}
+                <Text style={styles.cardTitle} numberOfLines={2}>{item.templateName}</Text>
 
-                {item.assignedBy ? (
-                    <View style={styles.assignedByRow}>
-                        <MaterialCommunityIcons name="account-arrow-left-outline" size={13} color="#718096" />
-                        <Text style={styles.assignedByText}>Assigned by: {item.assignedBy}</Text>
+                {/* Location row */}
+                {locationText ? (
+                    <View style={styles.locationRow}>
+                        <MaterialCommunityIcons name="office-building-outline" size={14} color="#64748B" />
+                        <Text style={styles.locationText} numberOfLines={1}>{locationText}</Text>
                     </View>
                 ) : null}
 
-                {item.note ? (
-                    <View style={styles.noteRow}>
-                        <MaterialCommunityIcons name="note-text-outline" size={13} color="#718096" />
-                        <Text style={styles.noteText} numberOfLines={1}>{item.note}</Text>
-                    </View>
-                ) : null}
-
-                <View style={styles.metaRow}>
-                    <Text style={styles.dateText}>{dateLabel}</Text>
-                </View>
-
+                {/* Action buttons */}
                 <View style={styles.actionRow}>
-                    <TouchableOpacity style={[styles.actionBtn, styles.fillBtn]} onPress={() => handleFillNow(item)}>
-                        <MaterialCommunityIcons name="pencil" size={16} color="#FFFFFF" />
+                    <TouchableOpacity style={styles.fillBtn} onPress={() => handleFillNow(item)}>
+                        <MaterialCommunityIcons name="format-list-bulleted" size={15} color="#2563EB" />
                         <Text style={styles.fillBtnText}>Fill Now</Text>
                     </TouchableOpacity>
                     {isSupervisor && (
-                        <TouchableOpacity style={[styles.actionBtn, styles.assignBtn]} onPress={() => handleAssignToTeam(item)}>
-                            <MaterialCommunityIcons name="account-arrow-right-outline" size={16} color="#1E3A8A" />
-                            <Text style={styles.assignBtnText}>Assign to Team</Text>
+                        <TouchableOpacity style={styles.assignBtn} onPress={() => handleAssignToTeam(item)}>
+                            <MaterialCommunityIcons name="account-plus-outline" size={15} color="#FFFFFF" />
+                            <Text style={styles.assignBtnText}>Assign</Text>
                         </TouchableOpacity>
                     )}
                 </View>
@@ -283,62 +302,79 @@ export default function ChecklistManagementScreen() {
     return (
         <SafeAreaView style={styles.container}>
             {/* Header */}
-            <View style={styles.headerBg}>
-                <View style={styles.headerTop}>
-                    <Text style={styles.headerTitle}>Checklists & Logsheets</Text>
-                </View>
-
-                {/* Main tabs: Assigned to Me / Unassigned (Unassigned only visible to supervisors) */}
-                <View style={styles.mainTabContainer}>
-                    <TouchableOpacity
-                        style={[styles.mainTab, activeTab === 'assigned' && styles.mainTabActive]}
-                        onPress={() => setActiveTab('assigned')}
-                    >
-                        <Text style={[styles.mainTabText, activeTab === 'assigned' && styles.mainTabTextActive]}>
-                            Assigned to Me ({assignedTemplates.length})
-                        </Text>
-                    </TouchableOpacity>
-                    {isSupervisor && (
-                        <TouchableOpacity
-                            style={[styles.mainTab, activeTab === 'unassigned' && styles.mainTabActive]}
-                            onPress={() => setActiveTab('unassigned')}
-                        >
-                            <Text style={[styles.mainTabText, activeTab === 'unassigned' && styles.mainTabTextActive]}>
-                                Unassigned ({unassignedTemplates.length})
-                            </Text>
-                        </TouchableOpacity>
-                    )}
-                </View>
-
-                {/* Type filter chips */}
-                <View style={styles.typeFilterRow}>
-                    {(['all', 'checklist', 'logsheet'] as TypeFilter[]).map((f) => {
-                        const counts = activeTab === 'assigned'
-                            ? { all: assignedTemplates.length, checklist: assignedChecklistCount, logsheet: assignedLogsheetCount }
-                            : { all: unassignedTemplates.length, checklist: unassignedChecklistCount, logsheet: unassignedLogsheetCount };
-                        return (
-                            <TouchableOpacity
-                                key={f}
-                                style={[styles.typeChip, typeFilter === f && styles.typeChipActive]}
-                                onPress={() => setTypeFilter(f)}
-                            >
-                                <Text style={[styles.typeChipText, typeFilter === f && styles.typeChipTextActive]}>
-                                    {f === 'all' ? `All (${counts.all})` : f === 'checklist' ? `Checklists (${counts.checklist})` : `Logsheets (${counts.logsheet})`}
-                                </Text>
-                            </TouchableOpacity>
-                        );
-                    })}
-                </View>
+            <View style={styles.header}>
+                <TouchableOpacity style={styles.headerBtn} onPress={() => router.push('/supervisor-dashboard' as any)}>
+                    <MaterialCommunityIcons name="arrow-left" size={24} color="#1E293B" />
+                </TouchableOpacity>
+                <Text style={styles.headerTitle}>
+                    {activeTab === 'unassigned' ? 'Unassigned Tasks' : 'My Tasks'}
+                </Text>
+                <TouchableOpacity style={styles.bellBtn}>
+                    <MaterialCommunityIcons name="bell-outline" size={20} color="#1E293B" />
+                </TouchableOpacity>
             </View>
 
+            {/* Search bar */}
+            <View style={styles.searchWrap}>
+                <MaterialCommunityIcons name="magnify" size={18} color="#94A3B8" />
+                <TextInput
+                    style={styles.searchInput}
+                    placeholder="Search assets, tasks..."
+                    placeholderTextColor="#94A3B8"
+                    value={searchQuery}
+                    onChangeText={setSearchQuery}
+                />
+                {searchQuery.length > 0 && (
+                    <TouchableOpacity onPress={() => setSearchQuery('')}>
+                        <MaterialCommunityIcons name="close-circle" size={16} color="#94A3B8" />
+                    </TouchableOpacity>
+                )}
+            </View>
+
+            {/* Filter pills */}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pillsScroll} contentContainerStyle={styles.pillsContent}>
+                {/* Main tab pills */}
+                {isSupervisor && (
+                    <TouchableOpacity
+                        style={[styles.pill, activeTab === 'unassigned' && styles.pillActive]}
+                        onPress={() => setActiveTab('unassigned')}
+                    >
+                        <Text style={[styles.pillText, activeTab === 'unassigned' && styles.pillTextActive]}>
+                            Unassigned
+                        </Text>
+                    </TouchableOpacity>
+                )}
+                <TouchableOpacity
+                    style={[styles.pill, activeTab === 'assigned' && styles.pillActive]}
+                    onPress={() => setActiveTab('assigned')}
+                >
+                    <Text style={[styles.pillText, activeTab === 'assigned' && styles.pillTextActive]}>
+                        Assigned to Me
+                    </Text>
+                </TouchableOpacity>
+                {/* Type filter pills */}
+                {(['all', 'checklist', 'logsheet'] as TypeFilter[]).map((f) => (
+                    <TouchableOpacity
+                        key={f}
+                        style={[styles.pill, typeFilter === f && styles.pillActive]}
+                        onPress={() => setTypeFilter(f)}
+                    >
+                        <Text style={[styles.pillText, typeFilter === f && styles.pillTextActive]}>
+                            {f === 'all' ? 'All Tasks' : f === 'checklist' ? 'Checklists' : 'Logsheets'}
+                            {' ▼'}
+                        </Text>
+                    </TouchableOpacity>
+                ))}
+            </ScrollView>
+
             {isLoading ? (
-                <View style={styles.centerContent}>
-                    <ActivityIndicator size="large" color="#1E3A8A" />
+                <View style={styles.center}>
+                    <ActivityIndicator size="large" color="#2563EB" />
                     <Text style={styles.loadingText}>Loading...</Text>
                 </View>
             ) : error ? (
-                <View style={styles.centerContent}>
-                    <MaterialCommunityIcons name="alert-circle-outline" size={48} color="#E53E3E" />
+                <View style={styles.center}>
+                    <MaterialCommunityIcons name="alert-circle-outline" size={48} color="#EF4444" />
                     <Text style={styles.errorText}>{error}</Text>
                     <TouchableOpacity style={styles.retryBtn} onPress={loadData}>
                         <Text style={styles.retryText}>Retry</Text>
@@ -348,33 +384,15 @@ export default function ChecklistManagementScreen() {
                 <ScrollView
                     style={{ flex: 1 }}
                     contentContainerStyle={styles.listContent}
-                    refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#1E3A8A']} />}
+                    refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#2563EB']} />}
                 >
-                    {/* Search */}
-                    <View style={styles.searchContainer}>
-                        <MaterialCommunityIcons name="magnify" size={20} color="#718096" style={styles.searchIcon} />
-                        <TextInput
-                            style={styles.searchInput}
-                            placeholder="Search by name or asset type..."
-                            placeholderTextColor="#A0AEC0"
-                            value={searchQuery}
-                            onChangeText={setSearchQuery}
-                        />
-                        {searchQuery.length > 0 && (
-                            <TouchableOpacity onPress={() => setSearchQuery('')}>
-                                <MaterialCommunityIcons name="close-circle" size={18} color="#A0AEC0" />
-                            </TouchableOpacity>
-                        )}
-                    </View>
-
-                    {/* Info banner for assigned tab */}
-                    {activeTab === 'assigned' && filteredList.length > 0 && (
-                        <View style={styles.infoBanner}>
-                            <MaterialCommunityIcons name="information-outline" size={14} color="#1E3A8A" />
-                            <Text style={styles.infoBannerText}>
-                                These were assigned to you by your admin. You can fill them yourself or delegate to your team.
-                            </Text>
-                        </View>
+                    {/* Section header */}
+                    {filteredList.length > 0 && (
+                        <Text style={styles.sectionHeader}>
+                            {activeTab === 'unassigned'
+                                ? `PENDING ASSIGNMENT (${filteredList.length})`
+                                : `MY TASKS (${filteredList.length})`}
+                        </Text>
                     )}
 
                     {filteredList.length === 0 ? (
@@ -398,11 +416,11 @@ export default function ChecklistManagementScreen() {
                     ) : (
                         filteredList.map((item) => renderCard(item))
                     )}
-                    <View style={{ height: 90 }} />
+                    <View style={{ height: 20 }} />
                 </ScrollView>
             )}
 
-            {/* Assign to Team Modal */}
+            {/* Assign Modal */}
             <Modal visible={showAssignModal} transparent animationType="slide" onRequestClose={() => setShowAssignModal(false)}>
                 <View style={styles.modalOverlay}>
                     <View style={styles.modalContainer}>
@@ -443,7 +461,7 @@ export default function ChecklistManagementScreen() {
                                             <Text style={styles.memberRole}>{member.role}</Text>
                                         </View>
                                         {isAssigning ? (
-                                            <ActivityIndicator size="small" color="#1E3A8A" />
+                                            <ActivityIndicator size="small" color="#2563EB" />
                                         ) : (
                                             <MaterialCommunityIcons name="chevron-right" size={20} color="#CBD5E0" />
                                         )}
@@ -455,100 +473,104 @@ export default function ChecklistManagementScreen() {
                 </View>
             </Modal>
 
-            <SupervisorBottomNav activeRoute="checklists" />
+            <TasksBottomNav activeRoute="tasks" />
         </SafeAreaView>
     );
 }
 
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: '#F7FAFC' },
-    headerBg: {
-        backgroundColor: '#1E3A8A',
-        paddingTop: Platform.OS === 'android' ? 30 : 0,
-        paddingBottom: 12,
-    },
-    headerTop: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 10 },
-    headerTitle: { color: '#FFFFFF', fontSize: 20, fontWeight: '800' },
-    mainTabContainer: {
+    container: { flex: 1, backgroundColor: '#F8FAFC' },
+
+    // Header
+    header: {
         flexDirection: 'row',
-        marginHorizontal: 16,
-        backgroundColor: '#2A4365',
-        borderRadius: 8,
-        padding: 4,
-        marginBottom: 10,
-    },
-    mainTab: { flex: 1, paddingVertical: 9, alignItems: 'center', borderRadius: 6 },
-    mainTabActive: { backgroundColor: '#FFFFFF' },
-    mainTabText: { color: '#93C5FD', fontWeight: '600', fontSize: 12 },
-    mainTabTextActive: { color: '#1E3A8A' },
-    typeFilterRow: {
-        flexDirection: 'row',
+        alignItems: 'center',
         paddingHorizontal: 16,
-        gap: 8,
-        paddingBottom: 4,
+        paddingTop: Platform.OS === 'android' ? 36 : 12,
+        paddingBottom: 12,
+        backgroundColor: '#FFFFFF',
+        borderBottomWidth: 1,
+        borderBottomColor: '#F1F5F9',
     },
-    typeChip: {
-        paddingHorizontal: 12,
-        paddingVertical: 5,
-        borderRadius: 20,
-        backgroundColor: '#2A4365',
+    headerBtn: { padding: 4 },
+    headerTitle: { flex: 1, textAlign: 'center', fontSize: 17, fontWeight: '700', color: '#1E293B' },
+    bellBtn: {
+        width: 36, height: 36, borderRadius: 10,
+        backgroundColor: '#F1F5F9', justifyContent: 'center', alignItems: 'center',
     },
-    typeChipActive: { backgroundColor: '#60A5FA' },
-    typeChipText: { color: '#93C5FD', fontSize: 11, fontWeight: '600' },
-    typeChipTextActive: { color: '#1E3A8A' },
-    listContent: { padding: 16, paddingBottom: 90 },
-    searchContainer: {
-        flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF',
-        borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10,
-        marginBottom: 12, borderWidth: 1, borderColor: '#E2E8F0',
+
+    // Search
+    searchWrap: {
+        flexDirection: 'row', alignItems: 'center',
+        backgroundColor: '#FFFFFF', marginHorizontal: 16, marginTop: 12, marginBottom: 4,
+        borderRadius: 10, borderWidth: 1, borderColor: '#E2E8F0',
+        paddingHorizontal: 12, paddingVertical: 10, gap: 8,
     },
-    searchIcon: { marginRight: 8 },
-    searchInput: { flex: 1, fontSize: 14, color: '#1A202C' },
-    infoBanner: {
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        backgroundColor: '#EFF6FF',
-        padding: 10,
-        borderRadius: 8,
-        marginBottom: 12,
-        gap: 8,
-        borderLeftWidth: 3,
-        borderLeftColor: '#1E3A8A',
+    searchInput: { flex: 1, fontSize: 14, color: '#1E293B' },
+
+    // Filter pills
+    pillsScroll: { maxHeight: 48, marginBottom: 4 },
+    pillsContent: { paddingHorizontal: 16, paddingVertical: 8, gap: 8 },
+    pill: {
+        paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20,
+        backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E2E8F0',
     },
-    infoBannerText: { flex: 1, fontSize: 12, color: '#1E3A8A', lineHeight: 18 },
-    cardContainer: {
-        backgroundColor: '#FFFFFF', borderRadius: 12, padding: 16, marginBottom: 14,
-        borderWidth: 1, borderColor: '#E2E8F0',
-        shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 3, elevation: 1,
+    pillActive: { backgroundColor: '#2563EB', borderColor: '#2563EB' },
+    pillText: { fontSize: 13, color: '#64748B', fontWeight: '500' },
+    pillTextActive: { color: '#FFFFFF', fontWeight: '600' },
+
+    // List
+    listContent: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 20 },
+
+    // Section header
+    sectionHeader: {
+        fontSize: 11, fontWeight: '700', color: '#94A3B8',
+        letterSpacing: 0.8, marginBottom: 10, marginTop: 4,
     },
-    cardHeader: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 10, gap: 10 },
-    iconCircle: { width: 42, height: 42, borderRadius: 10, justifyContent: 'center', alignItems: 'center', flexShrink: 0 },
-    cardTitleContainer: { flex: 1 },
-    cardTitle: { fontSize: 15, fontWeight: '700', color: '#1A202C', marginBottom: 3 },
-    cardSubtitle: { fontSize: 12, color: '#718096' },
-    typeBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20, flexShrink: 0 },
-    typeBadgeText: { fontSize: 11, fontWeight: '700' },
-    descriptionText: { fontSize: 13, color: '#4A5568', lineHeight: 18, marginBottom: 8 },
-    assignedByRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 4 },
-    assignedByText: { fontSize: 12, color: '#718096', fontStyle: 'italic' },
-    noteRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 4 },
-    noteText: { fontSize: 12, color: '#718096', flex: 1 },
-    metaRow: { paddingTop: 8, borderTopWidth: 1, borderTopColor: '#F1F5F9', marginTop: 4 },
-    dateText: { fontSize: 11, color: '#A0AEC0' },
-    actionRow: { flexDirection: 'row', gap: 10, marginTop: 12 },
-    actionBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 10, borderRadius: 8, gap: 6 },
-    fillBtn: { backgroundColor: '#1E3A8A' },
-    fillBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 13 },
-    assignBtn: { backgroundColor: '#EFF6FF', borderWidth: 1, borderColor: '#BFDBFE' },
-    assignBtnText: { color: '#1E3A8A', fontWeight: '700', fontSize: 13 },
-    centerContent: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 },
-    loadingText: { fontSize: 14, color: '#718096', marginTop: 12 },
-    errorText: { fontSize: 14, color: '#E53E3E', marginTop: 12, textAlign: 'center' },
-    retryBtn: { marginTop: 16, backgroundColor: '#1E3A8A', paddingHorizontal: 24, paddingVertical: 10, borderRadius: 8 },
+
+    // Cards
+    card: {
+        backgroundColor: '#FFFFFF', borderRadius: 14, padding: 16,
+        marginBottom: 12, borderWidth: 1, borderColor: '#E8EDF3',
+        shadowColor: '#0F172A', shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.06, shadowRadius: 6, elevation: 2,
+    },
+    badgeRow: { flexDirection: 'row', gap: 8, marginBottom: 10, flexWrap: 'wrap' },
+    priorityBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6 },
+    priorityBadgeText: { fontSize: 11, fontWeight: '700', letterSpacing: 0.3 },
+    typeBadge: {
+        paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6,
+        borderWidth: 1, borderColor: '#BFDBFE', backgroundColor: '#EFF6FF',
+    },
+    typeBadgeText: { fontSize: 11, fontWeight: '700', color: '#2563EB', letterSpacing: 0.3 },
+    cardTitle: { fontSize: 15, fontWeight: '700', color: '#1E293B', marginBottom: 8, lineHeight: 21 },
+    locationRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12 },
+    locationText: { fontSize: 13, color: '#64748B', flex: 1 },
+
+    // Action buttons
+    actionRow: { flexDirection: 'row', gap: 10 },
+    fillBtn: {
+        flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+        backgroundColor: '#EFF6FF', borderRadius: 8, paddingVertical: 10, gap: 6,
+    },
+    fillBtnText: { fontSize: 13, fontWeight: '700', color: '#2563EB' },
+    assignBtn: {
+        flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+        backgroundColor: '#2563EB', borderRadius: 8, paddingVertical: 10, gap: 6,
+    },
+    assignBtnText: { fontSize: 13, fontWeight: '700', color: '#FFFFFF' },
+
+    // States
+    center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 },
+    loadingText: { fontSize: 14, color: '#94A3B8', marginTop: 12 },
+    errorText: { fontSize: 14, color: '#EF4444', marginTop: 12, textAlign: 'center' },
+    retryBtn: { marginTop: 16, backgroundColor: '#2563EB', paddingHorizontal: 24, paddingVertical: 10, borderRadius: 8 },
     retryText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14 },
     emptyState: { alignItems: 'center', paddingVertical: 60 },
-    emptyTitle: { fontSize: 18, fontWeight: '700', color: '#1A202C', marginTop: 16, marginBottom: 8 },
-    emptyText: { fontSize: 14, color: '#718096', textAlign: 'center', lineHeight: 20 },
+    emptyTitle: { fontSize: 18, fontWeight: '700', color: '#1E293B', marginTop: 16, marginBottom: 8 },
+    emptyText: { fontSize: 14, color: '#94A3B8', textAlign: 'center', lineHeight: 20 },
+
+    // Modal
     modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
     modalContainer: {
         backgroundColor: '#FFFFFF', borderTopLeftRadius: 20, borderTopRightRadius: 20,
@@ -563,9 +585,15 @@ const styles = StyleSheet.create({
         minHeight: 60, textAlignVertical: 'top', marginBottom: 16,
     },
     memberLabel: { fontSize: 13, fontWeight: '700', color: '#4A5568', marginBottom: 8 },
-    memberRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#F1F5F9', gap: 12 },
-    memberAvatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#EBF8FF', justifyContent: 'center', alignItems: 'center' },
-    memberInitials: { fontSize: 14, fontWeight: '700', color: '#2B6CB0' },
+    memberRow: {
+        flexDirection: 'row', alignItems: 'center', paddingVertical: 12,
+        borderBottomWidth: 1, borderBottomColor: '#F1F5F9', gap: 12,
+    },
+    memberAvatar: {
+        width: 40, height: 40, borderRadius: 20,
+        backgroundColor: '#EFF6FF', justifyContent: 'center', alignItems: 'center',
+    },
+    memberInitials: { fontSize: 14, fontWeight: '700', color: '#2563EB' },
     memberInfo: { flex: 1 },
     memberName: { fontSize: 15, fontWeight: '600', color: '#1A202C' },
     memberRole: { fontSize: 12, color: '#718096', textTransform: 'capitalize' },

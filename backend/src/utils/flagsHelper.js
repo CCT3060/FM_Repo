@@ -26,6 +26,7 @@ import pool from "../db.js";
  * @returns {{ openFlagsCount: number, healthStatus: string }}
  */
 export async function updateAssetHealth(assetId, conn = pool) {
+  if (!assetId) return { openFlagsCount: 0, healthStatus: "green" };
   const [[row]] = await conn.query(
     `SELECT COUNT(*) AS cnt
      FROM flags
@@ -357,11 +358,11 @@ export async function createFlag(params, assetInfo = {}, conn = pool) {
   );
   const flagId = result.insertId || result[0]?.id;
 
-  // Recompute asset health
-  await updateAssetHealth(assetId, conn);
+  // Recompute asset health (skip when no asset)
+  if (assetId) await updateAssetHealth(assetId, conn);
 
-  // Recompute asset risk level
-  await checkAndUpdateAssetRisk(assetId, companyId, conn);
+  // Recompute asset risk level (skip when no asset)
+  if (assetId) await checkAndUpdateAssetRisk(assetId, companyId, conn);
 
   // Auto work order for critical flags or when rule forces it
   if ((effectiveSeverity === "critical" || forceWorkOrder) && flagId) {

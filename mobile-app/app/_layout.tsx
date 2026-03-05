@@ -22,6 +22,7 @@ export default function RootLayout() {
         {/* Supervisor Flow */}
         <Stack.Screen name="supervisor-dashboard" options={{ headerShown: false }} />
         <Stack.Screen name="team-assignments" options={{ headerShown: false }} />
+        <Stack.Screen name="work-order-details" options={{ headerShown: false }} />
 
         {/* Technician Flow */}
         <Stack.Screen name="tech-dashboard" options={{ headerShown: false }} />

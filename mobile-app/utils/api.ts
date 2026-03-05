@@ -480,6 +480,15 @@ export async function getUnassignedTemplates(type?: 'checklist' | 'logsheet'): P
 }
 
 /**
+ * Templates assigned TO the supervisor but NOT yet forwarded to any team member (supervisor only)
+ */
+export async function getMyUnassignedToTeam(): Promise<any[]> {
+  const response = await authenticatedFetch('/api/template-assignments/my-unassigned-to-team');
+  if (!response.ok) throw new Error('Failed to fetch supervisor pending assignments');
+  return response.json();
+}
+
+/**
  * Supervisor assigns a template directly to a team member
  */
 export async function supervisorAssignTemplate(
@@ -495,6 +504,39 @@ export async function supervisorAssignTemplate(
   if (!response.ok) {
     const err = await response.json();
     throw new Error(err.message || 'Failed to assign template');
+  }
+}
+
+/**
+ * Get work orders (company portal). Returns { total, data[] }
+ */
+export async function getWorkOrders(limit = 5): Promise<any[]> {
+  const response = await authenticatedFetch(`/api/company-portal/work-orders?limit=${limit}`);
+  if (!response.ok) throw new Error('Failed to fetch work orders');
+  const json = await response.json();
+  return json.data || [];
+}
+
+/**
+ * Get single work order with status history
+ */
+export async function getWorkOrderById(id: number | string): Promise<any> {
+  const response = await authenticatedFetch(`/api/company-portal/work-orders/${id}`);
+  if (!response.ok) throw new Error('Failed to fetch work order');
+  return response.json();
+}
+
+/**
+ * Update work order status (supervisor/admin only)
+ */
+export async function updateWorkOrderStatus(id: number | string, status: string, remark?: string): Promise<void> {
+  const response = await authenticatedFetch(`/api/company-portal/work-orders/${id}/status`, {
+    method: 'PUT',
+    body: JSON.stringify({ status, remark }),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error((err as any).message || 'Failed to update status');
   }
 }
 

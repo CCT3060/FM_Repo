@@ -200,7 +200,7 @@ const PERIODS = [
 ];
 
 /* ─── Main SubmissionsPanel ────────────────────────────────────── */
-export default function SubmissionsPanel({ token: tokenProp, type = "checklists" }) {
+export default function SubmissionsPanel({ token: tokenProp, type = "checklists", companyId }) {
   const token = tokenProp || localStorage.getItem("companyAuthToken") || localStorage.getItem("authToken");
 
   const [rows, setRows]         = useState([]);
@@ -215,6 +215,7 @@ export default function SubmissionsPanel({ token: tokenProp, type = "checklists"
   const buildUrl = useCallback(() => {
     const base = `${API_BASE}/api/template-assignments/submissions/${type}`;
     const params = new URLSearchParams();
+    if (companyId) params.set("companyId", companyId);
     if (period !== "all" && period !== "custom") params.set("period", period);
     if (period === "custom") {
       if (dateFrom) params.set("dateFrom", dateFrom);
@@ -222,7 +223,7 @@ export default function SubmissionsPanel({ token: tokenProp, type = "checklists"
     }
     const qs = params.toString();
     return qs ? `${base}?${qs}` : base;
-  }, [type, period, dateFrom, dateTo]);
+  }, [type, period, dateFrom, dateTo, companyId]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -247,8 +248,9 @@ export default function SubmissionsPanel({ token: tokenProp, type = "checklists"
 
   const openDetail = async (id) => {
     try {
+      const qs = companyId ? `?companyId=${companyId}` : "";
       const res = await fetch(
-        `${API_BASE}/api/template-assignments/submissions/${type}/${id}`,
+        `${API_BASE}/api/template-assignments/submissions/${type}/${id}${qs}`,
         { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } }
       );
       if (!res.ok) throw new Error(`HTTP ${res.status}`);

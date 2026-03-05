@@ -13,7 +13,7 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
-import { getMyTeam, clearAuth, getDashboardStats, getStoredUser, getTeamStats, getChecklistSubmissions } from '../utils/api';
+import { getMyTeam, clearAuth, getDashboardStats, getStoredUser, getTeamStats, getChecklistSubmissions, getWorkOrders } from '../utils/api';
 
 // Reusable Navigation Bar Component for Supervisor
 export const SupervisorBottomNav = ({ activeRoute }: { activeRoute: string }) => {
@@ -21,7 +21,7 @@ export const SupervisorBottomNav = ({ activeRoute }: { activeRoute: string }) =>
         <View style={navStyles.container}>
             <TouchableOpacity style={navStyles.navItem} onPress={() => router.push('/supervisor-dashboard')}>
                 <MaterialCommunityIcons
-                    name={activeRoute === 'home' ? 'home' : 'home-outline'}
+                    name={activeRoute === 'home' ? 'view-grid' : 'view-grid-outline'}
                     size={24}
                     color={activeRoute === 'home' ? '#1E3A8A' : '#A0AEC0'}
                 />
@@ -30,7 +30,7 @@ export const SupervisorBottomNav = ({ activeRoute }: { activeRoute: string }) =>
 
             <TouchableOpacity style={navStyles.navItem} onPress={() => router.push('/checklists')}>
                 <MaterialCommunityIcons
-                    name={activeRoute === 'checklists' ? 'clipboard-check' : 'clipboard-check-outline'}
+                    name={activeRoute === 'checklists' ? 'format-list-checks' : 'format-list-checkbox'}
                     size={24}
                     color={activeRoute === 'checklists' ? '#1E3A8A' : '#A0AEC0'}
                 />
@@ -39,7 +39,7 @@ export const SupervisorBottomNav = ({ activeRoute }: { activeRoute: string }) =>
 
             <TouchableOpacity style={navStyles.navItem} onPress={() => router.push('/assets-list')}>
                 <MaterialCommunityIcons
-                    name={activeRoute === 'assets' ? 'office-building' : 'office-building-outline'}
+                    name={activeRoute === 'assets' ? 'wrench' : 'wrench-outline'}
                     size={24}
                     color={activeRoute === 'assets' ? '#1E3A8A' : '#A0AEC0'}
                 />
@@ -92,6 +92,7 @@ export default function SupervisorDashboardScreen() {
     const [dashboardStats, setDashboardStats] = useState<any>(null);
     const [currentUser, setCurrentUser] = useState<any>(null);
     const [recentSubmissions, setRecentSubmissions] = useState<any[]>([]);
+    const [workOrders, setWorkOrders] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
 
@@ -99,18 +100,20 @@ export default function SupervisorDashboardScreen() {
 
     const loadData = async () => {
         try {
-            const [teamStatsData, teamData, statsData, userData, submissions] = await Promise.all([
+            const [teamStatsData, teamData, statsData, userData, submissions, orders] = await Promise.all([
                 getTeamStats().catch(() => []),
                 getMyTeam().catch(() => []),
                 getDashboardStats().catch(() => null),
                 getStoredUser(),
                 getChecklistSubmissions().catch(() => []),
+                getWorkOrders(4).catch(() => []),
             ]);
             setTeamStats(teamStatsData);
             setTeamMembers(teamData);
             if (statsData) setDashboardStats(statsData);
             if (userData) setCurrentUser(userData);
             setRecentSubmissions(submissions);
+            setWorkOrders(orders);
         } catch (error: any) {
             if (error.message?.includes('authentication') || error.message?.includes('token')) {
                 Alert.alert('Session Expired', 'Please log in again', [{
@@ -212,18 +215,14 @@ export default function SupervisorDashboardScreen() {
                             {totalTasks > 0 && (
                                 <View style={styles.trendBadge}>
                                     <MaterialCommunityIcons name="trending-up" size={14} color="#276749" />
-                                    <Text style={styles.trendText}>{pct}%</Text>
+                                    <Text style={styles.trendText}>+{pct}%</Text>
                                 </View>
                             )}
                         </View>
                         <View style={styles.progressBody}>
-                            {/* Ring */}
+                            {/* Partial-arc donut ring using two-halves technique */}
                             <View style={styles.ringOuter}>
-                                <View style={[styles.ringBorder, { borderColor: pct > 0 ? '#2563EB' : '#E2E8F0' }]}>
-                                    <View style={styles.ringInner}>
-                                        <Text style={styles.ringPct}>{pct}%</Text>
-                                    </View>
-                                </View>
+                                <DonutRing pct={pct} />
                             </View>
                             {/* Legend */}
                             <View style={styles.legend}>
@@ -246,7 +245,58 @@ export default function SupervisorDashboardScreen() {
                         </View>
                     </View>
 
-                    {/* â”€â”€ Technicians on Duty â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+                    {/* ── Work Orders ─────────────────────────────────── */}
+                    {workOrders.length > 0 && (
+                        <View style={styles.woSection}>
+                            <View style={styles.techHeader}>
+                                <Text style={styles.sectionTitle}>Work Orders</Text>
+                                <TouchableOpacity onPress={() => router.push('/warnings' as any)}>
+                                    <Text style={styles.viewAllText}>View All</Text>
+                                </TouchableOpacity>
+                            </View>
+                            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 4 }}>
+                                {workOrders.map((wo: any) => {
+                                    const status = (wo.status || 'open').toLowerCase();
+                                    const priority = (wo.priority || 'medium').toLowerCase();
+                                    const statusMap: Record<string, { label: string; bg: string; color: string }> = {
+                                        in_progress: { label: 'IN PROGRESS', bg: '#FFF7ED', color: '#C2410C' },
+                                        open:        { label: 'ASSIGNED',    bg: '#EFF6FF', color: '#1D4ED8' },
+                                        closed:      { label: 'CLOSED',      bg: '#F0FFF4', color: '#15803D' },
+                                    };
+                                    const sc = statusMap[status] || statusMap.open;
+                                    const priorityMap: Record<string, { icon: string; color: string; label: string }> = {
+                                        high:     { icon: 'alert',                   color: '#DC2626', label: 'High Priority' },
+                                        critical: { icon: 'alert',                   color: '#DC2626', label: 'Critical' },
+                                        medium:   { icon: 'format-list-bulleted',    color: '#64748B', label: 'Medium Priority' },
+                                        low:      { icon: 'arrow-down-circle-outline', color: '#94A3B8', label: 'Low Priority' },
+                                    };
+                                    const pc = priorityMap[priority] || priorityMap.medium;
+                                    return (
+                                        <TouchableOpacity
+                                            key={wo.id}
+                                            style={styles.woCard}
+                                            activeOpacity={0.8}
+                                            onPress={() => router.push({ pathname: '/work-order-details' as any, params: { id: wo.id } })}
+                                        >
+                                            <View style={styles.woCardTop}>
+                                                <View style={[styles.woStatusBadge, { backgroundColor: sc.bg }]}>
+                                                    <Text style={[styles.woStatusText, { color: sc.color }]}>{sc.label}</Text>
+                                                </View>
+                                                <Text style={styles.woNumber}>#{wo.workOrderNumber || `WO-${wo.id}`}</Text>
+                                            </View>
+                                            <Text style={styles.woTitle} numberOfLines={2}>{wo.issueDescription || wo.assetName || 'Work Order'}</Text>
+                                            <View style={styles.woPriorityRow}>
+                                                <MaterialCommunityIcons name={pc.icon as any} size={14} color={pc.color} />
+                                                <Text style={[styles.woPriorityText, { color: pc.color }]}>{pc.label}</Text>
+                                            </View>
+                                        </TouchableOpacity>
+                                    );
+                                })}
+                            </ScrollView>
+                        </View>
+                    )}
+
+                    {/* ── Technicians on Duty ────────────────────────── */}
                     <View style={styles.techHeader}>
                         <Text style={styles.sectionTitle}>Technicians on Duty</Text>
                         <TouchableOpacity onPress={() => router.push('/team-assignments')}>
@@ -260,18 +310,27 @@ export default function SupervisorDashboardScreen() {
                             <Text style={styles.emptyTeamText}>No team members yet</Text>
                         </View>
                     ) : (
-                        teamMembers.map((member: any) => {
+                        teamMembers.map((member: any, idx: number) => {
                             const name = member.fullName || member.fullname || 'Unknown';
                             const initials = name.split(' ').map((n: string) => n[0] || '').join('').slice(0, 2).toUpperCase();
                             const memberStat = teamStats.find((s) => s.id === member.id);
                             const taskInfo = memberStat
-                                ? `${String(member.role).replace('_', ' ')} â€¢ ${memberStat.totalCount || 0} task${memberStat.totalCount !== 1 ? 's' : ''}`
+                                ? `${String(member.role).replace('_', ' ')} \u2022 ${memberStat.totalCount || 0} task${memberStat.totalCount !== 1 ? 's' : ''}`
                                 : String(member.role).replace('_', ' ');
+                            // Vary status dot color: Active=green, first non-active if any=orange, rest=grey
+                            const statusColor = member.status === 'Active'
+                                ? '#38A169'
+                                : idx % 2 === 0 ? '#ED8936' : '#CBD5E0';
+                            // Avatar background color cycle
+                            const avatarBgs = ['#EBF8FF','#F0FFF4','#FFF5F5','#FAF5FF'];
+                            const avatarBg = avatarBgs[idx % avatarBgs.length];
+                            const avatarTxtColors = ['#2B6CB0','#276749','#C53030','#6B46C1'];
+                            const avatarTxt = avatarTxtColors[idx % avatarTxtColors.length];
                             return (
                                 <View key={member.id} style={styles.techCard}>
-                                    <View style={styles.techAvatar}>
-                                        <Text style={styles.techInitials}>{initials}</Text>
-                                        <View style={styles.statusDot} />
+                                    <View style={[styles.techAvatar, { backgroundColor: avatarBg }]}>
+                                        <Text style={[styles.techInitials, { color: avatarTxt }]}>{initials}</Text>
+                                        <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
                                     </View>
                                     <View style={styles.techInfo}>
                                         <Text style={styles.techName}>{name}</Text>
@@ -303,6 +362,59 @@ export default function SupervisorDashboardScreen() {
         </SafeAreaView>
     );
 }
+
+// ─── Partial-arc donut ring component ────────────────────────────────────────
+const RING_SIZE = 110;
+const RING_STROKE = 12;
+const RING_INNER = RING_SIZE - RING_STROKE * 2;
+
+function DonutRing({ pct }: { pct: number }) {
+    const deg = (pct / 100) * 360;
+    // Right half: sweeps from 0° to MIN(deg,180°). Maps 0%→-180°, 50%→0°
+    const rightRot = pct <= 50 ? (pct / 50) * 180 - 180 : 0;
+    // Left half: only active when pct>50. Maps 50%→-180°, 100%→0°
+    const leftRot = pct > 50 ? ((pct - 50) / 50) * 180 - 180 : -180;
+
+    return (
+        <View style={{ width: RING_SIZE, height: RING_SIZE }}>
+            {/* Grey background ring */}
+            <View style={[StyleSheet.absoluteFillObject, {
+                borderRadius: RING_SIZE / 2,
+                backgroundColor: '#E2E8F0',
+            }]} />
+            {/* Right half clip — reveals arc from 0° to min(deg,180°) */}
+            <View style={{ position: 'absolute', right: 0, top: 0, width: RING_SIZE / 2, height: RING_SIZE, overflow: 'hidden' }}>
+                <View style={{
+                    position: 'absolute', left: -RING_SIZE / 2, top: 0,
+                    width: RING_SIZE, height: RING_SIZE, borderRadius: RING_SIZE / 2,
+                    backgroundColor: pct > 0 ? '#2563EB' : '#E2E8F0',
+                    transform: [{ rotate: `${rightRot}deg` }],
+                }} />
+            </View>
+            {/* Left half clip — reveals arc from 180° to deg° (only if pct>50) */}
+            <View style={{ position: 'absolute', left: 0, top: 0, width: RING_SIZE / 2, height: RING_SIZE, overflow: 'hidden' }}>
+                <View style={{
+                    position: 'absolute', right: -RING_SIZE / 2, top: 0,
+                    width: RING_SIZE, height: RING_SIZE, borderRadius: RING_SIZE / 2,
+                    backgroundColor: pct > 50 ? '#2563EB' : '#E2E8F0',
+                    transform: [{ rotate: `${leftRot}deg` }],
+                }} />
+            </View>
+            {/* White donut hole */}
+            <View style={{
+                position: 'absolute',
+                top: RING_STROKE, left: RING_STROKE,
+                width: RING_INNER, height: RING_INNER,
+                borderRadius: RING_INNER / 2,
+                backgroundColor: '#FFFFFF',
+                justifyContent: 'center', alignItems: 'center',
+            }}>
+                <Text style={{ fontSize: 18, fontWeight: '800', color: '#1A202C' }}>{pct}%</Text>
+            </View>
+        </View>
+    );
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#F8FAFC' },
@@ -415,23 +527,6 @@ const styles = StyleSheet.create({
     trendText: { fontSize: 13, fontWeight: '700', color: '#276749' },
     progressBody: { flexDirection: 'row', alignItems: 'center', gap: 24 },
     ringOuter: { alignItems: 'center', justifyContent: 'center' },
-    ringBorder: {
-        width: 100,
-        height: 100,
-        borderRadius: 50,
-        borderWidth: 8,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    ringInner: {
-        width: 78,
-        height: 78,
-        borderRadius: 39,
-        backgroundColor: '#FFFFFF',
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    ringPct: { fontSize: 20, fontWeight: '800', color: '#1A202C' },
     legend: { flex: 1, gap: 12 },
     legendRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     legendDot: { width: 10, height: 10, borderRadius: 5 },
@@ -497,6 +592,30 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
     },
+
+    // Work Orders
+    woSection: { marginBottom: 8 },
+    woCard: {
+        width: 210,
+        backgroundColor: '#FFFFFF',
+        borderRadius: 14,
+        padding: 14,
+        borderWidth: 1,
+        borderColor: '#E8EDF3',
+        shadowColor: '#0F172A',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.06,
+        shadowRadius: 6,
+        elevation: 2,
+        marginBottom: 14,
+    },
+    woCardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+    woStatusBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+    woStatusText: { fontSize: 10, fontWeight: '800', letterSpacing: 0.3 },
+    woNumber: { fontSize: 11, color: '#94A3B8', fontWeight: '600' },
+    woTitle: { fontSize: 14, fontWeight: '700', color: '#1E293B', marginBottom: 10, lineHeight: 20 },
+    woPriorityRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+    woPriorityText: { fontSize: 12, fontWeight: '600' },
 
     // Assign button
     assignBtn: {

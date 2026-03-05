@@ -2,7 +2,8 @@
  * flags.js
  * ──────────────────────────────────────────────────────────────────────────────
  * REST API for the Flag System.
- * All routes are protected by requireCompanyAuth.
+ * All routes (including /admin/*) are protected by requireCompanyAuth.
+ * The company portal WarningsPanel sends the cp_token which is a company-user JWT.
  *
  * Role-based access:
  *   admin      → see/manage all flags in their company
@@ -10,6 +11,9 @@
  *   employee   → see only flags they raised
  *
  * Endpoints:
+ *   GET    /flags/admin/list        list flags for the JWT's company (admin/supervisor)
+ *   GET    /flags/admin/summary     aggregate stats for the JWT's company
+ *   PUT    /flags/admin/:id/status  update flag status
  *   GET    /flags                   list flags (filtered by role)
  *   GET    /flags/summary           aggregate stats for dashboard
  *   GET    /flags/:id               single flag detail
@@ -23,17 +27,20 @@ import { body, param, query } from "express-validator";
 import pool from "../db.js";
 import { validate } from "../validators.js";
 import { requireCompanyAuth } from "../middleware/companyAuth.js";
+import { flexCompanyAuth } from "../middleware/companyAuth.js";
 import { requireAuth } from "../middleware/auth.js";
 import { createFlag, updateAssetHealth } from "../utils/flagsHelper.js";
 
 const router = Router();
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ADMIN PORTAL ROUTES  (use main-admin JWT, NOT company JWT)
-// Must be declared BEFORE router.use(requireCompanyAuth) to avoid that guard
+// ADMIN PORTAL ROUTES  (use company-user JWT — same token as the rest of the portal)
+// These routes read companyId from the JWT (req.companyUser.companyId) so the
+// company portal WarningsPanel can call them with the cp_token directly.
+// Must be declared BEFORE router.use(requireCompanyAuth) to avoid double-applying.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Shared fields (same as below but available before the const re-declaration)
+// Shared fields for admin flag queries
 const ADMIN_FLAG_FIELDS = `
   f.id,
   f.company_id       AS "companyId",
@@ -57,12 +64,11 @@ const ADMIN_FLAG_FIELDS = `
   rcu.full_name      AS "raisedByName"
 `;
 
-// GET /flags/admin/list?companyId=X&status=open&severity=critical&limit=50&offset=0
+// GET /flags/admin/list?status=open&severity=critical&limit=50&offset=0
 router.get(
   "/admin/list",
-  requireAuth,
+  flexCompanyAuth,
   validate([
-    query("companyId").isInt({ min: 1 }).withMessage("companyId required"),
     query("status").optional().isString(),
     query("severity").optional().isString(),
     query("source").optional().isString(),
@@ -71,9 +77,12 @@ router.get(
   ]),
   async (req, res, next) => {
     try {
-      const { companyId, status, severity, source, limit = 100, offset = 0 } = req.query;
+      // companyId from JWT (cp_token) or from query param (main platform token)
+      const companyId = req.companyUser?.companyId || parseInt(req.query.companyId, 10);
+      if (!companyId || isNaN(companyId)) return res.status(400).json({ message: "companyId required" });
+      const { status, severity, source, limit = 100, offset = 0 } = req.query;
       const conditions = ["f.company_id = ?"];
-      const params     = [Number(companyId)];
+      const params     = [companyId];
       if (status)   { conditions.push("f.status = ?");   params.push(status); }
       if (severity) { conditions.push("f.severity = ?"); params.push(severity); }
       if (source)   { conditions.push("f.source = ?");   params.push(source); }
@@ -97,14 +106,14 @@ router.get(
   }
 );
 
-// GET /flags/admin/summary?companyId=X
+// GET /flags/admin/summary
 router.get(
   "/admin/summary",
-  requireAuth,
-  validate([query("companyId").isInt({ min: 1 }).withMessage("companyId required")]),
+  flexCompanyAuth,
   async (req, res, next) => {
     try {
-      const companyId = Number(req.query.companyId);
+      const companyId = req.companyUser?.companyId || parseInt(req.query.companyId, 10);
+      if (!companyId || isNaN(companyId)) return res.status(400).json({ message: "companyId required" });
       const [bySeverity] = await pool.query(
         `SELECT severity, COUNT(*) AS cnt FROM flags
          WHERE company_id = ? AND status IN ('open','in_progress') GROUP BY severity`,
@@ -134,13 +143,12 @@ router.get(
   }
 );
 
-// PUT /flags/admin/:id/status?companyId=X
+// PUT /flags/admin/:id/status
 router.put(
   "/admin/:id/status",
-  requireAuth,
+  flexCompanyAuth,
   validate([
     param("id").isInt({ min: 1 }),
-    query("companyId").isInt({ min: 1 }),
     body("status").isIn(["open","in_progress","resolved","closed","ignored"]),
     body("remark").optional().isString().trim(),
   ]),
@@ -148,7 +156,8 @@ router.put(
     const conn = await pool.getConnection();
     try {
       const { id } = req.params;
-      const companyId = Number(req.query.companyId);
+      const companyId = req.companyUser?.companyId || parseInt(req.body.companyId, 10) || parseInt(req.query.companyId, 10);
+      if (!companyId || isNaN(companyId)) { await conn.release(); return res.status(400).json({ message: "companyId required" }); }
       const { status, remark } = req.body;
 
       await conn.beginTransaction();
@@ -173,7 +182,7 @@ router.put(
           `INSERT INTO flag_history (flag_id, old_status, new_status, updated_by, remark)
            VALUES (?, ?, ?, NULL, ?)`,
           [Number(id), existing.status, status, remark || "Updated by portal admin"]
-        ).catch(() => {}); // flag_history may not have nullable updated_by — ignore gracefully
+        ).catch(() => {});
       }
       await updateAssetHealth(existing.assetId, conn).catch(() => {});
       await conn.commit();

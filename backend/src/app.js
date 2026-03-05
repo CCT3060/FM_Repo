@@ -19,6 +19,7 @@ import companyPortalRouter from "./routes/companyPortal.js";
 import assetQRRouter from "./routes/assetQR.js";
 import mobileAuthRouter from "./routes/mobileAuth.js";
 import templateAssignmentsRouter from "./routes/templateAssignments.js";
+import submissionReportsRouter from "./routes/submissionReports.js";
 import flagsRouter from "./routes/flags.js";
 import flagRulesRouter from "./routes/flagRules.js";
 import notificationsRouter from "./routes/notifications.js";
@@ -54,6 +55,8 @@ app.use("/api/company-auth", companyAuthRouter);
 app.use("/api/company-portal", companyPortalRouter);
 app.use("/api/asset-qr", assetQRRouter);
 app.use("/api/mobile-auth", mobileAuthRouter);
+// Submission reports – accepts both company JWT and main-platform JWT (must be BEFORE templateAssignmentsRouter)
+app.use("/api/template-assignments", submissionReportsRouter);
 app.use("/api/template-assignments", templateAssignmentsRouter);
 app.use("/api/flags", flagsRouter);
 app.use("/api/flag-rules", flagRulesRouter);

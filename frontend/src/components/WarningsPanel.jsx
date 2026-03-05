@@ -69,13 +69,14 @@ export default function WarningsPanel({ token, companyId: initialCompanyId, comp
     setLoading(true);
     setError(null);
     try {
-      const params = new URLSearchParams({ companyId, limit: LIMIT, offset: page * LIMIT });
+      // companyId is derived from the JWT on the backend — no longer needed as query param
+      const params = new URLSearchParams({ limit: LIMIT, offset: page * LIMIT });
       if (filter === "critical") params.set("severity", "critical");
       else if (filter !== "all") params.set("status", filter);
 
       const [flagsRes, sumRes] = await Promise.all([
         apiFetch("GET", `/api/flags/admin/list?${params}`, undefined, token),
-        apiFetch("GET", `/api/flags/admin/summary?companyId=${companyId}`, undefined, token).catch(() => null),
+        apiFetch("GET", `/api/flags/admin/summary`, undefined, token).catch(() => null),
       ]);
       setFlags(flagsRes?.data ?? []);
       setTotal(flagsRes?.total ?? 0);
@@ -91,10 +92,9 @@ export default function WarningsPanel({ token, companyId: initialCompanyId, comp
   useEffect(() => { setPage(0); }, [filter, companyId]);
 
   const updateStatus = async (id, status) => {
-    if (!companyId) return;
     setUpdating(id);
     try {
-      await apiFetch("PUT", `/api/flags/admin/${id}/status?companyId=${companyId}`, { status }, token);
+      await apiFetch("PUT", `/api/flags/admin/${id}/status`, { status }, token);
       setFlags((prev) => prev.map((f) => f.id === id ? { ...f, status } : f));
       if (status === "resolved" || status === "closed") {
         setSummary((s) => s ? { ...s, totals: { ...s.totals, open: Math.max(0, (s.totals?.open ?? 1) - 1) } } : s);

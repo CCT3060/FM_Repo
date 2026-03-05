@@ -2622,7 +2622,7 @@ const CompanyPortal = () => {
             )}
 
             {checklistSubNav === "submissions" && (
-              <SubmissionsPanel token={token} type="checklists" />
+              <SubmissionsPanel token={token} type="checklists" companyId={selectedCompanyId || companies[0]?.id} />
             )}
           </div>
         )}
@@ -2657,7 +2657,7 @@ const CompanyPortal = () => {
             )}
 
             {logsheetSubNav === "submissions" && (
-              <SubmissionsPanel token={token} type="logsheets" />
+              <SubmissionsPanel token={token} type="logsheets" companyId={selectedCompanyId || companies[0]?.id} />
             )}
           </div>
         )}

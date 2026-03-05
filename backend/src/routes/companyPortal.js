@@ -2,6 +2,8 @@ import { Router } from "express";
 import bcrypt from "bcryptjs";
 import pool from "../db.js";
 import { requireCompanyAuth } from "../middleware/companyAuth.js";
+import { evaluateRule, createFlag, detectChecklistFlags } from "../utils/flagsHelper.js";
+import { dispatchFlagNotifications } from "../utils/notificationsHelper.js";
 
 const router = Router();
 router.use(requireCompanyAuth);
@@ -685,14 +687,87 @@ router.post("/logsheet-templates/:templateId/entries", async (req, res, next) =>
 
     // Persist individual answers for standard (non-tabular) templates
     if (!isTabular && answers?.length) {
-      const answerValues = answers.map((a) => [entryId, a.questionId, a.dateColumn, a.answerValue != null ? String(a.answerValue) : null, 0, null, null]);
-      await pool.query(
-        `INSERT INTO logsheet_answers (entry_id, question_id, date_column, answer_value, is_issue, issue_reason, issue_detail) VALUES ?`,
-        [answerValues]
-      );
+      for (const a of answers) {
+        await pool.query(
+          `INSERT INTO logsheet_answers (entry_id, question_id, date_column, answer_value, is_issue, issue_reason, issue_detail)
+           VALUES (?, ?, ?, ?, 0, NULL, NULL)`,
+          [entryId, a.questionId, a.dateColumn || null, a.answerValue != null ? String(a.answerValue) : null]
+        ).catch(() => {});
+      }
     }
 
-    res.status(201).json({ id: entryId, issues: 0 });
+    // ── Flag & Alert Engine ────────────────────────────────────────────────────
+    let issueCount = 0;
+    if (entryId && assetId && answers?.length && !isTabular) {
+      try {
+        const [ruleQuestions] = await pool.query(
+          `SELECT lq.id, lq.question_text, lq.rule_json, lq.answer_type
+           FROM logsheet_questions lq
+           JOIN logsheet_sections ls ON lq.section_id = ls.id
+           WHERE ls.template_id = ?`,
+          [templateId]
+        );
+
+        const qRuleMap = {};
+        for (const q of ruleQuestions) {
+          const rule = q.rule_json
+            ? (typeof q.rule_json === "string" ? JSON.parse(q.rule_json) : q.rule_json)
+            : null;
+          qRuleMap[q.id] = { rule, text: q.question_text, answerType: q.answer_type };
+        }
+
+        const lsLocation = [assetRow.building, assetRow.floor, assetRow.room]
+          .filter(Boolean).join(", ");
+
+        for (const a of answers) {
+          const qInfo = qRuleMap[a.questionId];
+          if (!qInfo?.rule) continue;
+
+          const ruleEval = evaluateRule(qInfo.rule, a.answerValue);
+          if (!ruleEval.violated) continue;
+
+          issueCount++;
+          const description = `Rule violation for "${qInfo.text}": entered=${a.answerValue}, ${ruleEval.expectedText}`;
+
+          const flagId = await createFlag(
+            {
+              source:          "logsheet",
+              companyId:       cid(req),
+              assetId,
+              logsheetEntryId: entryId,
+              questionId:      a.questionId,
+              raisedBy:        req.companyUser.id,
+              description,
+              severity:        ruleEval.severity,
+              enteredValue:    String(a.answerValue ?? ""),
+              expectedRule:    ruleEval.expectedText,
+              forceWorkOrder:  !!qInfo.rule.autoWorkOrder,
+            },
+            { assetName: assetRow.asset_name, location: lsLocation }
+          ).catch((e) => { console.error("[FlagSystem] logsheet flag error:", e.message); return null; });
+
+          if (flagId) {
+            await dispatchFlagNotifications({
+              flagId,
+              companyId:    cid(req),
+              assetId,
+              assetName:    assetRow.asset_name,
+              location:     lsLocation,
+              questionText: qInfo.text,
+              enteredValue: String(a.answerValue ?? ""),
+              expectedRange: ruleEval.expectedText,
+              severity:     ruleEval.severity,
+              raisedBy:     req.companyUser.id,
+              ruleActions:  qInfo.rule,
+            }).catch(() => {});
+          }
+        }
+      } catch (flagErr) {
+        console.error("[FlagSystem] logsheet portal detection failed:", flagErr.message);
+      }
+    }
+
+    res.status(201).json({ id: entryId, issues: issueCount });
   } catch (err) {
     next(err);
   }
@@ -1455,6 +1530,69 @@ router.get("/template-user-assignments/mine", async (req, res, next) => {
 const generateWONumber = () =>
   `WO-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
 
+/* GET /work-orders/users  – list company users available for assignment */
+router.get("/work-orders/users", async (req, res, next) => {
+  try {
+    const companyId = parseInt(cid(req), 10);
+    if (!companyId || isNaN(companyId)) return res.status(400).json({ message: "Invalid company context" });
+    const [rows] = await pool.query(
+      `SELECT id, full_name AS "fullName", email, role, designation, status
+       FROM company_users
+       WHERE company_id = ? AND status = 'Active'
+       ORDER BY full_name ASC`,
+      [companyId]
+    );
+    res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* GET /work-orders/:id  – single work order with history */
+router.get("/work-orders/:id", async (req, res, next) => {
+  try {
+    const companyId = cid(req);
+    const woId = Number(req.params.id);
+
+    const [[wo]] = await pool.query(
+      `SELECT wo.id, wo.work_order_number AS "workOrderNumber",
+              wo.asset_id AS "assetId", wo.asset_name AS "assetName",
+              wo.location, wo.issue_source AS "issueSource",
+              wo.issue_description AS "issueDescription",
+              wo.priority, wo.status,
+              wo.flag_id AS "flagId",
+              wo.cp_assigned_to AS "assignedTo",
+              wo.assigned_note AS "assignedNote",
+              cu.full_name AS "assignedToName",
+              cu.role AS "assignedToRole",
+              wo.cp_created_by AS "createdBy",
+              cb.full_name AS "createdByName",
+              wo.created_at AS "createdAt",
+              wo.closed_at AS "closedAt",
+              f.severity AS "flagSeverity", f.source AS "flagSource"
+       FROM work_orders wo
+       LEFT JOIN company_users cu ON cu.id = wo.cp_assigned_to
+       LEFT JOIN company_users cb ON cb.id = wo.cp_created_by
+       LEFT JOIN flags f ON f.id = wo.flag_id
+       WHERE wo.id = ? AND wo.company_id = ?`,
+      [woId, companyId]
+    );
+    if (!wo) return res.status(404).json({ message: "Work order not found" });
+
+    const [history] = await pool.query(
+      `SELECT woh.id, woh.status, woh.remarks, woh.event_at AS "timestamp",
+              cu.full_name AS "updatedByName"
+       FROM work_order_history woh
+       LEFT JOIN company_users cu ON cu.id = woh.updated_by
+       WHERE woh.work_order_id = ?
+       ORDER BY woh.event_at ASC`,
+      [woId]
+    );
+
+    res.json({ ...wo, history });
+  } catch (err) { next(err); }
+});
+
 /* GET /work-orders  – list all work orders for this company */
 router.get("/work-orders", async (req, res, next) => {
   try {
@@ -1666,23 +1804,6 @@ router.put("/work-orders/:id/status", async (req, res, next) => {
     }
 
     res.json({ success: true });
-  } catch (err) {
-    next(err);
-  }
-});
-
-/* GET /work-orders/users  – list company users available for assignment */
-router.get("/work-orders/users", async (req, res, next) => {
-  try {
-    const companyId = cid(req);
-    const [rows] = await pool.query(
-      `SELECT id, full_name AS "fullName", email, role, designation, status
-       FROM company_users
-       WHERE company_id = ? AND status = 'Active'
-       ORDER BY full_name ASC`,
-      [companyId]
-    );
-    res.json(rows);
   } catch (err) {
     next(err);
   }

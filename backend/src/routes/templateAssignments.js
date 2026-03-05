@@ -420,19 +420,39 @@ router.post(
       }
 
       // ── Flag & Alert Engine (checklist) ─────────────────────────────────
-      // Load rule_json per question, evaluate with full rule engine, and
-      // dispatch notifications to stakeholders.
-      if (submissionId && effectiveAssetId && answers?.length) {
+      // Build ruleMap from the JSONB questions already loaded in qMap.
+      // Portal-created templates store rules inside checklist_templates.questions
+      // as { flagOn, minValue, maxValue, severity, action } — NOT in the
+      // separate checklist_template_questions table which may be empty.
+      if (submissionId && answers?.length) {
         try {
-          // Load rule_json from checklist_template_questions for this template
+          // Build ruleMap from qMap (JSONB rules from portal template builder)
+          const ruleMap = {};
+          for (const [qId, q] of Object.entries(qMap)) {
+            const rule = q.rule || q.rule_json || null;
+            if (!rule) continue;
+            const inputType = (q.inputType || q.answerType || "text").toLowerCase();
+            let normalized = null;
+            if (inputType === "yes_no") {
+              normalized = { operator: "yes_no", triggerValue: "no", severity: rule.severity || "high", autoWorkOrder: rule.action === "create_work_order" };
+            } else if (inputType === "ok_not_ok") {
+              normalized = { operator: "ok_not_ok", triggerValue: "not_ok", severity: rule.severity || "high", autoWorkOrder: rule.action === "create_work_order" };
+            } else if (inputType === "number" && (rule.minValue !== "" && rule.minValue != null || rule.maxValue !== "" && rule.maxValue != null)) {
+              normalized = { operator: "between", minValue: rule.minValue, maxValue: rule.maxValue, severity: rule.severity || "medium", autoWorkOrder: rule.action === "create_work_order" };
+            } else if (inputType === "dropdown" && rule.flagOn) {
+              normalized = { operator: "eq", triggerValue: rule.flagOn, severity: rule.severity || "medium", autoWorkOrder: rule.action === "create_work_order" };
+            }
+            if (normalized) ruleMap[qId] = normalized;
+          }
+
+          // Also merge any rules from the checklist_template_questions table
+          // (for templates that were created via the old admin-side builder)
           const [qRuleRows] = await pool.query(
             `SELECT id, rule_json FROM checklist_template_questions WHERE template_id = ?`,
             [templateId]
           ).catch(() => [[]]);
-
-          const ruleMap = {};
           for (const qr of qRuleRows) {
-            if (qr.rule_json) {
+            if (qr.rule_json && !ruleMap[qr.id]) {
               ruleMap[qr.id] = typeof qr.rule_json === "string"
                 ? JSON.parse(qr.rule_json)
                 : qr.rule_json;
@@ -451,10 +471,12 @@ router.post(
             };
           });
 
-          const [[chkAsset]] = await pool.query(
-            "SELECT asset_name, building, floor, room FROM assets WHERE id = ?",
-            [effectiveAssetId]
-          ).catch(() => [[null]]);
+          const [[chkAsset]] = effectiveAssetId
+            ? await pool.query(
+                "SELECT asset_name, building, floor, room FROM assets WHERE id = ?",
+                [effectiveAssetId]
+              ).catch(() => [[null]])
+            : [[null]];
 
           const flagParamsList = detectChecklistFlags(answerRows, {
             companyId:    cid(req),
@@ -535,43 +557,37 @@ router.post(
         if (!tmpl) return res.status(404).json({ message: "Logsheet template not found" });
       }
 
-      // Create logsheet entry — month/year required; logsheet_answers requires date_column
+      // Create logsheet entry — month/year derived from current date.
+      // asset_id is nullable after migration 2026-02-27-submissions-nullable-asset.sql.
       const _now = new Date();
       const currentMonth = _now.getMonth() + 1;
       const currentYear  = _now.getFullYear();
       const currentDay   = _now.getDate();
-
-      // Real schema: logsheet_entries(template_id, asset_id NOT NULL, submitted_by, entry_date, month, year, status, data, submitted_at)
-      // asset_id is NOT NULL — run migration 2026-02-27-submissions-nullable-asset.sql if no asset
-      if (!assetId) {
-        return res.status(400).json({
-          message: "Please run the migration to allow asset-less logsheet entries, or select an asset. Migration: ALTER TABLE logsheet_entries ALTER COLUMN asset_id DROP NOT NULL;"
-        });
-      }
 
       const [leResult] = await pool.query(
         `INSERT INTO logsheet_entries
          (template_id, asset_id, submitted_by, company_user_id, entry_date, month, year, status, data, submitted_at)
          VALUES (?, ?, NULL, ?, CURRENT_DATE, ?, ?, 'submitted', ?, NOW())
          RETURNING id`,
-        [templateId, assetId, req.companyUser.id, currentMonth, currentYear, JSON.stringify(answers || [])]
+        [templateId, assetId || null, req.companyUser.id, currentMonth, currentYear, JSON.stringify(answers || [])]
       );
       const entryId = leResult.insertId || leResult[0]?.id;
 
-      // Also insert into logsheet_answers (question_id must be a real logsheet_questions.id)
+      // Also insert into logsheet_answers row-by-row (PostgreSQL-compatible)
       if (entryId && answers && answers.length > 0) {
-        const rows = answers.map(a => [entryId, a.questionId, currentDay, a.answer || null]);
-        await pool.query(
-          `INSERT INTO logsheet_answers (entry_id, question_id, date_column, answer_value) VALUES ?`,
-          [rows]
-        ).catch(() => { /* answers already saved in data JSONB above */ });
+        for (const a of answers) {
+          await pool.query(
+            `INSERT INTO logsheet_answers (entry_id, question_id, date_column, answer_value) VALUES (?, ?, ?, ?)`,
+            [entryId, a.questionId, currentDay, a.answer != null ? a.answer : null]
+          ).catch(() => {});
+        }
       }
 
       // ── Flag & Alert Engine ──────────────────────────────────────────────
       // Evaluate each answer against the question's rule_json.
       // Supports all operators, severity overrides, notification dispatch,
       // and auto work-order creation per rule configuration.
-      if (entryId && assetId && answers?.length) {
+      if (entryId && answers?.length) {
         try {
           // Load questions with full rule_json for this template
           const [ruleQuestions] = await pool.query(
@@ -879,6 +895,55 @@ router.post(
     } catch (err) { next(err); }
   }
 );
+
+/* ────────────────────────────────────────────────────────────────────────────
+   SUPERVISOR: Templates assigned TO the supervisor but NOT yet forwarded to
+   any technician under them
+   ──────────────────────────────────────────────────────────────────────────── */
+router.get("/my-unassigned-to-team", async (req, res, next) => {
+  try {
+    if (req.companyUser.role !== "supervisor") {
+      return res.status(403).json({ message: "Supervisor only" });
+    }
+    const supId = req.companyUser.id;
+    const compId = cid(req);
+
+    // Get all templates assigned to this supervisor
+    // that have NOT been assigned to any team member under them
+    const [rows] = await pool.query(
+      `SELECT
+         tua.id            AS "assignmentId",
+         tua.template_type AS "templateType",
+         tua.template_id   AS "templateId",
+         tua.note,
+         tua.created_at    AS "assignedAt",
+         COALESCE(ct.template_name, lt.template_name) AS "templateName",
+         COALESCE(ct.description,  lt.description)    AS "description",
+         COALESCE(ct.asset_type,   lt.asset_type)     AS "assetType",
+         COALESCE(ct.frequency,    lt.frequency)      AS "frequency",
+         COALESCE(ct.asset_id,     lt.asset_id)       AS "assetId"
+       FROM template_user_assignments tua
+       LEFT JOIN checklist_templates ct
+         ON ct.id = tua.template_id AND tua.template_type = 'checklist' AND ct.company_id = ?
+       LEFT JOIN logsheet_templates lt
+         ON lt.id = tua.template_id AND tua.template_type = 'logsheet'  AND lt.company_id = ?
+       WHERE tua.assigned_to = ?
+         AND tua.company_id  = ?
+         AND NOT EXISTS (
+           SELECT 1
+           FROM template_user_assignments tua2
+           INNER JOIN company_users cu ON cu.id = tua2.assigned_to
+           WHERE tua2.template_type = tua.template_type
+             AND tua2.template_id   = tua.template_id
+             AND tua2.company_id    = ?
+             AND cu.supervisor_id   = ?
+         )
+       ORDER BY "templateName"`,
+      [compId, compId, supId, compId, compId, supId]
+    );
+    res.json(rows);
+  } catch (err) { next(err); }
+});
 
 /* ────────────────────────────────────────────────────────────────────────────
    SUPERVISOR: Get all templates NOT yet assigned to anyone in the company
