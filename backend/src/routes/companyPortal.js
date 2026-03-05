@@ -444,7 +444,7 @@ router.post("/checklists", async (req, res, next) => {
       `INSERT INTO checklist_templates (company_id, template_name, asset_type, category, description, frequency, shift, status, is_active, created_by, questions)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
        RETURNING id, template_name AS "templateName", asset_type AS "assetType", category, description, frequency, shift, status, questions, created_at AS "createdAt"`,
-      [cid(req), templateName.trim(), assetType, category || null, description || null, frequency, shift || null, status, req.companyUser.id, questionsJson]
+      [cid(req), templateName.trim(), assetType, category || null, description || null, frequency, shift || null, status, null, questionsJson]
     );
     res.status(201).json(rows[0]);
   } catch (err) { next(err); }

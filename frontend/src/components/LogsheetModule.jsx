@@ -242,7 +242,7 @@ function SectionEditor({ section, sIdx, onChange, onAddQ, onRemoveQ, onRemoveSec
 /* ─────────────────────────────────────────────────────────────────
    Template Builder (create mode)
 ───────────────────────────────────────────────────────────────── */
-function TemplateBuilder({ token, companies, assets, onBack, onSaved, createTemplate, assignTemplate, editTemplate, updateTemplate }) {
+function TemplateBuilder({ token, companies, assets, onBack, onSaved, createTemplate, assignTemplate, editTemplate, updateTemplate, companyPortalMode = false }) {
   const isEdit = !!editTemplate;
 
   const [form, setForm] = useState(() => {
@@ -300,7 +300,10 @@ function TemplateBuilder({ token, companies, assets, onBack, onSaved, createTemp
     if (!token || !form.companyId) return;
     let cancelled = false;
     setFetchedAssets([]);
-    fetch(`${API_BASE}/api/assets?companyId=${form.companyId}`, {
+    const assetUrl = companyPortalMode
+      ? `${API_BASE}/api/company-portal/assets`
+      : `${API_BASE}/api/assets?companyId=${form.companyId}`;
+    fetch(assetUrl, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((r) => r.ok ? r.json() : [])
@@ -1276,7 +1279,7 @@ function TemplateList({ token, companies, assets, onBuild, onFill, fetchTemplate
 /* ─────────────────────────────────────────────────────────────────
    LogsheetModule root
 ───────────────────────────────────────────────────────────────── */
-export default function LogsheetModule({ token, assets, companies, fetchTemplates, fetchEntries, submitEntry, createTemplate, assignTemplate, canBuild = true, fetchTemplate, updateTemplate, deleteTemplate, fetchGrid }) {
+export default function LogsheetModule({ token, assets, companies, fetchTemplates, fetchEntries, submitEntry, createTemplate, assignTemplate, canBuild = true, fetchTemplate, updateTemplate, deleteTemplate, fetchGrid, companyPortalMode = false }) {
   // view: "list" | "builder" | "editor" | "fill"
   const [view, setView] = useState("list");
   const [fillTemplate, setFillTemplate] = useState(null);
@@ -1333,6 +1336,7 @@ export default function LogsheetModule({ token, assets, companies, fetchTemplate
         onSaved={() => { setRefreshKey((k) => k + 1); setView("list"); }}
         createTemplate={createTemplate}
         assignTemplate={assignTemplate}
+        companyPortalMode={companyPortalMode}
       />
     );
   }
@@ -1349,6 +1353,7 @@ export default function LogsheetModule({ token, assets, companies, fetchTemplate
         updateTemplate={updateTemplate}
         createTemplate={createTemplate}
         assignTemplate={assignTemplate}
+        companyPortalMode={companyPortalMode}
       />
     );
   }

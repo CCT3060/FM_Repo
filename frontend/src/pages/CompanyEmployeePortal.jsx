@@ -2110,6 +2110,7 @@ export default function CompanyEmployeePortal() {
                 deleteTemplate={deleteCompanyPortalChecklist}
                 canBuild={currentUser.role === "admin" || currentUser.role === "supervisor"}
                 companyId={currentUser.companyId}
+                companyPortalMode={true}
               />
             )}
             {checklistSubNav === "submissions" && (
@@ -2148,6 +2149,7 @@ export default function CompanyEmployeePortal() {
                 assignTemplate={assignCompanyPortalLogsheetTemplate}
                 fetchGrid={getCompanyPortalLogsheetGrid}
                 canBuild={currentUser.role === "admin" || currentUser.role === "supervisor"}
+                companyPortalMode={true}
               />
             )}
             {logsheetSubNav === "submissions" && (

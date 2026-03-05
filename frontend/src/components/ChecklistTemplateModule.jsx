@@ -291,7 +291,7 @@ function QuestionRow({ q, idx, onChange, onRemove }) {
 /* ─────────────────────────────────────────────────────────────────
    Template Builder (create / edit)
 ───────────────────────────────────────────────────────────────── */
-function TemplateBuilder({ token, companies, assets: assetsProp = [], onBack, onSaved, createTemplate, updateTemplate, editTemplate }) {
+function TemplateBuilder({ token, companies, assets: assetsProp = [], onBack, onSaved, createTemplate, updateTemplate, editTemplate, companyPortalMode = false }) {
   const isEdit = !!editTemplate;
 
   const [form, setForm] = useState(() => {
@@ -350,7 +350,10 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], onBack, on
     if (!companyId) return;
     let cancelled = false;
     setAssets([]);
-    fetch(`${API_BASE}/api/assets?companyId=${companyId}`, {
+    const assetUrl = companyPortalMode
+      ? `${API_BASE}/api/company-portal/assets`
+      : `${API_BASE}/api/assets?companyId=${companyId}`;
+    fetch(assetUrl, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((r) => r.ok ? r.json() : [])
@@ -727,6 +730,7 @@ export default function ChecklistTemplateModule({
   deleteTemplate,
   canBuild = true,
   companyId,
+  companyPortalMode = false,
 }) {
   const [view, setView] = useState("list");
   const [editTarget, setEditTarget] = useState(null);
@@ -761,6 +765,7 @@ export default function ChecklistTemplateModule({
         onSaved={() => { setRefreshKey((k) => k + 1); setView("list"); }}
         createTemplate={createTemplate}
         updateTemplate={updateTemplate}
+        companyPortalMode={companyPortalMode}
       />
     );
   }
@@ -776,6 +781,7 @@ export default function ChecklistTemplateModule({
         editTemplate={editTarget}
         updateTemplate={updateTemplate}
         createTemplate={createTemplate}
+        companyPortalMode={companyPortalMode}
       />
     );
   }
