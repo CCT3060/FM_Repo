@@ -183,3 +183,15 @@ export const markNotificationRead = (token, id) =>
   request("PUT", `/api/notifications/${id}/read`, undefined, { authToken: token });
 export const markAllNotificationsRead = (token) =>
   request("PUT", "/api/notifications/read-all", undefined, { authToken: token });
+
+// ── Company Portal Work Orders ────────────────────────────────────────────────
+export const getCompanyPortalWorkOrders = (token, params = "") =>
+  request("GET", `/api/company-portal/work-orders${params ? `?${params}` : ""}`, undefined, { authToken: token });
+export const getCompanyPortalWOUsers = (token) =>
+  request("GET", "/api/company-portal/work-orders/users", undefined, { authToken: token });
+export const assignCompanyPortalWorkOrder = (token, id, data) =>
+  request("PUT", `/api/company-portal/work-orders/${id}/assign`, data, { authToken: token });
+
+// ── Company Portal Admin Flags (dashboard) ────────────────────────────────────
+export const getCompanyPortalAdminFlags = (token, params = "") =>
+  request("GET", `/api/flags/admin/list${params ? `?${params}` : ""}`, undefined, { authToken: token });

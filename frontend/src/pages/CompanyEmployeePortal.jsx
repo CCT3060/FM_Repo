@@ -45,6 +45,10 @@ import {
   getTemplateUserAssignments,
   getMyTemplateAssignments,
   deleteTemplateUserAssignment,
+  getCompanyPortalAdminFlags,
+  getCompanyPortalWorkOrders,
+  getCompanyPortalWOUsers,
+  assignCompanyPortalWorkOrder,
 } from "../api.js";
 
 /* ─── Role definitions ────────────────────────────────────────────── */
@@ -1149,6 +1153,17 @@ export default function CompanyEmployeePortal() {
   const [dashboardRecentTab, setDashboardRecentTab] = useState("logsheets");
   const [logsheetShowAll, setLogsheetShowAll] = useState(false);
   const [checklistShowAll, setChecklistShowAll] = useState(false);
+  // Dashboard quick-view: latest alerts + work orders (admin only)
+  const [dashboardAlerts, setDashboardAlerts]           = useState([]);
+  const [dashboardAlertsLoading, setDashboardAlertsLoading] = useState(false);
+  const [dashboardWorkOrders, setDashboardWorkOrders]   = useState([]);
+  const [dashboardWOLoading, setDashboardWOLoading]     = useState(false);
+  const [dashboardWOUsers, setDashboardWOUsers]         = useState([]);
+  const [dashWOAssign, setDashWOAssign]                 = useState(null);
+  const [dashWOAssignUser, setDashWOAssignUser]         = useState("");
+  const [dashWOAssignNote, setDashWOAssignNote]         = useState("");
+  const [dashWOAssignSaving, setDashWOAssignSaving]     = useState(false);
+  const [dashWOAssignErr, setDashWOAssignErr]           = useState(null);
   const [departments, setDepartments] = useState([]);
   const [assets, setAssets] = useState([]);
   const [checklists, setChecklists] = useState([]);
@@ -1156,6 +1171,7 @@ export default function CompanyEmployeePortal() {
   const [supervisors, setSupervisors] = useState([]);
   const [assignments, setAssignments] = useState([]);
   const [myAssignments, setMyAssignments] = useState([]);
+  const [directFillLogsheet, setDirectFillLogsheet] = useState(null);
   const [logsheetTemplatesList, setLogsheetTemplatesList] = useState([]);
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [assignTarget, setAssignTarget] = useState(null);
@@ -1221,6 +1237,23 @@ export default function CompanyEmployeePortal() {
       getCompanyPortalAssets(token).then((d) => d && setAssets(d)).catch(() => {});
       getCompanyPortalEmployees(token).then((d) => d && setEmployees(d)).catch(() => {});
       getTemplateUserAssignments(token).then((d) => d && setAssignments(d)).catch(() => {});
+      // Dashboard quick-view: latest open alerts + open work orders
+      setDashboardAlertsLoading(true);
+      getCompanyPortalAdminFlags(token, "status=open&limit=5")
+        .then((d) => d && setDashboardAlerts(d.data ?? []))
+        .catch(() => {})
+        .finally(() => setDashboardAlertsLoading(false));
+      setDashboardWOLoading(true);
+      Promise.all([
+        getCompanyPortalWorkOrders(token, "status=open&limit=5"),
+        getCompanyPortalWOUsers(token),
+      ])
+        .then(([woRes, usersRes]) => {
+          setDashboardWorkOrders(woRes?.data ?? []);
+          setDashboardWOUsers(usersRes ?? []);
+        })
+        .catch(() => {})
+        .finally(() => setDashboardWOLoading(false));
     } else if (currentUser?.role === "supervisor") {
       getMyTemplateAssignments(token).then((d) => d && setMyAssignments(d)).catch(() => {});
       getTemplateUserAssignments(token).then((d) => d && setAssignments(d)).catch(() => {});
@@ -1260,6 +1293,25 @@ export default function CompanyEmployeePortal() {
       .then((d) => d && setRecentChecklists(d))
       .catch(() => {})
       .finally(() => setRecentChecklistsLoading(false));
+    // Refresh dashboard quick-view (admin only)
+    if (currentUser?.role === "admin") {
+      setDashboardAlertsLoading(true);
+      getCompanyPortalAdminFlags(token, "status=open&limit=5")
+        .then((d) => d && setDashboardAlerts(d.data ?? []))
+        .catch(() => {})
+        .finally(() => setDashboardAlertsLoading(false));
+      setDashboardWOLoading(true);
+      Promise.all([
+        getCompanyPortalWorkOrders(token, "status=open&limit=5"),
+        getCompanyPortalWOUsers(token),
+      ])
+        .then(([woRes, usersRes]) => {
+          setDashboardWorkOrders(woRes?.data ?? []);
+          setDashboardWOUsers(usersRes ?? []);
+        })
+        .catch(() => {})
+        .finally(() => setDashboardWOLoading(false));
+    }
   }, [nav, token]);
 
   useEffect(() => {
@@ -1814,10 +1866,12 @@ export default function CompanyEmployeePortal() {
                   </div>
                 )}
 
-                {/* Analytics row: Pie chart + Breakdown */}
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px", marginBottom: "24px" }}>
+                {/* Submission Overview */}
+                {/* ── Main 2-col grid: Submission Overview (left) | Alerts + WO (right) ── */}
+                <style>{`@keyframes blink-dot{0%,100%{opacity:1}50%{opacity:0.12}} @keyframes pulse-dot{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.55);opacity:0.65}}`}</style>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px", marginBottom: "24px", alignItems: "start" }}>
 
-                  {/* Left: Pie / Donut Chart */}
+                  {/* ── Left: Submission Overview ── */}
                   <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px" }}>
                     {/* Title + Period Filter */}
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "10px" }}>
@@ -1870,55 +1924,189 @@ export default function CompanyEmployeePortal() {
                     </div>
                   </div>
 
-                  {/* Right: Breakdown stats */}
+                  {/* ── Right column: Latest Alerts + Work Orders stacked ── */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+
+                  {/* Latest Alerts */}
                   <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px" }}>
-                    <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", marginBottom: "16px" }}>Submission Breakdown</p>
-                    {/* Logsheets */}
-                    <div style={{ marginBottom: "20px" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
-                        <p style={{ fontWeight: 700, fontSize: "13.5px", color: "#1d4ed8", margin: 0 }}>Logsheets</p>
-                        <span style={{ fontSize: "12px", color: "#64748b" }}>{cs ? `${cs.filledLogsheets} / ${cs.totalLogsheets}` : "—"}</span>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+                      <div>
+                        <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", margin: 0 }}>Latest Alerts</p>
+                        <p style={{ fontSize: "12px", color: "#94a3b8", margin: 0, marginTop: "2px" }}>Open warnings &amp; flags</p>
                       </div>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                        <div style={{ background: "#eff6ff", borderRadius: "10px", padding: "14px", textAlign: "center", border: "1px solid #bfdbfe" }}>
-                          <p style={{ fontSize: "28px", fontWeight: 800, color: "#1d4ed8", margin: 0 }}>{cs?.filledLogsheets ?? "—"}</p>
-                          <p style={{ fontSize: "12px", color: "#3b82f6", margin: 0, marginTop: "4px", fontWeight: 600 }}>Filled</p>
-                        </div>
-                        <div style={{ background: (cs?.pendingLogsheets || 0) > 0 ? "#fef3c7" : "#f0fdf4", borderRadius: "10px", padding: "14px", textAlign: "center", border: `1px solid ${(cs?.pendingLogsheets || 0) > 0 ? "#fde68a" : "#bbf7d0"}` }}>
-                          <p style={{ fontSize: "28px", fontWeight: 800, color: (cs?.pendingLogsheets || 0) > 0 ? "#d97706" : "#16a34a", margin: 0 }}>{cs?.pendingLogsheets ?? "—"}</p>
-                          <p style={{ fontSize: "12px", color: (cs?.pendingLogsheets || 0) > 0 ? "#d97706" : "#16a34a", margin: 0, marginTop: "4px", fontWeight: 600 }}>Pending</p>
-                        </div>
-                      </div>
-                      {cs && cs.totalLogsheets > 0 && (
-                        <div style={{ marginTop: "8px", background: "#f1f5f9", borderRadius: "6px", overflow: "hidden", height: "6px" }}>
-                          <div style={{ width: `${Math.round((cs.filledLogsheets / cs.totalLogsheets) * 100)}%`, height: "100%", background: "#2563eb", borderRadius: "6px", transition: "width 0.4s" }} />
-                        </div>
-                      )}
+                      <button onClick={() => setNav("warnings")}
+                        style={{ padding: "5px 12px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "1px solid #e2e8f0", background: "#f8fafc", color: "#64748b" }}>
+                        View All →
+                      </button>
                     </div>
-                    {/* Checklists */}
-                    <div>
-                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
-                        <p style={{ fontWeight: 700, fontSize: "13.5px", color: "#16a34a", margin: 0 }}>Checklists</p>
-                        <span style={{ fontSize: "12px", color: "#64748b" }}>{cs ? `${cs.filledChecklists} / ${cs.totalChecklists}` : "—"}</span>
+                    {dashboardAlertsLoading ? (
+                      <p style={{ color: "#94a3b8", fontSize: "13px", padding: "8px 0" }}>Loading…</p>
+                    ) : dashboardAlerts.length === 0 ? (
+                      <div style={{ padding: "24px", textAlign: "center", color: "#94a3b8", background: "#f8fafc", borderRadius: "8px", fontSize: "13px" }}>
+                        ✅ No open alerts
                       </div>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                        <div style={{ background: "#f0fdf4", borderRadius: "10px", padding: "14px", textAlign: "center", border: "1px solid #bbf7d0" }}>
-                          <p style={{ fontSize: "28px", fontWeight: 800, color: "#16a34a", margin: 0 }}>{cs?.filledChecklists ?? "—"}</p>
-                          <p style={{ fontSize: "12px", color: "#16a34a", margin: 0, marginTop: "4px", fontWeight: 600 }}>Filled</p>
-                        </div>
-                        <div style={{ background: (cs?.pendingChecklists || 0) > 0 ? "#fef3c7" : "#f0fdf4", borderRadius: "10px", padding: "14px", textAlign: "center", border: `1px solid ${(cs?.pendingChecklists || 0) > 0 ? "#fde68a" : "#bbf7d0"}` }}>
-                          <p style={{ fontSize: "28px", fontWeight: 800, color: (cs?.pendingChecklists || 0) > 0 ? "#d97706" : "#16a34a", margin: 0 }}>{cs?.pendingChecklists ?? "—"}</p>
-                          <p style={{ fontSize: "12px", color: (cs?.pendingChecklists || 0) > 0 ? "#d97706" : "#16a34a", margin: 0, marginTop: "4px", fontWeight: 600 }}>Pending</p>
-                        </div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                        {dashboardAlerts.map((f) => {
+                          const sevCols = { critical: { bg: "#fee2e2", color: "#991b1b" }, high: { bg: "#ffedd5", color: "#9a3412" }, medium: { bg: "#fef9c3", color: "#854d0e" }, low: { bg: "#dcfce7", color: "#166534" } };
+                          const sc = sevCols[f.severity] || { bg: "#f1f5f9", color: "#475569" };
+                          const dotCfg = ({ open: { color: "#dc2626", animation: "blink-dot 1s ease-in-out infinite" }, in_progress: { color: "#f97316", animation: "pulse-dot 1.5s ease-in-out infinite" }, resolved: { color: "#16a34a", animation: "none" }, closed: { color: "#94a3b8", animation: "none" } })[f.status || "open"] || { color: "#94a3b8", animation: "none" };
+                          return (
+                            <div key={f.id} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px", borderRadius: "8px", border: `1px solid ${f.status === "open" ? "#fecaca" : "#f1f5f9"}`, background: f.status === "open" ? "#fff8f8" : "#fafafa" }}>
+                              <span title={f.status || "open"} style={{ flexShrink: 0, width: "9px", height: "9px", borderRadius: "50%", display: "inline-block", background: dotCfg.color, animation: dotCfg.animation }} />
+                              <span style={{ flexShrink: 0, padding: "2px 8px", borderRadius: "20px", fontSize: "10.5px", fontWeight: 700, background: sc.bg, color: sc.color, textTransform: "capitalize" }}>
+                                {f.severity || "—"}
+                              </span>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <p style={{ margin: 0, fontWeight: 600, fontSize: "12.5px", color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                  {f.assetName || "Unknown asset"}
+                                </p>
+                                <p style={{ margin: 0, fontSize: "11.5px", color: "#64748b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                  {f.description || "No description"}
+                                </p>
+                              </div>
+                              <span style={{ flexShrink: 0, fontSize: "10.5px", color: "#94a3b8", whiteSpace: "nowrap" }}>
+                                {f.createdAt ? new Date(f.createdAt).toLocaleDateString() : ""}
+                              </span>
+                            </div>
+                          );
+                        })}
                       </div>
-                      {cs && cs.totalChecklists > 0 && (
-                        <div style={{ marginTop: "8px", background: "#f1f5f9", borderRadius: "6px", overflow: "hidden", height: "6px" }}>
-                          <div style={{ width: `${Math.round((cs.filledChecklists / cs.totalChecklists) * 100)}%`, height: "100%", background: "#16a34a", borderRadius: "6px", transition: "width 0.4s" }} />
+                    )}
+                  </div>
+
+                  {/* Work Orders */}
+                  <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+                      <div>
+                        <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", margin: 0 }}>Work Orders</p>
+                        <p style={{ fontSize: "12px", color: "#94a3b8", margin: 0, marginTop: "2px" }}>Open • Assign to team members</p>
+                      </div>
+                      <button onClick={() => setNav("workorders")}
+                        style={{ padding: "5px 12px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "1px solid #e2e8f0", background: "#f8fafc", color: "#64748b" }}>
+                        View All →
+                      </button>
+                    </div>
+                    {dashboardWOLoading ? (
+                      <p style={{ color: "#94a3b8", fontSize: "13px", padding: "8px 0" }}>Loading…</p>
+                    ) : dashboardWorkOrders.length === 0 ? (
+                      <div style={{ padding: "24px", textAlign: "center", color: "#94a3b8", background: "#f8fafc", borderRadius: "8px", fontSize: "13px" }}>
+                        ✅ No open work orders
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                        {dashboardWorkOrders.map((wo) => {
+                          const priCols = { critical: { bg: "#fee2e2", color: "#991b1b" }, high: { bg: "#ffedd5", color: "#9a3412" }, medium: { bg: "#fef9c3", color: "#854d0e" }, low: { bg: "#dcfce7", color: "#166534" } };
+                          const pc = priCols[wo.priority] || { bg: "#f1f5f9", color: "#475569" };
+                          const assignedUser = dashboardWOUsers.find((u) => Number(u.id) === Number(wo.assignedTo));
+                          return (
+                            <div key={wo.id} style={{ display: "flex", alignItems: "flex-start", gap: "10px", padding: "10px 12px", borderRadius: "8px", border: "1px solid #f1f5f9", background: "#fafafa" }}>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "3px" }}>
+                                  <span style={{ flexShrink: 0, padding: "2px 8px", borderRadius: "20px", fontSize: "10.5px", fontWeight: 700, background: pc.bg, color: pc.color, textTransform: "capitalize" }}>
+                                    {wo.priority || "—"}
+                                  </span>
+                                  <p style={{ margin: 0, fontWeight: 700, fontSize: "12.5px", color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                    {wo.workOrderNumber || `WO-${wo.id}`}
+                                  </p>
+                                </div>
+                                <p style={{ margin: 0, fontSize: "11.5px", color: "#64748b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                  {wo.assetName || "No asset"}{wo.description ? ` — ${wo.description}` : ""}
+                                </p>
+                                {assignedUser ? (
+                                  <p style={{ margin: "3px 0 0", fontSize: "10.5px", color: "#2563eb", fontWeight: 600 }}>
+                                    Assigned: {assignedUser.fullName}
+                                  </p>
+                                ) : (
+                                  <p style={{ margin: "3px 0 0", fontSize: "10.5px", color: "#f97316", fontWeight: 600 }}>Unassigned</p>
+                                )}
+                              </div>
+                              <button
+                                onClick={() => {
+                                  setDashWOAssign(wo);
+                                  setDashWOAssignUser(wo.assignedTo ? String(wo.assignedTo) : "");
+                                  setDashWOAssignNote("");
+                                  setDashWOAssignErr(null);
+                                }}
+                                style={{ flexShrink: 0, padding: "4px 10px", borderRadius: "6px", border: "1px solid #2563eb", background: "#eff6ff", color: "#2563eb", fontSize: "11.5px", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>
+                                {wo.assignedTo ? "Re-assign" : "Assign"}
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  </div>{/* end right column */}
+                </div>{/* end 2-col grid */}
+
+                {/* Assign Work Order Modal */}
+                {dashWOAssign && (
+                  <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <div style={{ background: "#fff", borderRadius: "14px", padding: "28px", width: "480px", maxWidth: "95vw", boxShadow: "0 20px 60px rgba(0,0,0,0.18)" }}>
+                      <h3 style={{ margin: 0, fontSize: "17px", fontWeight: 700, color: "#0f172a", marginBottom: "6px" }}>Assign Work Order</h3>
+                      <p style={{ margin: "0 0 18px", fontSize: "13px", color: "#64748b" }}>
+                        {dashWOAssign.workOrderNumber || `WO-${dashWOAssign.id}`} — {dashWOAssign.assetName || "No asset"}
+                      </p>
+                      {dashWOAssignErr && (
+                        <div style={{ background: "#fef2f2", color: "#dc2626", padding: "9px 12px", borderRadius: "7px", marginBottom: "14px", fontSize: "13px" }}>
+                          {dashWOAssignErr}
                         </div>
                       )}
+                      <div style={{ marginBottom: "14px" }}>
+                        <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>
+                          Assign To <span style={{ color: "#ef4444" }}>*</span>
+                        </label>
+                        <select value={dashWOAssignUser} onChange={(e) => setDashWOAssignUser(e.target.value)}
+                          style={{ width: "100%", padding: "9px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13.5px", background: "#fff" }}>
+                          <option value="">— Select employee —</option>
+                          {dashboardWOUsers.map((u) => (
+                            <option key={u.id} value={u.id}>
+                              {u.fullName} ({u.role}{u.designation ? ` · ${u.designation}` : ""})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div style={{ marginBottom: "20px" }}>
+                        <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Note (optional)</label>
+                        <textarea value={dashWOAssignNote} onChange={(e) => setDashWOAssignNote(e.target.value)}
+                          placeholder="Instructions for assignee…" rows={3}
+                          style={{ width: "100%", boxSizing: "border-box", padding: "9px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13.5px", resize: "vertical" }} />
+                      </div>
+                      <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
+                        <button onClick={() => setDashWOAssign(null)}
+                          style={{ padding: "9px 20px", borderRadius: "8px", border: "1px solid #e2e8f0", background: "#f8fafc", color: "#475569", fontWeight: 600, fontSize: "13px", cursor: "pointer" }}>
+                          Cancel
+                        </button>
+                        <button
+                          disabled={dashWOAssignSaving}
+                          onClick={async () => {
+                            if (!dashWOAssignUser) { setDashWOAssignErr("Please select a user."); return; }
+                            setDashWOAssignSaving(true);
+                            setDashWOAssignErr(null);
+                            try {
+                              await assignCompanyPortalWorkOrder(token, dashWOAssign.id, {
+                                assignedTo: Number(dashWOAssignUser),
+                                assignedNote: dashWOAssignNote || undefined,
+                              });
+                              setDashboardWorkOrders((prev) =>
+                                prev.map((w) => w.id === dashWOAssign.id ? { ...w, assignedTo: Number(dashWOAssignUser) } : w)
+                              );
+                              setDashWOAssign(null);
+                            } catch (e) {
+                              setDashWOAssignErr(e.message || "Assignment failed");
+                            } finally {
+                              setDashWOAssignSaving(false);
+                            }
+                          }}
+                          style={{ padding: "9px 20px", borderRadius: "8px", border: "none", background: "#2563eb", color: "#fff", fontWeight: 600, fontSize: "13px", cursor: dashWOAssignSaving ? "not-allowed" : "pointer", opacity: dashWOAssignSaving ? 0.7 : 1 }}>
+                          {dashWOAssignSaving ? "Saving…" : "Assign"}
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
+                )}
 
                 {recentTable}
               </div>
@@ -2150,6 +2338,8 @@ export default function CompanyEmployeePortal() {
                 fetchGrid={getCompanyPortalLogsheetGrid}
                 canBuild={currentUser.role === "admin" || currentUser.role === "supervisor"}
                 companyPortalMode={true}
+                directFill={directFillLogsheet}
+                onDirectFillConsumed={() => setDirectFillLogsheet(null)}
               />
             )}
             {logsheetSubNav === "submissions" && (
@@ -2564,7 +2754,7 @@ export default function CompanyEmployeePortal() {
                               <p style={{ fontSize: "12px", color: "#64748b", margin: 0 }}>{a.assetName ? `Asset: ${a.assetName} · ` : ""} Assigned by {a.assignedByName} · {new Date(a.createdAt).toLocaleDateString()}</p>
                             </div>
                             <span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: fbg, color: ftx }}>{FREQ_LABELS[freq] || freq}</span>
-                            <button onClick={() => setNav("logsheets")}
+                            <button onClick={() => { setDirectFillLogsheet({ templateId: a.templateId, assetId: a.assetId, template: a }); setNav("logsheets"); }}
                               style={{ padding: "6px 16px", borderRadius: "7px", background: "#7c3aed", color: "#fff", border: "none", cursor: "pointer", fontWeight: 600, fontSize: "13px" }}>
                               {currentUser.role === "supervisor" ? "Open & Fill" : "Fill"}
                             </button>

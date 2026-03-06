@@ -13,6 +13,7 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import Animated, { FadeInDown, FadeInUp, Layout, SlideInDown } from 'react-native-reanimated';
 import { getMyTeam, clearAuth, getDashboardStats, getStoredUser, getTeamStats, getChecklistSubmissions, getWorkOrders } from '../utils/api';
 
 // Reusable Navigation Bar Component for Supervisor
@@ -156,57 +157,59 @@ export default function SupervisorDashboardScreen() {
 
     return (
         <SafeAreaView style={styles.container}>
-            {/* â”€â”€ Header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+            {/* ── Header ────────────────────────────────────────────── */}
             <View style={styles.header}>
-                <View style={styles.headerAvatar}>
-                    <MaterialCommunityIcons name="account" size={28} color="#1E3A8A" />
-                </View>
-                <View style={styles.headerText}>
+                <Animated.View entering={FadeInDown.duration(400).springify()} style={styles.headerAvatar}>
+                    <MaterialCommunityIcons name="account" size={28} color="#2563EB" />
+                </Animated.View>
+                <Animated.View entering={FadeInDown.delay(100).duration(400).springify()} style={styles.headerText}>
                     <Text style={styles.headerWelcome}>Welcome back,</Text>
                     <Text style={styles.headerName}>Supervisor {firstName}</Text>
-                </View>
-                <TouchableOpacity style={styles.bellBtn} onPress={() => router.push('/warnings')}>
-                    <View style={styles.bellCircle}>
-                        <MaterialCommunityIcons name="bell-outline" size={22} color="#4A5568" />
-                        {urgentAlerts > 0 && <View style={styles.bellDot} />}
-                    </View>
-                </TouchableOpacity>
+                </Animated.View>
+                <Animated.View entering={FadeInDown.delay(200).duration(400).springify()}>
+                    <TouchableOpacity style={styles.bellBtn} onPress={() => router.push('/warnings')}>
+                        <View style={styles.bellCircle}>
+                            <MaterialCommunityIcons name="bell-outline" size={22} color="#64748B" />
+                            {urgentAlerts > 0 && <View style={styles.bellDot} />}
+                        </View>
+                    </TouchableOpacity>
+                </Animated.View>
             </View>
 
             <ScrollView
                 style={{ flex: 1 }}
                 showsVerticalScrollIndicator={false}
-                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#1E3A8A']} />}
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#2563EB']} />}
             >
                 <View style={styles.content}>
 
-                    {/* â”€â”€ Stat Cards â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
-                    <View style={styles.statsRow}>
-                        <View style={[styles.statCard, { backgroundColor: '#EBF8FF' }]}>
-                            <View style={[styles.statIconWrap, { backgroundColor: '#BEE3F8' }]}>
-                                <MaterialCommunityIcons name="notebook-outline" size={20} color="#2B6CB0" />
+                    {/* ── Stat Cards ─────────────────────────────────────── */}
+                    <Animated.View entering={FadeInUp.delay(300).duration(400).springify()} style={styles.statsRow}>
+                        <View style={[styles.statCard, { backgroundColor: '#EFF6FF' }]}>
+                            <View style={[styles.statIconWrap, { backgroundColor: '#DBEAFE' }]}>
+                                <MaterialCommunityIcons name="notebook-outline" size={20} color="#2563EB" />
                             </View>
-                            <Text style={[styles.statNum, { color: '#2C5282' }]}>{pendingLogsheets}</Text>
+                            <Text style={[styles.statNum, { color: '#1E3A8A' }]}>{pendingLogsheets}</Text>
                             <Text style={styles.statLabel}>Pending{'\n'}Logsheets</Text>
                         </View>
-                        <View style={[styles.statCard, { backgroundColor: '#F0FFF4' }]}>
-                            <View style={[styles.statIconWrap, { backgroundColor: '#C6F6D5' }]}>
-                                <MaterialCommunityIcons name="clipboard-check-outline" size={20} color="#276749" />
+                        <View style={[styles.statCard, { backgroundColor: '#ECFDF5' }]}>
+                            <View style={[styles.statIconWrap, { backgroundColor: '#D1FAE5' }]}>
+                                <MaterialCommunityIcons name="clipboard-check-outline" size={20} color="#059669" />
                             </View>
-                            <Text style={[styles.statNum, { color: '#276749' }]}>{activeChecklists}</Text>
+                            <Text style={[styles.statNum, { color: '#065F46' }]}>{activeChecklists}</Text>
                             <Text style={styles.statLabel}>Active{'\n'}Checklists</Text>
                         </View>
-                        <View style={[styles.statCard, { backgroundColor: '#FFF5F5' }]}>
-                            <View style={[styles.statIconWrap, { backgroundColor: '#FED7D7' }]}>
-                                <MaterialCommunityIcons name="alert-circle-outline" size={20} color="#C53030" />
+                        <View style={[styles.statCard, { backgroundColor: '#FEF2F2' }]}>
+                            <View style={[styles.statIconWrap, { backgroundColor: '#FEE2E2' }]}>
+                                <MaterialCommunityIcons name="alert-circle-outline" size={20} color="#DC2626" />
                             </View>
-                            <Text style={[styles.statNum, { color: '#C53030' }]}>{urgentAlerts}</Text>
+                            <Text style={[styles.statNum, { color: '#991B1B' }]}>{urgentAlerts}</Text>
                             <Text style={styles.statLabel}>Urgent{'\n'}Alerts</Text>
                         </View>
-                    </View>
+                    </Animated.View>
 
-                    {/* â”€â”€ Daily Task Progress â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
-                    <View style={styles.progressCard}>
+                    {/* ── Daily Task Progress ───────────────────────────────── */}
+                    <Animated.View entering={FadeInUp.delay(400).duration(400).springify()} style={styles.progressCard}>
                         <View style={styles.progressCardHeader}>
                             <View>
                                 <Text style={styles.progressTitle}>Daily Task Progress</Text>
@@ -214,7 +217,7 @@ export default function SupervisorDashboardScreen() {
                             </View>
                             {totalTasks > 0 && (
                                 <View style={styles.trendBadge}>
-                                    <MaterialCommunityIcons name="trending-up" size={14} color="#276749" />
+                                    <MaterialCommunityIcons name="trending-up" size={14} color="#059669" />
                                     <Text style={styles.trendText}>+{pct}%</Text>
                                 </View>
                             )}
@@ -232,127 +235,134 @@ export default function SupervisorDashboardScreen() {
                                     <Text style={styles.legendCount}>{completedToday}</Text>
                                 </View>
                                 <View style={styles.legendRow}>
-                                    <View style={[styles.legendDot, { backgroundColor: '#93C5FD' }]} />
+                                    <View style={[styles.legendDot, { backgroundColor: '#60A5FA' }]} />
                                     <Text style={styles.legendLabel}>In Progress</Text>
                                     <Text style={styles.legendCount}>{inProgressCount}</Text>
                                 </View>
                                 <View style={styles.legendRow}>
-                                    <View style={[styles.legendDot, { backgroundColor: '#CBD5E0' }]} />
+                                    <View style={[styles.legendDot, { backgroundColor: '#CBD5E1' }]} />
                                     <Text style={styles.legendLabel}>Pending</Text>
                                     <Text style={styles.legendCount}>{pendingCount}</Text>
                                 </View>
                             </View>
                         </View>
-                    </View>
+                    </Animated.View>
 
                     {/* ── Work Orders ─────────────────────────────────── */}
                     {workOrders.length > 0 && (
-                        <View style={styles.woSection}>
+                        <Animated.View entering={FadeInUp.delay(500).duration(400).springify()} style={styles.woSection}>
                             <View style={styles.techHeader}>
                                 <Text style={styles.sectionTitle}>Work Orders</Text>
                                 <TouchableOpacity onPress={() => router.push('/warnings' as any)}>
                                     <Text style={styles.viewAllText}>View All</Text>
                                 </TouchableOpacity>
                             </View>
-                            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 4 }}>
-                                {workOrders.map((wo: any) => {
+                            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 14, paddingRight: 4, paddingBottom: 10 }}>
+                                {workOrders.map((wo: any, idx) => {
                                     const status = (wo.status || 'open').toLowerCase();
                                     const priority = (wo.priority || 'medium').toLowerCase();
                                     const statusMap: Record<string, { label: string; bg: string; color: string }> = {
-                                        in_progress: { label: 'IN PROGRESS', bg: '#FFF7ED', color: '#C2410C' },
-                                        open:        { label: 'ASSIGNED',    bg: '#EFF6FF', color: '#1D4ED8' },
-                                        closed:      { label: 'CLOSED',      bg: '#F0FFF4', color: '#15803D' },
+                                        in_progress: { label: 'IN PROGRESS', bg: '#FFF7ED', color: '#D97706' },
+                                        open: { label: 'ASSIGNED', bg: '#EFF6FF', color: '#2563EB' },
+                                        closed: { label: 'CLOSED', bg: '#ECFDF5', color: '#10B981' },
                                     };
                                     const sc = statusMap[status] || statusMap.open;
                                     const priorityMap: Record<string, { icon: string; color: string; label: string }> = {
-                                        high:     { icon: 'alert',                   color: '#DC2626', label: 'High Priority' },
-                                        critical: { icon: 'alert',                   color: '#DC2626', label: 'Critical' },
-                                        medium:   { icon: 'format-list-bulleted',    color: '#64748B', label: 'Medium Priority' },
-                                        low:      { icon: 'arrow-down-circle-outline', color: '#94A3B8', label: 'Low Priority' },
+                                        high: { icon: 'alert', color: '#EF4444', label: 'High Priority' },
+                                        critical: { icon: 'alert', color: '#DC2626', label: 'Critical' },
+                                        medium: { icon: 'format-list-bulleted', color: '#64748B', label: 'Medium Priority' },
+                                        low: { icon: 'arrow-down-circle-outline', color: '#94A3B8', label: 'Low Priority' },
                                     };
                                     const pc = priorityMap[priority] || priorityMap.medium;
                                     return (
-                                        <TouchableOpacity
-                                            key={wo.id}
-                                            style={styles.woCard}
-                                            activeOpacity={0.8}
-                                            onPress={() => router.push({ pathname: '/work-order-details' as any, params: { id: wo.id } })}
-                                        >
-                                            <View style={styles.woCardTop}>
-                                                <View style={[styles.woStatusBadge, { backgroundColor: sc.bg }]}>
-                                                    <Text style={[styles.woStatusText, { color: sc.color }]}>{sc.label}</Text>
+                                        <Animated.View key={wo.id} entering={FadeInUp.delay(550 + (idx * 50)).duration(400).springify()}>
+                                            <TouchableOpacity
+                                                style={styles.woCard}
+                                                activeOpacity={0.7}
+                                                onPress={() => router.push({ pathname: '/work-order-details' as any, params: { id: wo.id } })}
+                                            >
+                                                <View style={styles.woCardTop}>
+                                                    <View style={[styles.woStatusBadge, { backgroundColor: sc.bg }]}>
+                                                        <Text style={[styles.woStatusText, { color: sc.color }]}>{sc.label}</Text>
+                                                    </View>
+                                                    <Text style={styles.woNumber}>#{wo.workOrderNumber || `WO-${wo.id}`}</Text>
                                                 </View>
-                                                <Text style={styles.woNumber}>#{wo.workOrderNumber || `WO-${wo.id}`}</Text>
-                                            </View>
-                                            <Text style={styles.woTitle} numberOfLines={2}>{wo.issueDescription || wo.assetName || 'Work Order'}</Text>
-                                            <View style={styles.woPriorityRow}>
-                                                <MaterialCommunityIcons name={pc.icon as any} size={14} color={pc.color} />
-                                                <Text style={[styles.woPriorityText, { color: pc.color }]}>{pc.label}</Text>
-                                            </View>
-                                        </TouchableOpacity>
+                                                <Text style={styles.woTitle} numberOfLines={2}>{wo.issueDescription || wo.assetName || 'Work Order'}</Text>
+                                                <View style={styles.woPriorityRow}>
+                                                    <MaterialCommunityIcons name={pc.icon as any} size={14} color={pc.color} />
+                                                    <Text style={[styles.woPriorityText, { color: pc.color }]}>{pc.label}</Text>
+                                                </View>
+                                            </TouchableOpacity>
+                                        </Animated.View>
                                     );
                                 })}
                             </ScrollView>
-                        </View>
+                        </Animated.View>
                     )}
 
                     {/* ── Technicians on Duty ────────────────────────── */}
-                    <View style={styles.techHeader}>
-                        <Text style={styles.sectionTitle}>Technicians on Duty</Text>
-                        <TouchableOpacity onPress={() => router.push('/team-assignments')}>
-                            <Text style={styles.viewAllText}>View All</Text>
-                        </TouchableOpacity>
-                    </View>
-
-                    {teamMembers.length === 0 ? (
-                        <View style={styles.emptyTeam}>
-                            <MaterialCommunityIcons name="account-group-outline" size={36} color="#CBD5E0" />
-                            <Text style={styles.emptyTeamText}>No team members yet</Text>
+                    <Animated.View entering={FadeInUp.delay(600).duration(400).springify()}>
+                        <View style={styles.techHeader}>
+                            <Text style={styles.sectionTitle}>Technicians on Duty</Text>
+                            <TouchableOpacity onPress={() => router.push('/team-assignments')}>
+                                <Text style={styles.viewAllText}>View All</Text>
+                            </TouchableOpacity>
                         </View>
-                    ) : (
-                        teamMembers.map((member: any, idx: number) => {
-                            const name = member.fullName || member.fullname || 'Unknown';
-                            const initials = name.split(' ').map((n: string) => n[0] || '').join('').slice(0, 2).toUpperCase();
-                            const memberStat = teamStats.find((s) => s.id === member.id);
-                            const taskInfo = memberStat
-                                ? `${String(member.role).replace('_', ' ')} \u2022 ${memberStat.totalCount || 0} task${memberStat.totalCount !== 1 ? 's' : ''}`
-                                : String(member.role).replace('_', ' ');
-                            // Vary status dot color: Active=green, first non-active if any=orange, rest=grey
-                            const statusColor = member.status === 'Active'
-                                ? '#38A169'
-                                : idx % 2 === 0 ? '#ED8936' : '#CBD5E0';
-                            // Avatar background color cycle
-                            const avatarBgs = ['#EBF8FF','#F0FFF4','#FFF5F5','#FAF5FF'];
-                            const avatarBg = avatarBgs[idx % avatarBgs.length];
-                            const avatarTxtColors = ['#2B6CB0','#276749','#C53030','#6B46C1'];
-                            const avatarTxt = avatarTxtColors[idx % avatarTxtColors.length];
-                            return (
-                                <View key={member.id} style={styles.techCard}>
-                                    <View style={[styles.techAvatar, { backgroundColor: avatarBg }]}>
-                                        <Text style={[styles.techInitials, { color: avatarTxt }]}>{initials}</Text>
-                                        <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
-                                    </View>
-                                    <View style={styles.techInfo}>
-                                        <Text style={styles.techName}>{name}</Text>
-                                        <Text style={styles.techRole}>{taskInfo}</Text>
-                                    </View>
-                                    <TouchableOpacity style={styles.msgBtn} onPress={() => router.push('/checklists')}>
-                                        <MaterialCommunityIcons name="message-text-outline" size={20} color="#718096" />
-                                    </TouchableOpacity>
-                                </View>
-                            );
-                        })
-                    )}
 
-                    {/* â”€â”€ Assign New Task button â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
-                    <TouchableOpacity
-                        style={styles.assignBtn}
-                        activeOpacity={0.85}
-                        onPress={() => router.push('/checklists')}
-                    >
-                        <MaterialCommunityIcons name="clipboard-plus-outline" size={22} color="#FFFFFF" />
-                        <Text style={styles.assignBtnText}>Assign New Task</Text>
-                    </TouchableOpacity>
+                        {teamMembers.length === 0 ? (
+                            <View style={styles.emptyTeam}>
+                                <MaterialCommunityIcons name="account-group-outline" size={36} color="#CBD5E1" />
+                                <Text style={styles.emptyTeamText}>No team members yet</Text>
+                            </View>
+                        ) : (
+                            <Animated.View layout={Layout.springify()} style={{ paddingBottom: 6 }}>
+                                {teamMembers.map((member: any, idx: number) => {
+                                    const name = member.fullName || member.fullname || 'Unknown';
+                                    const initials = name.split(' ').map((n: string) => n[0] || '').join('').slice(0, 2).toUpperCase();
+                                    const memberStat = teamStats.find((s) => s.id === member.id);
+                                    const taskInfo = memberStat
+                                        ? `${String(member.role).replace('_', ' ')} • ${memberStat.totalCount || 0} task${memberStat.totalCount !== 1 ? 's' : ''}`
+                                        : String(member.role).replace('_', ' ');
+                                    // Vary status dot color: Active=green, first non-active if any=orange, rest=grey
+                                    const statusColor = member.status === 'Active'
+                                        ? '#10B981'
+                                        : idx % 2 === 0 ? '#F59E0B' : '#CBD5E1';
+                                    // Avatar background color cycle
+                                    const avatarBgs = ['#EFF6FF', '#ECFDF5', '#FEF2F2', '#FAF5FF'];
+                                    const avatarBg = avatarBgs[idx % avatarBgs.length];
+                                    const avatarTxtColors = ['#2563EB', '#059669', '#DC2626', '#7C3AED'];
+                                    const avatarTxt = avatarTxtColors[idx % avatarTxtColors.length];
+                                    return (
+                                        <Animated.View key={member.id} entering={FadeInUp.delay(650 + (idx * 50)).duration(400).springify()} style={styles.techCard}>
+                                            <View style={[styles.techAvatar, { backgroundColor: avatarBg }]}>
+                                                <Text style={[styles.techInitials, { color: avatarTxt }]}>{initials}</Text>
+                                                <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
+                                            </View>
+                                            <View style={styles.techInfo}>
+                                                <Text style={styles.techName}>{name}</Text>
+                                                <Text style={styles.techRole}>{taskInfo}</Text>
+                                            </View>
+                                            <TouchableOpacity style={styles.msgBtn} activeOpacity={0.7} onPress={() => router.push('/checklists')}>
+                                                <MaterialCommunityIcons name="message-text-outline" size={20} color="#64748B" />
+                                            </TouchableOpacity>
+                                        </Animated.View>
+                                    );
+                                })}
+                            </Animated.View>
+                        )}
+                    </Animated.View>
+
+                    {/* ── Assign New Task button ─────────────────────── */}
+                    <Animated.View entering={SlideInDown.delay(200).duration(800)}>
+                        <TouchableOpacity
+                            style={styles.assignBtn}
+                            activeOpacity={0.8}
+                            onPress={() => router.push('/checklists')}
+                        >
+                            <MaterialCommunityIcons name="clipboard-plus-outline" size={22} color="#FFFFFF" />
+                            <Text style={styles.assignBtnText}>Assign New Task</Text>
+                        </TouchableOpacity>
+                    </Animated.View>
 
                     <View style={{ height: 24 }} />
                 </View>
@@ -417,9 +427,9 @@ function DonutRing({ pct }: { pct: number }) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: '#F8FAFC' },
+    container: { flex: 1, backgroundColor: '#FAF9F6' },
     loadingBox: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 16 },
-    loadingText: { fontSize: 15, color: '#718096' },
+    loadingText: { fontSize: 15, color: '#64748B', fontWeight: '500' },
 
     // Header
     header: {
@@ -427,31 +437,29 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         paddingHorizontal: 20,
         paddingVertical: 16,
-        paddingTop: Platform.OS === 'android' ? 40 : 16,
-        backgroundColor: '#FFFFFF',
-        borderBottomWidth: 1,
-        borderBottomColor: '#EDF2F7',
+        paddingTop: Platform.OS === 'android' ? 48 : 20,
+        backgroundColor: '#FAF9F6',
         gap: 14,
     },
     headerAvatar: {
         width: 52,
         height: 52,
         borderRadius: 26,
-        backgroundColor: '#EBF8FF',
+        backgroundColor: '#EFF6FF',
         borderWidth: 2,
-        borderColor: '#BEE3F8',
+        borderColor: '#DBEAFE',
         justifyContent: 'center',
         alignItems: 'center',
     },
     headerText: { flex: 1 },
-    headerWelcome: { fontSize: 13, color: '#718096', fontWeight: '500' },
-    headerName: { fontSize: 18, fontWeight: '800', color: '#1A202C', marginTop: 2 },
+    headerWelcome: { fontSize: 13, color: '#64748B', fontWeight: '600' },
+    headerName: { fontSize: 18, fontWeight: '800', color: '#0F172A', marginTop: 2, letterSpacing: -0.5 },
     bellBtn: { padding: 4 },
     bellCircle: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
-        backgroundColor: '#F7FAFC',
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: '#F1F5F9',
         borderWidth: 1,
         borderColor: '#E2E8F0',
         justifyContent: 'center',
@@ -459,134 +467,140 @@ const styles = StyleSheet.create({
     },
     bellDot: {
         position: 'absolute',
-        top: 6,
-        right: 6,
-        width: 8,
-        height: 8,
-        borderRadius: 4,
-        backgroundColor: '#E53E3E',
-        borderWidth: 1.5,
-        borderColor: '#FFFFFF',
+        top: 8,
+        right: 8,
+        width: 10,
+        height: 10,
+        borderRadius: 5,
+        backgroundColor: '#EF4444',
+        borderWidth: 2,
+        borderColor: '#FAF9F6',
     },
 
     content: { padding: 20, paddingTop: 16, paddingBottom: 20 },
 
     // Stat cards
-    statsRow: { flexDirection: 'row', gap: 10, marginBottom: 18 },
+    statsRow: { flexDirection: 'row', gap: 12, marginBottom: 20 },
     statCard: {
         flex: 1,
-        borderRadius: 14,
-        padding: 14,
+        borderRadius: 16,
+        padding: 16,
         alignItems: 'center',
-        gap: 6,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
+        gap: 8,
+        shadowColor: '#64748B',
+        shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.05,
-        shadowRadius: 4,
-        elevation: 1,
+        shadowRadius: 8,
+        elevation: 2,
+        borderWidth: 1,
+        borderColor: '#FFFFFF', // Creates a clean edge for light backgrounds
     },
     statIconWrap: {
-        width: 38,
-        height: 38,
-        borderRadius: 10,
+        width: 42,
+        height: 42,
+        borderRadius: 12,
         justifyContent: 'center',
         alignItems: 'center',
     },
-    statNum: { fontSize: 26, fontWeight: '800' },
-    statLabel: { fontSize: 11, color: '#4A5568', fontWeight: '600', textAlign: 'center', lineHeight: 15 },
+    statNum: { fontSize: 26, fontWeight: '800', letterSpacing: -0.5 },
+    statLabel: { fontSize: 11, color: '#64748B', fontWeight: '700', textAlign: 'center', lineHeight: 15, textTransform: 'uppercase' },
 
     // Progress card
     progressCard: {
         backgroundColor: '#FFFFFF',
         borderRadius: 16,
         padding: 20,
-        marginBottom: 18,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.06,
+        marginBottom: 20,
+        shadowColor: '#64748B',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.04,
         shadowRadius: 8,
         elevation: 2,
+        borderWidth: 1,
+        borderColor: '#F1F5F9',
     },
     progressCardHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'flex-start',
-        marginBottom: 18,
+        marginBottom: 20,
     },
-    progressTitle: { fontSize: 16, fontWeight: '800', color: '#1A202C' },
-    progressSub: { fontSize: 12, color: '#718096', marginTop: 3 },
+    progressTitle: { fontSize: 16, fontWeight: '800', color: '#0F172A', letterSpacing: -0.2 },
+    progressSub: { fontSize: 13, color: '#64748B', marginTop: 3, fontWeight: '500' },
     trendBadge: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#F0FFF4',
-        paddingHorizontal: 10,
-        paddingVertical: 4,
+        backgroundColor: '#ECFDF5',
+        paddingHorizontal: 12,
+        paddingVertical: 5,
         borderRadius: 20,
         gap: 4,
     },
-    trendText: { fontSize: 13, fontWeight: '700', color: '#276749' },
+    trendText: { fontSize: 13, fontWeight: '800', color: '#059669' },
     progressBody: { flexDirection: 'row', alignItems: 'center', gap: 24 },
     ringOuter: { alignItems: 'center', justifyContent: 'center' },
-    legend: { flex: 1, gap: 12 },
-    legendRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-    legendDot: { width: 10, height: 10, borderRadius: 5 },
-    legendLabel: { flex: 1, fontSize: 13, color: '#4A5568', fontWeight: '500' },
-    legendCount: { fontSize: 14, fontWeight: '800', color: '#1A202C' },
+    legend: { flex: 1, gap: 14 },
+    legendRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    legendDot: { width: 12, height: 12, borderRadius: 6 },
+    legendLabel: { flex: 1, fontSize: 13, color: '#64748B', fontWeight: '600' },
+    legendCount: { fontSize: 15, fontWeight: '800', color: '#0F172A' },
 
     // Technicians section
     techHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: 12,
+        marginBottom: 14,
     },
-    sectionTitle: { fontSize: 17, fontWeight: '800', color: '#1A202C' },
+    sectionTitle: { fontSize: 17, fontWeight: '800', color: '#0F172A', letterSpacing: -0.2 },
     viewAllText: { fontSize: 14, fontWeight: '700', color: '#2563EB' },
-    emptyTeam: { alignItems: 'center', paddingVertical: 24, gap: 8 },
-    emptyTeamText: { fontSize: 13, color: '#A0AEC0' },
+    emptyTeam: { alignItems: 'center', paddingVertical: 24, gap: 10 },
+    emptyTeamText: { fontSize: 14, color: '#94A3B8', fontWeight: '500' },
     techCard: {
         flexDirection: 'row',
         alignItems: 'center',
         backgroundColor: '#FFFFFF',
-        borderRadius: 14,
-        padding: 14,
-        marginBottom: 10,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.05,
-        shadowRadius: 4,
+        borderRadius: 16,
+        padding: 16,
+        marginBottom: 12,
+        shadowColor: '#64748B',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.04,
+        shadowRadius: 6,
         elevation: 1,
-        gap: 12,
+        gap: 14,
+        borderWidth: 1,
+        borderColor: '#F1F5F9',
     },
     techAvatar: {
-        width: 46,
-        height: 46,
-        borderRadius: 23,
-        backgroundColor: '#EBF8FF',
+        width: 48,
+        height: 48,
+        borderRadius: 24,
+        backgroundColor: '#EFF6FF',
         justifyContent: 'center',
         alignItems: 'center',
         flexShrink: 0,
     },
-    techInitials: { fontSize: 15, fontWeight: '700', color: '#2B6CB0' },
+    techInitials: { fontSize: 15, fontWeight: '800', color: '#2563EB' },
     statusDot: {
         position: 'absolute',
         bottom: 1,
         right: 1,
-        width: 11,
-        height: 11,
+        width: 12,
+        height: 12,
         borderRadius: 6,
-        backgroundColor: '#38A169',
+        backgroundColor: '#10B981',
         borderWidth: 2,
         borderColor: '#FFFFFF',
     },
     techInfo: { flex: 1 },
-    techName: { fontSize: 15, fontWeight: '700', color: '#1A202C' },
-    techRole: { fontSize: 12, color: '#718096', marginTop: 2, textTransform: 'capitalize' },
+    techName: { fontSize: 15, fontWeight: '800', color: '#0F172A', letterSpacing: -0.2 },
+    techRole: { fontSize: 13, color: '#64748B', marginTop: 3, textTransform: 'capitalize', fontWeight: '500' },
     msgBtn: {
-        width: 36,
-        height: 36,
-        borderRadius: 8,
-        backgroundColor: '#F7FAFC',
+        width: 40,
+        height: 40,
+        borderRadius: 10,
+        backgroundColor: '#F8FAFC',
         borderWidth: 1,
         borderColor: '#E2E8F0',
         justifyContent: 'center',
@@ -594,28 +608,28 @@ const styles = StyleSheet.create({
     },
 
     // Work Orders
-    woSection: { marginBottom: 8 },
+    woSection: { marginBottom: 12 },
     woCard: {
-        width: 210,
+        width: 240,
         backgroundColor: '#FFFFFF',
-        borderRadius: 14,
-        padding: 14,
+        borderRadius: 16,
+        padding: 16,
         borderWidth: 1,
-        borderColor: '#E8EDF3',
-        shadowColor: '#0F172A',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.06,
-        shadowRadius: 6,
+        borderColor: '#F1F5F9',
+        shadowColor: '#64748B',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.04,
+        shadowRadius: 8,
         elevation: 2,
-        marginBottom: 14,
+        marginBottom: 4,
     },
-    woCardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
-    woStatusBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
-    woStatusText: { fontSize: 10, fontWeight: '800', letterSpacing: 0.3 },
-    woNumber: { fontSize: 11, color: '#94A3B8', fontWeight: '600' },
-    woTitle: { fontSize: 14, fontWeight: '700', color: '#1E293B', marginBottom: 10, lineHeight: 20 },
-    woPriorityRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-    woPriorityText: { fontSize: 12, fontWeight: '600' },
+    woCardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+    woStatusBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6 },
+    woStatusText: { fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
+    woNumber: { fontSize: 12, color: '#94A3B8', fontWeight: '700' },
+    woTitle: { fontSize: 15, fontWeight: '700', color: '#0F172A', marginBottom: 12, lineHeight: 22 },
+    woPriorityRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    woPriorityText: { fontSize: 13, fontWeight: '600' },
 
     // Assign button
     assignBtn: {
@@ -623,15 +637,15 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         backgroundColor: '#2563EB',
-        borderRadius: 14,
-        paddingVertical: 16,
-        marginTop: 8,
-        gap: 10,
+        borderRadius: 16,
+        paddingVertical: 18,
+        marginTop: 10,
+        gap: 12,
         shadowColor: '#2563EB',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.3,
-        shadowRadius: 8,
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.2,
+        shadowRadius: 10,
         elevation: 4,
     },
-    assignBtnText: { color: '#FFFFFF', fontSize: 17, fontWeight: '800' },
+    assignBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800', letterSpacing: 0.3 },
 });

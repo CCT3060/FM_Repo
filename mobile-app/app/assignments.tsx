@@ -14,6 +14,7 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import Animated, { FadeInUp, Layout } from 'react-native-reanimated';
 import { getMyAssignments, getMyTeam, reassignTemplate, clearAuth, getStoredUser, type Assignment } from '../utils/api';
 import { SupervisorBottomNav } from './supervisor-dashboard';
 
@@ -111,6 +112,19 @@ export default function AssignmentsScreen() {
         });
     };
 
+    const handleViewLogsheetEntries = (assignment: Assignment) => {
+        const now = new Date();
+        router.push({
+            pathname: '/logsheet-entry-view',
+            params: {
+                templateId: assignment.templateId.toString(),
+                templateName: assignment.templateName || 'Logsheet',
+                month: String(now.getMonth() + 1),
+                year: String(now.getFullYear()),
+            },
+        });
+    };
+
     const handleReassign = (assignment: Assignment) => {
         if (teamMembers.length === 0) {
             Alert.alert('No Team Members', 'You don\'t have any team members to reassign to.');
@@ -146,69 +160,94 @@ export default function AssignmentsScreen() {
         const bgColor = isChecklist ? '#F3E8FF' : '#EFF6FF';
 
         return (
-            <View key={assignment.assignmentId} style={styles.card}>
-                <View style={styles.cardHeader}>
-                    <View style={[styles.iconBox, { backgroundColor: bgColor }]}>
-                        <MaterialCommunityIcons name={iconName} size={24} color={iconColor} />
+            <Animated.View key={assignment.assignmentId} entering={FadeInUp.duration(400).springify()} layout={Layout.springify()}>
+                <View style={styles.card}>
+                    <View style={styles.cardHeader}>
+                        <View style={[styles.iconBox, { backgroundColor: bgColor }]}>
+                            <MaterialCommunityIcons name={iconName} size={24} color={iconColor} />
+                        </View>
+                        <View style={styles.headerText}>
+                            <Text style={styles.cardTitle}>{assignment.templateName || 'Untitled'}</Text>
+                            <Text style={styles.cardType}>
+                                {(assignment.templateType || 'unknown').toUpperCase()}
+                                {assignment.assetType && ` • ${assignment.assetType}`}
+                            </Text>
+                        </View>
                     </View>
-                    <View style={styles.headerText}>
-                        <Text style={styles.cardTitle}>{assignment.templateName || 'Untitled'}</Text>
-                        <Text style={styles.cardType}>
-                            {(assignment.templateType || 'unknown').toUpperCase()}
-                            {assignment.assetType && ` • ${assignment.assetType}`}
+
+                    {assignment.description && (
+                        <Text style={styles.cardDescription} numberOfLines={2}>
+                            {assignment.description}
+                        </Text>
+                    )}
+
+                    {assignment.note && (
+                        <View style={styles.noteBox}>
+                            <MaterialCommunityIcons name="note-text-outline" size={16} color="#718096" />
+                            <Text style={styles.noteText}>{assignment.note}</Text>
+                        </View>
+                    )}
+
+                    <View style={styles.cardMeta}>
+                        <Text style={styles.metaText}>
+                            Assigned by: {assignment.assignedBy || 'Admin'}
+                        </Text>
+                        <Text style={styles.metaText}>
+                            {new Date(assignment.assignedAt).toLocaleDateString()}
                         </Text>
                     </View>
-                </View>
 
-                {assignment.description && (
-                    <Text style={styles.cardDescription} numberOfLines={2}>
-                        {assignment.description}
-                    </Text>
-                )}
+                    <View style={styles.cardActions}>
+                        {userRole === 'supervisor' ? (
+                            <View style={{ gap: 8 }}>
+                                {assignment.templateType === 'logsheet' && (
+                                    <TouchableOpacity
+                                        style={[styles.actionButton, styles.viewButton]}
+                                        onPress={() => handleViewLogsheetEntries(assignment)}
+                                    >
+                                        <MaterialCommunityIcons name="table-eye" size={18} color="#FFFFFF" />
+                                        <Text style={styles.fillButtonText}>View Logsheet</Text>
+                                    </TouchableOpacity>
+                                )}
+                                {assignment.templateType !== 'logsheet' && (
+                                    <View style={styles.viewOnlyBadge}>
+                                        <MaterialCommunityIcons name="eye-outline" size={16} color="#718096" />
+                                        <Text style={styles.viewOnlyText}>View Only — Supervisors cannot fill or reassign</Text>
+                                    </View>
+                                )}
+                            </View>
+                        ) : (
+                            <>
+                                <TouchableOpacity
+                                    style={[styles.actionButton, styles.fillButton]}
+                                    onPress={() => handleFillAssignment(assignment)}
+                                >
+                                    <MaterialCommunityIcons name="pencil" size={18} color="#FFFFFF" />
+                                    <Text style={styles.fillButtonText}>Fill Now</Text>
+                                </TouchableOpacity>
 
-                {assignment.note && (
-                    <View style={styles.noteBox}>
-                        <MaterialCommunityIcons name="note-text-outline" size={16} color="#718096" />
-                        <Text style={styles.noteText}>{assignment.note}</Text>
+                                {assignment.templateType === 'logsheet' && (
+                                    <TouchableOpacity
+                                        style={[styles.actionButton, styles.viewButton]}
+                                        onPress={() => handleViewLogsheetEntries(assignment)}
+                                    >
+                                        <MaterialCommunityIcons name="table-eye" size={18} color="#FFFFFF" />
+                                        <Text style={styles.fillButtonText}>View Entries</Text>
+                                    </TouchableOpacity>
+                                )}
+
+                                <TouchableOpacity
+                                    style={[styles.actionButton, styles.reassignButton]}
+                                    onPress={() => handleReassign(assignment)}
+                                >
+                                    <MaterialCommunityIcons name="account-arrow-right" size={18} color="#1E3A8A" />
+                                    <Text style={styles.reassignButtonText}>Reassign</Text>
+                                </TouchableOpacity>
+                            </>
+                        )}
                     </View>
-                )}
-
-                <View style={styles.cardMeta}>
-                    <Text style={styles.metaText}>
-                        Assigned by: {assignment.assignedBy || 'Admin'}
-                    </Text>
-                    <Text style={styles.metaText}>
-                        {new Date(assignment.assignedAt).toLocaleDateString()}
-                    </Text>
                 </View>
-
-                <View style={styles.cardActions}>
-                    {userRole === 'supervisor' ? (
-                        <View style={styles.viewOnlyBadge}>
-                            <MaterialCommunityIcons name="eye-outline" size={16} color="#718096" />
-                            <Text style={styles.viewOnlyText}>View Only — Supervisors cannot fill or reassign</Text>
-                        </View>
-                    ) : (
-                        <>
-                            <TouchableOpacity
-                                style={[styles.actionButton, styles.fillButton]}
-                                onPress={() => handleFillAssignment(assignment)}
-                            >
-                                <MaterialCommunityIcons name="pencil" size={18} color="#FFFFFF" />
-                                <Text style={styles.fillButtonText}>Fill Now</Text>
-                            </TouchableOpacity>
-
-                            <TouchableOpacity
-                                style={[styles.actionButton, styles.reassignButton]}
-                                onPress={() => handleReassign(assignment)}
-                            >
-                                <MaterialCommunityIcons name="account-arrow-right" size={18} color="#1E3A8A" />
-                                <Text style={styles.reassignButtonText}>Reassign</Text>
-                            </TouchableOpacity>
-                        </>
-                    )}
-                </View>
-            </View>
+            </Animated.View>
         );
     };
 
@@ -228,7 +267,7 @@ export default function AssignmentsScreen() {
             {/* Header */}
             <View style={styles.header}>
                 <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-                    <MaterialCommunityIcons name="arrow-left" size={24} color="#1A202C" />
+                    <MaterialCommunityIcons name="arrow-left" size={24} color="#0F172A" />
                 </TouchableOpacity>
                 <Text style={styles.headerTitle}>My Assignments</Text>
                 <View style={styles.headerSpacer} />
@@ -271,7 +310,9 @@ export default function AssignmentsScreen() {
                                 </View>
                             </View>
 
-                            {assignments.map(renderAssignmentCard)}
+                            <Animated.View layout={Layout.springify()}>
+                                {assignments.map(renderAssignmentCard)}
+                            </Animated.View>
                         </>
                     )}
                 </View>
@@ -352,7 +393,7 @@ export default function AssignmentsScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#F8F9FA',
+        backgroundColor: '#FAF9F6',
     },
     loadingContainer: {
         flex: 1,
@@ -362,7 +403,7 @@ const styles = StyleSheet.create({
     },
     loadingText: {
         fontSize: 16,
-        color: '#718096',
+        color: '#64748B',
     },
     header: {
         flexDirection: 'row',
@@ -370,18 +411,17 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         paddingHorizontal: 16,
         paddingVertical: 12,
-        backgroundColor: '#FFFFFF',
-        borderBottomWidth: 1,
-        borderBottomColor: '#E2E8F0',
-        marginTop: Platform.OS === 'android' ? 30 : 0,
+        backgroundColor: '#FAF9F6',
+        marginTop: Platform.OS === 'android' ? 36 : 12,
     },
     backButton: {
         padding: 8,
     },
     headerTitle: {
         fontSize: 18,
-        fontWeight: '700',
-        color: '#1A202C',
+        fontWeight: '800',
+        color: '#0F172A',
+        letterSpacing: -0.5,
     },
     headerSpacer: {
         width: 40,
@@ -401,29 +441,39 @@ const styles = StyleSheet.create({
         flex: 1,
         backgroundColor: '#FFFFFF',
         padding: 16,
-        borderRadius: 12,
+        borderRadius: 16,
         alignItems: 'center',
         borderWidth: 1,
         borderColor: '#E2E8F0',
+        shadowColor: '#64748B',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.04,
+        shadowRadius: 8,
+        elevation: 2,
     },
     statNumber: {
         fontSize: 24,
         fontWeight: '800',
-        color: '#1E3A8A',
+        color: '#2563EB',
         marginBottom: 4,
     },
     statLabel: {
         fontSize: 12,
-        color: '#718096',
+        color: '#64748B',
         fontWeight: '600',
     },
     card: {
         backgroundColor: '#FFFFFF',
-        borderRadius: 12,
+        borderRadius: 16,
         padding: 16,
         marginBottom: 16,
         borderWidth: 1,
-        borderColor: '#E2E8F0',
+        borderColor: '#F1F5F9',
+        shadowColor: '#64748B',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.04,
+        shadowRadius: 8,
+        elevation: 2,
     },
     cardHeader: {
         flexDirection: 'row',
@@ -443,9 +493,10 @@ const styles = StyleSheet.create({
     },
     cardTitle: {
         fontSize: 16,
-        fontWeight: '700',
-        color: '#1A202C',
+        fontWeight: '800',
+        color: '#0F172A',
         marginBottom: 4,
+        letterSpacing: -0.2,
     },
     cardType: {
         fontSize: 12,
@@ -500,7 +551,10 @@ const styles = StyleSheet.create({
         gap: 6,
     },
     fillButton: {
-        backgroundColor: '#1E3A8A',
+        backgroundColor: '#2563EB',
+    },
+    viewButton: {
+        backgroundColor: '#0891B2',
     },
     fillButtonText: {
         color: '#FFFFFF',
@@ -542,8 +596,8 @@ const styles = StyleSheet.create({
     },
     emptyTitle: {
         fontSize: 20,
-        fontWeight: '700',
-        color: '#1A202C',
+        fontWeight: '800',
+        color: '#0F172A',
         marginTop: 16,
         marginBottom: 8,
     },
@@ -577,8 +631,8 @@ const styles = StyleSheet.create({
     },
     modalTitle: {
         fontSize: 18,
-        fontWeight: '700',
-        color: '#1A202C',
+        fontWeight: '800',
+        color: '#0F172A',
     },
     assignmentInfo: {
         backgroundColor: '#F7FAFC',
@@ -636,8 +690,8 @@ const styles = StyleSheet.create({
     },
     memberName: {
         fontSize: 16,
-        fontWeight: '600',
-        color: '#1A202C',
+        fontWeight: '700',
+        color: '#0F172A',
         marginBottom: 4,
     },
     memberRole: {

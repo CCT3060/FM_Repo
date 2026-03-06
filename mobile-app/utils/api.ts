@@ -311,6 +311,21 @@ export interface Assignment {
   assignedBy?: string;
 }
 
+export interface TabularColumnGroup {
+  id: string;
+  label: string;
+  columns: Array<{ id: string; label: string; subLabel?: string }>;
+}
+
+export interface TabularHeaderConfig {
+  layoutType: 'tabular';
+  rowLabelHeader?: string;
+  rows: Array<{ id: string; label: string }>;
+  columnGroups: TabularColumnGroup[];
+  summaryRows?: any[];
+  footerBlocks?: any[];
+}
+
 export interface TemplateDetails {
   id: number;
   templateName: string;
@@ -318,6 +333,8 @@ export interface TemplateDetails {
   assetType?: string;
   assetId?: number;
   assetName?: string;
+  layoutType?: string;
+  headerConfig?: TabularHeaderConfig | Record<string, any>;
   questions: Array<{
     id: number;
     questionText: string;
@@ -390,6 +407,27 @@ export async function submitChecklist(templateId: number, assetId: number | null
 }
 
 /**
+ * Submit tabular logsheet entry via company-portal endpoint
+ */
+export async function submitTabularLogsheet(
+  templateId: number,
+  assetId: number | null,
+  month: number,
+  year: number,
+  shift: string | null,
+  tabularData: Record<string, any>
+): Promise<void> {
+  const response = await authenticatedFetch(`/api/company-portal/logsheet-templates/${templateId}/entries`, {
+    method: 'POST',
+    body: JSON.stringify({ assetId, month, year, shift, tabularData }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to submit' }));
+    throw new Error((error as any).message || 'Failed to submit tabular logsheet');
+  }
+}
+
+/**
  * Submit logsheet entry
  */
 export async function submitLogsheet(templateId: number, assetId: number | null, answers: SubmissionAnswer[]): Promise<void> {
@@ -402,6 +440,69 @@ export async function submitLogsheet(templateId: number, assetId: number | null,
     const error = await response.json();
     throw new Error(error.message || 'Failed to submit logsheet');
   }
+}
+
+export interface LogsheetEntry {
+  id: number;
+  templateId: number;
+  assetId: number | null;
+  month: number;
+  year: number;
+  shift: string | null;
+  submittedAt: string;
+  submittedByName: string | null;
+  data: { readings?: Record<string, Record<string, string>>; summary?: Record<string, any>; footer?: Record<string, any> };
+}
+
+/**
+ * Get all submitted entries for a logsheet template (filterable by month/year)
+ */
+export async function getLogsheetEntries(templateId: number, month?: number, year?: number): Promise<LogsheetEntry[]> {
+  const params = new URLSearchParams();
+  if (month) params.set('month', String(month));
+  if (year) params.set('year', String(year));
+  const query = params.toString() ? `?${params}` : '';
+  const response = await authenticatedFetch(`/api/company-portal/logsheet-templates/${templateId}/entries${query}`);
+  if (!response.ok) throw new Error('Failed to fetch logsheet entries');
+  return await response.json();
+}
+
+export interface ChecklistGridData {
+  template: { id: number; templateName: string; assetId?: number | null; assetName?: string | null };
+  questions: Array<{ id: number; questionText: string; answerType: string; displayOrder: number }>;
+  submissions: Array<{
+    id: number;
+    day: number;
+    date: string | null;
+    submittedBy: string | null;
+    answers: Record<string, string>;
+  }>;
+  month: number;
+  year: number;
+  daysInMonth: number;
+}
+
+/**
+ * Get checklist monthly grid data (questions × days of month)
+ */
+export async function getChecklistGridData(templateId: number, month: number, year: number): Promise<ChecklistGridData> {
+  const response = await authenticatedFetch(`/api/template-assignments/checklist-grid/${templateId}?month=${month}&year=${year}`);
+  if (!response.ok) throw new Error('Failed to fetch checklist grid');
+  return response.json();
+}
+
+/**
+ * Get logsheet grid data (template + submitted entries) for a given month/year
+ */
+export async function getLogsheetGridData(templateId: number, month: number, year: number): Promise<{
+  template: TemplateDetails & { headerConfig: TabularHeaderConfig | Record<string, any> };
+  entries: LogsheetEntry[];
+  entry: LogsheetEntry | null;
+  daysInMonth: number;
+}> {
+  const response = await authenticatedFetch(`/api/company-portal/logsheet-templates/${templateId}/grid?month=${month}&year=${year}`);
+  if (!response.ok) throw new Error('Failed to fetch logsheet grid');
+  return await response.json();
 }
 
 /**
@@ -510,8 +611,9 @@ export async function supervisorAssignTemplate(
 /**
  * Get work orders (company portal). Returns { total, data[] }
  */
-export async function getWorkOrders(limit = 5): Promise<any[]> {
-  const response = await authenticatedFetch(`/api/company-portal/work-orders?limit=${limit}`);
+export async function getWorkOrders(limit = 5, assignedToMe = false): Promise<any[]> {
+  const url = `/api/company-portal/work-orders?limit=${limit}${assignedToMe ? '&assignedToMe=true' : ''}`;
+  const response = await authenticatedFetch(url);
   if (!response.ok) throw new Error('Failed to fetch work orders');
   const json = await response.json();
   return json.data || [];

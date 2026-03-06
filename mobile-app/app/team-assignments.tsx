@@ -12,6 +12,7 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import Animated, { FadeInUp, Layout } from 'react-native-reanimated';
 import { getTeamStats } from '../utils/api';
 import { SupervisorBottomNav } from './supervisor-dashboard';
 
@@ -38,9 +39,9 @@ function deriveStatus(member: any, idx: number): 'active' | 'on_break' | 'offlin
 }
 
 const STATUS_CFG = {
-    active:   { label: 'ACTIVE',    bg: '#DCFCE7', color: '#15803D', dot: '#22C55E' },
-    on_break: { label: 'ON BREAK',  bg: '#FEF9C3', color: '#A16207', dot: '#EAB308' },
-    offline:  { label: 'OFFLINE',   bg: '#F1F5F9', color: '#64748B', dot: '#94A3B8' },
+    active: { label: 'ACTIVE', bg: '#ECFDF5', color: '#059669', dot: '#10B981' },
+    on_break: { label: 'ON BREAK', bg: '#FFFBEB', color: '#D97706', dot: '#F59E0B' },
+    offline: { label: 'OFFLINE', bg: '#F8FAFC', color: '#64748B', dot: '#94A3B8' },
 };
 
 const AVATAR_COLORS = [
@@ -100,21 +101,21 @@ export default function TechniciansOverviewScreen() {
             {/* Header */}
             <View style={styles.header}>
                 <TouchableOpacity style={styles.headerBtn} onPress={() => router.back()}>
-                    <MaterialCommunityIcons name="arrow-left" size={24} color="#1E293B" />
+                    <MaterialCommunityIcons name="arrow-left" size={24} color="#0F172A" />
                 </TouchableOpacity>
                 <Text style={styles.headerTitle}>Technicians Overview</Text>
                 <TouchableOpacity style={styles.headerBtn}>
-                    <MaterialCommunityIcons name="dots-vertical" size={24} color="#1E293B" />
+                    <MaterialCommunityIcons name="dots-vertical" size={24} color="#0F172A" />
                 </TouchableOpacity>
             </View>
 
             {/* Status filter tabs */}
             <View style={styles.tabsContainer}>
                 {([
-                    { key: 'all',      label: `All (${tabCounts.all})` },
-                    { key: 'active',   label: 'Active' },
+                    { key: 'all', label: `All (${tabCounts.all})` },
+                    { key: 'active', label: 'Active' },
                     { key: 'on_break', label: 'On Break' },
-                    { key: 'offline',  label: 'Offline' },
+                    { key: 'offline', label: 'Offline' },
                 ] as { key: StatusFilter; label: string }[]).map((tab) => (
                     <TouchableOpacity
                         key={tab.key}
@@ -149,46 +150,50 @@ export default function TechniciansOverviewScreen() {
                 >
                     {filtered.length === 0 ? (
                         <View style={styles.center}>
-                            <MaterialCommunityIcons name="account-group-outline" size={52} color="#CBD5E0" />
+                            <MaterialCommunityIcons name="account-group-outline" size={52} color="#CBD5E1" />
                             <Text style={styles.emptyText}>No technicians found</Text>
                         </View>
                     ) : (
-                        filtered.map((member, idx) => {
-                            const initials = member.fullName
-                                .split(' ')
-                                .map((n) => n[0] || '')
-                                .join('')
-                                .slice(0, 2)
-                                .toUpperCase();
-                            const sc = STATUS_CFG[member.status];
-                            const ac = AVATAR_COLORS[idx % AVATAR_COLORS.length];
-                            return (
-                                <TouchableOpacity key={member.id} style={styles.card} activeOpacity={0.8}>
-                                    {/* Avatar */}
-                                    <View style={[styles.avatar, { backgroundColor: ac.bg }]}>
-                                        <Text style={[styles.avatarText, { color: ac.text }]}>{initials}</Text>
-                                        <View style={[styles.statusDot, { backgroundColor: sc.dot }]} />
-                                    </View>
+                        <Animated.View layout={Layout.springify()}>
+                            {filtered.map((member, idx) => {
+                                const initials = member.fullName
+                                    .split(' ')
+                                    .map((n) => n[0] || '')
+                                    .join('')
+                                    .slice(0, 2)
+                                    .toUpperCase();
+                                const sc = STATUS_CFG[member.status];
+                                const ac = AVATAR_COLORS[idx % AVATAR_COLORS.length];
+                                return (
+                                    <Animated.View key={member.id} entering={FadeInUp.delay(50 * idx).duration(400).springify()}>
+                                        <TouchableOpacity style={styles.card} activeOpacity={0.8}>
+                                            {/* Avatar */}
+                                            <View style={[styles.avatar, { backgroundColor: ac.bg }]}>
+                                                <Text style={[styles.avatarText, { color: ac.text }]}>{initials}</Text>
+                                                <View style={[styles.statusDot, { backgroundColor: sc.dot }]} />
+                                            </View>
 
-                                    {/* Info */}
-                                    <View style={styles.cardInfo}>
-                                        <Text style={styles.memberName}>{member.fullName}</Text>
-                                        <Text style={styles.memberStats}>
-                                            {member.logsheetCount} Logsheet{member.logsheetCount !== 1 ? 's' : ''}{'  '}
-                                            {member.checklistCount} Checklist{member.checklistCount !== 1 ? 's' : ''}
-                                        </Text>
-                                    </View>
+                                            {/* Info */}
+                                            <View style={styles.cardInfo}>
+                                                <Text style={styles.memberName}>{member.fullName}</Text>
+                                                <Text style={styles.memberStats}>
+                                                    {member.logsheetCount} Logsheet{member.logsheetCount !== 1 ? 's' : ''}{'  '}
+                                                    {member.checklistCount} Checklist{member.checklistCount !== 1 ? 's' : ''}
+                                                </Text>
+                                            </View>
 
-                                    {/* Status badge + arrow */}
-                                    <View style={styles.cardRight}>
-                                        <View style={[styles.statusBadge, { backgroundColor: sc.bg }]}>
-                                            <Text style={[styles.statusBadgeText, { color: sc.color }]}>{sc.label}</Text>
-                                        </View>
-                                        <MaterialCommunityIcons name="chevron-right" size={20} color="#CBD5E0" style={{ marginTop: 4 }} />
-                                    </View>
-                                </TouchableOpacity>
-                            );
-                        })
+                                            {/* Status badge + arrow */}
+                                            <View style={styles.cardRight}>
+                                                <View style={[styles.statusBadge, { backgroundColor: sc.bg }]}>
+                                                    <Text style={[styles.statusBadgeText, { color: sc.color }]}>{sc.label}</Text>
+                                                </View>
+                                                <MaterialCommunityIcons name="chevron-right" size={20} color="#94A3B8" style={{ marginTop: 4 }} />
+                                            </View>
+                                        </TouchableOpacity>
+                                    </Animated.View>
+                                );
+                            })}
+                        </Animated.View>
                     )}
                     <View style={{ height: 20 }} />
                 </ScrollView>
@@ -200,21 +205,19 @@ export default function TechniciansOverviewScreen() {
 }
 
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: '#F8FAFC' },
+    container: { flex: 1, backgroundColor: '#FAF9F6' },
     center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 },
 
     // Header
     header: {
         flexDirection: 'row', alignItems: 'center',
         paddingHorizontal: 16,
-        paddingTop: Platform.OS === 'android' ? 36 : 12,
+        paddingTop: Platform.OS === 'android' ? 48 : 20,
         paddingBottom: 12,
-        backgroundColor: '#FFFFFF',
-        borderBottomWidth: 1,
-        borderBottomColor: '#F1F5F9',
+        backgroundColor: '#FAF9F6',
     },
     headerBtn: { padding: 4, width: 36 },
-    headerTitle: { flex: 1, textAlign: 'center', fontSize: 17, fontWeight: '700', color: '#1E293B' },
+    headerTitle: { flex: 1, textAlign: 'center', fontSize: 18, fontWeight: '800', color: '#0F172A', letterSpacing: -0.5 },
 
     // Tabs
     tabsContainer: {
@@ -223,13 +226,18 @@ const styles = StyleSheet.create({
         borderBottomWidth: 1,
         borderBottomColor: '#F1F5F9',
         paddingHorizontal: 8,
+        shadowColor: '#64748B',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.02,
+        shadowRadius: 4,
+        elevation: 1,
     },
-    tab: { flex: 1, alignItems: 'center', paddingVertical: 12, position: 'relative' },
-    tabText: { fontSize: 13, color: '#94A3B8', fontWeight: '600' },
-    tabTextActive: { color: '#2563EB', fontWeight: '700' },
+    tab: { flex: 1, alignItems: 'center', paddingVertical: 14, position: 'relative' },
+    tabText: { fontSize: 13, color: '#64748B', fontWeight: '600' },
+    tabTextActive: { color: '#2563EB', fontWeight: '800' },
     tabUnderline: {
-        position: 'absolute', bottom: 0, left: 8, right: 8,
-        height: 2, backgroundColor: '#2563EB', borderRadius: 2,
+        position: 'absolute', bottom: 0, left: 16, right: 16,
+        height: 3, backgroundColor: '#2563EB', borderRadius: 3,
     },
 
     // List
@@ -238,33 +246,33 @@ const styles = StyleSheet.create({
     // Cards
     card: {
         flexDirection: 'row', alignItems: 'center',
-        backgroundColor: '#FFFFFF', borderRadius: 14,
-        padding: 14, marginBottom: 10,
+        backgroundColor: '#FFFFFF', borderRadius: 16,
+        padding: 16, marginBottom: 12,
         borderWidth: 1, borderColor: '#F1F5F9',
-        shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.04, shadowRadius: 4, elevation: 1,
-        gap: 12,
+        shadowColor: '#64748B', shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.04, shadowRadius: 8, elevation: 2,
+        gap: 14,
     },
     avatar: {
         width: 52, height: 52, borderRadius: 26,
         justifyContent: 'center', alignItems: 'center', flexShrink: 0,
     },
-    avatarText: { fontSize: 18, fontWeight: '700' },
+    avatarText: { fontSize: 18, fontWeight: '800' },
     statusDot: {
         position: 'absolute', bottom: 2, right: 2,
         width: 12, height: 12, borderRadius: 6,
         borderWidth: 2, borderColor: '#FFFFFF',
     },
     cardInfo: { flex: 1 },
-    memberName: { fontSize: 15, fontWeight: '700', color: '#1E293B', marginBottom: 3 },
-    memberStats: { fontSize: 12, color: '#94A3B8' },
-    cardRight: { alignItems: 'flex-end', gap: 2 },
-    statusBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 },
-    statusBadgeText: { fontSize: 11, fontWeight: '800', letterSpacing: 0.3 },
+    memberName: { fontSize: 16, fontWeight: '800', color: '#0F172A', marginBottom: 4, letterSpacing: -0.2 },
+    memberStats: { fontSize: 13, color: '#64748B', fontWeight: '500' },
+    cardRight: { alignItems: 'flex-end', gap: 4 },
+    statusBadge: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20 },
+    statusBadgeText: { fontSize: 11, fontWeight: '800', letterSpacing: 0.5 },
 
     // States
-    emptyText: { fontSize: 14, color: '#94A3B8', marginTop: 12 },
+    emptyText: { fontSize: 15, color: '#64748B', marginTop: 12, fontWeight: '500' },
     errorText: { fontSize: 14, color: '#EF4444', marginTop: 12, textAlign: 'center' },
-    retryBtn: { marginTop: 16, backgroundColor: '#2563EB', paddingHorizontal: 24, paddingVertical: 10, borderRadius: 8 },
-    retryText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14 },
+    retryBtn: { marginTop: 16, backgroundColor: '#2563EB', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 10 },
+    retryText: { color: '#FFFFFF', fontWeight: '800', fontSize: 15 },
 });

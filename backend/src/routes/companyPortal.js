@@ -23,6 +23,9 @@ pool.query("ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS questions J
 // Ensure tabular-logsheet columns exist (migration 2026-03-02-tabular-logsheet)
 pool.query("ALTER TABLE logsheet_templates ADD COLUMN IF NOT EXISTS layout_type VARCHAR(20) NOT NULL DEFAULT 'standard'").catch(() => {});
 pool.query("ALTER TABLE logsheet_entries ADD COLUMN IF NOT EXISTS data JSONB").catch(() => {});
+// Ensure company_user_id column exists (migration 2026-02-28-logsheet-company-user)
+pool.query("ALTER TABLE logsheet_entries ADD COLUMN IF NOT EXISTS company_user_id BIGINT REFERENCES company_users(id) ON DELETE SET NULL").catch(() => {});
+pool.query("ALTER TABLE checklist_submissions ADD COLUMN IF NOT EXISTS company_user_id BIGINT REFERENCES company_users(id) ON DELETE SET NULL").catch(() => {});
 
 /* ── Dashboard ──────────────────────────────────────────────────────────────── */
 router.get("/dashboard", async (req, res, next) => {
@@ -421,6 +424,7 @@ router.get("/checklists", async (req, res, next) => {
   try {
     const [rows] = await pool.query(
       `SELECT ct.id, ct.template_name AS "templateName", ct.asset_type AS "assetType",
+              ct.asset_id AS "assetId",
               ct.category, ct.description, ct.frequency, ct.shift, ct.status,
               ct.questions, ct.created_at AS "createdAt"
        FROM checklist_templates ct
@@ -437,14 +441,14 @@ router.get("/checklists", async (req, res, next) => {
 router.post("/checklists", async (req, res, next) => {
   try {
     if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
-    const { templateName, assetType, category, description, frequency = "Daily", shift, status = "active", questions } = req.body;
+    const { templateName, assetType, assetId, category, description, frequency = "Daily", shift, status = "active", questions } = req.body;
     if (!templateName?.trim() || !assetType) return res.status(400).json({ message: "templateName and assetType are required" });
     const questionsJson = questions ? JSON.stringify(questions) : null;
     const [rows] = await pool.query(
-      `INSERT INTO checklist_templates (company_id, template_name, asset_type, category, description, frequency, shift, status, is_active, created_by, questions)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-       RETURNING id, template_name AS "templateName", asset_type AS "assetType", category, description, frequency, shift, status, questions, created_at AS "createdAt"`,
-      [cid(req), templateName.trim(), assetType, category || null, description || null, frequency, shift || null, status, null, questionsJson]
+      `INSERT INTO checklist_templates (company_id, template_name, asset_type, asset_id, category, description, frequency, shift, status, is_active, created_by, questions)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+       RETURNING id, template_name AS "templateName", asset_type AS "assetType", asset_id AS "assetId", category, description, frequency, shift, status, questions, created_at AS "createdAt"`,
+      [cid(req), templateName.trim(), assetType, assetId || null, category || null, description || null, frequency, shift || null, status, null, questionsJson]
     );
     res.status(201).json(rows[0]);
   } catch (err) { next(err); }
@@ -454,7 +458,7 @@ router.put("/checklists/:id", async (req, res, next) => {
   try {
     if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
     const { id } = req.params;
-    const { templateName, assetType, category, description, frequency, shift, status, questions } = req.body;
+    const { templateName, assetType, assetId, category, description, frequency, shift, status, questions } = req.body;
     const [[check]] = await pool.query("SELECT id FROM checklist_templates WHERE id = ? AND company_id = ?", [id, cid(req)]);
     if (!check) return res.status(404).json({ message: "Checklist not found" });
     const isActive = status === "active" ? 1 : 0;
@@ -463,6 +467,7 @@ router.put("/checklists/:id", async (req, res, next) => {
       `UPDATE checklist_templates SET
          template_name = COALESCE(?, template_name),
          asset_type = COALESCE(?, asset_type),
+         asset_id = ?,
          category = COALESCE(?, category),
          description = COALESCE(?, description),
          frequency = COALESCE(?, frequency),
@@ -471,8 +476,8 @@ router.put("/checklists/:id", async (req, res, next) => {
          is_active = ?,
          questions = COALESCE(?, questions)
        WHERE id = ?
-       RETURNING id, template_name AS "templateName", asset_type AS "assetType", category, description, frequency, shift, status, questions, created_at AS "createdAt"`,
-      [templateName || null, assetType || null, category || null, description || null, frequency || null, shift || null, status || null, isActive, questionsJson ?? null, id]
+       RETURNING id, template_name AS "templateName", asset_type AS "assetType", asset_id AS "assetId", category, description, frequency, shift, status, questions, created_at AS "createdAt"`,
+      [templateName || null, assetType || null, assetId || null, category || null, description || null, frequency || null, shift || null, status || null, isActive, questionsJson ?? null, id]
     );
     res.json(rows[0]);
   } catch (err) { next(err); }
@@ -547,7 +552,7 @@ router.post("/logsheet-templates", async (req, res, next) => {
       // Auto-assign to asset if provided
       if (assetId) {
         await conn.execute(
-          `INSERT IGNORE INTO logsheet_template_assignments (template_id, asset_id) VALUES (?, ?)`,
+          `INSERT INTO logsheet_template_assignments (template_id, asset_id) VALUES (?, ?) ON CONFLICT DO NOTHING`,
           [templateId, assetId]
         );
       }
@@ -650,11 +655,11 @@ router.post("/logsheet-templates/:templateId/entries", async (req, res, next) =>
     const { templateId } = req.params;
     const { assetId, month, year, shift, headerValues = {}, answers, tabularData } = req.body;
 
-    if (!assetId || !month || !year) {
-      return res.status(400).json({ message: "assetId, month, and year are required" });
+    if (!month || !year) {
+      return res.status(400).json({ message: "month and year are required" });
     }
 
-    // Verify template and asset belong to this company
+    // Verify template belongs to this company
     const [[tmplRow]] = await pool.query(
       `SELECT id, COALESCE(layout_type, 'standard') AS "layoutType" FROM logsheet_templates WHERE id = ? AND company_id = ?`,
       [templateId, cid(req)]
@@ -666,24 +671,32 @@ router.post("/logsheet-templates/:templateId/entries", async (req, res, next) =>
     if (!isTabular && !answers?.length) {
       return res.status(400).json({ message: "answers are required for standard logsheet entries" });
     }
+    if (!isTabular && !assetId) {
+      return res.status(400).json({ message: "assetId is required for standard logsheet entries" });
+    }
 
-    const [[assetRow]] = await pool.query(
-      "SELECT id, asset_name, building, floor, room FROM assets WHERE id = ? AND company_id = ?",
-      [assetId, cid(req)]
-    );
-    if (!assetRow) return res.status(404).json({ message: "Asset not found" });
+    // Verify asset belongs to this company (only when asset is provided)
+    let assetRow = null;
+    if (assetId) {
+      const [[foundAsset]] = await pool.query(
+        "SELECT id, asset_name, building, floor, room FROM assets WHERE id = ? AND company_id = ?",
+        [assetId, cid(req)]
+      );
+      if (!foundAsset) return res.status(404).json({ message: "Asset not found" });
+      assetRow = foundAsset;
+    }
 
     const monthDate = `${year}-${String(month).padStart(2, "0")}-01`;
     const dataJson = isTabular ? JSON.stringify(tabularData || {}) : "{}";
 
     const [entryRows] = await pool.query(
       `INSERT INTO logsheet_entries (template_id, asset_id, submitted_by, company_user_id, entry_date, month, year, shift, header_values, data, submitted_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+       VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, NOW())
        RETURNING id`,
-      [templateId, assetId, req.companyUser.id, req.companyUser.id, monthDate, month, year,
+      [templateId, assetId || null, req.companyUser.id, monthDate, month, year,
        shift || null, JSON.stringify(headerValues), dataJson]
     );
-    const entryId = entryRows[0]?.id;
+    const entryId = entryRows[0]?.id ?? entryRows.insertId;
 
     // Persist individual answers for standard (non-tabular) templates
     if (!isTabular && answers?.length) {
@@ -795,8 +808,11 @@ router.get("/logsheet-templates/:templateId/entries", async (req, res, next) => 
       `SELECT le.id, le.asset_id AS "assetId", le.template_id AS "templateId",
               le.submitted_by AS "submittedBy", le.entry_date AS "entryDate",
               le.month, le.year, le.shift, le.header_values AS "headerValues",
-              le.submitted_at AS "submittedAt"
+              le.data,
+              le.submitted_at AS "submittedAt",
+              cu.full_name AS "submittedByName"
        FROM logsheet_entries le
+       LEFT JOIN company_users cu ON cu.id = COALESCE(le.company_user_id, le.submitted_by)
        ${where}
        ORDER BY le.submitted_at DESC
        LIMIT ?`,
@@ -818,6 +834,7 @@ router.get("/logsheet-templates/:templateId/entries", async (req, res, next) => 
     const result = entries.map((e) => ({
       ...e,
       headerValues: safeParse(e.headerValues) ?? {},
+      data: safeParse(e.data) ?? {},
       answers: answers.filter((a) => a.entryId === e.id),
     }));
 
@@ -841,12 +858,15 @@ router.get("/logsheet-templates/:templateId/grid", async (req, res, next) => {
     const [[tmplRow]] = await pool.query(
       `SELECT lt.id, lt.template_name AS "templateName", lt.asset_type AS "assetType",
               lt.asset_model AS "assetModel", lt.frequency, lt.asset_id AS "defaultAssetId",
-              lt.header_config AS "headerConfig", lt.description
+              lt.header_config AS "headerConfig", lt.description,
+              COALESCE(lt.layout_type, 'standard') AS "layoutType"
        FROM logsheet_templates lt WHERE lt.id = ? AND lt.company_id = ?`,
       [templateId, companyId]
     );
     if (!tmplRow) return res.status(404).json({ message: "Template not found" });
     tmplRow.headerConfig = safeParse(tmplRow.headerConfig) ?? {};
+    // Ensure layoutType is always reflected in headerConfig for the frontend check
+    if (!tmplRow.headerConfig.layoutType) tmplRow.headerConfig.layoutType = tmplRow.layoutType;
 
     // Sections + Questions
     const [sections] = await pool.query(
@@ -891,31 +911,31 @@ router.get("/logsheet-templates/:templateId/grid", async (req, res, next) => {
       asset = aRow || null;
     }
 
-    // Find most recent entry for this template + month + year
-    const entryParams = [templateId, effectiveMonth, effectiveYear];
-    let entryWhere = "le.template_id = ? AND le.month = ? AND le.year = ?";
-    if (effectiveAssetId) {
-      entryWhere += " AND le.asset_id = ?";
-      entryParams.push(effectiveAssetId);
-    }
-
+    // Fetch all entries for this template + month + year (supports date filter on frontend)
     const [entryRows] = await pool.query(
       `SELECT le.id, le.asset_id AS "assetId", le.shift,
-              le.header_values AS "headerValues", le.submitted_at AS "submittedAt", le.status,
+              le.header_values AS "headerValues", le.data,
+              le.submitted_at AS "submittedAt", le.status,
               cu.full_name AS "submittedByName"
        FROM logsheet_entries le
        LEFT JOIN company_users cu ON cu.id = COALESCE(le.company_user_id, le.submitted_by)
-       WHERE ${entryWhere}
-       ORDER BY le.submitted_at DESC NULLS LAST
-       LIMIT 1`,
-      entryParams
+       WHERE le.template_id = ? AND le.month = ? AND le.year = ?
+       ORDER BY le.submitted_at DESC NULLS LAST`,
+      [templateId, effectiveMonth, effectiveYear]
     );
 
-    const entry = entryRows[0] || null;
+    // Parse JSON columns for every entry
+    const allEntries = entryRows.map((e) => ({
+      ...e,
+      headerValues: safeParse(e.headerValues) ?? {},
+      data: safeParse(e.data) ?? {},
+    }));
+
+    const entry = allEntries[0] || null;
     let answerMap = {};
 
-    if (entry) {
-      entry.headerValues = safeParse(entry.headerValues) ?? {};
+    // Build answer-map from logsheet_answers for standard (non-tabular) templates
+    if (entry && tmplRow.layoutType !== "tabular") {
       const [ansRows] = await pool.query(
         `SELECT question_id AS "questionId", date_column AS "dateColumn",
                 answer_value AS "answerValue", is_issue AS "isIssue", issue_reason AS "issueReason"
@@ -935,7 +955,7 @@ router.get("/logsheet-templates/:templateId/grid", async (req, res, next) => {
 
     const daysInMonth = new Date(effectiveYear, effectiveMonth, 0).getDate();
 
-    res.json({ template: structuredTemplate, asset, entry, answerMap, daysInMonth });
+    res.json({ template: structuredTemplate, asset, entry, entries: allEntries, answerMap, daysInMonth });
   } catch (err) {
     next(err);
   }
@@ -1034,7 +1054,7 @@ router.put("/logsheet-templates/:templateId", async (req, res, next) => {
         await conn.execute("DELETE FROM logsheet_template_assignments WHERE template_id = ?", [templateId]);
         if (assetId) {
           await conn.execute(
-            `INSERT IGNORE INTO logsheet_template_assignments (template_id, asset_id) VALUES (?, ?)`,
+            `INSERT INTO logsheet_template_assignments (template_id, asset_id) VALUES (?, ?) ON CONFLICT DO NOTHING`,
             [templateId, assetId]
           );
         }
@@ -1684,7 +1704,8 @@ router.post("/work-orders", async (req, res, next) => {
          (work_order_number, company_id, asset_id, asset_name, location,
           issue_source, issue_description, priority, status,
           flag_id, cp_assigned_to, assigned_note, cp_created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)
+       RETURNING id`,
       [
         workOrderNumber, companyId, assetId || null, assetName, location,
         issueSource, issueDescription, priority,
@@ -1766,11 +1787,17 @@ router.put("/work-orders/:id/status", async (req, res, next) => {
   try {
     const companyId = cid(req);
     const { role, id: userId } = req.companyUser;
+    const woId = Number(req.params.id);
+
     if (role !== "admin" && role !== "supervisor") {
-      return res.status(403).json({ message: "Not authorised" });
+      // Technicians can only update their own assigned work orders
+      const [[assigned]] = await pool.query(
+        "SELECT id FROM work_orders WHERE id = ? AND company_id = ? AND cp_assigned_to = ?",
+        [woId, companyId, userId]
+      );
+      if (!assigned) return res.status(403).json({ message: "Not authorised" });
     }
 
-    const woId = Number(req.params.id);
     const { status, remark } = req.body;
 
     const VALID = ["open", "in_progress", "completed", "closed"];

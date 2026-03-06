@@ -348,6 +348,7 @@ function TemplateBuilder({ token, companies, assets, onBack, onSaved, createTemp
     setError(null);
     if (!form.companyId) return setError("Select a company");
     if (!form.templateName.trim()) return setError("Template name is required");
+    if (!form.assetId) return setError("Please select an asset to link this logsheet to");
     for (const [si, s] of sections.entries()) {
       if (!s.name.trim()) return setError(`Section ${si + 1} needs a name`);
       for (const [qi, q] of s.questions.entries()) {
@@ -853,6 +854,8 @@ function LogsheetGridViewModal({ template, token, onClose, fetchGrid }) {
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [year, setYear] = useState(now.getFullYear());
   const [gridData, setGridData] = useState(null);
+  const [allEntries, setAllEntries] = useState([]);
+  const [selectedEntryId, setSelectedEntryId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const printRef = useRef(null);
@@ -863,7 +866,12 @@ function LogsheetGridViewModal({ template, token, onClose, fetchGrid }) {
     setError(null);
     const gridFn = fetchGrid || getLogsheetGrid;
     gridFn(token, template.id, `month=${month}&year=${year}`)
-      .then(setGridData)
+      .then((data) => {
+        setGridData(data);
+        const entries = data?.entries || [];
+        setAllEntries(entries);
+        setSelectedEntryId(entries[0]?.id ?? null);
+      })
       .catch((err) => setError(err.message || "Could not load grid data"))
       .finally(() => setLoading(false));
   }, [template, token, month, year, fetchGrid]);
@@ -894,6 +902,7 @@ function LogsheetGridViewModal({ template, token, onClose, fetchGrid }) {
   const days = gridData ? Array.from({ length: gridData.daysInMonth }, (_, i) => i + 1) : Array.from({ length: 31 }, (_, i) => i + 1);
   const answerMap = gridData?.answerMap || {};
   const entry = gridData?.entry || null;
+  const selectedEntry = allEntries.find((e) => e.id === selectedEntryId) || entry;
   const asset = gridData?.asset || null;
   const headerValues = entry?.headerValues || {};
   // Merge: use gridData template but fall back to the passed template's questions
@@ -934,6 +943,22 @@ function LogsheetGridViewModal({ template, token, onClose, fetchGrid }) {
           </select>
           <input type="number" value={year} min={2000} max={2100} onChange={(e) => setYear(Number(e.target.value))} style={{ width: "80px", padding: "6px 10px", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "13px" }} />
 
+          {/* Submission selector — shown when multiple entries exist (e.g. different shifts) */}
+          {allEntries.length > 1 && (
+            <select
+              value={selectedEntryId || ""}
+              onChange={(e) => setSelectedEntryId(Number(e.target.value) || null)}
+              style={{ padding: "6px 10px", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "13px", maxWidth: "260px" }}
+            >
+              {allEntries.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.shift ? `Shift: ${e.shift} — ` : ""}
+                  {new Date(e.submittedAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
+                  {e.submittedByName ? ` · ${e.submittedByName}` : ""}
+                </option>
+              ))}
+            </select>
+          )}
           <button onClick={handlePrint} style={{ padding: "6px 14px", background: "#1e3a5f", color: "#fff", border: "none", borderRadius: "6px", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
             &#128424; Print
           </button>
@@ -958,16 +983,114 @@ function LogsheetGridViewModal({ template, token, onClose, fetchGrid }) {
 
               {/* ── Sub-title bar ── */}
               <div style={{ background: "#2563eb", color: "#fff", textAlign: "center", fontSize: "12px", fontWeight: 600, padding: "6px" }}>
-                {MONTH_NAMES[month - 1]} {year} &nbsp;|&nbsp; {tmpl.assetType || ""}{asset ? ` — ${asset.assetName}` : ""}
-                {entry?.submittedByName ? ` &nbsp;|&nbsp; Submitted by: ${entry.submittedByName}` : ""}
+                {MONTH_NAMES[month - 1]} {year} {"\u00a0|\u00a0"} {tmpl.assetType || ""}{asset ? ` — ${asset.assetName}` : ""}
+                {selectedEntry?.submittedByName ? `\u00a0|\u00a0 Submitted by: ${selectedEntry.submittedByName}` : ""}
+                {selectedEntry?.shift ? `\u00a0|\u00a0 Shift: ${selectedEntry.shift}` : ""}
               </div>
 
-              {/* ── Header fields ── */}
+              {/* ── Tabular template preview ── */}
+              {headerConfig.layoutType === "tabular" ? (() => {
+                const safeStr = (v) => {
+                  if (v === null || v === undefined) return "";
+                  if (typeof v !== "object") return String(v);
+                  return v.label ?? v.id ?? "";
+                };
+                const rows = headerConfig.rows || [];
+                const columnGroups = headerConfig.columnGroups || [];
+                const allCols = columnGroups.flatMap((g) => (g.columns || []).map((c) => ({ ...c, groupId: g.id, groupLabel: g.label })));
+                const readings = selectedEntry?.data?.readings || {};
+                const summaryData = selectedEntry?.data?.summary || {};
+                const tabVal = (rowId, col) => readings[rowId]?.[`${col.groupId}__${col.id}`] || "";
+                const sumVal = (rowId, col) => summaryData[rowId]?.[`${col.groupId}__${col.id}`] || readings[rowId]?.[`${col.groupId}__${col.id}`] || "";
+                const hasSubLabels = allCols.some((c) => c.subLabel);
+                return (
+                  <div style={{ overflowX: "auto", marginBottom: "12px" }}>
+                    <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "11px" }}>
+                      <thead>
+                        {/* Group header row */}
+                        <tr>
+                          <th rowSpan={hasSubLabels ? 3 : 2} style={{ ...thStyle, background: "#1e3a5f", color: "#fff", verticalAlign: "middle", minWidth: "70px" }}>
+                            {safeStr(headerConfig.rowLabelHeader) || "TIME"}
+                          </th>
+                          {columnGroups.map((g, gi) => (
+                            <th key={gi} colSpan={(g.columns || []).length}
+                              style={{ ...thStyle, background: "#1e3a5f", color: "#fff" }}>
+                              {safeStr(g.label)}
+                            </th>
+                          ))}
+                        </tr>
+                        {/* Column label row */}
+                        <tr>
+                          {allCols.map((c, ci) => (
+                            <th key={ci} rowSpan={hasSubLabels && !c.subLabel ? 2 : 1}
+                              style={{ ...thStyle, background: "#334e7e", color: "#fff", minWidth: "50px" }}>
+                              {safeStr(c.label)}
+                            </th>
+                          ))}
+                        </tr>
+                        {/* Sub-label row */}
+                        {hasSubLabels && (
+                          <tr>
+                            {allCols.filter((c) => c.subLabel).map((c, ci) => (
+                              <th key={ci} style={{ ...thStyle, background: "#4a6fa5", color: "#fff" }}>
+                                {safeStr(c.subLabel)}
+                              </th>
+                            ))}
+                          </tr>
+                        )}
+                      </thead>
+                      <tbody>
+                        {rows.map((row, ri) => (
+                          <tr key={ri} style={{ background: ri % 2 === 0 ? "#fff" : "#f8fafc" }}>
+                            <td style={{ ...tdStyle, fontWeight: 700, textAlign: "left", paddingLeft: "8px" }}>
+                              {safeStr(row)}
+                            </td>
+                            {allCols.map((col, ci) => {
+                              const val = tabVal(row.id ?? row, col);
+                              return (
+                                <td key={ci} style={{
+                                  ...tdStyle,
+                                  background: val ? "#f0fdf4" : "#fff",
+                                  color: val ? "#15803d" : "#94a3b8",
+                                  fontWeight: val ? 700 : 400,
+                                }}>{val}</td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                        {/* Summary rows */}
+                        {(headerConfig.summaryRows || []).map((sr, sri) => (
+                          <tr key={`sum-${sri}`} style={{ background: "#f1f5f9" }}>
+                            <td style={{ ...tdStyle, fontWeight: 700, textAlign: "left", paddingLeft: "8px", color: "#1e40af" }}>
+                              {safeStr(sr.label)}
+                            </td>
+                            {allCols.map((col, ci) => {
+                              const val = sumVal(sr.id ?? sr, col);
+                              return (
+                                <td key={ci} style={{
+                                  ...tdStyle,
+                                  background: val ? "#eff6ff" : "#f8fafc",
+                                  color: val ? "#1e40af" : "#94a3b8",
+                                  fontWeight: val ? 700 : 400,
+                                }}>{val}</td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })() : (
+                <>
+              {/* ── Header fields (standard templates only) ── */}
               {Object.keys(headerConfig).length > 0 && (
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", border: "1px solid #cbd5e1", borderTop: "none", marginBottom: "12px" }}>
-                  {Object.entries(headerConfig).map(([key, label]) => (
+                  {Object.entries(headerConfig)
+                    .filter(([, v]) => typeof v === "string" || typeof v === "number")
+                    .map(([key, label]) => (
                     <div key={key} style={{ display: "flex", borderBottom: "1px solid #e2e8f0", borderRight: "1px solid #e2e8f0" }}>
-                      <div style={{ background: "#f1f5f9", padding: "6px 10px", fontWeight: 700, fontSize: "11px", color: "#334155", minWidth: "110px", borderRight: "1px solid #e2e8f0" }}>{label}</div>
+                      <div style={{ background: "#f1f5f9", padding: "6px 10px", fontWeight: 700, fontSize: "11px", color: "#334155", minWidth: "110px", borderRight: "1px solid #e2e8f0" }}>{String(label)}</div>
                       <div style={{ padding: "6px 10px", fontSize: "12px", color: "#0f172a", flex: 1 }}>
                         {key === "monthYear" ? `${MONTH_NAMES[month - 1]} ${year}` : (headerValues[key] || "—")}
                       </div>
@@ -1031,6 +1154,8 @@ function LogsheetGridViewModal({ template, token, onClose, fetchGrid }) {
                   </div>
                 </div>
               ))}
+                </>
+              )}
 
               {/* ── Signature section ── */}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0", border: "1px solid #cbd5e1", marginTop: "20px" }}>
@@ -1260,6 +1385,12 @@ function TemplateList({ token, companies, assets, onBuild, onFill, fetchTemplate
                             style={{ padding: "5px 10px", background: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe", borderRadius: "6px", fontSize: "12px", cursor: "pointer", fontWeight: 600, whiteSpace: "nowrap" }}>
                             📋 Fill Logsheet
                           </button>
+                        ) : onFill && !boundAsset && t.layoutType === "tabular" ? (
+                          // Tabular templates have their own asset picker inside the fill form
+                          <button title="Fill tabular logsheet" onClick={() => onFill(t, { id: null })}
+                            style={{ padding: "5px 10px", background: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe", borderRadius: "6px", fontSize: "12px", cursor: "pointer", fontWeight: 600, whiteSpace: "nowrap" }}>
+                            📋 Fill Logsheet
+                          </button>
                         ) : onFill && !boundAsset ? (
                           <span title="Edit this template and assign an asset to enable filling" style={{ fontSize: "12px", color: "#94a3b8", padding: "5px 0" }}>No asset assigned</span>
                         ) : null}
@@ -1279,7 +1410,7 @@ function TemplateList({ token, companies, assets, onBuild, onFill, fetchTemplate
 /* ─────────────────────────────────────────────────────────────────
    LogsheetModule root
 ───────────────────────────────────────────────────────────────── */
-export default function LogsheetModule({ token, assets, companies, fetchTemplates, fetchEntries, submitEntry, createTemplate, assignTemplate, canBuild = true, fetchTemplate, updateTemplate, deleteTemplate, fetchGrid, companyPortalMode = false }) {
+export default function LogsheetModule({ token, assets, companies, fetchTemplates, fetchEntries, submitEntry, createTemplate, assignTemplate, canBuild = true, fetchTemplate, updateTemplate, deleteTemplate, fetchGrid, companyPortalMode = false, directFill = null, onDirectFillConsumed }) {
   // view: "list" | "builder" | "editor" | "fill"
   const [view, setView] = useState("list");
   const [fillTemplate, setFillTemplate] = useState(null);
@@ -1287,6 +1418,22 @@ export default function LogsheetModule({ token, assets, companies, fetchTemplate
   const [editTarget, setEditTarget] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [fillLoading, setFillLoading] = useState(false);
+
+  // Auto-open fill view when directFill is provided (e.g. from My Tasks)
+  useEffect(() => {
+    if (!directFill) return;
+    (async () => {
+      let fullTemplate = directFill.template || { id: directFill.templateId };
+      if (fetchTemplate && directFill.templateId) {
+        try { fullTemplate = await fetchTemplate(token, directFill.templateId); } catch (_) { /* use partial */ }
+      }
+      setFillTemplate(fullTemplate);
+      setFillAsset(directFill.asset || (directFill.assetId ? { id: directFill.assetId } : null));
+      setView("fill");
+      onDirectFillConsumed?.();
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [directFill]);
 
   const handleFill = async (template, asset) => {
     // If the template from the list doesn't have sections loaded, fetch the full template first
@@ -1367,7 +1514,7 @@ export default function LogsheetModule({ token, assets, companies, fetchTemplate
     );
   }
 
-  if (view === "fill" && fillTemplate && fillAsset) {
+  if (view === "fill" && fillTemplate && (fillAsset || fillTemplate.layoutType === "tabular")) {
     // Tabular logsheets use their own specialised fill component
     if (fillTemplate.layoutType === "tabular") {
       return (

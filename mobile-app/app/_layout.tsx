@@ -28,6 +28,13 @@ export default function RootLayout() {
         <Stack.Screen name="tech-dashboard" options={{ headerShown: false }} />
         <Stack.Screen name="tech-tasks" options={{ headerShown: false }} />
         <Stack.Screen name="tech-execution" options={{ headerShown: false }} />
+        <Stack.Screen name="tech-training" options={{ headerShown: false }} />
+        <Stack.Screen name="tech-work-orders" options={{ headerShown: false }} />
+
+        {/* Logsheet entry view (tabular grid history) */}
+        <Stack.Screen name="logsheet-entry-view" options={{ headerShown: false }} />
+        {/* Checklist entry view (monthly grid history) */}
+        <Stack.Screen name="checklist-entry-view" options={{ headerShown: false }} />
       </Stack>
       <StatusBar style="auto" />
     </>
