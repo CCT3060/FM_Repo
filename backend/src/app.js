@@ -20,9 +20,13 @@ import assetQRRouter from "./routes/assetQR.js";
 import mobileAuthRouter from "./routes/mobileAuth.js";
 import templateAssignmentsRouter from "./routes/templateAssignments.js";
 import submissionReportsRouter from "./routes/submissionReports.js";
+import shiftsRouter from "./routes/shifts.js";
 import flagsRouter from "./routes/flags.js";
 import flagRulesRouter from "./routes/flagRules.js";
 import notificationsRouter from "./routes/notifications.js";
+import templateImportRouter from "./routes/templateImport.js";
+import assetDashboardRouter from "./routes/assetDashboard.js";
+import companyPortalAssetDashboardRouter from "./routes/companyPortalAssetDashboard.js";
 
 const app = express();
 
@@ -58,9 +62,13 @@ app.use("/api/mobile-auth", mobileAuthRouter);
 // Submission reports – accepts both company JWT and main-platform JWT (must be BEFORE templateAssignmentsRouter)
 app.use("/api/template-assignments", submissionReportsRouter);
 app.use("/api/template-assignments", templateAssignmentsRouter);
+app.use("/api/shifts", shiftsRouter);
 app.use("/api/flags", flagsRouter);
 app.use("/api/flag-rules", flagRulesRouter);
 app.use("/api/notifications", notificationsRouter);
+app.use("/api/template-import", templateImportRouter);
+app.use("/api/asset-dashboard", assetDashboardRouter);
+app.use("/api/company-portal/asset-dashboard", companyPortalAssetDashboardRouter);
 
 // Basic 404 handler
 app.use((req, res) => res.status(404).json({ message: "Not found", path: req.originalUrl }));

@@ -195,3 +195,27 @@ export const assignCompanyPortalWorkOrder = (token, id, data) =>
 // ── Company Portal Admin Flags (dashboard) ────────────────────────────────────
 export const getCompanyPortalAdminFlags = (token, params = "") =>
   request("GET", `/api/flags/admin/list${params ? `?${params}` : ""}`, undefined, { authToken: token });
+
+// ── Company Portal Asset Dashboard ───────────────────────────────────────────
+const cpAD = "/api/company-portal/asset-dashboard";
+export const getCPAssetDashboardSummary      = (token, params = "") => request("GET", `${cpAD}/summary${params ? `?${params}` : ""}`,          undefined, { authToken: token });
+export const getCPAssetDashboardDistribution = (token, params = "") => request("GET", `${cpAD}/distribution${params ? `?${params}` : ""}`,      undefined, { authToken: token });
+export const getCPAssetDashboardPerformance  = (token, params = "") => request("GET", `${cpAD}/performance${params ? `?${params}` : ""}`,       undefined, { authToken: token });
+export const getCPAssetDashboardWorkOrders   = (token, params = "") => request("GET", `${cpAD}/work-orders${params ? `?${params}` : ""}`,       undefined, { authToken: token });
+export const getCPAssetDashboardMaintCost    = (token, params = "") => request("GET", `${cpAD}/maintenance-cost${params ? `?${params}` : ""}`,  undefined, { authToken: token });
+export const getCPAssetDashboardDepreciation = (token, params = "") => request("GET", `${cpAD}/depreciation${params ? `?${params}` : ""}`,      undefined, { authToken: token });
+export const getCPAssetDashboardAlerts       = (token, params = "") => request("GET", `${cpAD}/alerts${params ? `?${params}` : ""}`,            undefined, { authToken: token });
+export const getCPAssetDashboardHistory      = (token, assetId)     => request("GET", `${cpAD}/${assetId}/history`,                             undefined, { authToken: token });
+export const getCPAssetDashboardCompare      = (token, params = "") => request("GET", `${cpAD}/compare${params ? `?${params}` : ""}`,           undefined, { authToken: token });
+export const getCPAssetDashboardPredictive   = (token, params = "") => request("GET", `${cpAD}/predictive${params ? `?${params}` : ""}`,        undefined, { authToken: token });
+
+// ── Shift Management ──────────────────────────────────────────────────────────
+export const getShifts             = (token)          => request("GET",    "/api/shifts",                          undefined, { authToken: token });
+export const getActiveShifts       = (token)          => request("GET",    "/api/shifts/active",                   undefined, { authToken: token });
+export const createShift           = (token, data)    => request("POST",   "/api/shifts",               data,      { authToken: token });
+export const updateShift           = (token, id, data)=> request("PUT",    `/api/shifts/${id}`,          data,      { authToken: token });
+export const deleteShift           = (token, id)      => request("DELETE", `/api/shifts/${id}`,          undefined, { authToken: token });
+export const getShiftEmployees     = (token, id)      => request("GET",    `/api/shifts/${id}/employees`,undefined, { authToken: token });
+export const assignShiftEmployees  = (token, id, userIds) => request("POST", `/api/shifts/${id}/employees`, { userIds }, { authToken: token });
+export const removeShiftEmployee   = (token, id, userId)  => request("DELETE", `/api/shifts/${id}/employees/${userId}`, undefined, { authToken: token });
+

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import QRCode from "qrcode";
 import logo from "../images/image.png";
@@ -8,6 +8,8 @@ import ChecklistTemplateModule from "../components/ChecklistTemplateModule.jsx";
 import SubmissionsPanel from "../components/SubmissionsPanel.jsx";
 import WarningsPanel from "../components/WarningsPanel.jsx";
 import WorkOrdersPanel from "../components/WorkOrdersPanel.jsx";
+import AssetDashboard from "../components/AssetDashboard.jsx";
+import { useAlertSound } from "../hooks/useAlertSound";
 import {
   getCompanyPortalMe,
   getCompanyPortalDashboard,
@@ -49,6 +51,14 @@ import {
   getCompanyPortalWorkOrders,
   getCompanyPortalWOUsers,
   assignCompanyPortalWorkOrder,
+  getShifts,
+  getActiveShifts,
+  createShift,
+  updateShift,
+  deleteShift,
+  getShiftEmployees,
+  assignShiftEmployees,
+  removeShiftEmployee,
 } from "../api.js";
 
 /* ─── Role definitions ────────────────────────────────────────────── */
@@ -89,6 +99,7 @@ const NAV_ALL = [
   { key: "employees", label: "Employees", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> },
   { key: "warnings", label: "Warnings", roles: ["admin","supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> },
   { key: "workorders", label: "Work Orders", roles: ["admin","supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-4 0v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg> },
+  { key: "shifts", label: "Shifts", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> },
   { key: "mytasks", label: "My Tasks", roles: ["supervisor","*"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg> },
 ];
 // Returns nav items visible for a given role
@@ -853,7 +864,7 @@ const clCategories = [
 ];
 const mkQ = () => ({ id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, text: "", answerType: "yes_no", isMandatory: false, config: null });
 
-function ChecklistModal({ existing, assets = [], token, onClose, onSaved }) {
+function ChecklistModal({ existing, assets = [], shifts = [], token, onClose, onSaved }) {
   const isEdit = !!existing;
 
   // Normalise questions stored on existing record (items saved as {title,answerType,isRequired,...})
@@ -872,6 +883,7 @@ function ChecklistModal({ existing, assets = [], token, onClose, onSaved }) {
   const [assetId,        setAssetId]         = useState(existing?.assetId ? String(existing.assetId) : "");
   const [checklistName,  setChecklistName]   = useState(existing?.templateName || "");
   const [description,    setDescription]     = useState(existing?.description || "");
+  const [shiftId,        setShiftId]         = useState(existing?.shiftId ? String(existing.shiftId) : "");
   const [questions,      setQuestions]       = useState(() => parseExistingQ(existing?.questions));
   const [saving,         setSaving]          = useState(false);
   const [error,          setError]           = useState(null);
@@ -909,6 +921,7 @@ function ChecklistModal({ existing, assets = [], token, onClose, onSaved }) {
         category,
         description:  description.trim() || undefined,
         assetId:      assetId ? Number(assetId) : undefined,
+        shiftId:      shiftId ? Number(shiftId) : undefined,
         questions:    validQuestions.map((q, idx) => ({
           id:         q.id,
           title:      q.text.trim(),
@@ -963,6 +976,13 @@ function ChecklistModal({ existing, assets = [], token, onClose, onSaved }) {
             <div>
               <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Description</label>
               <input value={description} onChange={(e) => setDescription(e.target.value)} className="form-input" placeholder="Purpose or scope" style={{ width: "100%", boxSizing: "border-box" }} />
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Shift (optional)</label>
+              <select value={shiftId} onChange={(e) => setShiftId(e.target.value)} className="form-select" style={{ width: "100%" }}>
+                <option value="">— Any shift —</option>
+                {shifts.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
             </div>
           </div>
 
@@ -1139,8 +1159,48 @@ export default function CompanyEmployeePortal() {
     try { return JSON.parse(sessionStorage.getItem("cp_user") || "null"); } catch { return null; }
   }, []);
 
-  const [nav, setNav] = useState("dashboard");
+  const [nav, setNav] = useState(() => sessionStorage.getItem("cp_nav") || "dashboard");
   const [dashboard, setDashboard] = useState(null);
+
+  // ── Alert sound / toast / bell notification state ───────────────
+  const [warnOpenCount, setWarnOpenCount] = useState(0);
+  const [bellOpen,      setBellOpen]      = useState(false);
+  const [bellRinging,   setBellRinging]   = useState(false);
+  const [recentAlerts,  setRecentAlerts]  = useState([]);
+  const [toasts,        setToasts]        = useState([]);
+  const prevWarnCount   = useRef(0);
+  const toastId         = useRef(0);
+  const prevWOCount     = useRef(null);   // null = not yet initialised (suppress first-load sound)
+  const prevAssignCount = useRef(null);   // null = not yet initialised
+
+  // Modular alert sound hook — single shared AudioContext, throttled, localStorage preference
+  const {
+    play: playAlertSound,
+    preview: previewAlertSound,
+    enabled: soundEnabled,
+    toggle: toggleSound,
+    volume: alarmVolume,
+    updateVolume: updateAlarmVolume,
+    severityConfig: alarmSevConfig,
+    updateSeverityConfig: updateAlarmSevConfig,
+  } = useAlertSound();
+
+  const [alarmSettingsOpen, setAlarmSettingsOpen] = useState(false);
+
+  /** Trigger bell ring animation (auto-clears after 650 ms). */
+  const ringBell = useCallback(() => {
+    setBellRinging(true);
+    setTimeout(() => setBellRinging(false), 650);
+  }, []);
+
+  const pushToast = useCallback((text, severity = "high") => {
+    const id = ++toastId.current;
+    setToasts((t) => [...t, { id, text, severity }]);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 6000);
+  }, []);
+
+  // Persist active tab so page refresh returns to the same section
+  useEffect(() => { sessionStorage.setItem("cp_nav", nav); }, [nav]);
   const [chartStats, setChartStats] = useState(null);
   const [chartFilter, setChartFilter] = useState("month"); // day|week|month|year
   const [chartCustomStart, setChartCustomStart] = useState("");
@@ -1171,6 +1231,18 @@ export default function CompanyEmployeePortal() {
   const [supervisors, setSupervisors] = useState([]);
   const [assignments, setAssignments] = useState([]);
   const [myAssignments, setMyAssignments] = useState([]);
+  const [shifts, setShifts] = useState([]);
+  const [activeShifts, setActiveShifts] = useState([]);
+  const [shiftSearch, setShiftSearch] = useState("");
+  const [showShiftModal, setShowShiftModal] = useState(false);
+  const [editShift, setEditShift] = useState(null);
+  const [expandedShiftId, setExpandedShiftId] = useState(null);
+  const [shiftEmployees, setShiftEmployees] = useState({});
+  const [shiftEmpError, setShiftEmpError] = useState({});
+  const [addEmpInput, setAddEmpInput] = useState({});
+  const [shiftSaving, setShiftSaving] = useState(false);
+  const [shiftForm, setShiftForm] = useState({ name: "", startTime: "", endTime: "", description: "", status: "active" });
+  const [shiftFormError, setShiftFormError] = useState(null);
   const [directFillLogsheet, setDirectFillLogsheet] = useState(null);
   const [logsheetTemplatesList, setLogsheetTemplatesList] = useState([]);
   const [showAssignModal, setShowAssignModal] = useState(false);
@@ -1196,6 +1268,7 @@ export default function CompanyEmployeePortal() {
   const [editChecklist, setEditChecklist] = useState(null);
   const [checklistSubNav, setChecklistSubNav] = useState("templates");
   const [logsheetSubNav, setLogsheetSubNav] = useState("templates");
+  const [assetSubNav, setAssetSubNav] = useState("dashboard");
 
   useEffect(() => {
     if (!token || !currentUser) {
@@ -1237,6 +1310,8 @@ export default function CompanyEmployeePortal() {
       getCompanyPortalAssets(token).then((d) => d && setAssets(d)).catch(() => {});
       getCompanyPortalEmployees(token).then((d) => d && setEmployees(d)).catch(() => {});
       getTemplateUserAssignments(token).then((d) => d && setAssignments(d)).catch(() => {});
+      getShifts(token).then((d) => d && setShifts(d)).catch(() => {});
+      getActiveShifts(token).then((d) => d && setActiveShifts(d)).catch(() => {});
       // Dashboard quick-view: latest open alerts + open work orders
       setDashboardAlertsLoading(true);
       getCompanyPortalAdminFlags(token, "status=open&limit=5")
@@ -1314,6 +1389,99 @@ export default function CompanyEmployeePortal() {
     }
   }, [nav, token]);
 
+  // ── Poll for new flags / work orders / assignments every 15 s ───────────
+  useEffect(() => {
+    if (!token || (currentUser?.role !== "admin" && currentUser?.role !== "supervisor")) return;
+    const isAdmin = currentUser?.role === "admin";
+
+    const poll = async () => {
+      // 1. Flags (admin + supervisor)
+      try {
+        const res = await getCompanyPortalAdminFlags(token, "status=open&limit=5");
+        if (!res) return;
+        const newCount = res.total ?? 0;
+        const prev     = prevWarnCount.current;
+        prevWarnCount.current = newCount;
+        setWarnOpenCount(newCount);
+        if (res.data?.length) setRecentAlerts(res.data.slice(0, 5));
+        setDashboardAlerts(res.data ?? []);
+        if (newCount > prev) {
+          const diff   = newCount - prev;
+          const newest = res.data?.[0];
+          const sev    = newest?.severity || "high";
+          const msg    = newest
+            ? `${diff} new alert${diff > 1 ? "s" : ""}: ${sev.toUpperCase()} – ${newest.assetName || "unknown asset"}`
+            : `${diff} new alert${diff > 1 ? "s" : ""} raised`;
+          pushToast(msg, sev);
+          playAlertSound(sev);
+          ringBell();
+        }
+      } catch (_) { /* silent */ }
+
+      // 2. Work orders (admin only)
+      if (isAdmin) {
+        try {
+          const woRes = await getCompanyPortalWorkOrders(token, "status=open&limit=5");
+          const newWOCount = woRes?.total ?? woRes?.data?.length ?? 0;
+          if (prevWOCount.current !== null && newWOCount > prevWOCount.current) {
+            const diff = newWOCount - prevWOCount.current;
+            pushToast(`${diff} new work order${diff > 1 ? "s" : ""} opened`, "medium");
+            playAlertSound("medium");
+          }
+          prevWOCount.current = newWOCount;
+          setDashboardWorkOrders(woRes?.data ?? []);
+        } catch (_) { /* silent */ }
+      }
+    };
+
+    // Initial sync — seed counts without playing sound
+    Promise.all([
+      getCompanyPortalAdminFlags(token, "status=open&limit=5"),
+      isAdmin ? getCompanyPortalWorkOrders(token, "status=open&limit=5") : Promise.resolve(null),
+    ]).then(([flagRes, woRes]) => {
+      if (flagRes) {
+        prevWarnCount.current = flagRes.total ?? 0;
+        setWarnOpenCount(flagRes.total ?? 0);
+        if (flagRes.data?.length) setRecentAlerts(flagRes.data.slice(0, 5));
+        setDashboardAlerts(flagRes.data ?? []);
+      }
+      if (woRes) {
+        prevWOCount.current = woRes?.total ?? woRes?.data?.length ?? 0;
+        setDashboardWorkOrders(woRes?.data ?? []);
+      }
+    }).catch(() => {});
+
+    const id = setInterval(poll, 15000);
+    return () => clearInterval(id);
+  }, [token, currentUser?.role, pushToast, playAlertSound, ringBell]);
+
+  // ── Poll for new checklist/logsheet assignments every 15 s (all roles) ──
+  useEffect(() => {
+    if (!token) return;
+    const pollAssignments = async () => {
+      try {
+        const data = await getMyTemplateAssignments(token);
+        const newCount = Array.isArray(data) ? data.length : 0;
+        if (prevAssignCount.current !== null && newCount > prevAssignCount.current) {
+          const diff = newCount - prevAssignCount.current;
+          pushToast(`${diff} new assignment${diff > 1 ? "s" : ""} received`, "low");
+          playAlertSound("low");
+        }
+        prevAssignCount.current = newCount;
+        setMyAssignments(data ?? []);
+      } catch (_) { /* silent */ }
+    };
+
+    // Seed count on mount
+    getMyTemplateAssignments(token).then((data) => {
+      prevAssignCount.current = Array.isArray(data) ? data.length : 0;
+      setMyAssignments(data ?? []);
+    }).catch(() => {});
+
+    const id = setInterval(pollAssignments, 15000);
+    return () => clearInterval(id);
+  }, [token, pushToast, playAlertSound]);
+
   useEffect(() => {
     if (!token || nav === "dashboard") return;
     if (nav === "departments") load("departments", () => getCompanyPortalDepartments(token)).then((d) => d && setDepartments(d));
@@ -1330,7 +1498,7 @@ export default function CompanyEmployeePortal() {
       if (currentUser?.role === "admin" || currentUser?.role === "supervisor") {
         getCompanyPortalSupervisors(token).then((d) => d && setSupervisors(d)).catch(() => {});
         getTemplateUserAssignments(token).then((d) => d && setAssignments(d)).catch(() => {});
-        if (!checklists.length) getCompanyPortalChecklists(token).then((d) => d && setChecklists(d)).catch(() => {});
+        getCompanyPortalChecklists(token).then((d) => d && setChecklists(d)).catch(() => {});
         getCompanyPortalLogsheetTemplates(token).then((d) => d && setLogsheetTemplatesList(d)).catch(() => {});
       }
     }
@@ -1508,6 +1676,106 @@ export default function CompanyEmployeePortal() {
               <Badge val={currentUser.role} />
             </div>
           </div>
+          {/* Bell button — admin & supervisor only */}
+          {(currentUser?.role === "admin" || currentUser?.role === "supervisor") && (
+            <div style={{ position: "relative", marginBottom: "8px" }}>
+              <button
+                onClick={() => setBellOpen((v) => !v)}
+                style={{ width: "100%", padding: "8px", borderRadius: "7px", background: bellOpen ? "#eff6ff" : "#f8fafc", color: warnOpenCount > 0 ? "#ea580c" : "#475569", border: "1px solid #e2e8f0", cursor: "pointer", fontSize: "13px", fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: "6px", position: "relative" }}
+              >
+                <span className={bellRinging ? "fm-bell-ringing" : ""} style={{ display: "inline-flex", alignItems: "center" }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                </span>
+                Alerts
+                {warnOpenCount > 0 && (
+                  <span style={{ background: "#dc2626", color: "#fff", borderRadius: "50%", fontSize: "9px", fontWeight: 800, width: "16px", height: "16px", display: "inline-flex", alignItems: "center", justifyContent: "center", marginLeft: "2px" }}>
+                    {warnOpenCount > 99 ? "99+" : warnOpenCount}
+                  </span>
+                )}
+              </button>
+              {bellOpen && (
+                <div style={{ position: "absolute", bottom: "calc(100% + 6px)", left: 0, right: 0, background: "#fff", border: "1px solid #e2e8f0", borderRadius: "10px", boxShadow: "0 -10px 30px rgba(0,0,0,0.12)", zIndex: 9999, overflow: "hidden", minWidth: "220px" }}>
+                  <div style={{ padding: "10px 14px", borderBottom: "1px solid #f1f5f9", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span style={{ fontWeight: 700, fontSize: "12px", color: "#0f172a" }}>⚠️ Active Warnings</span>
+                    <button onClick={() => { setBellOpen(false); setNav("warnings"); }} style={{ background: "none", border: "none", color: "#2563eb", fontSize: "11px", fontWeight: 700, cursor: "pointer" }}>View all →</button>
+                  </div>
+                  {recentAlerts.length === 0 && (
+                    <div style={{ padding: "16px", textAlign: "center", color: "#94a3b8", fontSize: "12px" }}>No open warnings</div>
+                  )}
+                  {recentAlerts.map((a) => {
+                    const sevColor = { critical: "#dc2626", high: "#ea580c", medium: "#d97706", low: "#16a34a" }[a.severity] || "#475569";
+                    const sevBg    = { critical: "#fee2e2", high: "#fff7ed", medium: "#fefce8", low: "#f0fdf4"  }[a.severity] || "#f8fafc";
+                    return (
+                      <div key={a.id} style={{ padding: "9px 14px", borderBottom: "1px solid #f8fafc", cursor: "pointer" }}
+                        onClick={() => { setBellOpen(false); setNav("warnings"); }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = "#f8fafc")}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = "")}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                          <span style={{ background: sevBg, color: sevColor, fontSize: "9px", fontWeight: 800, padding: "2px 6px", borderRadius: "8px", textTransform: "uppercase" }}>{a.severity}</span>
+                          <span style={{ fontWeight: 600, fontSize: "11px", color: "#0f172a", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.assetName || "Unknown asset"}</span>
+                        </div>
+                        <div style={{ fontSize: "10px", color: "#64748b", marginTop: "2px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.description || "No description"}</div>
+                      </div>
+                    );
+                  })}
+                  {/* Sound toggle + settings footer */}
+                  <div style={{ borderTop: "1px solid #f1f5f9" }}>
+                    <div style={{ padding: "8px 14px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <span style={{ fontSize: "10px", color: "#94a3b8" }}>Alert sounds</span>
+                      <div style={{ display: "flex", gap: "5px", alignItems: "center" }}>
+                        <button
+                          className={`fm-alarm-gear${alarmSettingsOpen ? " fm-open" : ""}`}
+                          onClick={() => setAlarmSettingsOpen((v) => !v)}
+                          title="Alarm settings"
+                        >⚙</button>
+                        <button className={`fm-sound-toggle ${soundEnabled ? "fm-enabled" : "fm-muted"}`} onClick={toggleSound}>
+                          {soundEnabled ? "🔊 On" : "🔇 Off"}
+                        </button>
+                      </div>
+                    </div>
+                    {alarmSettingsOpen && (
+                      <div className="fm-alarm-settings">
+                        <h4>Alarm Settings</h4>
+                        {/* Volume */}
+                        <div className="fm-alarm-vol-row">
+                          <span>Volume</span>
+                          <strong>{Math.round(alarmVolume * 100)}%</strong>
+                        </div>
+                        <input
+                          type="range" min="0" max="1" step="0.05"
+                          value={alarmVolume}
+                          onChange={(e) => updateAlarmVolume(parseFloat(e.target.value))}
+                          className="fm-vol-slider"
+                        />
+                        {/* Per-severity toggles */}
+                        <div className="fm-sev-section-label">Sound per severity</div>
+                        {[
+                          { key: "critical", label: "Critical", color: "#dc2626", bg: "#fee2e2" },
+                          { key: "high",     label: "High",     color: "#ea580c", bg: "#fff7ed" },
+                          { key: "medium",   label: "Medium",   color: "#d97706", bg: "#fefce8" },
+                          { key: "low",      label: "Low",      color: "#16a34a", bg: "#f0fdf4" },
+                          { key: "info",     label: "Info",     color: "#2563eb", bg: "#eff6ff" },
+                        ].map(({ key, label, color, bg }) => {
+                          const isOn = alarmSevConfig[key] !== false;
+                          return (
+                            <div key={key} className="fm-sev-row">
+                              <span className="fm-sev-badge" style={{ background: bg, color }}>{label}</span>
+                              <div className="fm-sev-actions">
+                                <button className="fm-preview-btn" title={`Preview ${label} sound`} onClick={() => previewAlertSound(key)}>▶ Test</button>
+                                <button className={`fm-sev-toggle ${isOn ? "on" : "off"}`} onClick={() => updateAlarmSevConfig(key, !isOn)}>
+                                  {isOn ? "ON" : "OFF"}
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
           <button onClick={handleLogout}
             style={{ width: "100%", padding: "8px", borderRadius: "7px", background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca", cursor: "pointer", fontSize: "13px", fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
@@ -1867,6 +2135,42 @@ export default function CompanyEmployeePortal() {
                 )}
 
                 {/* Submission Overview */}
+                {/* ── Shift summary banner ── */}
+                {shifts.length > 0 && (() => {
+                  const now = new Date();
+                  const nowMins = now.getHours() * 60 + now.getMinutes();
+                  const activeShiftList = shifts.filter((s) => {
+                    if (s.status !== "active") return false;
+                    const [sh, sm] = s.startTime.split(":").map(Number);
+                    const [eh, em] = s.endTime.split(":").map(Number);
+                    const startMins = sh * 60 + sm;
+                    const endMins = eh * 60 + em;
+                    if (startMins <= endMins) return nowMins >= startMins && nowMins <= endMins;
+                    return nowMins >= startMins || nowMins <= endMins;
+                  });
+                  const fmt12 = (t) => { if (!t) return ""; const [h, m] = t.split(":"); const hr = parseInt(h, 10); return `${hr % 12 || 12}:${m} ${hr < 12 ? "AM" : "PM"}`; };
+                  return (
+                    <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", marginBottom: "20px" }}>
+                      {activeShiftList.length === 0 ? (
+                        <div style={{ padding: "12px 18px", background: "#f8fafc", borderRadius: "10px", border: "1px solid #e2e8f0", fontSize: "13.5px", color: "#64748b" }}>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2" style={{ marginRight: "6px", verticalAlign: "middle" }}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                          No shifts are currently active — <button onClick={() => setNav("shifts")} style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", fontWeight: 600, fontSize: "13.5px", padding: 0 }}>manage shifts</button>
+                        </div>
+                      ) : activeShiftList.map((s) => (
+                        <div key={s.id} style={{ display: "inline-flex", alignItems: "center", gap: "10px", padding: "10px 16px", background: "#f0fdf4", borderRadius: "10px", border: "1px solid #bbf7d0" }}>
+                          <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#16a34a", display: "inline-block", animation: "pulse-dot 1.4s ease-in-out infinite" }} />
+                          <div>
+                            <span style={{ fontWeight: 700, fontSize: "13.5px", color: "#15803d" }}>{s.name}</span>
+                            <span style={{ fontSize: "12.5px", color: "#4ade80", marginLeft: "8px" }}>{fmt12(s.startTime)} – {fmt12(s.endTime)}</span>
+                          </div>
+                          <span style={{ fontSize: "12px", color: "#16a34a", background: "#dcfce7", padding: "2px 8px", borderRadius: "20px", fontWeight: 600 }}>
+                            {s.employeeCount ?? 0} emp
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
                 {/* ── Main 2-col grid: Submission Overview (left) | Alerts + WO (right) ── */}
                 <style>{`@keyframes blink-dot{0%,100%{opacity:1}50%{opacity:0.12}} @keyframes pulse-dot{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.55);opacity:0.65}}`}</style>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px", marginBottom: "24px", alignItems: "start" }}>
@@ -2186,6 +2490,34 @@ export default function CompanyEmployeePortal() {
           const isAdmin = currentUser.role === "admin";
           return (
           <div>
+            {/* Sub-tab navigation */}
+            <div style={{ display: "flex", gap: "4px", marginBottom: "24px", borderBottom: "2px solid #e2e8f0" }}>
+              {[
+                { k: "dashboard", label: "📊 Analytics Dashboard" },
+                { k: "manage",    label: "🗂 Manage Assets" },
+              ].map(({ k, label }) => (
+                <button key={k} type="button" onClick={() => setAssetSubNav(k)}
+                  style={{ padding: "10px 22px", background: "none", border: "none",
+                    borderBottom: assetSubNav === k ? "3px solid #2563eb" : "3px solid transparent",
+                    marginBottom: "-2px", fontSize: "14px", fontWeight: 700,
+                    color: assetSubNav === k ? "#2563eb" : "#64748b", cursor: "pointer" }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {/* Analytics Dashboard */}
+            {assetSubNav === "dashboard" && (
+              <AssetDashboard
+                endpointPrefix="/api/company-portal/asset-dashboard"
+                token={token}
+                companyId={currentUser.companyId}
+                assetList={assets}
+              />
+            )}
+
+            {/* Manage Assets */}
+            {assetSubNav === "manage" && (<div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "22px" }}>
               <div>
                 <h1 style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px", marginBottom: "4px" }}>Assets</h1>
@@ -2268,6 +2600,7 @@ export default function CompanyEmployeePortal() {
                   </table>
                 )}
             </Card>
+            </div>)}
           </div>
           );
         })()}
@@ -2291,6 +2624,7 @@ export default function CompanyEmployeePortal() {
               <ChecklistTemplateModule
                 token={token}
                 companies={[{ id: currentUser.companyId, companyName: currentUser.companyName }]}
+                shifts={shifts}
                 fetchTemplates={(tok) => getCompanyPortalChecklists(tok)}
                 createTemplate={createCompanyPortalChecklist}
                 fetchTemplate={null}
@@ -2326,6 +2660,7 @@ export default function CompanyEmployeePortal() {
               <LogsheetModule
                 token={token}
                 assets={assets.length ? assets : []}
+                shifts={shifts}
                 companies={[{ id: currentUser.companyId, companyName: currentUser.companyName }]}
                 fetchTemplates={getCompanyPortalLogsheetTemplates}
                 fetchTemplate={getCompanyPortalLogsheetTemplate}
@@ -2674,6 +3009,287 @@ export default function CompanyEmployeePortal() {
             </div>
           );
         })()}
+
+        {/* ── Shifts ────────────────────────────────────────────── */}
+        {nav === "shifts" && (() => {
+          const fmt12 = (t) => {
+            if (!t) return "";
+            const [h, m] = t.split(":");
+            const hr = parseInt(h, 10);
+            return `${hr % 12 || 12}:${m} ${hr < 12 ? "AM" : "PM"}`;
+          };
+
+          const isActiveNow = (s) => {
+            if (s.status !== "active") return false;
+            const now = new Date();
+            const [nh, nm] = [now.getHours(), now.getMinutes()];
+            const nowMins = nh * 60 + nm;
+            const [sh, sm] = s.startTime.split(":").map(Number);
+            const [eh, em] = s.endTime.split(":").map(Number);
+            const startMins = sh * 60 + sm;
+            const endMins = eh * 60 + em;
+            if (startMins <= endMins) return nowMins >= startMins && nowMins <= endMins;
+            return nowMins >= startMins || nowMins <= endMins;
+          };
+
+          const loadShiftEmployees = async (sid) => {
+            try {
+              const data = await getShiftEmployees(token, sid);
+              setShiftEmployees((p) => ({ ...p, [sid]: Array.isArray(data) ? data : [] }));
+            } catch { setShiftEmpError((p) => ({ ...p, [sid]: "Failed to load employees" })); }
+          };
+
+          const handleExpandShift = (sid) => {
+            if (expandedShiftId === sid) { setExpandedShiftId(null); return; }
+            setExpandedShiftId(sid);
+            if (!shiftEmployees[sid]) loadShiftEmployees(sid);
+          };
+
+          const handleOpenCreate = () => {
+            setEditShift(null);
+            setShiftForm({ name: "", startTime: "", endTime: "", description: "", status: "active" });
+            setShiftFormError(null);
+            setShowShiftModal(true);
+          };
+
+          const handleOpenEdit = (s) => {
+            setEditShift(s);
+            setShiftForm({ name: s.name, startTime: s.startTime, endTime: s.endTime, description: s.description || "", status: s.status });
+            setShiftFormError(null);
+            setShowShiftModal(true);
+          };
+
+          const handleSaveShift = async () => {
+            const { name, startTime, endTime, status } = shiftForm;
+            if (!name.trim()) return setShiftFormError("Shift name is required");
+            if (!startTime) return setShiftFormError("Start time is required");
+            if (!endTime) return setShiftFormError("End time is required");
+            setShiftSaving(true); setShiftFormError(null);
+            try {
+              const payload = { name: name.trim(), startTime, endTime, description: shiftForm.description.trim() || undefined, status };
+              if (editShift) {
+                const updated = await updateShift(token, editShift.id, payload);
+                setShifts((p) => p.map((s) => s.id === editShift.id ? updated : s));
+              } else {
+                const created = await createShift(token, payload);
+                setShifts((p) => [created, ...p]);
+              }
+              setShowShiftModal(false);
+            } catch (err) { setShiftFormError(err.message || "Could not save shift"); }
+            finally { setShiftSaving(false); }
+          };
+
+          const handleDeleteShift = async (id) => {
+            if (!window.confirm("Delete this shift? This will unlink it from all templates.")) return;
+            try {
+              await deleteShift(token, id);
+              setShifts((p) => p.filter((s) => s.id !== id));
+            } catch (err) { alert(err.message || "Delete failed"); }
+          };
+
+          const handleAssignEmployees = async (sid) => {
+            const input = (addEmpInput[sid] || "").trim();
+            if (!input) return;
+            const ids = input.split(",").map((v) => parseInt(v.trim(), 10)).filter(Boolean);
+            if (!ids.length) return;
+            try {
+              await assignShiftEmployees(token, sid, ids);
+              setAddEmpInput((p) => ({ ...p, [sid]: "" }));
+              loadShiftEmployees(sid);
+            } catch (err) { alert(err.message || "Failed to assign employees"); }
+          };
+
+          const handleRemoveEmp = async (sid, uid) => {
+            try {
+              await removeShiftEmployee(token, sid, uid);
+              setShiftEmployees((p) => ({ ...p, [sid]: (p[sid] || []).filter((e) => e.id !== uid) }));
+            } catch (err) { alert(err.message || "Failed to remove"); }
+          };
+
+          const filtered = shifts.filter((s) => s.name.toLowerCase().includes(shiftSearch.toLowerCase()));
+
+          return (
+            <div>
+              {/* Page header */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "24px" }}>
+                <div>
+                  <h1 style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px", marginBottom: "4px" }}>Shift Management</h1>
+                  <p style={{ color: "#64748b", fontSize: "13.5px" }}>Create work shifts and assign employees, checklists, and logsheets to them</p>
+                </div>
+                {currentUser.role === "admin" && (
+                  <button onClick={handleOpenCreate}
+                    style={{ display: "inline-flex", alignItems: "center", gap: "6px", background: "#2563eb", color: "#fff", border: "none", borderRadius: "8px", padding: "9px 16px", fontWeight: 600, fontSize: "13.5px", cursor: "pointer" }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    Create Shift
+                  </button>
+                )}
+              </div>
+
+              {/* Search */}
+              <input value={shiftSearch} onChange={(e) => setShiftSearch(e.target.value)} placeholder="Search shifts…"
+                style={{ width: "280px", padding: "8px 12px", border: "1px solid #e2e8f0", borderRadius: "8px", fontSize: "13.5px", marginBottom: "20px", outline: "none" }} />
+
+              {/* Empty state */}
+              {!filtered.length && (
+                <div style={{ padding: "48px", textAlign: "center", background: "#f8fafc", borderRadius: "14px", border: "2px dashed #e2e8f0" }}>
+                  <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="1.5" style={{ margin: "0 auto 12px" }}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                  <p style={{ color: "#64748b", fontWeight: 600, marginBottom: "4px" }}>No shifts defined</p>
+                  <p style={{ color: "#94a3b8", fontSize: "13px" }}>Create your first work shift to start organizing employees and templates</p>
+                </div>
+              )}
+
+              {/* Shift cards */}
+              <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                {filtered.map((s) => {
+                  const active = isActiveNow(s);
+                  const expanded = expandedShiftId === s.id;
+                  const empList = shiftEmployees[s.id] || [];
+                  return (
+                    <div key={s.id} style={{ background: "#fff", borderRadius: "12px", border: `1.5px solid ${active ? "#bbf7d0" : "#e2e8f0"}`, overflow: "hidden" }}>
+                      {/* Card header row */}
+                      <div style={{ display: "flex", alignItems: "center", gap: "12px", padding: "14px 18px" }}>
+                        <div style={{ width: "42px", height: "42px", borderRadius: "10px", background: active ? "#dcfce7" : "#f1f5f9", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={active ? "#16a34a" : "#64748b"} strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                            <span style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a" }}>{s.name}</span>
+                            {active && <span style={{ fontSize: "11px", fontWeight: 700, color: "#16a34a", background: "#dcfce7", padding: "2px 8px", borderRadius: "20px" }}>ACTIVE NOW</span>}
+                            {s.status === "inactive" && <span style={{ fontSize: "11px", fontWeight: 600, color: "#64748b", background: "#f1f5f9", padding: "2px 8px", borderRadius: "20px" }}>INACTIVE</span>}
+                          </div>
+                          <div style={{ fontSize: "13px", color: "#64748b", marginTop: "2px" }}>
+                            {fmt12(s.startTime)} – {fmt12(s.endTime)}
+                            {s.description && <span style={{ marginLeft: "10px", color: "#94a3b8" }}>· {s.description}</span>}
+                          </div>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                          <span style={{ fontSize: "12px", color: "#64748b", background: "#f8fafc", padding: "4px 10px", borderRadius: "20px", border: "1px solid #e2e8f0" }}>
+                            {s.employeeCount ?? 0} employee{s.employeeCount !== 1 ? "s" : ""}
+                          </span>
+                          <button onClick={() => handleExpandShift(s.id)}
+                            style={{ padding: "6px 12px", background: expanded ? "#eff6ff" : "#f8fafc", color: expanded ? "#2563eb" : "#64748b", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "12.5px", fontWeight: 600, cursor: "pointer" }}>
+                            {expanded ? "Hide" : "Employees"}
+                          </button>
+                          {currentUser.role === "admin" && (
+                            <>
+                              <button onClick={() => handleOpenEdit(s)}
+                                style={{ width: "30px", height: "30px", borderRadius: "7px", background: "#eff6ff", color: "#2563eb", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                              </button>
+                              <button onClick={() => handleDeleteShift(s.id)}
+                                style={{ width: "30px", height: "30px", borderRadius: "7px", background: "#fef2f2", color: "#dc2626", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Expanded employee panel */}
+                      {expanded && (
+                        <div style={{ borderTop: "1px solid #f1f5f9", padding: "14px 18px", background: "#f8fafc" }}>
+                          {shiftEmpError[s.id] && <p style={{ color: "#dc2626", fontSize: "12.5px", marginBottom: "8px" }}>{shiftEmpError[s.id]}</p>}
+                          {!empList.length && !shiftEmpError[s.id] && (
+                            <p style={{ color: "#94a3b8", fontSize: "13px", marginBottom: "10px" }}>No employees assigned to this shift yet.</p>
+                          )}
+                          {empList.length > 0 && (
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "12px" }}>
+                              {empList.map((e) => (
+                                <span key={e.id} style={{ display: "inline-flex", alignItems: "center", gap: "6px", background: "#fff", border: "1px solid #e2e8f0", borderRadius: "20px", padding: "4px 10px", fontSize: "12.5px", color: "#374151" }}>
+                                  {e.fullName || e.username || e.email}
+                                  {currentUser.role === "admin" && (
+                                    <button onClick={() => handleRemoveEmp(s.id, e.id)}
+                                      style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", padding: 0, lineHeight: 1, display: "flex" }}>
+                                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                    </button>
+                                  )}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          {currentUser.role === "admin" && (
+                            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                              <select
+                                multiple={false}
+                                value={addEmpInput[s.id] || ""}
+                                onChange={(e) => setAddEmpInput((p) => ({ ...p, [s.id]: e.target.value }))}
+                                style={{ flex: 1, padding: "7px 10px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13px" }}>
+                                <option value="">— Select employee to add —</option>
+                                {employees.filter((e) => !(shiftEmployees[s.id] || []).some((ae) => ae.id === e.id)).map((e) => (
+                                  <option key={e.id} value={e.id}>{e.fullName || e.username || e.email}</option>
+                                ))}
+                              </select>
+                              <button onClick={() => handleAssignEmployees(s.id)}
+                                style={{ padding: "7px 14px", background: "#2563eb", color: "#fff", border: "none", borderRadius: "7px", fontWeight: 600, fontSize: "13px", cursor: "pointer" }}>
+                                Add
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Create / Edit modal */}
+              {showShiftModal && (
+                <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+                  <div style={{ background: "#fff", borderRadius: "14px", width: "100%", maxWidth: "480px" }}>
+                    <div style={{ padding: "16px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a" }}>{editShift ? "Edit Shift" : "Create Shift"}</p>
+                      <button onClick={() => setShowShiftModal(false)} style={{ width: "28px", height: "28px", borderRadius: "6px", background: "#f1f5f9", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                      </button>
+                    </div>
+                    <div style={{ padding: "18px 20px", display: "flex", flexDirection: "column", gap: "14px" }}>
+                      {shiftFormError && <div style={{ padding: "10px 14px", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: "8px", color: "#dc2626", fontSize: "13px" }}>{shiftFormError}</div>}
+                      <div>
+                        <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Shift Name *</label>
+                        <input value={shiftForm.name} onChange={(e) => setShiftForm((p) => ({ ...p, name: e.target.value }))} placeholder="e.g. Morning Shift"
+                          style={{ width: "100%", padding: "8px 12px", border: "1px solid #e2e8f0", borderRadius: "8px", fontSize: "13.5px", boxSizing: "border-box" }} />
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                        <div>
+                          <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Start Time *</label>
+                          <input type="time" value={shiftForm.startTime} onChange={(e) => setShiftForm((p) => ({ ...p, startTime: e.target.value }))}
+                            style={{ width: "100%", padding: "8px 12px", border: "1px solid #e2e8f0", borderRadius: "8px", fontSize: "13.5px", boxSizing: "border-box" }} />
+                        </div>
+                        <div>
+                          <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>End Time *</label>
+                          <input type="time" value={shiftForm.endTime} onChange={(e) => setShiftForm((p) => ({ ...p, endTime: e.target.value }))}
+                            style={{ width: "100%", padding: "8px 12px", border: "1px solid #e2e8f0", borderRadius: "8px", fontSize: "13.5px", boxSizing: "border-box" }} />
+                        </div>
+                      </div>
+                      <div>
+                        <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Description</label>
+                        <input value={shiftForm.description} onChange={(e) => setShiftForm((p) => ({ ...p, description: e.target.value }))} placeholder="Optional notes"
+                          style={{ width: "100%", padding: "8px 12px", border: "1px solid #e2e8f0", borderRadius: "8px", fontSize: "13.5px", boxSizing: "border-box" }} />
+                      </div>
+                      <div>
+                        <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Status</label>
+                        <select value={shiftForm.status} onChange={(e) => setShiftForm((p) => ({ ...p, status: e.target.value }))}
+                          style={{ width: "100%", padding: "8px 12px", border: "1px solid #e2e8f0", borderRadius: "8px", fontSize: "13.5px" }}>
+                          <option value="active">Active</option>
+                          <option value="inactive">Inactive</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div style={{ padding: "14px 20px", borderTop: "1px solid #e2e8f0", display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+                      <button onClick={() => setShowShiftModal(false)}
+                        style={{ padding: "8px 16px", background: "#fff", color: "#64748b", border: "1px solid #e2e8f0", borderRadius: "8px", fontWeight: 600, fontSize: "13.5px", cursor: "pointer" }}>Cancel</button>
+                      <button onClick={handleSaveShift} disabled={shiftSaving}
+                        style={{ padding: "8px 16px", background: "#2563eb", color: "#fff", border: "none", borderRadius: "8px", fontWeight: 600, fontSize: "13.5px", cursor: "pointer", opacity: shiftSaving ? 0.7 : 1 }}>
+                        {shiftSaving ? "Saving…" : editShift ? "Save Changes" : "Create Shift"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
         {/* ── My Tasks ──────────────────────────────────────── */}
         {nav === "mytasks" && (
           <div>
@@ -2878,6 +3494,30 @@ export default function CompanyEmployeePortal() {
           }}
         />
       )}
+
+      {/* ── Toast notifications (fixed overlay) ── */}
+      <div style={{ position: "fixed", bottom: "24px", right: "24px", zIndex: 99999, display: "flex", flexDirection: "column", gap: "10px", pointerEvents: "none" }}>
+        {toasts.map((t) => {
+          const bg  = { critical: "#fee2e2", high: "#fff7ed", medium: "#fefce8", low: "#f0fdf4", info: "#eff6ff" }[t.severity] || "#fff";
+          const col = { critical: "#991b1b", high: "#9a3412",  medium: "#854d0e", low: "#166534", info: "#1d4ed8" }[t.severity] || "#0f172a";
+          const bdr = { critical: "#fca5a5", high: "#fdba74",  medium: "#fde68a", low: "#86efac", info: "#bfdbfe" }[t.severity] || "#e2e8f0";
+          const icon = { critical: "🚨", high: "⚠️", medium: "⚡", low: "🔔", info: "ℹ️" }[t.severity] || "⚠️";
+          const label = { critical: "Critical Alert", high: "New Warning", medium: "New Alert", low: "Notification", info: "Info" }[t.severity] || "New Alert";
+          return (
+            <div key={t.id} className="fm-toast-enter" style={{ background: bg, border: `1px solid ${bdr}`, color: col, borderRadius: "10px", padding: "12px 16px", boxShadow: "0 4px 20px rgba(0,0,0,0.12)", fontSize: "13px", fontWeight: 600, maxWidth: "340px", pointerEvents: "auto", display: "flex", alignItems: "flex-start", gap: "8px" }}>
+              <span style={{ fontSize: "18px", flexShrink: 0 }}>{icon}</span>
+              <div>
+                <div style={{ fontWeight: 800, marginBottom: "2px", fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</div>
+                <div>{t.text}</div>
+                <button onClick={() => { setNav("warnings"); setToasts((ts) => ts.filter((x) => x.id !== t.id)); }}
+                  style={{ marginTop: "6px", background: "none", border: "none", color: col, fontWeight: 700, fontSize: "11px", cursor: "pointer", padding: 0, textDecoration: "underline" }}>View warnings →</button>
+              </div>
+              <button onClick={() => setToasts((ts) => ts.filter((x) => x.id !== t.id))}
+                style={{ marginLeft: "auto", background: "none", border: "none", color: col, cursor: "pointer", fontSize: "16px", lineHeight: 1, padding: 0, opacity: 0.6 }}>✕</button>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

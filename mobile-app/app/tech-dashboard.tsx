@@ -13,7 +13,7 @@ import {
     View,
 } from 'react-native';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
-import { getMyAssignments, getStoredUser, type Assignment } from '../utils/api';
+import { getMyAssignments, getMyShifts, getStoredUser, type Assignment, type Shift } from '../utils/api';
 
 // Reusable Navigation Bar Component for Tech Flow
 export const TechBottomNav = ({ activeRoute }: { activeRoute: string }) => {
@@ -120,6 +120,7 @@ const navStyles = StyleSheet.create({
 
 export default function TechDashboardScreen() {
     const [assignments, setAssignments] = useState<Assignment[]>([]);
+    const [shifts, setShifts] = useState<Shift[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [user, setUser] = useState<any>(null);
@@ -130,12 +131,14 @@ export default function TechDashboardScreen() {
 
     const loadData = async () => {
         try {
-            const [data, storedUser] = await Promise.all([
+            const [data, storedUser, myShifts] = await Promise.all([
                 getMyAssignments(),
                 getStoredUser(),
+                getMyShifts().catch(() => [] as Shift[]),
             ]);
             setAssignments(data);
             setUser(storedUser);
+            setShifts(myShifts);
         } catch (error: any) {
             console.error('Failed to load dashboard:', error);
         } finally {
@@ -232,6 +235,43 @@ export default function TechDashboardScreen() {
                         <Text style={styles.viewAll}>See All</Text>
                     </TouchableOpacity>
                 </Animated.View>
+
+                {/* Active shift banner */}
+                {shifts.length > 0 && (() => {
+                    const fmt12 = (t: string) => {
+                        const [h, m] = t.split(':');
+                        const hr = parseInt(h, 10);
+                        return `${hr % 12 || 12}:${m} ${hr < 12 ? 'AM' : 'PM'}`;
+                    };
+                    const isActive = (s: Shift) => {
+                        const now = new Date();
+                        const nowMins = now.getHours() * 60 + now.getMinutes();
+                        const [sh, sm] = s.startTime.split(':').map(Number);
+                        const [eh, em] = s.endTime.split(':').map(Number);
+                        const startMins = sh * 60 + sm;
+                        const endMins = eh * 60 + em;
+                        if (startMins <= endMins) return nowMins >= startMins && nowMins <= endMins;
+                        return nowMins >= startMins || nowMins <= endMins;
+                    };
+                    const activeShift = shifts.find(isActive);
+                    const currentShift = activeShift || shifts[0];
+                    return (
+                        <Animated.View entering={FadeInDown.delay(50).duration(350)} style={[shiftBannerStyles.container, activeShift ? shiftBannerStyles.active : shiftBannerStyles.inactive]}>
+                            <View style={shiftBannerStyles.iconWrap}>
+                                <MaterialCommunityIcons name="clock-outline" size={18} color={activeShift ? '#16a34a' : '#64748b'} />
+                            </View>
+                            <View style={{ flex: 1 }}>
+                                <Text style={[shiftBannerStyles.name, !activeShift && { color: '#64748b' }]}>{currentShift.name}</Text>
+                                <Text style={shiftBannerStyles.time}>{fmt12(currentShift.startTime)} – {fmt12(currentShift.endTime)}</Text>
+                            </View>
+                            {activeShift && (
+                                <View style={shiftBannerStyles.activeBadge}>
+                                    <Text style={shiftBannerStyles.activeBadgeText}>ACTIVE</Text>
+                                </View>
+                            )}
+                        </Animated.View>
+                    );
+                })()}
 
                 {/* Task cards */}
                 {assignments.length === 0 ? (
@@ -412,4 +452,15 @@ const styles = StyleSheet.create({
     emptyIconCircle: { width: 64, height: 64, borderRadius: 32, backgroundColor: '#ECFDF5', alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
     emptyTitle: { fontSize: 16, fontWeight: '700', color: '#0F172A', marginBottom: 4 },
     emptyText: { fontSize: 14, color: '#94A3B8' },
+});
+
+const shiftBannerStyles = StyleSheet.create({
+    container: { flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 12, padding: 12, marginBottom: 12, borderWidth: 1 },
+    active: { backgroundColor: '#f0fdf4', borderColor: '#bbf7d0' },
+    inactive: { backgroundColor: '#f8fafc', borderColor: '#e2e8f0' },
+    iconWrap: { width: 34, height: 34, borderRadius: 8, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
+    name: { fontSize: 14, fontWeight: '700', color: '#15803d', marginBottom: 1 },
+    time: { fontSize: 12, color: '#4ade80' },
+    activeBadge: { backgroundColor: '#dcfce7', borderRadius: 20, paddingHorizontal: 8, paddingVertical: 3 },
+    activeBadgeText: { fontSize: 11, fontWeight: '700', color: '#16a34a' },
 });

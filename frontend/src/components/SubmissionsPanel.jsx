@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useCallback, useRef } from "react";
+﻿import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:4000";
 
@@ -378,6 +378,518 @@ const STATUS_OPTIONS = [
   { value: "rejected",  label: "Rejected" },
 ];
 
+const DRILLDOWN_PERIODS = [
+  { key: "today",  label: "Today" },
+  { key: "week",   label: "This Week" },
+  { key: "month",  label: "This Month" },
+  { key: "year",   label: "This Year" },
+  { key: "all",    label: "All Time" },
+  { key: "custom", label: "Custom Range" },
+];
+
+/* ─── Consolidated Date-Wise Grid Report ───────────────────────── */
+function ConsolidatedGridView({ userName, templateId, templateName, assetName, companyId, type, token, submissionRows, onBack }) {
+  const [details,  setDetails]  = useState([]);   // [{id, submittedAt, answers:[]}]
+  const [loading,  setLoading]  = useState(true);
+  const [error,    setError]    = useState(null);
+
+  /* Fetch full answers for every submission in submissionRows */
+  useEffect(() => {
+    if (!submissionRows || submissionRows.length === 0) { setLoading(false); return; }
+    setLoading(true);
+    const qs = companyId ? `?companyId=${companyId}` : "";
+    Promise.all(
+      submissionRows.map((r) =>
+        fetch(`${API_BASE}/api/template-assignments/submissions/${type}/${r.id}${qs}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+          .then((res) => res.ok ? res.json() : null)
+          .catch(() => null)
+      )
+    )
+      .then((results) => {
+        const valid = results.filter(Boolean).sort(
+          (a, b) => new Date(a.submittedAt) - new Date(b.submittedAt)
+        );
+        setDetails(valid);
+      })
+      .catch(() => setError("Failed to load submission details"))
+      .finally(() => setLoading(false));
+  }, [companyId, token, type, submissionRows]);
+
+  /* Build grid: collect all unique question texts as rows */
+  const { questions, columns } = useMemo(() => {
+    const qSet  = [];
+    const qSeen = new Set();
+    for (const d of details) {
+      const answers = getAllAnswers(d);
+      for (const a of answers) {
+        const key = (a.questionText || "").trim();
+        if (key && !qSeen.has(key)) { qSeen.add(key); qSet.push(key); }
+      }
+    }
+    const cols = details.map((d) => ({
+      id: d.id,
+      label: new Date(d.submittedAt).toLocaleDateString(undefined, { day: "2-digit", month: "short" }),
+      dateTime: new Date(d.submittedAt).toLocaleString(undefined,
+        { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }),
+      indexMap: Object.fromEntries(
+        getAllAnswers(d).map((a) => [(a.questionText || "").trim(), a.answerValue || a.answer || "—"])
+      ),
+    }));
+    return { questions: qSet, columns: cols };
+  }, [details]);
+
+  /* CSV export */
+  const exportGrid = () => {
+    const header = ["Question / Parameter", ...columns.map((c) => c.label)];
+    const rows   = questions.map((q) => [q, ...columns.map((c) => c.indexMap[q] ?? "")]);
+    const csv = [header, ...rows]
+      .map((row) => row.map((cell) => {
+        const s = String(cell ?? "");
+        return s.includes(",") || s.includes('"') ? `"${s.replace(/"/g, '""')}"` : s;
+      }).join(","))
+      .join("\n");
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${userName}-${templateName}-consolidated.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const initials = (userName || "?").split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 2);
+
+  const hCell = {
+    padding: "8px 10px", background: "#1e3a5f", color: "#fff", fontWeight: 700,
+    fontSize: "12px", textAlign: "center", border: "1px solid #2d5282", whiteSpace: "nowrap",
+  };
+  const qCell = {
+    padding: "8px 12px", background: "#fff", color: "#1e293b", fontWeight: 600,
+    fontSize: "12.5px", border: "1px solid #e2e8f0", minWidth: "160px", maxWidth: "240px",
+  };
+  const vCell = (val) => ({
+    padding: "7px 10px", textAlign: "center", fontSize: "12.5px",
+    border: "1px solid #e2e8f0", background: val && val !== "—" ? "#fff" : "#f8fafc",
+    color: val && val !== "—" ? "#0f172a" : "#94a3b8", fontWeight: val && val !== "—" ? 600 : 400,
+    minWidth: "80px",
+  });
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "0", fontFamily: "inherit" }}>
+      {/* ─ Header Card (matches logsheet style) ─ */}
+      <div style={{ background: "#1e3a5f", color: "#fff", borderRadius: "12px 12px 0 0", padding: "20px 28px", textAlign: "center" }}>
+        <div style={{ fontSize: "22px", fontWeight: 800, letterSpacing: "-0.5px" }}>
+          {templateName} — {assetName || "All Assets"}
+        </div>
+      </div>
+      <div style={{ background: "#2563eb", color: "#fff", padding: "10px 28px", textAlign: "center",
+        display: "flex", alignItems: "center", justifyContent: "center", gap: "24px" }}>
+        <div style={{ fontSize: "14px", fontWeight: 700 }}>
+          {columns.length > 0
+            ? `${new Date(details[0]?.submittedAt).toLocaleDateString(undefined, { month: "long", year: "numeric" })} – ${new Date(details[details.length - 1]?.submittedAt).toLocaleDateString(undefined, { month: "long", year: "numeric" })}`
+            : "—"}
+        </div>
+        <span style={{ opacity: 0.5 }}>|</span>
+        <div style={{ fontSize: "14px", fontWeight: 700 }}>{type === "checklists" ? "Checklist" : "Logsheet"}</div>
+      </div>
+
+      {/* ─ Person info bar ─ */}
+      <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderTop: "none",
+        padding: "14px 24px", display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap" }}>
+        <button onClick={onBack}
+          style={{ padding: "7px 14px", border: "1px solid #e2e8f0", borderRadius: "8px",
+            background: "#f8fafc", color: "#475569", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>
+          ← Back
+        </button>
+        <div style={{ width: "40px", height: "40px", borderRadius: "50%", background: "#eff6ff",
+          color: "#2563eb", fontWeight: 800, fontSize: "15px",
+          display: "flex", alignItems: "center", justifyContent: "center" }}>
+          {initials}
+        </div>
+        <div>
+          <div style={{ fontWeight: 800, fontSize: "16px", color: "#0f172a" }}>{userName}</div>
+          <div style={{ fontSize: "12px", color: "#64748b" }}>
+            {columns.length} submission{columns.length !== 1 ? "s" : ""} · {questions.length} parameter{questions.length !== 1 ? "s" : ""}
+          </div>
+        </div>
+        <div style={{ marginLeft: "auto", display: "flex", gap: "8px" }}>
+          <button onClick={() => window.print()}
+            style={{ padding: "7px 14px", border: "1px solid #e2e8f0", borderRadius: "8px",
+              background: "#f8fafc", color: "#475569", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>
+            🖨 Print
+          </button>
+          <button onClick={exportGrid}
+            style={{ padding: "7px 14px", border: "1px solid #bbf7d0", borderRadius: "8px",
+              background: "#f0fdf4", color: "#16a34a", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>
+            ⬇ Export CSV
+          </button>
+        </div>
+      </div>
+
+      {/* ─ Grid ─ */}
+      <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderTop: "none",
+        borderRadius: "0 0 12px 12px", overflow: "hidden" }}>
+        {loading ? (
+          <div style={{ padding: "60px", textAlign: "center", color: "#64748b", fontSize: "14px" }}>
+            ⏳ Loading submissions…
+          </div>
+        ) : error ? (
+          <div style={{ padding: "40px", textAlign: "center", color: "#dc2626" }}>{error}</div>
+        ) : columns.length === 0 ? (
+          <div style={{ padding: "60px", textAlign: "center", color: "#94a3b8" }}>
+            No submissions found for this template
+          </div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ borderCollapse: "collapse", fontSize: "12.5px", width: "100%" }}>
+              <thead>
+                <tr>
+                  {/* Section header row */}
+                  <th style={{ ...hCell, background: "#1e3a5f", textAlign: "left", padding: "10px 14px" }}>
+                    Sl.
+                  </th>
+                  <th style={{ ...hCell, background: "#1e3a5f", textAlign: "left", minWidth: "180px" }}>
+                    Activities / Parameters
+                  </th>
+                  {columns.map((c, ci) => (
+                    <th key={ci} style={{ ...hCell, background: "#1e3a5f" }}>
+                      <div>{c.label}</div>
+                      <div style={{ fontSize: "10px", opacity: 0.75, fontWeight: 400, marginTop: "2px" }}>
+                        {new Date(details[ci]?.submittedAt).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+                      </div>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {questions.map((q, qi) => (
+                  <tr key={qi} style={{ background: qi % 2 === 0 ? "#f8fafc" : "#fff" }}>
+                    <td style={{ ...qCell, width: "40px", textAlign: "center", minWidth: "0",
+                      color: "#64748b", fontWeight: 700, background: "inherit" }}>
+                      {qi + 1}
+                    </td>
+                    <td style={{ ...qCell, background: "inherit" }}>{q}</td>
+                    {columns.map((c, ci) => {
+                      const val = c.indexMap[q] ?? "";
+                      return (
+                        <td key={ci} style={vCell(val)}>
+                          {val || "—"}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Signature footer */}
+        {!loading && columns.length > 0 && (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)",
+            borderTop: "1px solid #e2e8f0", margin: "0" }}>
+            {["Technician Signature", "Supervisor Signature", "Manager Signature"].map((label) => (
+              <div key={label} style={{ padding: "28px 20px 16px", borderRight: "1px solid #e2e8f0",
+                textAlign: "center" }}>
+                <div style={{ borderTop: "1px solid #94a3b8", paddingTop: "8px",
+                  fontSize: "12px", color: "#64748b", marginTop: "24px" }}>
+                  {label}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ─── User Drilldown View ──────────────────────────────────────── */
+function UserDrilldown({ userName, companyId, type, token, onBack }) {
+  const [period,   setPeriod]   = useState("today");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo,   setDateTo]   = useState("");
+  const [rows,     setRows]     = useState([]);
+  const [loading,  setLoading]  = useState(true);
+  const [detail,      setDetail]      = useState(null);
+  const [consolidated, setConsolidated] = useState(null); // { templateId, templateName, assetName }
+
+  const inputStyle = {
+    padding: "7px 10px", border: "1px solid #e2e8f0", borderRadius: "8px",
+    fontSize: "13px", outline: "none", background: "#fff", boxSizing: "border-box",
+  };
+
+  const load = useCallback(async () => {
+    if (period === "custom" && !(dateFrom && dateTo)) return;
+    setLoading(true);
+    try {
+      const p = new URLSearchParams();
+      if (companyId) p.set("companyId", companyId);
+      p.set("submittedBy", userName);
+      if (period !== "all" && period !== "custom") p.set("period", period);
+      if (period === "custom") {
+        if (dateFrom) p.set("dateFrom", dateFrom);
+        if (dateTo)   p.set("dateTo",   dateTo);
+      }
+      const res = await fetch(
+        `${API_BASE}/api/template-assignments/submissions/${type}?${p}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (res.ok) setRows(await res.json());
+    } catch (_) { /* silent */ }
+    finally { setLoading(false); }
+  }, [userName, companyId, type, token, period, dateFrom, dateTo]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const openDetail = async (id) => {
+    try {
+      const qs = companyId ? `?companyId=${companyId}` : "";
+      const res = await fetch(
+        `${API_BASE}/api/template-assignments/submissions/${type}/${id}${qs}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (res.ok) setDetail(await res.json());
+    } catch (e) { alert(e.message || "Failed to load"); }
+  };
+
+  const initials = (userName || "?").split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 2);
+  const panelLabel = type === "checklists" ? "Checklist Submissions" : "Logsheet Entries";
+
+  /* ── show consolidated grid if selected ── */
+  if (consolidated) {
+    const submissionRows = rows.filter((r) => r.templateId === consolidated.templateId);
+    return (
+      <ConsolidatedGridView
+        userName={userName}
+        templateId={consolidated.templateId}
+        templateName={consolidated.templateName}
+        assetName={consolidated.assetName}
+        companyId={companyId}
+        type={type}
+        token={token}
+        submissionRows={submissionRows}
+        onBack={() => setConsolidated(null)}
+      />
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+      {detail && <DetailModal submission={detail} type={type} onClose={() => setDetail(null)} />}
+
+      {/* ─ Back + User Header ─ */}
+      <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0",
+        padding: "16px 20px", display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap" }}>
+        <button onClick={onBack}
+          style={{ display: "flex", alignItems: "center", gap: "6px", padding: "7px 14px",
+            border: "1px solid #e2e8f0", borderRadius: "8px", background: "#f8fafc",
+            color: "#475569", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>
+          ← Back to List
+        </button>
+        <div style={{ width: "42px", height: "42px", borderRadius: "50%", background: "#eff6ff",
+          color: "#2563eb", fontWeight: 700, fontSize: "16px", flexShrink: 0,
+          display: "flex", alignItems: "center", justifyContent: "center" }}>
+          {initials}
+        </div>
+        <div>
+          <div style={{ fontWeight: 800, fontSize: "17px", color: "#0f172a" }}>{userName}</div>
+          <div style={{ fontSize: "12px", color: "#64748b", marginTop: "2px" }}>
+            {panelLabel}
+            {!loading && <span style={{ marginLeft: "6px", background: "#eff6ff", color: "#2563eb",
+              borderRadius: "20px", padding: "1px 8px", fontWeight: 700 }}>{rows.length}</span>}
+          </div>
+        </div>
+        <button onClick={load}
+          style={{ marginLeft: "auto", padding: "7px 14px", border: "1px solid #e2e8f0",
+            borderRadius: "8px", background: "#f8fafc", cursor: "pointer",
+            fontSize: "13px", fontWeight: 600, color: "#475569" }}>
+          ↻ Refresh
+        </button>
+      </div>
+
+      {/* ─ Period Filter ─ */}
+      <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
+        <div style={{ padding: "14px 20px",
+          borderBottom: period === "custom" ? "1px solid #e2e8f0" : "none",
+          display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center" }}>
+          {DRILLDOWN_PERIODS.map(({ key, label: pl }) => (
+            <button key={key} onClick={() => setPeriod(key)}
+              style={{ padding: "6px 16px", borderRadius: "8px", fontSize: "13px", fontWeight: 600,
+                cursor: "pointer",
+                border: period === key ? "none" : "1px solid #e2e8f0",
+                background: period === key
+                  ? (key === "today" ? "#2563eb" : "#2563eb")
+                  : "#f8fafc",
+                color: period === key ? "#fff" : "#475569" }}>
+              {pl}
+            </button>
+          ))}
+          <span style={{ marginLeft: "auto", fontSize: "12px", color: "#94a3b8" }}>
+            {period === "today" ? new Date().toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" })
+              : period === "week" ? "Last 7 days"
+              : period === "month" ? new Date().toLocaleDateString(undefined, { month: "long", year: "numeric" })
+              : period === "year" ? String(new Date().getFullYear())
+              : ""}
+          </span>
+        </div>
+        {period === "custom" && (
+          <div style={{ padding: "12px 20px", display: "flex", gap: "12px", alignItems: "flex-end", flexWrap: "wrap" }}>
+            <div style={{ flex: "0 0 160px" }}>
+              <label style={{ fontSize: "11px", fontWeight: 600, color: "#64748b", display: "block", marginBottom: "4px" }}>From</label>
+              <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} style={inputStyle} />
+            </div>
+            <div style={{ flex: "0 0 160px" }}>
+              <label style={{ fontSize: "11px", fontWeight: 600, color: "#64748b", display: "block", marginBottom: "4px" }}>To</label>
+              <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} style={inputStyle} />
+            </div>
+            <button onClick={load}
+              style={{ padding: "7px 18px", background: "#2563eb", color: "#fff", border: "none",
+                borderRadius: "8px", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>
+              Apply
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* ─ Results ─ */}
+      <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
+        <div style={{ padding: "14px 20px", borderBottom: "1px solid #e2e8f0", display: "flex",
+          alignItems: "center", justifyContent: "space-between", gap: "12px", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <span style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a" }}>Submitted Data</span>
+          </div>
+          <button onClick={() => exportToCSV(rows, type)}
+            style={{ padding: "7px 14px", border: "1px solid #bbf7d0", borderRadius: "8px",
+              background: "#f0fdf4", cursor: "pointer", fontSize: "13px", fontWeight: 600,
+              color: "#16a34a", display: "flex", alignItems: "center", gap: "5px" }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            Export CSV
+          </button>
+        </div>
+
+        {loading ? (
+          <div style={{ padding: "60px", textAlign: "center", color: "#94a3b8" }}>Loading…</div>
+        ) : rows.length === 0 ? (
+          <div style={{ padding: "60px", textAlign: "center" }}>
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" strokeWidth="1.5"
+              style={{ marginBottom: "12px" }}>
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+            </svg>
+            <p style={{ color: "#94a3b8", fontSize: "14px", margin: "0 0 6px" }}>
+              No submissions found for this period
+            </p>
+            <p style={{ color: "#cbd5e1", fontSize: "12px", margin: 0 }}>
+              Try changing the time filter above
+            </p>
+          </div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13.5px" }}>
+              <thead>
+                <tr>
+                  {["#", "Template",
+                    ...(type === "logsheets" ? ["Type"] : []),
+                    "Asset",
+                    ...(type === "logsheets" ? ["Period", "Shift"] : []),
+                    "Date & Time", "Status", ""].map((h, hi) => (
+                    <th key={hi} style={{ padding: "11px 14px", textAlign: "left", background: "#f8fafc",
+                      color: "#475569", fontWeight: 600, fontSize: "11.5px", textTransform: "uppercase",
+                      letterSpacing: "0.05em", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={r.id}
+                    onMouseEnter={(e) => e.currentTarget.style.background = "#f8fafc"}
+                    onMouseLeave={(e) => e.currentTarget.style.background = ""}
+                    style={{ borderBottom: "1px solid #f1f5f9", transition: "background 0.1s" }}>
+                    <td style={{ padding: "10px 14px", color: "#94a3b8", fontSize: "12px", fontWeight: 600 }}>{i + 1}</td>
+                    <td style={{ padding: "10px 14px", fontWeight: 700, color: "#0f172a" }}>{r.templateName}</td>
+                    {type === "logsheets" && (
+                      <td style={{ padding: "10px 14px" }}>
+                        <span style={{ padding: "2px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: 600,
+                          background: r.layoutType === "tabular" ? "#f3e8ff" : "#eff6ff",
+                          color: r.layoutType === "tabular" ? "#7c3aed" : "#2563eb" }}>
+                          {r.layoutType === "tabular" ? "📊 Tabular" : "📋 Standard"}
+                        </span>
+                      </td>
+                    )}
+                    <td style={{ padding: "10px 14px", color: "#475569" }}>{r.assetName || "—"}</td>
+                    {type === "logsheets" && (
+                      <>
+                        <td style={{ padding: "10px 14px", color: "#475569", whiteSpace: "nowrap" }}>
+                          {r.month && r.year ? `${MONTH_NAMES[(r.month || 1) - 1]} ${r.year}` : "—"}
+                        </td>
+                        <td style={{ padding: "10px 14px", color: "#64748b" }}>{r.shift || "—"}</td>
+                      </>
+                    )}
+                    <td style={{ padding: "10px 14px", color: "#0f172a", fontWeight: 600, whiteSpace: "nowrap" }}>
+                      <div>{new Date(r.submittedAt).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" })}</div>
+                      <div style={{ fontSize: "11px", color: "#94a3b8", fontWeight: 400 }}>
+                        {new Date(r.submittedAt).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+                      </div>
+                    </td>
+                    <td style={{ padding: "10px 14px" }}><StatusBadge status={r.status} /></td>
+                    <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
+                      <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                        <button onClick={() =>
+                          setConsolidated({ templateId: r.templateId, templateName: r.templateName, assetName: r.assetName })
+                        }
+                          style={{ padding: "5px 12px", background: "#eff6ff", color: "#2563eb",
+                            border: "1px solid #bfdbfe", borderRadius: "7px", fontSize: "12px", fontWeight: 700, cursor: "pointer" }}>
+                          📊 View Report
+                        </button>
+                        <button onClick={() => openDetail(r.id)}
+                          style={{ padding: "5px 12px", background: "#f8fafc", color: "#475569",
+                            border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}>
+                          Detail
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {!loading && rows.length > 0 && (
+          <div style={{ padding: "10px 20px", borderTop: "1px solid #f1f5f9", display: "flex",
+            gap: "24px", fontSize: "12px", color: "#94a3b8", background: "#f8fafc", flexWrap: "wrap" }}>
+            <span>Total entries: <strong style={{ color: "#475569" }}>{rows.length}</strong></span>
+            {type === "logsheets" && (
+              <>
+                <span>Standard: <strong style={{ color: "#2563eb" }}>
+                  {rows.filter((r) => !r.layoutType || r.layoutType === "standard").length}
+                </strong></span>
+                <span>Tabular: <strong style={{ color: "#7c3aed" }}>
+                  {rows.filter((r) => r.layoutType === "tabular").length}
+                </strong></span>
+              </>
+            )}
+            {type === "checklists" && (
+              <span>Submitted: <strong style={{ color: "#16a34a" }}>
+                {rows.filter((r) => (r.status || "").toLowerCase() === "submitted").length}
+              </strong></span>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ─── Main SubmissionsPanel ────────────────────────────────────── */
 export default function SubmissionsPanel({ token: tokenProp, type = "checklists", companyId }) {
   const token = tokenProp
@@ -390,6 +902,9 @@ export default function SubmissionsPanel({ token: tokenProp, type = "checklists"
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState(null);
   const [detail,  setDetail]  = useState(null);
+
+  /* ── User drilldown ── */
+  const [userView, setUserView] = useState({ active: false, userName: "", submittedById: null });
 
   /* ── Filter meta (loaded when advanced panel is opened) ── */
   const [filterMeta, setFilterMeta] = useState({ templates: [], employees: [], assets: [], shifts: [] });
@@ -555,6 +1070,19 @@ export default function SubmissionsPanel({ token: tokenProp, type = "checklists"
         { key: "status",       label: "Status",       sortable: true },
         { key: "action",       label: "",             sortable: false },
       ];
+
+  /* ── If user drilldown is active, show it ── */
+  if (userView.active) {
+    return (
+      <UserDrilldown
+        userName={userView.userName}
+        companyId={companyId}
+        type={type}
+        token={token}
+        onBack={() => setUserView({ active: false, userName: "", submittedById: null })}
+      />
+    );
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
@@ -845,7 +1373,8 @@ export default function SubmissionsPanel({ token: tokenProp, type = "checklists"
                     </td>
                     <td style={{ padding: "10px 14px" }}><StatusBadge status={r.status} /></td>
                     <td style={{ padding: "10px 14px" }}>
-                      <button onClick={() => openDetail(r.id)}
+                      <button
+                        onClick={() => setUserView({ active: true, userName: r.submittedBy || "Unknown", submittedById: r.submittedById || null })}
                         style={{ padding: "5px 14px", background: "#eff6ff", color: "#2563eb",
                           border: "none", borderRadius: "7px", fontSize: "12.5px", fontWeight: 600, cursor: "pointer" }}>
                         View →

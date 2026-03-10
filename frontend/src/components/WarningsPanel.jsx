@@ -69,14 +69,13 @@ export default function WarningsPanel({ token, companyId: initialCompanyId, comp
     setLoading(true);
     setError(null);
     try {
-      // companyId is derived from the JWT on the backend — no longer needed as query param
-      const params = new URLSearchParams({ limit: LIMIT, offset: page * LIMIT });
+      const params = new URLSearchParams({ limit: LIMIT, offset: page * LIMIT, companyId });
       if (filter === "critical") params.set("severity", "critical");
       else if (filter !== "all") params.set("status", filter);
 
       const [flagsRes, sumRes] = await Promise.all([
         apiFetch("GET", `/api/flags/admin/list?${params}`, undefined, token),
-        apiFetch("GET", `/api/flags/admin/summary`, undefined, token).catch(() => null),
+        apiFetch("GET", `/api/flags/admin/summary?companyId=${companyId}`, undefined, token).catch(() => null),
       ]);
       setFlags(flagsRes?.data ?? []);
       setTotal(flagsRes?.total ?? 0);

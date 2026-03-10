@@ -87,7 +87,7 @@ router.post(
 router.get("/my-assignments", async (req, res, next) => {
   try {
     const [assignments] = await pool.query(
-      `SELECT 
+      `SELECT
          tua.id,
          tua.template_type AS "templateType",
          tua.template_id AS "templateId",
@@ -99,18 +99,24 @@ router.get("/my-assignments", async (req, res, next) => {
          ct.asset_type AS "assetType",
          ct.asset_id AS "checklistAssetId",
          a_ct.asset_name AS "checklistAssetName",
+         ct.shift_id AS "checklistShiftId",
+         s_ct.name AS "checklistShiftName",
          lt.template_name AS "logsheetName",
          lt.description AS "logsheetDescription",
          lt.asset_type AS "logsheetAssetType",
          lta.asset_id AS "logsheetAssetId",
-         a_lt.asset_name AS "logsheetAssetName"
+         a_lt.asset_name AS "logsheetAssetName",
+         lt.shift_id AS "logsheetShiftId",
+         s_lt.name AS "logsheetShiftName"
        FROM template_user_assignments tua
        LEFT JOIN company_users cu_by ON tua.assigned_by = cu_by.id
-       LEFT JOIN checklist_templates ct ON tua.template_type = 'checklist' AND tua.template_id = ct.id
+       LEFT JOIN checklist_templates ct ON tua.template_type = 'checklist' AND tua.template_id = ct.id AND ct.company_id = tua.company_id
        LEFT JOIN assets a_ct ON ct.asset_id = a_ct.id
-       LEFT JOIN logsheet_templates lt ON tua.template_type = 'logsheet' AND tua.template_id = lt.id
+       LEFT JOIN shifts s_ct ON ct.shift_id = s_ct.id
+       LEFT JOIN logsheet_templates lt ON tua.template_type = 'logsheet' AND tua.template_id = lt.id AND lt.company_id = tua.company_id
        LEFT JOIN logsheet_template_assignments lta ON tua.template_type = 'logsheet' AND lta.template_id = tua.template_id
        LEFT JOIN assets a_lt ON lta.asset_id = a_lt.id
+       LEFT JOIN shifts s_lt ON lt.shift_id = s_lt.id
        WHERE tua.assigned_to = ?
          AND tua.company_id = ?
          AND (
@@ -118,12 +124,52 @@ router.get("/my-assignments", async (req, res, next) => {
              SELECT 1 FROM checklist_submissions cs
              WHERE cs.template_id = tua.template_id
                AND cs.company_user_id = tua.assigned_to
+               AND cs.submitted_at >= tua.created_at
            ))
            OR
            (tua.template_type = 'logsheet' AND NOT EXISTS (
              SELECT 1 FROM logsheet_entries le
              WHERE le.template_id = tua.template_id
                AND le.company_user_id = tua.assigned_to
+               AND le.submitted_at >= tua.created_at
+           ))
+         )
+         AND (
+           -- Template has no shift restriction → always visible (also guards against deleted templates)
+           (tua.template_type = 'checklist' AND ct.id IS NOT NULL AND ct.shift_id IS NULL)
+           OR
+           (tua.template_type = 'logsheet' AND lt.id IS NOT NULL AND lt.shift_id IS NULL)
+           OR
+           -- Template belongs to a shift → only show if the user is in that shift
+           -- AND that shift is currently active by server time
+           (tua.template_type = 'checklist' AND ct.shift_id IS NOT NULL AND EXISTS (
+             SELECT 1 FROM employee_shifts es
+             JOIN shifts sh ON sh.id = es.shift_id
+             WHERE es.company_user_id = tua.assigned_to
+               AND es.shift_id = ct.shift_id
+               AND sh.status = 'active'
+               AND (
+                 (sh.start_time <= sh.end_time
+                   AND CURRENT_TIME BETWEEN sh.start_time AND sh.end_time)
+                 OR
+                 (sh.start_time > sh.end_time
+                   AND (CURRENT_TIME >= sh.start_time OR CURRENT_TIME <= sh.end_time))
+               )
+           ))
+           OR
+           (tua.template_type = 'logsheet' AND lt.shift_id IS NOT NULL AND EXISTS (
+             SELECT 1 FROM employee_shifts es
+             JOIN shifts sh ON sh.id = es.shift_id
+             WHERE es.company_user_id = tua.assigned_to
+               AND es.shift_id = lt.shift_id
+               AND sh.status = 'active'
+               AND (
+                 (sh.start_time <= sh.end_time
+                   AND CURRENT_TIME BETWEEN sh.start_time AND sh.end_time)
+                 OR
+                 (sh.start_time > sh.end_time
+                   AND (CURRENT_TIME >= sh.start_time OR CURRENT_TIME <= sh.end_time))
+               )
            ))
          )
        ORDER BY tua.created_at DESC`,
@@ -140,6 +186,8 @@ router.get("/my-assignments", async (req, res, next) => {
       assetType: a.templateType === 'checklist' ? a.assetType : a.logsheetAssetType,
       assetId: a.templateType === 'checklist' ? (a.checklistAssetId || null) : (a.logsheetAssetId || null),
       assetName: a.templateType === 'checklist' ? (a.checklistAssetName || null) : (a.logsheetAssetName || null),
+      shiftId: a.templateType === 'checklist' ? (a.checklistShiftId || null) : (a.logsheetShiftId || null),
+      shiftName: a.templateType === 'checklist' ? (a.checklistShiftName || null) : (a.logsheetShiftName || null),
       note: a.note,
       assignedAt: a.assignedAt,
       assignedBy: a.assignedByName,
@@ -1054,8 +1102,8 @@ router.get("/team-assignments", async (req, res, next) => {
               cu.role AS "assignedToRole"
        FROM template_user_assignments tua
        JOIN company_users cu ON tua.assigned_to = cu.id
-       LEFT JOIN checklist_templates ct ON tua.template_type = 'checklist' AND tua.template_id = ct.id
-       LEFT JOIN logsheet_templates lt ON tua.template_type = 'logsheet' AND tua.template_id = lt.id
+       LEFT JOIN checklist_templates ct ON tua.template_type = 'checklist' AND tua.template_id = ct.id AND ct.company_id = tua.company_id
+       LEFT JOIN logsheet_templates lt ON tua.template_type = 'logsheet' AND tua.template_id = lt.id AND lt.company_id = tua.company_id
        WHERE ${conditions.join(" AND ")}
        ORDER BY tua.created_at DESC
        LIMIT 200`,

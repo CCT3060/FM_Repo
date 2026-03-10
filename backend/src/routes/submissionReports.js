@@ -117,7 +117,9 @@ router.get(
       const conditions = ["ct.company_id = ?"];
       const params     = [companyId];
 
-      if (period === "week") {
+      if (period === "today") {
+        conditions.push("DATE(cs.submitted_at) = CURRENT_DATE");
+      } else if (period === "week") {
         conditions.push("cs.submitted_at >= NOW() - INTERVAL '7 days'");
       } else if (period === "month") {
         conditions.push("DATE_TRUNC('month', cs.submitted_at) = DATE_TRUNC('month', NOW())");
@@ -177,7 +179,9 @@ router.get(
       const params     = [companyId];
       const dateExpr   = "COALESCE(le.submitted_at, le.entry_date)";
 
-      if (period === "week") {
+      if (period === "today") {
+        conditions.push(`DATE(${dateExpr}) = CURRENT_DATE`);
+      } else if (period === "week") {
         conditions.push(`${dateExpr} >= NOW() - INTERVAL '7 days'`);
       } else if (period === "month") {
         conditions.push("le.month = EXTRACT(MONTH FROM NOW()) AND le.year = EXTRACT(YEAR FROM NOW())");

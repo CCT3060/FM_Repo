@@ -49,6 +49,8 @@ import LogsheetModule from "../components/LogsheetModule.jsx";
 import ChecklistTemplateModule from "../components/ChecklistTemplateModule.jsx";
 import SubmissionsPanel from "../components/SubmissionsPanel.jsx";
 import WarningsPanel from "../components/WarningsPanel.jsx";
+import AssetDashboard from "../components/AssetDashboard.jsx";
+import { useAlertSound } from "../hooks/useAlertSound";
 
 const TOKEN_KEY = "company_portal_token";
 
@@ -160,8 +162,9 @@ const CompanyPortal = () => {
   const [companyForm, setCompanyForm] = useState(emptyCompany);
   const [companyError, setCompanyError] = useState(null);
   const [companyLoading, setCompanyLoading] = useState(false);
-  const [nav, setNav] = useState("dashboard");
+  const [nav, setNav] = useState(() => localStorage.getItem("portal_nav") || "dashboard");
   const [checklistSubNav, setChecklistSubNav] = useState("templates");
+  const [assetSubNav, setAssetSubNav] = useState("dashboard");
   const [logsheetSubNav, setLogsheetSubNav] = useState("templates");
   const [showAddForm, setShowAddForm] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
@@ -228,17 +231,42 @@ const CompanyPortal = () => {
   // Warnings nav badge
   const [warnOpenCount, setWarnOpenCount] = useState(0);
   // Notification bell + toasts
-  const [bellOpen,    setBellOpen]    = useState(false);
+  const [bellOpen,     setBellOpen]    = useState(false);
+  const [bellRinging,  setBellRinging] = useState(false);
   const [recentAlerts, setRecentAlerts] = useState([]); // [{id,severity,assetName,description,createdAt}]
-  const [toasts,      setToasts]      = useState([]);   // [{id,text,severity}]
+  const [toasts,       setToasts]      = useState([]);   // [{id,text,severity}]
   const prevWarnCount = useRef(0);
   const toastId = useRef(0);
+
+  // Modular alert sound hook — single shared AudioContext, throttled, localStorage preference
+  const {
+    play: playAlertSound,
+    preview: previewAlertSound,
+    enabled: soundEnabled,
+    toggle: toggleSound,
+    volume: alarmVolume,
+    updateVolume: updateAlarmVolume,
+    severityConfig: alarmSevConfig,
+    updateSeverityConfig: updateAlarmSevConfig,
+  } = useAlertSound();
+
+  const [alarmSettingsOpen, setAlarmSettingsOpen] = useState(false);
+
+  /** Trigger bell ring animation (auto-clears after 650 ms). */
+  const ringBell = useCallback(() => {
+    setBellRinging(true);
+    setTimeout(() => setBellRinging(false), 650);
+  }, []);
 
   const pushToast = useCallback((text, severity = "high") => {
     const id = ++toastId.current;
     setToasts((t) => [...t, { id, text, severity }]);
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 6000);
   }, []);
+
+  // Persist active tab so page refresh returns to the same section
+  useEffect(() => { localStorage.setItem("portal_nav", nav); }, [nav]);
+
   const [companyUsers, setCompanyUsers] = useState([]);
   const [companyUsersLoading, setCompanyUsersLoading] = useState(false);
   const [companyUsersError, setCompanyUsersError] = useState(null);
@@ -527,16 +555,19 @@ const CompanyPortal = () => {
         if (newCount > prev) {
           const diff = newCount - prev;
           const newest = data?.data?.[0];
+          const sev = newest?.severity || "high";
           const msg = newest
             ? `${diff} new warning${diff > 1 ? "s" : ""}: ${newest.severity?.toUpperCase()} – ${newest.assetName || "unknown asset"}`
             : `${diff} new warning${diff > 1 ? "s" : ""} raised`;
-          pushToast(msg, newest?.severity || "high");
+          pushToast(msg, sev);
+          playAlertSound(sev);
+          ringBell();
         }
       } catch (_) { /* silent */ }
     };
-    const id = setInterval(poll, 30000);
+    const id = setInterval(poll, 15000);
     return () => clearInterval(id);
-  }, [token, selectedCompanyId, companies, pushToast]);
+  }, [token, selectedCompanyId, companies, pushToast, playAlertSound, ringBell]);
 
   // ── Initial data load on login ────────────────────────────────────────────
   useEffect(() => {
@@ -1330,7 +1361,7 @@ const CompanyPortal = () => {
               style={{ background: "none", border: "none", cursor: "pointer", padding: "4px", borderRadius: "6px", position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}
               title="Warnings & Alerts"
             >
-              <span style={{ fontSize: "18px" }}>🔔</span>
+              <span className={bellRinging ? "fm-bell-ringing" : ""} style={{ fontSize: "18px", display: "inline-block" }}>🔔</span>
               {warnOpenCount > 0 && (
                 <span style={{ position: "absolute", top: "-2px", right: "-2px", background: "#dc2626", color: "#fff", borderRadius: "50%", fontSize: "9px", fontWeight: 800, width: "16px", height: "16px", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>
                   {warnOpenCount > 99 ? "99+" : warnOpenCount}
@@ -1373,6 +1404,60 @@ const CompanyPortal = () => {
                     </button>
                   </div>
                 )}
+                {/* Sound toggle + settings footer */}
+                <div style={{ borderTop: "1px solid #f1f5f9" }}>
+                  <div style={{ padding: "8px 14px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span style={{ fontSize: "10px", color: "#94a3b8" }}>Alert sounds</span>
+                    <div style={{ display: "flex", gap: "5px", alignItems: "center" }}>
+                      <button
+                        className={`fm-alarm-gear${alarmSettingsOpen ? " fm-open" : ""}`}
+                        onClick={() => setAlarmSettingsOpen((v) => !v)}
+                        title="Alarm settings"
+                      >⚙</button>
+                      <button className={`fm-sound-toggle ${soundEnabled ? "fm-enabled" : "fm-muted"}`} onClick={toggleSound}>
+                        {soundEnabled ? "🔊 On" : "🔇 Off"}
+                      </button>
+                    </div>
+                  </div>
+                  {alarmSettingsOpen && (
+                    <div className="fm-alarm-settings">
+                      <h4>Alarm Settings</h4>
+                      {/* Volume */}
+                      <div className="fm-alarm-vol-row">
+                        <span>Volume</span>
+                        <strong>{Math.round(alarmVolume * 100)}%</strong>
+                      </div>
+                      <input
+                        type="range" min="0" max="1" step="0.05"
+                        value={alarmVolume}
+                        onChange={(e) => updateAlarmVolume(parseFloat(e.target.value))}
+                        className="fm-vol-slider"
+                      />
+                      {/* Per-severity toggles */}
+                      <div className="fm-sev-section-label">Sound per severity</div>
+                      {[
+                        { key: "critical", label: "Critical", color: "#dc2626", bg: "#fee2e2" },
+                        { key: "high",     label: "High",     color: "#ea580c", bg: "#fff7ed" },
+                        { key: "medium",   label: "Medium",   color: "#d97706", bg: "#fefce8" },
+                        { key: "low",      label: "Low",      color: "#16a34a", bg: "#f0fdf4" },
+                        { key: "info",     label: "Info",     color: "#2563eb", bg: "#eff6ff" },
+                      ].map(({ key, label, color, bg }) => {
+                        const isOn = alarmSevConfig[key] !== false;
+                        return (
+                          <div key={key} className="fm-sev-row">
+                            <span className="fm-sev-badge" style={{ background: bg, color }}>{label}</span>
+                            <div className="fm-sev-actions">
+                              <button className="fm-preview-btn" title={`Preview ${label} sound`} onClick={() => previewAlertSound(key)}>▶ Test</button>
+                              <button className={`fm-sev-toggle ${isOn ? "on" : "off"}`} onClick={() => updateAlarmSevConfig(key, !isOn)}>
+                                {isOn ? "ON" : "OFF"}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -2159,6 +2244,33 @@ const CompanyPortal = () => {
           );
           return (
             <>
+              {/* ── Sub-tab navigation ── */}
+              <div style={{ display: "flex", gap: "4px", marginBottom: "24px", borderBottom: "2px solid #e2e8f0" }}>
+                {[
+                  { k: "dashboard", label: "📊 Analytics Dashboard" },
+                  { k: "manage",    label: "🗂 Manage Assets" },
+                ].map(({ k, label }) => (
+                  <button key={k} type="button" onClick={() => setAssetSubNav(k)}
+                    style={{ padding: "10px 22px", background: "none", border: "none",
+                      borderBottom: assetSubNav === k ? "3px solid #2563eb" : "3px solid transparent",
+                      marginBottom: "-2px", fontSize: "14px", fontWeight: 700,
+                      color: assetSubNav === k ? "#2563eb" : "#64748b", cursor: "pointer" }}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {/* ── Dashboard sub-tab ── */}
+              {assetSubNav === "dashboard" && (
+                <AssetDashboard
+                  token={token}
+                  companyId={selectedCompanyId || companies[0]?.id}
+                  assetList={assets}
+                />
+              )}
+
+              {/* ── Manage sub-tab (original content below) ── */}
+              {assetSubNav === "manage" && (<>
               {/* Header */}
               <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "22px" }}>
                 <div>
@@ -2476,6 +2588,7 @@ const CompanyPortal = () => {
               </div>
               </div>
             )}
+            </>)} {/* end assetSubNav === "manage" */}
             </>
           );
         })()}
@@ -2673,14 +2786,16 @@ const CompanyPortal = () => {
         {/* ── Toast notifications (fixed overlay on every page) ── */}
         <div style={{ position: "fixed", bottom: "24px", right: "24px", zIndex: 99999, display: "flex", flexDirection: "column", gap: "10px", pointerEvents: "none" }}>
           {toasts.map((t) => {
-            const bg  = { critical: "#fee2e2", high: "#fff7ed", medium: "#fefce8", low: "#f0fdf4" }[t.severity] || "#fff";
-            const col = { critical: "#991b1b", high: "#9a3412", medium: "#854d0e", low: "#166534" }[t.severity] || "#0f172a";
-            const bdr = { critical: "#fca5a5", high: "#fdba74",  medium: "#fde68a", low: "#86efac" }[t.severity] || "#e2e8f0";
+            const bg  = { critical: "#fee2e2", high: "#fff7ed", medium: "#fefce8", low: "#f0fdf4", info: "#eff6ff" }[t.severity] || "#fff";
+            const col = { critical: "#991b1b", high: "#9a3412", medium: "#854d0e", low: "#166534", info: "#1d4ed8" }[t.severity] || "#0f172a";
+            const bdr = { critical: "#fca5a5", high: "#fdba74",  medium: "#fde68a", low: "#86efac", info: "#bfdbfe" }[t.severity] || "#e2e8f0";
+            const icon  = { critical: "🚨", high: "⚠️", medium: "⚡", low: "🔔", info: "ℹ️" }[t.severity] || "⚠️";
+            const label = { critical: "Critical Alert", high: "New Warning", medium: "New Alert", low: "Notification", info: "Info" }[t.severity] || "New Alert";
             return (
-              <div key={t.id} style={{ background: bg, border: `1px solid ${bdr}`, color: col, borderRadius: "10px", padding: "12px 16px", boxShadow: "0 4px 20px rgba(0,0,0,0.12)", fontSize: "13px", fontWeight: 600, maxWidth: "340px", pointerEvents: "auto", display: "flex", alignItems: "flex-start", gap: "8px", animation: "slideInRight 0.3s ease" }}>
-                <span style={{ fontSize: "16px", flexShrink: 0 }}>⚠️</span>
+              <div key={t.id} className="fm-toast-enter" style={{ background: bg, border: `1px solid ${bdr}`, color: col, borderRadius: "10px", padding: "12px 16px", boxShadow: "0 4px 20px rgba(0,0,0,0.12)", fontSize: "13px", fontWeight: 600, maxWidth: "340px", pointerEvents: "auto", display: "flex", alignItems: "flex-start", gap: "8px" }}>
+                <span style={{ fontSize: "18px", flexShrink: 0 }}>{icon}</span>
                 <div>
-                  <div style={{ fontWeight: 800, marginBottom: "2px", fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.04em" }}>New Warning</div>
+                  <div style={{ fontWeight: 800, marginBottom: "2px", fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</div>
                   <div>{t.text}</div>
                   <button onClick={() => { setNav("warnings"); setShowAddForm(false); setToasts((ts) => ts.filter((x) => x.id !== t.id)); }}
                     style={{ marginTop: "6px", background: "none", border: "none", color: col, fontWeight: 700, fontSize: "11px", cursor: "pointer", padding: 0, textDecoration: "underline" }}>View warnings →</button>

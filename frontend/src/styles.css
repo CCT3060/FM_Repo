@@ -754,3 +754,145 @@ tr:last-child td {
   from { opacity: 0; transform: translateX(60px); }
   to   { opacity: 1; transform: translateX(0);    }
 }
+
+/* ── Alert system animations ─────────────────────────────────────────── */
+
+/* Pulse ring on a new alert row / badge */
+@keyframes fm-alert-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.55); }
+  50%  { box-shadow: 0 0 0 8px rgba(220, 38, 38, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); }
+}
+.fm-alert-new {
+  animation: fm-alert-pulse 0.8s ease-out 3;
+}
+
+/* Bell shake when there is a new alert */
+@keyframes fm-bell-ring {
+  0%,100% { transform: rotate(0deg);    }
+  10%,50% { transform: rotate(18deg);   }
+  30%,70% { transform: rotate(-18deg);  }
+  90%     { transform: rotate(8deg);    }
+}
+.fm-bell-ringing {
+  animation: fm-bell-ring 0.6s ease-in-out;
+  transform-origin: top center;
+  display: inline-block;
+}
+
+/* Severity-aware toast entrance (used by the toast overlay) */
+.fm-toast-enter {
+  animation: slideInRight 0.3s ease forwards;
+}
+
+/* Sound-toggle button inside the bell dropdown */
+.fm-sound-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: none;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+.fm-sound-toggle:hover      { background: #f1f5f9; color: #0f172a; }
+.fm-sound-toggle.fm-muted   { color: #94a3b8; border-color: #f1f5f9; }
+.fm-sound-toggle.fm-enabled { color: #2563eb; border-color: #bfdbfe; background: #eff6ff; }
+
+/* ── Alarm settings gear button ────────────────────────────────────────── */
+.fm-alarm-gear {
+  background: none;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 3px 6px;
+  font-size: 12px;
+  cursor: pointer;
+  color: #64748b;
+  line-height: 1;
+  transition: background 0.15s, color 0.15s, transform 0.2s;
+}
+.fm-alarm-gear:hover         { background: #f1f5f9; color: #0f172a; }
+.fm-alarm-gear.fm-open       { background: #eff6ff; color: #2563eb; border-color: #bfdbfe; transform: rotate(45deg); }
+
+/* ── Alarm settings panel ───────────────────────────────────────────────── */
+.fm-alarm-settings {
+  padding: 10px 14px 12px;
+  border-top: 1px solid #f1f5f9;
+  background: #f8fafc;
+}
+.fm-alarm-settings h4 {
+  margin: 0 0 10px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #374151;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.fm-alarm-vol-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  font-size: 10px;
+  color: #6b7280;
+}
+.fm-alarm-vol-row strong { color: #374151; font-weight: 700; }
+input[type="range"].fm-vol-slider {
+  width: 100%;
+  accent-color: #2563eb;
+  cursor: pointer;
+  margin-bottom: 10px;
+}
+.fm-sev-section-label {
+  font-size: 10px;
+  color: #6b7280;
+  margin-bottom: 6px;
+}
+.fm-sev-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 5px;
+}
+.fm-sev-badge {
+  font-size: 9px;
+  font-weight: 800;
+  padding: 1px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.fm-sev-actions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.fm-preview-btn {
+  background: none;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 10px;
+  padding: 2px 6px;
+  color: #64748b;
+  line-height: 1.2;
+  transition: background 0.12s;
+}
+.fm-preview-btn:hover { background: #f1f5f9; color: #0f172a; }
+.fm-sev-toggle {
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border: 1px solid;
+  transition: background 0.12s, color 0.12s;
+}
+.fm-sev-toggle.on  { background: #eff6ff; border-color: #bfdbfe; color: #2563eb; }
+.fm-sev-toggle.off { background: #f8fafc; border-color: #e2e8f0; color: #94a3b8; }

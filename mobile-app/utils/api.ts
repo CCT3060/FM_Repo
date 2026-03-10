@@ -18,11 +18,11 @@ const getApiBase = () => {
   // Development URLs
   if (Platform.OS === 'android') {
     // For physical Android device, use your PC's IP
-    return 'http://192.168.1.28:4000';
+    return 'http://192.168.1.55:4000';
     // For Android emulator, use: return 'http://10.0.2.2:4000';
   } else if (Platform.OS === 'ios') {
     // For physical iOS device, use your PC's IP
-    return 'http://192.168.1.28:4000';
+    return 'http://192.168.1.55:4000';
     // For iOS simulator, use: return 'http://localhost:4000';
   } else {
     return 'http://localhost:4000'; // Web or other platforms
@@ -309,6 +309,8 @@ export interface Assignment {
   note?: string;
   assignedAt: string;
   assignedBy?: string;
+  shiftId?: number | null;
+  shiftName?: string | null;
 }
 
 export interface TabularColumnGroup {
@@ -370,7 +372,8 @@ export async function getTemplateDetails(type: 'checklist' | 'logsheet', id: num
   const response = await authenticatedFetch(`/api/template-assignments/template/${type}/${id}`);
   
   if (!response.ok) {
-    throw new Error('Failed to fetch template details');
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.message || 'Failed to fetch template details');
   }
   
   return await response.json();
@@ -694,5 +697,46 @@ export async function getTeamAssignments(filters?: {
   const query = params.toString() ? `?${params.toString()}` : '';
   const response = await authenticatedFetch(`/api/template-assignments/team-assignments${query}`);
   if (!response.ok) throw new Error('Failed to fetch team assignments');
+  return response.json();
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Shift Management
+// ────────────────────────────────────────────────────────────────────────────
+
+export interface Shift {
+  id: number;
+  name: string;
+  startTime: string; // HH:MM
+  endTime: string;   // HH:MM
+  description?: string;
+  status: 'active' | 'inactive';
+  employeeCount?: number;
+}
+
+/**
+ * Get all shifts for the company
+ */
+export async function getShifts(): Promise<Shift[]> {
+  const response = await authenticatedFetch('/api/shifts');
+  if (!response.ok) throw new Error('Failed to fetch shifts');
+  return response.json();
+}
+
+/**
+ * Get only currently active shifts (by server time)
+ */
+export async function getActiveShifts(): Promise<Shift[]> {
+  const response = await authenticatedFetch('/api/shifts/active');
+  if (!response.ok) throw new Error('Failed to fetch active shifts');
+  return response.json();
+}
+
+/**
+ * Get shifts assigned to the logged-in user
+ */
+export async function getMyShifts(): Promise<Shift[]> {
+  const response = await authenticatedFetch('/api/shifts/my-shifts');
+  if (!response.ok) throw new Error('Failed to fetch my shifts');
   return response.json();
 }

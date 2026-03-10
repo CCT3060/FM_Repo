@@ -442,7 +442,7 @@ export default function TechExecutionScreen() {
                                                 <Text style={[styles.questionNum, isFilled && styles.questionNumFilled]}>{index + 1}</Text>
                                             </View>
                                             <Text style={styles.questionText} numberOfLines={3}>{q.questionText}</Text>
-                                            {q.isRequired && (
+                                            {!!q.isRequired && (
                                                 <Text style={styles.requiredStar}>*</Text>
                                             )}
                                             {isFilled && (

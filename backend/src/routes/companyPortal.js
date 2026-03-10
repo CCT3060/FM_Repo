@@ -426,8 +426,10 @@ router.get("/checklists", async (req, res, next) => {
       `SELECT ct.id, ct.template_name AS "templateName", ct.asset_type AS "assetType",
               ct.asset_id AS "assetId",
               ct.category, ct.description, ct.frequency, ct.shift, ct.status,
+              ct.shift_id AS "shiftId", s.name AS "shiftName",
               ct.questions, ct.created_at AS "createdAt"
        FROM checklist_templates ct
+       LEFT JOIN shifts s ON s.id = ct.shift_id
        WHERE ct.company_id = ? AND ct.is_active = 1
        ORDER BY ct.template_name`,
       [cid(req)]
@@ -441,14 +443,14 @@ router.get("/checklists", async (req, res, next) => {
 router.post("/checklists", async (req, res, next) => {
   try {
     if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
-    const { templateName, assetType, assetId, category, description, frequency = "Daily", shift, status = "active", questions } = req.body;
+    const { templateName, assetType, assetId, category, description, frequency = "Daily", shift, shiftId, status = "active", questions } = req.body;
     if (!templateName?.trim() || !assetType) return res.status(400).json({ message: "templateName and assetType are required" });
     const questionsJson = questions ? JSON.stringify(questions) : null;
     const [rows] = await pool.query(
-      `INSERT INTO checklist_templates (company_id, template_name, asset_type, asset_id, category, description, frequency, shift, status, is_active, created_by, questions)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-       RETURNING id, template_name AS "templateName", asset_type AS "assetType", asset_id AS "assetId", category, description, frequency, shift, status, questions, created_at AS "createdAt"`,
-      [cid(req), templateName.trim(), assetType, assetId || null, category || null, description || null, frequency, shift || null, status, null, questionsJson]
+      `INSERT INTO checklist_templates (company_id, template_name, asset_type, asset_id, category, description, frequency, shift, shift_id, status, is_active, created_by, questions)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+       RETURNING id, template_name AS "templateName", asset_type AS "assetType", asset_id AS "assetId", category, description, frequency, shift, shift_id AS "shiftId", status, questions, created_at AS "createdAt"`,
+      [cid(req), templateName.trim(), assetType, assetId || null, category || null, description || null, frequency, shift || null, shiftId || null, status, null, questionsJson]
     );
     res.status(201).json(rows[0]);
   } catch (err) { next(err); }
@@ -458,7 +460,7 @@ router.put("/checklists/:id", async (req, res, next) => {
   try {
     if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
     const { id } = req.params;
-    const { templateName, assetType, assetId, category, description, frequency, shift, status, questions } = req.body;
+    const { templateName, assetType, assetId, category, description, frequency, shift, shiftId, status, questions } = req.body;
     const [[check]] = await pool.query("SELECT id FROM checklist_templates WHERE id = ? AND company_id = ?", [id, cid(req)]);
     if (!check) return res.status(404).json({ message: "Checklist not found" });
     const isActive = status === "active" ? 1 : 0;
@@ -472,12 +474,13 @@ router.put("/checklists/:id", async (req, res, next) => {
          description = COALESCE(?, description),
          frequency = COALESCE(?, frequency),
          shift = COALESCE(?, shift),
+         shift_id = COALESCE(?, shift_id),
          status = COALESCE(?, status),
          is_active = ?,
          questions = COALESCE(?, questions)
        WHERE id = ?
-       RETURNING id, template_name AS "templateName", asset_type AS "assetType", asset_id AS "assetId", category, description, frequency, shift, status, questions, created_at AS "createdAt"`,
-      [templateName || null, assetType || null, assetId || null, category || null, description || null, frequency || null, shift || null, status || null, isActive, questionsJson ?? null, id]
+       RETURNING id, template_name AS "templateName", asset_type AS "assetType", asset_id AS "assetId", category, description, frequency, shift, shift_id AS "shiftId", status, questions, created_at AS "createdAt"`,
+      [templateName || null, assetType || null, assetId || null, category || null, description || null, frequency || null, shift || null, shiftId ?? null, status || null, isActive, questionsJson ?? null, id]
     );
     res.json(rows[0]);
   } catch (err) { next(err); }
@@ -501,7 +504,7 @@ router.post("/logsheet-templates", async (req, res, next) => {
       return res.status(403).json({ message: "Only admin or supervisor can create logsheet templates" });
     }
     const { templateName, assetType, assetModel, frequency = "daily", assetId, description,
-            headerConfig = {}, sections, layoutType = "standard" } = req.body;
+            headerConfig = {}, sections, layoutType = "standard", shiftId } = req.body;
     if (!templateName?.trim()) return res.status(400).json({ message: "templateName is required" });
     if (!assetType) return res.status(400).json({ message: "assetType is required" });
     // Standard templates require sections; tabular templates store config in headerConfig
@@ -517,11 +520,11 @@ router.post("/logsheet-templates", async (req, res, next) => {
     try {
       await conn.beginTransaction();
       const [tmplRows] = await conn.execute(
-        `INSERT INTO logsheet_templates (company_id, asset_id, template_name, asset_type, asset_model, frequency, header_config, description, is_active, layout_type)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+        `INSERT INTO logsheet_templates (company_id, asset_id, template_name, asset_type, asset_model, frequency, header_config, description, is_active, layout_type, shift_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
          RETURNING id`,
         [companyId, assetId || null, templateName.trim(), assetType, assetModel || null, frequency,
-         JSON.stringify(mergedConfig), description || null, layoutType]
+         JSON.stringify(mergedConfig), description || null, layoutType, shiftId || null]
       );
       const templateId = tmplRows[0]?.id;
 
@@ -599,9 +602,11 @@ router.get("/logsheet-templates", async (req, res, next) => {
               a.asset_name AS "assetName",
               lt.description, lt.header_config AS "headerConfig",
               lt.layout_type AS "layoutType",
+              lt.shift_id AS "shiftId", sh.name AS "shiftName",
               lt.is_active AS "isActive", lt.created_at AS "createdAt"
        FROM logsheet_templates lt
        LEFT JOIN assets a ON a.id = lt.asset_id
+       LEFT JOIN shifts sh ON sh.id = lt.shift_id
        WHERE lt.company_id = ?
        ORDER BY lt.template_name`,
       [cid(req)]
@@ -1455,6 +1460,14 @@ router.post("/template-user-assignments", async (req, res, next) => {
       [assignedTo, cid(req)]
     );
     if (!empCheck) return res.status(404).json({ message: "Assignee not found in this company" });
+
+    // Verify the template belongs to this company
+    const templateTable = templateType === "checklist" ? "checklist_templates" : "logsheet_templates";
+    const [[templateCheck]] = await pool.query(
+      `SELECT id FROM ${templateTable} WHERE id = ? AND company_id = ?`,
+      [templateId, cid(req)]
+    );
+    if (!templateCheck) return res.status(404).json({ message: "Template not found in this company" });
 
     const [rows] = await pool.query(
       `INSERT INTO template_user_assignments (company_id, template_type, template_id, assigned_to, assigned_by, note)

@@ -107,6 +107,8 @@ export default function ChecklistManagementScreen() {
     const [unassignedTemplates, setUnassignedTemplates] = useState<Template[]>([]);
     const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
     const [isSupervisor, setIsSupervisor] = useState<boolean | null>(null);
+    const [currentUserId, setCurrentUserId] = useState<number | null>(null);
+    const [currentUserName, setCurrentUserName] = useState<string>('Me');
 
     const [activeTab, setActiveTab] = useState<ActiveTab>('unassigned');
     const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
@@ -133,6 +135,10 @@ export default function ChecklistManagementScreen() {
             const storedUser = await getStoredUser();
             const supervisor = storedUser?.role === 'supervisor';
             setIsSupervisor(supervisor);
+            if (storedUser?.id) setCurrentUserId(storedUser.id);
+            if (storedUser?.fullName || storedUser?.full_name) {
+                setCurrentUserName(storedUser.fullName || storedUser.full_name || 'Me');
+            }
 
             const myAssignments = await getMyAssignments();
             setAssignedTemplates(
@@ -233,10 +239,6 @@ export default function ChecklistManagementScreen() {
     };
 
     const handleAssignToTeam = (template: Template) => {
-        if (teamMembers.length === 0) {
-            Alert.alert('No Team Members', 'You have no team members to assign to.');
-            return;
-        }
         setSelectedTemplate(template);
         setAssignNote(template.note || '');
         setShowAssignModal(true);
@@ -307,12 +309,10 @@ export default function ChecklistManagementScreen() {
                             <Text style={styles.historyBtnText}>History</Text>
                         </TouchableOpacity>
                     )}
-                    {isSupervisor && (
-                        <TouchableOpacity style={styles.assignBtn} onPress={() => handleAssignToTeam(item)}>
-                            <MaterialCommunityIcons name="account-plus-outline" size={15} color="#FFFFFF" />
-                            <Text style={styles.assignBtnText}>Assign</Text>
-                        </TouchableOpacity>
-                    )}
+                    <TouchableOpacity style={styles.assignBtn} onPress={() => handleAssignToTeam(item)}>
+                        <MaterialCommunityIcons name="account-plus-outline" size={15} color="#FFFFFF" />
+                        <Text style={styles.assignBtnText}>Assign</Text>
+                    </TouchableOpacity>
                 </View>
             </View>
         );
@@ -462,6 +462,28 @@ export default function ChecklistManagementScreen() {
                         />
                         <Text style={styles.memberLabel}>Select Team Member:</Text>
                         <ScrollView style={{ maxHeight: 300 }}>
+                            {/* Assign to Myself — always shown first */}
+                            {currentUserId && (
+                                <TouchableOpacity
+                                    key="myself"
+                                    style={[styles.memberRow, { backgroundColor: '#F0FDF4', borderRadius: 8, marginBottom: 4 }]}
+                                    onPress={() => performAssign(currentUserId)}
+                                    disabled={isAssigning}
+                                >
+                                    <View style={[styles.memberAvatar, { backgroundColor: '#DCFCE7' }]}>
+                                        <MaterialCommunityIcons name="account-check" size={20} color="#16A34A" />
+                                    </View>
+                                    <View style={styles.memberInfo}>
+                                        <Text style={[styles.memberName, { color: '#15803D' }]}>Assign to Myself</Text>
+                                        <Text style={styles.memberRole}>{currentUserName}</Text>
+                                    </View>
+                                    {isAssigning ? (
+                                        <ActivityIndicator size="small" color="#16A34A" />
+                                    ) : (
+                                        <MaterialCommunityIcons name="chevron-right" size={20} color="#86EFAC" />
+                                    )}
+                                </TouchableOpacity>
+                            )}
                             {teamMembers.map((member) => {
                                 const name = member.fullName || (member as any).fullname || 'Unknown';
                                 const initials = name.split(' ').map((n: string) => n[0] || '').join('').slice(0, 2).toUpperCase();

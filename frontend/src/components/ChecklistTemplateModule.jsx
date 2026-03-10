@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import TemplateImportModal from "./TemplateImportModal.jsx";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:4000";
 
@@ -291,7 +292,7 @@ function QuestionRow({ q, idx, onChange, onRemove }) {
 /* ─────────────────────────────────────────────────────────────────
    Template Builder (create / edit)
 ───────────────────────────────────────────────────────────────── */
-function TemplateBuilder({ token, companies, assets: assetsProp = [], onBack, onSaved, createTemplate, updateTemplate, editTemplate, companyPortalMode = false }) {
+function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [], onBack, onSaved, createTemplate, updateTemplate, editTemplate, companyPortalMode = false }) {
   const isEdit = !!editTemplate;
 
   const [form, setForm] = useState(() => {
@@ -304,7 +305,7 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], onBack, on
         category: editTemplate.category || "",
         description: editTemplate.description || "",
         frequency: editTemplate.frequency || "Daily",
-        shift: editTemplate.shift || "",
+        shiftId: editTemplate.shiftId ? String(editTemplate.shiftId) : "",
         status: editTemplate.status || "active",
       };
     }
@@ -316,7 +317,7 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], onBack, on
       category: "",
       description: "",
       frequency: "Daily",
-      shift: "",
+      shiftId: "",
       status: "active",
     };
   });
@@ -402,7 +403,7 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], onBack, on
       category: form.category.trim() || undefined,
       description: form.description.trim() || undefined,
       frequency: form.frequency,
-      shift: form.shift.trim() || undefined,
+      shiftId: form.shiftId ? Number(form.shiftId) : undefined,
       status: form.status,
       questions: questions.map((q, idx) => ({
         questionText: q.questionText.trim(),
@@ -510,8 +511,11 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], onBack, on
             </Sel>
           </div>
           <div>
-            <Label>Shift</Label>
-            <Inp value={form.shift} onChange={(e) => setForm((p) => ({ ...p, shift: e.target.value }))} placeholder="e.g. Morning, Night" />
+            <Label>Shift (optional)</Label>
+            <Sel value={form.shiftId} onChange={(e) => setForm((p) => ({ ...p, shiftId: e.target.value }))}>
+              <option value="">— Any shift —</option>
+              {shifts.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </Sel>
           </div>
           <div>
             <Label>Status</Label>
@@ -549,9 +553,88 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], onBack, on
 }
 
 /* ─────────────────────────────────────────────────────────────────
+   Assign Modal  (assign a checklist template to a user)
+───────────────────────────────────────────────────────────────── */
+function AssignModal({ token, companyId, template, templateType, onClose, companyPortalMode = false }) {
+  const [users, setUsers] = useState([]);
+  const [loadingUsers, setLoadingUsers] = useState(true);
+  const [selectedUser, setSelectedUser] = useState("");
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState(null);
+
+  useEffect(() => {
+    if (!companyId) { setLoadingUsers(false); return; }
+    const usersUrl = companyPortalMode
+      ? `${API_BASE}/api/company-portal/employees`
+      : `${API_BASE}/api/company-users?companyId=${companyId}`;
+    fetch(usersUrl, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => r.json())
+      .then((d) => setUsers(Array.isArray(d) ? d : []))
+      .catch(() => setUsers([]))
+      .finally(() => setLoadingUsers(false));
+  }, [token, companyId]);
+
+  const handleSubmit = async () => {
+    if (!selectedUser) { setErr("Please select a user."); return; }
+    setSaving(true); setErr(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/company-portal/template-user-assignments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ templateType, templateId: template.id, assignedTo: selectedUser, note }),
+      });
+      if (!res.ok) { const d = await res.json(); throw new Error(d.error || "Failed to assign"); }
+      onClose();
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const overlay = { position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 9000, display: "flex", alignItems: "center", justifyContent: "center" };
+  const modal = { background: "#fff", borderRadius: "14px", padding: "28px 32px", minWidth: "360px", maxWidth: "480px", width: "100%", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" };
+
+  return (
+    <div style={overlay} onClick={onClose}>
+      <div style={modal} onClick={(e) => e.stopPropagation()}>
+        <h3 style={{ margin: "0 0 6px", fontSize: "17px", fontWeight: 700, color: "#0f172a" }}>Assign Template</h3>
+        <p style={{ margin: "0 0 20px", color: "#64748b", fontSize: "13px" }}>Assign <b>{template.templateName}</b> to a user</p>
+        {loadingUsers ? (
+          <p style={{ color: "#64748b", fontSize: "14px" }}>Loading users…</p>
+        ) : (
+          <>
+            <label style={{ fontSize: "13px", fontWeight: 600, color: "#374151", display: "block", marginBottom: "6px" }}>Select User *</label>
+            <select value={selectedUser} onChange={(e) => setSelectedUser(e.target.value)}
+              style={{ width: "100%", padding: "9px 12px", borderRadius: "8px", border: "1px solid #d1d5db", fontSize: "14px", marginBottom: "14px", background: "#fff" }}>
+              <option value="">— Choose a user —</option>
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>{u.fullName || u.displayName || u.username || u.email || `User #${u.id}`}</option>
+              ))}
+            </select>
+            <label style={{ fontSize: "13px", fontWeight: 600, color: "#374151", display: "block", marginBottom: "6px" }}>Note (optional)</label>
+            <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Add a note…"
+              style={{ width: "100%", padding: "9px 12px", borderRadius: "8px", border: "1px solid #d1d5db", fontSize: "14px", marginBottom: "18px", boxSizing: "border-box" }} />
+          </>
+        )}
+        {err && <p style={{ color: "#dc2626", fontSize: "13px", marginBottom: "12px" }}>{err}</p>}
+        <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
+          <button onClick={onClose} style={{ padding: "9px 18px", background: "#f1f5f9", color: "#475569", border: "1px solid #e2e8f0", borderRadius: "8px", cursor: "pointer", fontWeight: 600, fontSize: "14px" }}>Cancel</button>
+          <button onClick={handleSubmit} disabled={saving || loadingUsers}
+            style={{ padding: "9px 18px", background: "#7c3aed", color: "#fff", border: "none", borderRadius: "8px", cursor: "pointer", fontWeight: 600, fontSize: "14px", opacity: saving ? 0.7 : 1 }}>
+            {saving ? "Assigning…" : "Assign"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────
    Template List
 ───────────────────────────────────────────────────────────────── */
-function TemplateList({ token, companies, fetchTemplates, onBuild, onEdit, onDelete, canBuild, companyId }) {
+function TemplateList({ token, companies, fetchTemplates, onBuild, onImport, onEdit, onDelete, canBuild, companyId, companyPortalMode = false }) {
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -559,6 +642,7 @@ function TemplateList({ token, companies, fetchTemplates, onBuild, onEdit, onDel
   const [filterType, setFilterType] = useState("");
   const [viewTemplate, setViewTemplate] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
+  const [assignTarget, setAssignTarget] = useState(null);
 
   const loadTemplates = useCallback(async () => {
     setLoading(true);
@@ -602,18 +686,27 @@ function TemplateList({ token, companies, fetchTemplates, onBuild, onEdit, onDel
   return (
     <div>
       {viewTemplate && <ViewModal template={viewTemplate} onClose={() => setViewTemplate(null)} />}
+      {assignTarget && <AssignModal token={token} companyId={companyId} template={assignTarget} templateType="checklist" onClose={() => setAssignTarget(null)} companyPortalMode={companyPortalMode} />}
       {/* Header */}
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "22px" }}>
         <div>
           <h1 style={{ fontSize: "26px", fontWeight: 800, color: "#0f172a", marginBottom: "4px", letterSpacing: "-0.5px" }}>Checklist Templates</h1>
           <p style={{ color: "#64748b", fontSize: "14px", margin: 0 }}>Build reusable inspection checklists for assets, departments, and users.</p>
         </div>
-        {canBuild && onBuild && (
-          <SBtn onClick={onBuild}>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            New Template
-          </SBtn>
-        )}
+        <div style={{ display: "flex", gap: "8px" }}>
+          {canBuild && onImport && (
+            <SBtn onClick={onImport} outline color="#7c3aed" bg="#fff">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+              Import
+            </SBtn>
+          )}
+          {canBuild && onBuild && (
+            <SBtn onClick={onBuild}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              New Template
+            </SBtn>
+          )}
+        </div>
       </div>
 
       {error && <Alert type="error">⚠ {error}</Alert>}
@@ -706,6 +799,13 @@ function TemplateList({ token, companies, fetchTemplates, onBuild, onEdit, onDel
                             🗑 {deletingId === t.id ? "…" : "Del"}
                           </button>
                         )}
+                        {/* Assign */}
+                        {canBuild && (
+                          <button onClick={() => setAssignTarget(t)} title="Assign to user"
+                            style={{ padding: "5px 9px", background: "#f5f3ff", color: "#7c3aed", border: "1px solid #ddd6fe", borderRadius: "6px", fontSize: "12px", cursor: "pointer", fontWeight: 600 }}>
+                            👤 Assign
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -726,6 +826,7 @@ export default function ChecklistTemplateModule({
   token,
   companies = [],
   assets = [],
+  shifts = [],
   fetchTemplates,
   createTemplate,
   fetchTemplate,
@@ -738,6 +839,7 @@ export default function ChecklistTemplateModule({
   const [view, setView] = useState("list");
   const [editTarget, setEditTarget] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [showImport, setShowImport] = useState(false);
 
   const handleEdit = async (template) => {
     if (fetchTemplate) {
@@ -764,6 +866,7 @@ export default function ChecklistTemplateModule({
         token={token}
         companies={companies}
         assets={assets}
+        shifts={shifts}
         onBack={() => setView("list")}
         onSaved={() => { setRefreshKey((k) => k + 1); setView("list"); }}
         createTemplate={createTemplate}
@@ -779,6 +882,7 @@ export default function ChecklistTemplateModule({
         token={token}
         companies={companies}
         assets={assets}
+        shifts={shifts}
         onBack={() => { setEditTarget(null); setView("list"); }}
         onSaved={() => { setEditTarget(null); setRefreshKey((k) => k + 1); setView("list"); }}
         editTemplate={editTarget}
@@ -790,16 +894,32 @@ export default function ChecklistTemplateModule({
   }
 
   return (
-    <TemplateList
-      key={refreshKey}
-      token={token}
-      companies={companies}
-      fetchTemplates={fetchTemplates}
-      companyId={companyId}
-      onBuild={canBuild && createTemplate ? () => setView("builder") : null}
-      onEdit={canBuild && updateTemplate ? handleEdit : null}
-      onDelete={canBuild && deleteTemplate ? handleDelete : null}
-      canBuild={canBuild}
-    />
+    <>
+      {showImport && (
+        <TemplateImportModal
+          type="checklist"
+          token={token}
+          companies={companies}
+          companyId={companyId}
+          createTemplate={createTemplate}
+          companyPortalMode={companyPortalMode}
+          onClose={() => setShowImport(false)}
+          onCreated={() => { setShowImport(false); setRefreshKey((k) => k + 1); }}
+        />
+      )}
+      <TemplateList
+        key={refreshKey}
+        token={token}
+        companies={companies}
+        fetchTemplates={fetchTemplates}
+        companyId={companyId}
+        onBuild={canBuild && createTemplate ? () => setView("builder") : null}
+        onImport={canBuild && createTemplate ? () => setShowImport(true) : null}
+        onEdit={canBuild && updateTemplate ? handleEdit : null}
+        onDelete={canBuild && deleteTemplate ? handleDelete : null}
+        canBuild={canBuild}
+        companyPortalMode={companyPortalMode}
+      />
+    </>
   );
 }

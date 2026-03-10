@@ -51,6 +51,10 @@ export default function AssignmentFormScreen() {
         try {
             const data = await getMyAssets();
             setAssets(data);
+            // Auto-select the first asset so users never need to tap the picker
+            if (data.length > 0) {
+                setAssetId(prev => prev || String(data[0].id));
+            }
         } catch (_) {
             // non-critical
         }
@@ -337,31 +341,32 @@ export default function AssignmentFormScreen() {
                             <Text style={styles.questionLabel}>
                                 Asset {templateType === 'logsheet' ? '(Required)' : '(Optional)'}
                             </Text>
-                            {(template?.assetId || routeAssetId) ? (
-                                // Locked: asset is pre-linked via template or passed from assignment
-                                <View style={[styles.assetPickerBtn, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}>
+                            {(template?.assetId || routeAssetId || assetId) ? (
+                                // Asset is known — show badge; locked if from template/assignment, tappable if auto-selected
+                                <TouchableOpacity
+                                    style={[styles.assetPickerBtn, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}
+                                    onPress={!template?.assetId && !routeAssetId ? () => setShowAssetPicker(v => !v) : undefined}
+                                    activeOpacity={template?.assetId || routeAssetId ? 1 : 0.7}
+                                >
                                     <MaterialCommunityIcons name="office-building" size={18} color="#1E3A8A" />
                                     <Text style={[styles.assetPickerText, { color: '#1E3A8A', flex: 1 }]}>
-                                        {template?.assetName || routeAssetName || (template?.assetId ? `Asset #${template.assetId}` : `Asset #${routeAssetId}`)}
+                                        {template?.assetName || routeAssetName ||
+                                            (assetId ? (assets.find(a => String(a.id) === assetId)?.assetName ?? `Asset #${assetId}`) : '')}
                                     </Text>
-                                    <View style={{ backgroundColor: '#2563EB', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 }}>
-                                        <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>Auto</Text>
-                                    </View>
-                                </View>
+                                    {(template?.assetId || routeAssetId) ? (
+                                        <View style={{ backgroundColor: '#2563EB', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 }}>
+                                            <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>Auto</Text>
+                                        </View>
+                                    ) : (
+                                        <MaterialCommunityIcons name={showAssetPicker ? 'chevron-up' : 'chevron-down'} size={18} color="#718096" />
+                                    )}
+                                </TouchableOpacity>
                             ) : (
-                            <TouchableOpacity
-                                style={[styles.assetPickerBtn, !assetId && templateType === 'logsheet' && styles.assetPickerBtnRequired]}
-                                onPress={() => setShowAssetPicker(v => !v)}
-                            >
-                                <MaterialCommunityIcons name="office-building" size={18} color={assetId ? '#1E3A8A' : '#A0AEC0'} />
-                                <Text style={[styles.assetPickerText, !assetId && styles.assetPickerPlaceholder]}>
-                                    {assetId
-                                        ? (assets.find(a => String(a.id) === assetId)?.assetName
-                                            ?? (routeAssetId && String(routeAssetId) === assetId && routeAssetName ? routeAssetName : `Asset #${assetId}`))
-                                        : 'Tap to select an asset...'}
-                                </Text>
-                                <MaterialCommunityIcons name={showAssetPicker ? 'chevron-up' : 'chevron-down'} size={18} color="#718096" />
-                            </TouchableOpacity>
+                                // Assets still loading
+                                <View style={[styles.assetPickerBtn, { backgroundColor: '#F7FAFC' }]}>
+                                    <MaterialCommunityIcons name="office-building" size={18} color="#A0AEC0" />
+                                    <Text style={[styles.assetPickerText, styles.assetPickerPlaceholder]}>Loading assets...</Text>
+                                </View>
                             )}
                             {!template?.assetId && !routeAssetId && showAssetPicker && (
                                 <View style={styles.assetList}>
@@ -494,7 +499,7 @@ export default function AssignmentFormScreen() {
                             <View key={question.id} style={styles.questionCard}>
                                 <View style={styles.questionHeader}>
                                     <Text style={styles.questionNumber}>Q{index + 1}</Text>
-                                    {question.isRequired && <View style={styles.requiredBadge}>
+                                    {!!question.isRequired && <View style={styles.requiredBadge}>
                                         <Text style={styles.requiredText}>Required</Text>
                                     </View>}
                                 </View>
