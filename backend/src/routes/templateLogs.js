@@ -193,7 +193,7 @@ router.post(
         // Auto-assign to asset if provided
         if (assetId) {
           await conn.execute(
-            `INSERT INTO logsheet_template_assignments (template_id, asset_id, attached_by) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
+            `INSERT IGNORE INTO logsheet_template_assignments (template_id, asset_id, attached_by) VALUES (?, ?, ?)`,
             [templateId, assetId, req.user.id]
           );
         }
@@ -832,7 +832,7 @@ router.put(
           await conn.execute("DELETE FROM logsheet_template_assignments WHERE template_id = ?", [templateId]);
           if (assetId) {
             await conn.execute(
-              `INSERT INTO logsheet_template_assignments (template_id, asset_id, attached_by) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
+              `INSERT IGNORE INTO logsheet_template_assignments (template_id, asset_id, attached_by) VALUES (?, ?, ?)`,
               [templateId, assetId, req.user.id]
             );
           }

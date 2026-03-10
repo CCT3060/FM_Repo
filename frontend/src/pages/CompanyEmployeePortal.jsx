@@ -8,6 +8,7 @@ import ChecklistTemplateModule from "../components/ChecklistTemplateModule.jsx";
 import SubmissionsPanel from "../components/SubmissionsPanel.jsx";
 import WarningsPanel from "../components/WarningsPanel.jsx";
 import WorkOrdersPanel from "../components/WorkOrdersPanel.jsx";
+import OjtTrainingBuilder, { TrainingPreviewModal, TrainingQRModal } from "../components/OjtTrainingBuilder.jsx";
 import {
   getCompanyPortalMe,
   getCompanyPortalDashboard,
@@ -45,51 +46,58 @@ import {
   getTemplateUserAssignments,
   getMyTemplateAssignments,
   deleteTemplateUserAssignment,
-  getCompanyPortalAdminFlags,
-  getCompanyPortalWorkOrders,
-  getCompanyPortalWOUsers,
-  assignCompanyPortalWorkOrder,
+  // OJT
+  getOjtTrainings, getOjtTraining, createOjtTraining, updateOjtTraining, deleteOjtTraining, publishOjtTraining,
+  createOjtModule, updateOjtModule, deleteOjtModule, addOjtModuleContent, deleteOjtContent,
+  createOjtTest, addOjtQuestion, updateOjtQuestion, deleteOjtQuestion, getOjtTrainingUsers, grantOjtCertificate,
+  // Fleet
+  getFleetAssets, getFleetInspections, createFleetInspection, updateFleetInspection, deleteFleetInspection,
+  getFleetFuelLogs, createFleetFuelLog, updateFleetFuelLog, deleteFleetFuelLog,
+  getFleetMaintenance, createFleetMaintenance, updateFleetMaintenance, updateFleetMaintenanceStatus, deleteFleetMaintenance,
+  getFleetSubmissions, getFleetSubmissionDetail, downloadFleetSubmissionsCSV,
 } from "../api.js";
 
 /* ─── Role definitions ────────────────────────────────────────────── */
 const ROLES = [
-  { value: "admin",               label: "Admin",               color: "#7c3aed", bg: "#f3e8ff" },
-  { value: "technical_lead",      label: "Technical Lead",      color: "#1d4ed8", bg: "#dbeafe" },
-  { value: "assistant_manager",   label: "Asst. Manager",       color: "#5b21b6", bg: "#ede9fe" },
+  { value: "admin", label: "Admin", color: "#7c3aed", bg: "#f3e8ff" },
+  { value: "technical_lead", label: "Technical Lead", color: "#1d4ed8", bg: "#dbeafe" },
+  { value: "assistant_manager", label: "Asst. Manager", color: "#5b21b6", bg: "#ede9fe" },
   { value: "technical_executive", label: "Technical Executive", color: "#0e7490", bg: "#cffafe" },
-  { value: "supervisor",          label: "Supervisor",          color: "#0369a1", bg: "#e0f2fe" },
-  { value: "technician",          label: "Technician",          color: "#059669", bg: "#d1fae5" },
-  { value: "cleaner",             label: "Cleaner",             color: "#16a34a", bg: "#f0fdf4" },
-  { value: "security",            label: "Security",            color: "#ca8a04", bg: "#fefce8" },
-  { value: "driver",              label: "Driver",              color: "#ea580c", bg: "#fff7ed" },
-  { value: "fleet_operator",      label: "Fleet Operator",      color: "#9333ea", bg: "#fdf4ff" },
-  { value: "employee",            label: "Employee",            color: "#64748b", bg: "#f1f5f9" },
+  { value: "supervisor", label: "Supervisor", color: "#0369a1", bg: "#e0f2fe" },
+  { value: "technician", label: "Technician", color: "#059669", bg: "#d1fae5" },
+  { value: "cleaner", label: "Cleaner", color: "#16a34a", bg: "#f0fdf4" },
+  { value: "security", label: "Security", color: "#ca8a04", bg: "#fefce8" },
+  { value: "driver", label: "Driver", color: "#ea580c", bg: "#fff7ed" },
+  { value: "fleet_operator", label: "Fleet Operator", color: "#9333ea", bg: "#fdf4ff" },
+  { value: "employee", label: "Employee", color: "#64748b", bg: "#f1f5f9" },
 ];
 const roleInfo = (r) => ROLES.find((x) => x.value === r) || ROLES[ROLES.length - 1];
 
 // 5-level maintenance hierarchy
 const HIERARCHY_CHAIN = [
-  { role: "technical_lead",      label: "Technical Lead",      parentRole: null,                  color: "#1d4ed8", bg: "#dbeafe", border: "#bfdbfe" },
-  { role: "assistant_manager",   label: "Asst. Manager",       parentRole: "technical_lead",      color: "#5b21b6", bg: "#ede9fe", border: "#c4b5fd" },
-  { role: "technical_executive", label: "Technical Executive", parentRole: "assistant_manager",   color: "#0e7490", bg: "#cffafe", border: "#a5f3fc" },
-  { role: "supervisor",          label: "Supervisor",          parentRole: "technical_executive", color: "#0369a1", bg: "#e0f2fe", border: "#bae6fd" },
-  { role: "technician",          label: "Technician",          parentRole: "supervisor",          color: "#059669", bg: "#d1fae5", border: "#6ee7b7" },
+  { role: "technical_lead", label: "Technical Lead", parentRole: null, color: "#1d4ed8", bg: "#dbeafe", border: "#bfdbfe" },
+  { role: "assistant_manager", label: "Asst. Manager", parentRole: "technical_lead", color: "#5b21b6", bg: "#ede9fe", border: "#c4b5fd" },
+  { role: "technical_executive", label: "Technical Executive", parentRole: "assistant_manager", color: "#0e7490", bg: "#cffafe", border: "#a5f3fc" },
+  { role: "supervisor", label: "Supervisor", parentRole: "technical_executive", color: "#0369a1", bg: "#e0f2fe", border: "#bae6fd" },
+  { role: "technician", label: "Technician", parentRole: "supervisor", color: "#059669", bg: "#d1fae5", border: "#6ee7b7" },
 ];
 const PARENT_ROLE = Object.fromEntries(HIERARCHY_CHAIN.map((h) => [h.role, h.parentRole]));
 const HIERARCHY_ROLES = new Set(HIERARCHY_CHAIN.map((h) => h.role));
 const SHIFTS = ["Morning", "Afternoon", "Evening", "Night"];
 
 const NAV_ALL = [
-  { key: "dashboard", label: "Dashboard", roles: ["admin","supervisor","*"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg> },
-  { key: "departments", label: "Departments", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg> },
-  { key: "assets", label: "Assets", roles: ["admin","supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 19.07a10 10 0 0 1 0-14.14"/></svg> },
-  { key: "checklists", label: "Checklists", roles: ["admin","supervisor","*"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg> },
-  { key: "logsheets", label: "Logsheets", roles: ["admin","supervisor","*"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> },
-  { key: "employees", label: "My Team", roles: ["supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> },
-  { key: "employees", label: "Employees", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> },
-  { key: "warnings", label: "Warnings", roles: ["admin","supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> },
-  { key: "workorders", label: "Work Orders", roles: ["admin","supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-4 0v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg> },
-  { key: "mytasks", label: "My Tasks", roles: ["supervisor","*"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg> },
+  { key: "dashboard", label: "Dashboard", roles: ["admin", "supervisor", "*"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="14" y="14" width="7" height="7" /><rect x="3" y="14" width="7" height="7" /></svg> },
+  { key: "departments", label: "Departments", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><polyline points="9 22 9 12 15 12 15 22" /></svg> },
+  { key: "assets", label: "Assets", roles: ["admin", "supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3" /><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 19.07a10 10 0 0 1 0-14.14" /></svg> },
+  { key: "checklists", label: "Checklists", roles: ["admin", "supervisor", "*"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 11 12 14 22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg> },
+  { key: "logsheets", label: "Logsheets", roles: ["admin", "supervisor", "*"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="16" y1="13" x2="8" y2="13" /><line x1="16" y1="17" x2="8" y2="17" /><polyline points="10 9 9 9 8 9" /></svg> },
+  { key: "employees", label: "My Team", roles: ["supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg> },
+  { key: "employees", label: "Employees", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg> },
+  { key: "warnings", label: "Warnings", roles: ["admin", "supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg> },
+  { key: "workorders", label: "Work Orders", roles: ["admin", "supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="7" width="20" height="14" rx="2" /><path d="M16 7V5a2 2 0 0 0-4 0v2" /><line x1="12" y1="12" x2="12" y2="16" /><line x1="10" y1="14" x2="14" y2="14" /></svg> },
+  { key: "ojt", label: "OJT Management", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 10v6M2 10l10-5 10 5-10 5z" /><path d="M6 12v5c3 3 9 3 12 0v-5" /></svg> },
+  { key: "fleet", label: "Fleet Management", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="1" y="3" width="15" height="13" rx="2" /><polygon points="16 8 20 8 23 11 23 16 16 16 16 8" /><circle cx="5.5" cy="18.5" r="2.5" /><circle cx="18.5" cy="18.5" r="2.5" /></svg> },
+  { key: "mytasks", label: "My Tasks", roles: ["supervisor", "*"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 11 12 14 22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg> },
 ];
 // Returns nav items visible for a given role
 const getNav = (role) => NAV_ALL.filter((n) => n.roles.includes(role) || n.roles.includes("*"));
@@ -178,7 +186,7 @@ function EmployeeModal({ existing, token, employees = [], currentUserRole = "adm
     shift: existing.shift || "",
   } : def);
   const [saving, setSaving] = useState(false);
-  const [error, setError]   = useState(null);
+  const [error, setError] = useState(null);
 
   const change = (k, v) => setForm((p) => ({ ...p, [k]: v }));
 
@@ -240,7 +248,7 @@ function EmployeeModal({ existing, token, employees = [], currentUserRole = "adm
             <p style={{ fontSize: "12.5px", color: "#64748b", marginTop: "2px" }}>Fill in staff details and hierarchy placement</p>
           </div>
           <button onClick={onClose} style={{ width: "32px", height: "32px", borderRadius: "8px", background: "#e2e8f0", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b" }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
           </button>
         </div>
 
@@ -346,7 +354,7 @@ function EmployeeModal({ existing, token, employees = [], currentUserRole = "adm
           {/* Mobile App Access */}
           <div style={{ gridColumn: "span 2", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "10px", padding: "16px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4f46e5" strokeWidth="2"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4f46e5" strokeWidth="2"><rect x="5" y="2" width="14" height="20" rx="2" /><line x1="12" y1="18" x2="12.01" y2="18" /></svg>
               <p style={{ fontWeight: 700, fontSize: "13.5px", color: "#0f172a", margin: 0 }}>Mobile App Access</p>
             </div>
             <p style={{ fontSize: "12px", color: "#64748b", marginBottom: "12px" }}>Username &amp; password for the employee mobile app login</p>
@@ -356,7 +364,7 @@ function EmployeeModal({ existing, token, employees = [], currentUserRole = "adm
             </div>
             {isEdit && form.username && (
               <p style={{ fontSize: "11.5px", color: "#16a34a", marginTop: "8px", display: "flex", alignItems: "center", gap: "5px" }}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12" /></svg>
                 Mobile access active — username: <strong>{form.username}</strong>
               </p>
             )}
@@ -421,7 +429,7 @@ function ForwardTemplateModal({ assignment, token, teamMembers = [], existingFor
             </div>
           </div>
           <button onClick={onClose} style={{ width: "30px", height: "30px", borderRadius: "7px", background: "#f1f5f9", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b", flexShrink: 0 }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
           </button>
         </div>
 
@@ -429,7 +437,7 @@ function ForwardTemplateModal({ assignment, token, teamMembers = [], existingFor
         <div style={{ padding: "18px 22px", display: "flex", flexDirection: "column", gap: "12px" }}>
           {error && <Alert>{error}</Alert>}
           {teamMembers.length === 0 ? (
-            <p style={{ color: "#94a3b8", textAlign: "center", padding: "24px 0" }}>No team members under you yet.<br/>Add members from the My Team tab first.</p>
+            <p style={{ color: "#94a3b8", textAlign: "center", padding: "24px 0" }}>No team members under you yet.<br />Add members from the My Team tab first.</p>
           ) : (
             <>
               <FSelect label="Assign to" required value={selectedUserId} onChange={(e) => setSelectedUserId(e.target.value)}>
@@ -444,7 +452,7 @@ function ForwardTemplateModal({ assignment, token, teamMembers = [], existingFor
               <div>
                 <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Note (optional)</label>
                 <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="Add instructions for this team member…"
-                  style={{ width: "100%", boxSizing: "border-box", padding: "8px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13.5px", resize: "vertical", fontFamily: "inherit", outline: "none" }}/>
+                  style={{ width: "100%", boxSizing: "border-box", padding: "8px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13.5px", resize: "vertical", fontFamily: "inherit", outline: "none" }} />
               </div>
               <Btn onClick={handleForward} disabled={saving || !selectedUserId}>{saving ? "Assigning…" : "Assign to Team Member"}</Btn>
             </>
@@ -460,7 +468,7 @@ function ForwardTemplateModal({ assignment, token, teamMembers = [], existingFor
                   return (
                     <div key={m.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", borderRadius: "8px", background: "#f0fdf4", border: "1px solid #bbf7d0" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2"><polyline points="20 6 9 17 4 12"/></svg>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2"><polyline points="20 6 9 17 4 12" /></svg>
                         <span style={{ fontSize: "13.5px", fontWeight: 600, color: "#166534" }}>{m.fullName}</span>
                         <span style={{ fontSize: "12px", color: "#16a34a" }}>{m.designation || ""}</span>
                       </div>
@@ -521,7 +529,7 @@ function AssignTemplateModal({ employee, token, checklists = [], logsheetTemplat
             <p style={{ fontSize: "12.5px", color: "#64748b", marginTop: "2px" }}>{empAssignedHere.length} templates currently assigned ({tab})</p>
           </div>
           <button onClick={onClose} style={{ width: "32px", height: "32px", borderRadius: "8px", background: "#f1f5f9", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b" }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
           </button>
         </div>
 
@@ -597,7 +605,7 @@ function DeptModal({ existing, token, onClose, onSaved }) {
         <div style={{ padding: "18px 22px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a" }}>{isEdit ? "Edit Department" : "Add Department"}</p>
           <button onClick={onClose} style={{ width: "30px", height: "30px", borderRadius: "7px", background: "#f1f5f9", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b" }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
           </button>
         </div>
         <div style={{ padding: "18px 22px", display: "flex", flexDirection: "column", gap: "12px" }}>
@@ -619,57 +627,57 @@ function DeptModal({ existing, token, onClose, onSaved }) {
 }
 
 /* ─── Asset Modal ─────────────────────────────────────────────── */
-function AssetModal({ existing, token, departments, onClose, onSaved }) {
+function AssetModal({ existing, token, departments, employees, onClose, onSaved }) {
   const isEdit = !!existing;
 
   const buildForm = (src) => {
     const meta = src?.metadata || {};
     return {
-      assetName:    src?.assetName    || "",
+      assetName: src?.assetName || "",
       assetUniqueId: src?.assetUniqueId || "",
-      assetType:    src?.assetType    || "soft",
+      assetType: src?.assetType || "soft",
       departmentId: src?.departmentId != null ? String(src.departmentId) : "",
-      building:     src?.building     || "",
-      floor:        src?.floor        || "",
-      room:         src?.room         || "",
-      status:       src?.status       || "Active",
-      description:  meta.description  || "",
+      building: src?.building || "",
+      floor: src?.floor || "",
+      room: src?.room || "",
+      status: src?.status || "Active",
+      description: meta.description || "",
       // Soft
-      serviceArea:         meta.serviceArea         || "",
-      frequency:           meta.frequency           || "Daily",
-      shift:               meta.shift               || "Morning",
-      supervisor:          meta.supervisor          || "",
-      staffRequired:       meta.staffRequired       || "",
+      serviceArea: meta.serviceArea || "",
+      frequency: meta.frequency || "Daily",
+      shift: meta.shift || "Morning",
+      supervisor: meta.supervisor || "",
+      staffRequired: meta.staffRequired || "",
       specialInstructions: meta.specialInstructions || "",
       // Technical
-      machineName:          meta.machineName          || "",
-      brand:                meta.brand                || "",
-      modelNumber:          meta.modelNumber          || "",
-      serialNumber:         meta.serialNumber         || "",
-      installationDate:     meta.installationDate     || "",
-      warrantyExpiry:       meta.warrantyExpiry       || "",
+      machineName: meta.machineName || "",
+      brand: meta.brand || "",
+      modelNumber: meta.modelNumber || "",
+      serialNumber: meta.serialNumber || "",
+      installationDate: meta.installationDate || "",
+      warrantyExpiry: meta.warrantyExpiry || "",
       maintenanceFrequency: meta.maintenanceFrequency || "",
-      lastServiceDate:      meta.lastServiceDate      || "",
-      nextServiceDate:      meta.nextServiceDate      || "",
-      technician:           meta.technician           || "",
+      lastServiceDate: meta.lastServiceDate || "",
+      nextServiceDate: meta.nextServiceDate || "",
+      technician: meta.technician || "",
       // Fleet
-      vehicleNumber:   meta.vehicleNumber   || "",
-      vehicleType:     meta.vehicleType     || "",
-      fuelType:        meta.fuelType        || "",
-      driver:          meta.driver          || "",
-      rcNumber:        meta.rcNumber        || "",
+      vehicleNumber: meta.vehicleNumber || "",
+      vehicleType: meta.vehicleType || "",
+      fuelType: meta.fuelType || "",
+      driver: meta.driver || "",
+      rcNumber: meta.rcNumber || "",
       insuranceExpiry: meta.insuranceExpiry || "",
-      pucExpiry:       meta.pucExpiry       || "",
-      serviceDueDate:  meta.serviceDueDate  || "",
-      purchaseDate:    meta.purchaseDate    || "",
-      vendor:          meta.vendor          || "",
+      pucExpiry: meta.pucExpiry || "",
+      serviceDueDate: meta.serviceDueDate || "",
+      purchaseDate: meta.purchaseDate || "",
+      vendor: meta.vendor || "",
       dailyKmTracking: !!meta.dailyKmTracking,
     };
   };
 
   const [form, setForm] = useState(() => buildForm(existing));
   const [saving, setSaving] = useState(false);
-  const [error, setError]   = useState(null);
+  const [error, setError] = useState(null);
 
   const ch = (k, v) => setForm(p => ({ ...p, [k]: v }));
   const handleChange = (e) => {
@@ -704,15 +712,15 @@ function AssetModal({ existing, token, departments, onClose, onSaved }) {
     setSaving(true); setError(null);
     try {
       const payload = {
-        assetName:     form.assetName.trim(),
+        assetName: form.assetName.trim(),
         assetUniqueId: form.assetUniqueId || null,
-        assetType:     form.assetType,
-        departmentId:  form.departmentId || null,
-        building:      form.building || null,
-        floor:         form.floor    || null,
-        room:          form.room     || null,
-        status:        form.status,
-        metadata:      buildMetadata(),
+        assetType: form.assetType,
+        departmentId: form.departmentId || null,
+        building: form.building || null,
+        floor: form.floor || null,
+        room: form.room || null,
+        status: form.status,
+        metadata: buildMetadata(),
       };
       const saved = isEdit
         ? await updateCompanyPortalAsset(token, existing.id, payload)
@@ -739,7 +747,7 @@ function AssetModal({ existing, token, departments, onClose, onSaved }) {
             <p style={{ fontSize: "12.5px", color: "#64748b", marginTop: "2px" }}>Fill in details based on the selected asset type.</p>
           </div>
           <button onClick={onClose} style={{ width: "30px", height: "30px", borderRadius: "7px", background: "#f1f5f9", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b" }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
           </button>
         </div>
 
@@ -768,12 +776,12 @@ function AssetModal({ existing, token, departments, onClose, onSaved }) {
 
           {/* ── Location ── */}
           {form.assetType !== "fleet" && <>
-          <FSec title="Location" />
-          <FInput label="Building" name="building" value={form.building} onChange={handleChange} placeholder="e.g. Block A" />
-          <FInput label="Floor" name="floor" value={form.floor} onChange={handleChange} placeholder="e.g. 3rd Floor" />
-          <div style={{ gridColumn: "span 2" }}>
-            <FInput label="Room / Area" name="room" value={form.room} onChange={handleChange} placeholder="e.g. Server Room" />
-          </div>
+            <FSec title="Location" />
+            <FInput label="Building" name="building" value={form.building} onChange={handleChange} placeholder="e.g. Block A" />
+            <FInput label="Floor" name="floor" value={form.floor} onChange={handleChange} placeholder="e.g. 3rd Floor" />
+            <div style={{ gridColumn: "span 2" }}>
+              <FInput label="Room / Area" name="room" value={form.room} onChange={handleChange} placeholder="e.g. Server Room" />
+            </div>
           </>}
 
           {/* ── Description ── */}
@@ -812,7 +820,10 @@ function AssetModal({ existing, token, departments, onClose, onSaved }) {
             <FInput label="Maintenance Frequency" name="maintenanceFrequency" value={form.maintenanceFrequency} onChange={handleChange} placeholder="e.g. Monthly" />
             <FInput label="Last Service Date" name="lastServiceDate" type="date" value={form.lastServiceDate} onChange={handleChange} />
             <FInput label="Next Service Date" name="nextServiceDate" type="date" value={form.nextServiceDate} onChange={handleChange} />
-            <FInput label="Technician Assigned" name="technician" value={form.technician} onChange={handleChange} />
+            <FSelect label="Technician Assigned" name="technician" value={form.technician} onChange={handleChange}>
+              <option value="">— Select Technician —</option>
+              {(employees || []).map(e => <option key={e.id} value={e.fullName}>{e.fullName}</option>)}
+            </FSelect>
           </>}
 
           {/* ── Fleet ── */}
@@ -821,7 +832,10 @@ function AssetModal({ existing, token, departments, onClose, onSaved }) {
             <FInput label="Vehicle Number" required name="vehicleNumber" value={form.vehicleNumber} onChange={handleChange} />
             <FInput label="Vehicle Type" name="vehicleType" value={form.vehicleType} onChange={handleChange} />
             <FInput label="Fuel Type" name="fuelType" value={form.fuelType} onChange={handleChange} />
-            <FInput label="Driver Assigned" name="driver" value={form.driver} onChange={handleChange} />
+            <FSelect label="Driver Assigned" name="driver" value={form.driver} onChange={handleChange}>
+              <option value="">— Select Driver —</option>
+              {(employees || []).map(e => <option key={e.id} value={e.fullName}>{e.fullName} ({e.designation || e.role || 'Employee'})</option>)}
+            </FSelect>
             <FInput label="RC Number" name="rcNumber" value={form.rcNumber} onChange={handleChange} />
             <FInput label="Insurance Expiry" name="insuranceExpiry" type="date" value={form.insuranceExpiry} onChange={handleChange} />
             <FInput label="PUC Expiry" name="pucExpiry" type="date" value={form.pucExpiry} onChange={handleChange} />
@@ -847,9 +861,9 @@ function AssetModal({ existing, token, departments, onClose, onSaved }) {
 
 /* ─── Checklist Modal ──────────────────────────────────────────── */
 const clCategories = [
-  { value: "soft",      label: "Soft Services"    },
-  { value: "technical", label: "Technical Assets"  },
-  { value: "fleet",     label: "Fleet Assets"      },
+  { value: "soft", label: "Soft Services" },
+  { value: "technical", label: "Technical Assets" },
+  { value: "fleet", label: "Fleet Assets" },
 ];
 const mkQ = () => ({ id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, text: "", answerType: "yes_no", isMandatory: false, config: null });
 
@@ -868,27 +882,27 @@ function ChecklistModal({ existing, assets = [], token, onClose, onSaved }) {
     }));
   };
 
-  const [category,       setCategory]       = useState(existing?.assetType || "soft");
-  const [assetId,        setAssetId]         = useState(existing?.assetId ? String(existing.assetId) : "");
-  const [checklistName,  setChecklistName]   = useState(existing?.templateName || "");
-  const [description,    setDescription]     = useState(existing?.description || "");
-  const [questions,      setQuestions]       = useState(() => parseExistingQ(existing?.questions));
-  const [saving,         setSaving]          = useState(false);
-  const [error,          setError]           = useState(null);
-  const [draggingId,     setDraggingId]      = useState(null);
+  const [category, setCategory] = useState(existing?.assetType || "soft");
+  const [assetId, setAssetId] = useState(existing?.assetId ? String(existing.assetId) : "");
+  const [checklistName, setChecklistName] = useState(existing?.templateName || "");
+  const [description, setDescription] = useState(existing?.description || "");
+  const [questions, setQuestions] = useState(() => parseExistingQ(existing?.questions));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const [draggingId, setDraggingId] = useState(null);
 
   const filteredAssets = useMemo(() => assets.filter((a) => a.assetType === category), [assets, category]);
 
-  const handleAddQuestion    = ()           => setQuestions((p) => [...p, mkQ()]);
-  const handleUpdateQuestion = (id, patch)  => setQuestions((p) => p.map((q) => (q.id === id ? { ...q, ...patch } : q)));
-  const handleRemoveQuestion = (id)         => setQuestions((p) => p.length === 1 ? p : p.filter((q) => q.id !== id));
+  const handleAddQuestion = () => setQuestions((p) => [...p, mkQ()]);
+  const handleUpdateQuestion = (id, patch) => setQuestions((p) => p.map((q) => (q.id === id ? { ...q, ...patch } : q)));
+  const handleRemoveQuestion = (id) => setQuestions((p) => p.length === 1 ? p : p.filter((q) => q.id !== id));
 
   const reorder = (dragId, targetId) => {
     if (!dragId || dragId === targetId) return;
     setQuestions((prev) => {
       const next = [...prev];
       const from = next.findIndex((q) => q.id === dragId);
-      const to   = next.findIndex((q) => q.id === targetId);
+      const to = next.findIndex((q) => q.id === targetId);
       if (from === -1 || to === -1) return prev;
       const [moved] = next.splice(from, 1);
       next.splice(to, 0, moved);
@@ -905,17 +919,17 @@ function ChecklistModal({ existing, assets = [], token, onClose, onSaved }) {
     try {
       const payload = {
         templateName: name,
-        assetType:    category,
+        assetType: category,
         category,
-        description:  description.trim() || undefined,
-        assetId:      assetId ? Number(assetId) : undefined,
-        questions:    validQuestions.map((q, idx) => ({
-          id:         q.id,
-          title:      q.text.trim(),
+        description: description.trim() || undefined,
+        assetId: assetId ? Number(assetId) : undefined,
+        questions: validQuestions.map((q, idx) => ({
+          id: q.id,
+          title: q.text.trim(),
           answerType: q.answerType,
           isRequired: !!q.isMandatory,
-          order:      idx,
-          config:     q.config,
+          order: idx,
+          config: q.config,
         })),
       };
       const saved = isEdit
@@ -933,7 +947,7 @@ function ChecklistModal({ existing, assets = [], token, onClose, onSaved }) {
         <div style={{ padding: "18px 22px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a" }}>{isEdit ? "Edit Checklist" : "Add Checklist"}</p>
           <button onClick={onClose} style={{ width: "30px", height: "30px", borderRadius: "7px", background: "#f1f5f9", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b" }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
           </button>
         </div>
 
@@ -983,7 +997,7 @@ function ChecklistModal({ existing, assets = [], token, onClose, onSaved }) {
                   onChange={handleUpdateQuestion}
                   onRemove={handleRemoveQuestion}
                   onDragStart={(dragId) => setDraggingId(dragId)}
-                  onDragOver={() => {}}
+                  onDragOver={() => { }}
                   onDrop={() => { reorder(draggingId, q.id); setDraggingId(null); }}
                 />
               ))}
@@ -1058,7 +1072,7 @@ function ImportModal({ token, onClose, onDone }) {
             <p style={{ fontSize: "12.5px", color: "#64748b", marginTop: "2px" }}>Upload a .csv file with employee data</p>
           </div>
           <button onClick={onClose} style={{ width: "32px", height: "32px", borderRadius: "8px", background: "#f1f5f9", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b" }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
           </button>
         </div>
         <div style={{ padding: "20px 24px" }}>
@@ -1077,11 +1091,11 @@ function ImportModal({ token, onClose, onDone }) {
 
           <div style={{ display: "flex", gap: "10px", marginBottom: "16px" }}>
             <Btn onClick={downloadCSVTemplate} outline color="#64748b" bg="#fff">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
               Download Template
             </Btn>
             <label style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 16px", borderRadius: "8px", fontSize: "13.5px", fontWeight: 600, cursor: "pointer", background: "#2563eb", color: "#fff", border: "none" }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="16 16 12 12 8 16" /><line x1="12" y1="12" x2="12" y2="21" /><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3" /></svg>
               {fileName ? "Change File" : "Upload CSV"}
               <input type="file" accept=".csv" onChange={handleFile} style={{ display: "none" }} />
             </label>
@@ -1131,6 +1145,777 @@ function ImportModal({ token, onClose, onDone }) {
   );
 }
 
+/* ─── OJT Detail View (Builder & Tracking) ───────────────────────── */
+function OjtTrainingDetailView({ training, token, onBack, onUpdated }) {
+  const [activeTab, setActiveTab] = useState("details"); // details, modules, test, tracking
+  const [data, setData] = useState(training);
+  const [loading, setLoading] = useState(false);
+
+  // Re-fetch helper
+  const refresh = async () => {
+    try {
+      setLoading(true);
+      const updated = await getOjtTraining(token, data.id);
+      setData(updated);
+      onUpdated(updated);
+    } catch (e) { console.error(e); } finally { setLoading(false); }
+  };
+
+  if (!data) return <div style={{ padding: "40px", textAlign: "center" }}>Loading...</div>;
+
+  return (
+    <Card style={{ borderTop: "4px solid #2563eb" }}>
+      <div style={{ padding: "20px 24px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#f8fafc" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+          <button onClick={onBack} style={{ width: "36px", height: "36px", borderRadius: "50%", background: "#fff", border: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#64748b", transition: "all 0.2s" }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" /></svg>
+          </button>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              <h2 style={{ fontSize: "20px", fontWeight: 800, color: "#0f172a", margin: 0 }}>{data.title}</h2>
+              <span style={{ padding: "4px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 700, background: data.status === "published" ? "#dcfce7" : "#f1f5f9", color: data.status === "published" ? "#166534" : "#475569" }}>
+                {data.status === "published" ? "Published" : "Draft"}
+              </span>
+            </div>
+            <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: "13.5px" }}>{data.description || "No description provided."}</p>
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: "10px" }}>
+          <Btn outline color="#2563eb" bg="#fff" onClick={refresh}>Refresh</Btn>
+          {data.status !== "published" && (
+            <Btn onClick={async () => {
+              if (!window.confirm("Publish this training? It will become visible to technicians.")) return;
+              try { await publishOjtTraining(token, data.id); refresh(); } catch (e) { alert("Failed to publish"); }
+            }} style={{ background: "#16a34a" }}>
+              Publish Course
+            </Btn>
+          )}
+        </div>
+      </div>
+
+      <div style={{ display: "flex", borderBottom: "1px solid #e2e8f0", background: "#fff", padding: "0 24px" }}>
+        {[
+          { id: "details", label: "Overview" },
+          { id: "modules", label: `Modules (${data.modules?.length || 0})` },
+          { id: "test", label: "Test Builder" },
+          { id: "tracking", label: "User Progress" }
+        ].map(tab => (
+          <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+            style={{ padding: "16px 20px", background: "none", border: "none", borderBottom: activeTab === tab.id ? "3px solid #2563eb" : "3px solid transparent", color: activeTab === tab.id ? "#2563eb" : "#64748b", fontSize: "14px", fontWeight: 600, cursor: "pointer", transition: "all 0.2s" }}>
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ padding: "24px", background: "#f8fafc", minHeight: "400px" }}>
+        {activeTab === "details" && (
+          <div style={{ maxWidth: "600px", background: "#fff", padding: "24px", borderRadius: "12px", border: "1px solid #e2e8f0" }}>
+            <h3 style={{ fontSize: "16px", fontWeight: 700, color: "#1e293b", marginBottom: "20px" }}>Course Settings</h3>
+            <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+              <div>
+                <label style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>Passing Percentage</label>
+                <div style={{ fontSize: "15px", fontWeight: 600, color: "#0f172a" }}>{data.passingPercentage}% Required</div>
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>Associated Asset</label>
+                <div style={{ fontSize: "15px", color: data.assetName ? "#0f172a" : "#94a3b8" }}>{data.assetName || "None - General Training"}</div>
+              </div>
+              <div style={{ marginTop: "10px", paddingTop: "16px", borderTop: "1px solid #e2e8f0", fontSize: "13px", color: "#64748b" }}>
+                Created on {new Date(data.createdAt).toLocaleString()}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === "modules" && (
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+              <h3 style={{ fontSize: "16px", fontWeight: 700, color: "#1e293b", margin: 0 }}>Course Modules</h3>
+              <Btn onClick={async () => {
+                const title = window.prompt("Enter Module Title:");
+                if (!title) return;
+                try { await createOjtModule(token, data.id, { title, orderNumber: data.modules?.length || 0 }); refresh(); }
+                catch (e) { alert("Failed to add module"); }
+              }}>+ Add Module</Btn>
+            </div>
+
+            {loading ? <p style={{ color: "#64748b" }}>Loading...</p> : data.modules?.length === 0 ? (
+              <div style={{ padding: "40px", textAlign: "center", background: "#fff", borderRadius: "12px", border: "1px dashed #cbd5e1", color: "#94a3b8" }}>
+                No modules added yet. Click "+ Add Module" to start building curriculum.
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                {data.modules.map((m, idx) => (
+                  <div key={m.id} style={{ background: "#fff", borderRadius: "10px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
+                    <div style={{ padding: "16px 20px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <h4 style={{ margin: 0, fontSize: "15px", fontWeight: 700, color: "#334155" }}>{idx + 1}. {m.title}</h4>
+                      <button onClick={async () => {
+                        if (!window.confirm("Delete this module and all its content?")) return;
+                        try { await deleteOjtModule(token, m.id); refresh(); } catch (e) { alert("Failed to delete"); }
+                      }} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>Remove</button>
+                    </div>
+                    <div style={{ padding: "16px 20px" }}>
+                      {m.contents?.length > 0 ? (
+                        <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginBottom: "16px" }}>
+                          {m.contents.map(c => (
+                            <div key={c.id} style={{ padding: "12px", background: "#f1f5f9", borderRadius: "8px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                              <div>
+                                <span style={{ display: "inline-block", padding: "2px 8px", background: "#e2e8f0", borderRadius: "12px", fontSize: "11px", fontWeight: 700, textTransform: "uppercase", color: "#475569", marginRight: "10px" }}>{c.type}</span>
+                                <span style={{ fontSize: "14px", color: "#334155" }}>{c.description || c.url || "Content block"}</span>
+                              </div>
+                              <button onClick={async () => {
+                                try { await deleteOjtContent(token, c.id); refresh(); } catch (e) { }
+                              }} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer" }}>×</button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p style={{ margin: "0 0 16px", color: "#94a3b8", fontSize: "13px" }}>No content in this module.</p>
+                      )}
+
+                      <div style={{ display: "flex", gap: "10px" }}>
+                        <Btn outline color="#2563eb" bg="#fff" onClick={async () => {
+                          const url = window.prompt("Enter Video/Document URL:");
+                          if (!url) return;
+                          const desc = window.prompt("Enter short description:");
+                          try { await addOjtModuleContent(token, m.id, { type: "url", url, description: desc }); refresh(); } catch (e) { }
+                        }}>+ Add Link / Video</Btn>
+                        <Btn outline color="#2563eb" bg="#fff" onClick={async () => {
+                          const desc = window.prompt("Enter Text Content:");
+                          if (!desc) return;
+                          try { await addOjtModuleContent(token, m.id, { type: "text", description: desc }); refresh(); } catch (e) { }
+                        }}>+ Add Text</Btn>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === "test" && (
+          <div>
+            {!data.test ? (
+              <div style={{ padding: "40px", textAlign: "center", background: "#fff", borderRadius: "12px", border: "1px dashed #cbd5e1", color: "#64748b" }}>
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" strokeWidth="1.5" style={{ marginBottom: "16px", display: "inline-block" }}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="16" y1="13" x2="8" y2="13" /><line x1="16" y1="17" x2="8" y2="17" /><polyline points="10 9 9 9 8 9" /></svg>
+                <h3 style={{ fontSize: "16px", color: "#334155", marginBottom: "8px" }}>No Test Configured</h3>
+                <p style={{ fontSize: "14px", maxWidth: "400px", margin: "0 auto", marginBottom: "20px" }}>Initialize an assessment to add verification questions for this training.</p>
+                <Btn onClick={async () => {
+                  try { await createOjtTest(token, data.id, { totalMarks: 100 }); refresh(); } catch (e) { alert("Failed"); }
+                }}>Initialize Test Assessment</Btn>
+              </div>
+            ) : (
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+                  <div>
+                    <h3 style={{ fontSize: "16px", fontWeight: 700, color: "#1e293b", margin: 0 }}>Test Questions</h3>
+                    <p style={{ color: "#64748b", fontSize: "13px", margin: "4px 0 0" }}>Total Marks: {data.test.totalMarks} — Add questions to assess knowledge.</p>
+                  </div>
+                  <Btn onClick={() => {
+                    const qType = window.prompt("Type of question? (mcq / descriptive / multiselect)", "mcq");
+                    if (!qType || !["mcq", "descriptive", "multiselect"].includes(qType.toLowerCase())) return;
+                    const text = window.prompt("Enter the question:");
+                    if (!text) return;
+                    let opts = null, ans = "";
+                    if (qType.toLowerCase() === "mcq") {
+                      opts = ["Option A", "Option B", "Option C", "Option D"];
+                      ans = "Option A";
+                    }
+                    if (qType.toLowerCase() === "multiselect") {
+                      opts = ["Option 1", "Option 2", "Option 3"];
+                      ans = "Option 1,Option 2";
+                    }
+                    try {
+                      addOjtQuestion(token, data.test.id, { question: text, options: opts, correctAnswer: ans, marks: 10 }).then(refresh);
+                    } catch (e) { alert("Failed"); }
+                  }}>+ Add Question</Btn>
+                </div>
+
+                {data.test.questions?.length > 0 ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                    {data.test.questions.map((q, i) => (
+                      <div key={q.id} style={{ background: "#fff", borderRadius: "10px", padding: "20px", border: "1px solid #e2e8f0" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "12px" }}>
+                          <h4 style={{ margin: 0, fontSize: "15px", color: "#0f172a", fontWeight: 600 }}>{i + 1}. {q.question}</h4>
+                          <span style={{ fontSize: "12px", fontWeight: 700, color: "#2563eb", background: "#eff6ff", padding: "3px 8px", borderRadius: "12px" }}>{q.marks} Marks</span>
+                        </div>
+
+                        {q.options && Array.isArray(q.options) && q.options.length > 0 && (
+                          <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "12px" }}>
+                            {q.options.map((opt, oIdx) => (
+                              <div key={oIdx} style={{ padding: "8px 12px", borderRadius: "6px", background: q.correctAnswer?.includes(opt) ? "#dcfce7" : "#f8fafc", border: q.correctAnswer?.includes(opt) ? "1px solid #86efac" : "1px solid #e2e8f0", fontSize: "13.5px", color: q.correctAnswer?.includes(opt) ? "#166534" : "#475569" }}>
+                                {opt} {q.correctAnswer?.includes(opt) && <strong style={{ marginLeft: "8px" }}>(Correct)</strong>}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {!q.options && (
+                          <p style={{ margin: "0 0 12px", fontSize: "13px", color: "#64748b", fontStyle: "italic" }}>Descriptive answer expected.</p>
+                        )}
+
+                        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                          <button onClick={async () => {
+                            if (!window.confirm("Delete this question?")) return;
+                            try { await deleteOjtQuestion(token, q.id); refresh(); } catch (e) { }
+                          }} style={{ background: "none", border: "none", color: "#ef4444", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>Delete Question</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ padding: "30px", textAlign: "center", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0", color: "#94a3b8" }}>
+                    No questions added yet.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === "tracking" && (
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+              <h3 style={{ fontSize: "16px", fontWeight: 700, color: "#1e293b", margin: 0 }}>Enrollment & Progress</h3>
+            </div>
+
+            {loading ? <p style={{ color: "#64748b" }}>Loading...</p> : !data.users || data.users.length === 0 ? (
+              <div style={{ padding: "40px", textAlign: "center", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0", color: "#94a3b8" }}>
+                No technicians are currently enrolled in this training.
+              </div>
+            ) : (
+              <div style={{ overflowX: "auto", background: "#fff", border: "1px solid #e2e8f0", borderRadius: "10px" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13.5px" }}>
+                  <thead>
+                    <tr style={{ background: "#f8fafc" }}>
+                      {["Technician", "Status", "Score", "Actions"].map((h) => (
+                        <th key={h} style={{ padding: "12px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", borderBottom: "1px solid #e2e8f0" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.users.map(u => (
+                      <tr key={u.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                        <td style={{ padding: "12px 16px", fontWeight: 600, color: "#0f172a" }}>{u.userName}</td>
+                        <td style={{ padding: "12px 16px" }}>
+                          <span style={{ padding: "4px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: u.status === "completed" ? "#dcfce7" : u.status === "in_progress" ? "#fef9c3" : "#f1f5f9", color: u.status === "completed" ? "#166534" : u.status === "in_progress" ? "#854d0e" : "#475569" }}>
+                            {u.status.replace("_", " ").toUpperCase()}
+                          </span>
+                        </td>
+                        <td style={{ padding: "12px 16px", color: u.score >= data.passingPercentage ? "#16a34a" : "#dc2626", fontWeight: 600 }}>
+                          {u.score != null ? `${u.score}%` : "—"}
+                        </td>
+                        <td style={{ padding: "12px 16px" }}>
+                          {u.status === "completed" && u.score >= data.passingPercentage && !u.certificateUrl && (
+                            <Btn outline color="#16a34a" bg="#fff" onClick={async () => {
+                              try { await grantOjtCertificate(token, u.id); refresh(); } catch (e) { alert("Failed to grant"); }
+                            }}>Grant Certificate</Btn>
+                          )}
+                          {u.certificateUrl && (
+                            <a href={u.certificateUrl} target="_blank" rel="noreferrer" style={{ fontSize: "13px", color: "#2563eb", fontWeight: 600, textDecoration: "none" }}>View Certificate</a>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+/* ─── OJT Progress Tracking Section ─────────────────────────────── */
+function TrackingSection({ token, ojtTrainings = [] }) {
+  const [selectedId, setSelectedId] = useState("");
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [passingPct, setPassingPct] = useState(0);
+  const [totalModules, setTotalModules] = useState(0);
+
+  const loadUsers = async (id) => {
+    if (!id) { setUsers([]); return; }
+    setLoading(true);
+    try {
+      const data = await getOjtTrainingUsers(token, id);
+      if (Array.isArray(data)) {
+        setUsers(data);
+        setPassingPct(0);
+        setTotalModules(0);
+      } else {
+        setUsers(data.users || []);
+        setPassingPct(data.passingPercentage ?? 0);
+        setTotalModules(data.totalModules ?? 0);
+      }
+    } catch (e) { setUsers([]); }
+    setLoading(false);
+  };
+
+  const handleSelect = (id) => { setSelectedId(id); loadUsers(id); };
+
+  const handleGrant = async (progressId) => {
+    try {
+      await grantOjtCertificate(token, progressId);
+      setUsers(p => p.map(u => u.id === progressId ? { ...u, certificateUrl: "granted" } : u));
+    } catch (e) { alert("Failed to grant certificate"); }
+  };
+
+  return (
+    <Card style={{ padding: "0" }}>
+      <div style={{ padding: "16px 20px", borderBottom: "1px solid #e2e8f0" }}>
+        <h3 style={{ fontSize: "15px", fontWeight: 700, color: "#0f172a", margin: "0 0 12px" }}>Employee Training Progress</h3>
+        <select value={selectedId} onChange={e => handleSelect(e.target.value)}
+          style={{ width: "320px", padding: "9px 12px", borderRadius: "8px", border: "1px solid #e2e8f0", fontSize: "14px", outline: "none" }}>
+          <option value="">— Select a training to view progress —</option>
+          {ojtTrainings.map(t => (
+            <option key={t.id} value={t.id}>{t.title} ({t.status})</option>
+          ))}
+        </select>
+      </div>
+      {!selectedId ? (
+        <div style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" strokeWidth="1.5" style={{ marginBottom: "12px", display: "inline-block" }}><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
+          <p style={{ margin: 0, fontSize: "14px" }}>Select a training above to see employee progress and issue certificates.</p>
+        </div>
+      ) : loading ? (
+        <div style={{ padding: "40px", textAlign: "center", color: "#64748b" }}>Loading progress…</div>
+      ) : users.length === 0 ? (
+        <div style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>No employees enrolled in this training yet.</div>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
+            <thead>
+              <tr style={{ background: "#f8fafc" }}>
+                {["Employee", "Status", "Progress", "Score", "Certificate", "Actions"].map(h => (
+                  <th key={h} style={{ padding: "11px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", borderBottom: "1px solid #e2e8f0" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {users.map(u => {
+                const completedCount = (() => {
+                  try { return Array.isArray(u.completedModules) ? u.completedModules.length : JSON.parse(u.completedModules || "[]").length; }
+                  catch { return 0; }
+                })();
+                // Effective total: use backend count; fall back to completedCount if totalModules is 0
+                const effectiveTotal = totalModules > 0 ? totalModules : completedCount;
+                const modulePct = effectiveTotal > 0 ? Math.round((completedCount / effectiveTotal) * 100) : 0;
+                const testPassed = u.score != null && u.score >= passingPct;
+                const canGrantCert = u.status === "completed" && !u.certificateUrl;
+                return (
+                  <tr key={u.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                    <td style={{ padding: "12px 16px" }}>
+                      <div style={{ fontWeight: 600, color: "#0f172a" }}>{u.userName || u.fullName || "Employee"}</div>
+                      {u.email && <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "2px" }}>{u.email}</div>}
+                    </td>
+                    <td style={{ padding: "12px 16px" }}>
+                      <span style={{ padding: "3px 10px", borderRadius: "12px", fontSize: "12px", fontWeight: 600,
+                        background: u.status === "completed" ? "#dcfce7" : u.status === "in_progress" ? "#fef9c3" : u.status === "failed" ? "#fee2e2" : "#f1f5f9",
+                        color: u.status === "completed" ? "#166534" : u.status === "in_progress" ? "#854d0e" : u.status === "failed" ? "#991b1b" : "#475569" }}>
+                        {(u.status || "not_started").replace("_", " ").toUpperCase()}
+                      </span>
+                    </td>
+                    <td style={{ padding: "12px 16px", minWidth: "140px" }}>
+                      <div style={{ fontSize: "12px", color: "#475569", marginBottom: "5px", fontWeight: 600 }}>
+                        {completedCount}/{effectiveTotal} modules
+                      </div>
+                      <div style={{ height: "6px", background: "#e2e8f0", borderRadius: "3px", overflow: "hidden" }}>
+                        <div style={{ height: "100%", width: `${modulePct}%`, background: modulePct === 100 ? "#16a34a" : "#2563eb", borderRadius: "3px", transition: "width 0.3s" }} />
+                      </div>
+                      <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "3px" }}>{modulePct}%</div>
+                    </td>
+                    <td style={{ padding: "12px 16px", fontWeight: 600, color: testPassed ? "#16a34a" : "#dc2626" }}>
+                      {u.score != null ? `${u.score}%` : "—"}
+                    </td>
+                    <td style={{ padding: "12px 16px" }}>
+                      {u.certificateUrl ? (
+                        <span style={{ padding: "3px 10px", borderRadius: "12px", fontSize: "12px", fontWeight: 600, background: "#dcfce7", color: "#166534" }}>🏆 Issued</span>
+                      ) : <span style={{ color: "#94a3b8", fontSize: "12px" }}>—</span>}
+                    </td>
+                    <td style={{ padding: "12px 16px" }}>
+                      {canGrantCert ? (
+                        <button onClick={() => handleGrant(u.id)} style={{ padding: "5px 12px", borderRadius: "6px", background: "#dcfce7", color: "#166534", border: "none", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}>
+                          Grant Certificate
+                        </button>
+                      ) : u.status !== "completed" && !u.certificateUrl ? (
+                        <span style={{ fontSize: "11px", color: "#94a3b8" }}>Awaiting test completion</span>
+                      ) : null}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/* ─── Fleet Asset Detail View ────────────────────────────────────── */
+function FleetAssetDetailView({ assetId, token, onBack }) {
+  const [activeTab, setActiveTab] = useState("overview"); // overview, inspections, fuel, maintenance, assignments
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const refresh = async () => {
+    try {
+      setLoading(true);
+      const res = await getFleetAssetDetails(token, assetId);
+      setData(res);
+    } catch (e) { console.error(e); } finally { setLoading(false); }
+  };
+
+  useEffect(() => { refresh(); }, [assetId]);
+
+  if (loading && !data) return <div style={{ padding: "40px", textAlign: "center", color: "#64748b" }}>Loading Asset Details...</div>;
+  if (!data) return <div style={{ padding: "40px", textAlign: "center", color: "#ef4444" }}>Failed to load asset.</div>;
+
+  return (
+    <Card style={{ borderTop: "4px solid #10b981", padding: 0, overflow: "hidden" }}>
+      <div style={{ padding: "20px 24px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#f8fafc" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+          <button onClick={onBack} style={{ width: "36px", height: "36px", borderRadius: "50%", background: "#fff", border: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#64748b", transition: "all 0.2s" }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" /></svg>
+          </button>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              <h2 style={{ fontSize: "20px", fontWeight: 800, color: "#0f172a", margin: 0 }}>{data.assetName}</h2>
+              <span style={{ padding: "4px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 700, background: data.status === "Active" ? "#dcfce7" : "#f1f5f9", color: data.status === "Active" ? "#166534" : "#475569" }}>
+                {data.status || "Unknown"}
+              </span>
+            </div>
+            <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: "13.5px" }}>ID: {data.assetUniqueId} | Dept: {data.departmentName || "N/A"}</p>
+          </div>
+        </div>
+        <div>
+          <Btn outline color="#10b981" bg="#fff" onClick={refresh}>Refresh Data</Btn>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", borderBottom: "1px solid #e2e8f0", background: "#fff", padding: "0 24px", overflowX: "auto" }}>
+        {[
+          { id: "overview", label: "Overview" },
+          { id: "inspections", label: `Inspections (${data.inspections?.length || 0})` },
+          { id: "fuel", label: `Fuel Logs (${data.fuelLogs?.length || 0})` },
+          { id: "maintenance", label: `Maintenance (${data.maintenance?.length || 0})` },
+          { id: "assignments", label: `Checklists & Logs (${data.assignments?.length || 0})` }
+        ].map(tab => (
+          <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+            style={{ padding: "16px 20px", background: "none", border: "none", borderBottom: activeTab === tab.id ? "3px solid #10b981" : "3px solid transparent", color: activeTab === tab.id ? "#10b981" : "#64748b", fontSize: "14px", fontWeight: 600, cursor: "pointer", transition: "all 0.2s", whiteSpace: "nowrap" }}>
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ padding: "24px", background: "#f8fafc", minHeight: "400px" }}>
+        {activeTab === "overview" && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
+            <div style={{ background: "#fff", padding: "24px", borderRadius: "12px", border: "1px solid #e2e8f0" }}>
+              <h3 style={{ fontSize: "16px", fontWeight: 700, color: "#1e293b", margin: "0 0 20px 0" }}>Asset Details</h3>
+              <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid #f1f5f9", paddingBottom: "8px" }}>
+                  <span style={{ color: "#64748b", fontSize: "13.5px" }}>Make/Model:</span>
+                  <span style={{ fontWeight: 600, color: "#0f172a", fontSize: "13.5px" }}>{data.metadata?.make || "—"} / {data.metadata?.model || "—"}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid #f1f5f9", paddingBottom: "8px" }}>
+                  <span style={{ color: "#64748b", fontSize: "13.5px" }}>License Plate:</span>
+                  <span style={{ fontWeight: 600, color: "#0f172a", fontSize: "13.5px" }}>{data.metadata?.license_plate || "—"}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid #f1f5f9", paddingBottom: "8px" }}>
+                  <span style={{ color: "#64748b", fontSize: "13.5px" }}>VIN Number:</span>
+                  <span style={{ fontWeight: 600, color: "#0f172a", fontSize: "13.5px", fontFamily: "monospace" }}>{data.metadata?.vin || "—"}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid #f1f5f9", paddingBottom: "8px" }}>
+                  <span style={{ color: "#64748b", fontSize: "13.5px" }}>Year:</span>
+                  <span style={{ fontWeight: 600, color: "#0f172a", fontSize: "13.5px" }}>{data.metadata?.year || "—"}</span>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ background: "#fff", padding: "24px", borderRadius: "12px", border: "1px solid #e2e8f0" }}>
+              <h3 style={{ fontSize: "16px", fontWeight: 700, color: "#1e293b", margin: "0 0 20px 0" }}>Cost Overview</h3>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+                <div style={{ background: "#f0fdf4", padding: "16px", borderRadius: "10px", border: "1px solid #bbf7d0" }}>
+                  <div style={{ fontSize: "12px", fontWeight: 600, color: "#166534", textTransform: "uppercase", marginBottom: "4px" }}>Total Fuel Cost</div>
+                  <div style={{ fontSize: "24px", fontWeight: 800, color: "#14532d" }}>${data.stats?.totalFuelCost?.toFixed(2) || "0.00"}</div>
+                </div>
+                <div style={{ background: "#fef2f2", padding: "16px", borderRadius: "10px", border: "1px solid #fecaca" }}>
+                  <div style={{ fontSize: "12px", fontWeight: 600, color: "#991b1b", textTransform: "uppercase", marginBottom: "4px" }}>Total Maintenance</div>
+                  <div style={{ fontSize: "24px", fontWeight: 800, color: "#7f1d1d" }}>${data.stats?.totalMaintenanceCost?.toFixed(2) || "0.00"}</div>
+                </div>
+                <div style={{ background: "#f8fafc", padding: "16px", borderRadius: "10px", border: "1px solid #e2e8f0", gridColumn: "span 2", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <div style={{ fontSize: "12px", fontWeight: 600, color: "#475569", textTransform: "uppercase", marginBottom: "4px" }}>Open Maintenance Issues</div>
+                    <div style={{ fontSize: "20px", fontWeight: 800, color: "#0f172a" }}>{data.stats?.openIssues || 0}</div>
+                  </div>
+                  {data.stats?.openIssues > 0 && (
+                    <button onClick={() => setActiveTab("maintenance")} style={{ background: "#0f172a", color: "#fff", border: "none", padding: "6px 14px", borderRadius: "6px", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}>View Issues</button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === "inspections" && (
+          <div>
+            <h3 style={{ fontSize: "16px", fontWeight: 700, color: "#1e293b", marginBottom: "16px", marginTop: 0 }}>Inspection History</h3>
+            {!data.inspections?.length ? <p style={{ color: "#64748b" }}>No inspections recorded.</p> : (
+              <div style={{ overflowX: "auto", background: "#fff", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13.5px" }}>
+                  <thead><tr style={{ background: "#f8fafc" }}>{["Date", "Status", "Inspector", "Notes"].map(h => <th key={h} style={{ padding: "12px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", borderBottom: "1px solid #e2e8f0" }}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {data.inspections.map(i => (
+                      <tr key={i.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                        <td style={{ padding: "12px 16px", color: "#0f172a", fontWeight: 500 }}>{new Date(i.inspectionDate || i.createdAt).toLocaleDateString()}</td>
+                        <td style={{ padding: "12px 16px" }}><span style={{ padding: "3px 8px", borderRadius: "12px", fontSize: "11px", fontWeight: 700, textTransform: "uppercase", background: i.status === "passed" ? "#dcfce7" : i.status === "failed" ? "#fee2e2" : "#f1f5f9", color: i.status === "passed" ? "#16a34a" : i.status === "failed" ? "#dc2626" : "#475569" }}>{i.status}</span></td>
+                        <td style={{ padding: "12px 16px", color: "#475569" }}>{i.inspectedByName || "Unknown"}</td>
+                        <td style={{ padding: "12px 16px", color: "#64748b", maxWidth: "200px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{i.notes || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === "fuel" && (
+          <div>
+            <h3 style={{ fontSize: "16px", fontWeight: 700, color: "#1e293b", marginBottom: "16px", marginTop: 0 }}>Fuel Logs</h3>
+            {!data.fuelLogs?.length ? <p style={{ color: "#64748b" }}>No fuel logs recorded.</p> : (
+              <div style={{ overflowX: "auto", background: "#fff", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13.5px" }}>
+                  <thead><tr style={{ background: "#f8fafc" }}>{["Date", "Amount", "Cost", "Odometer", "Logged By"].map(h => <th key={h} style={{ padding: "12px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", borderBottom: "1px solid #e2e8f0" }}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {data.fuelLogs.map(l => (
+                      <tr key={l.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                        <td style={{ padding: "12px 16px", color: "#0f172a", fontWeight: 500 }}>{new Date(l.logDate || l.createdAt).toLocaleDateString()}</td>
+                        <td style={{ padding: "12px 16px", color: "#475569" }}>{l.fuelAmount} {l.fuelType && `(${l.fuelType})`}</td>
+                        <td style={{ padding: "12px 16px", color: "#16a34a", fontWeight: 600 }}>${l.cost}</td>
+                        <td style={{ padding: "12px 16px", color: "#475569" }}>{l.odometer || "—"}</td>
+                        <td style={{ padding: "12px 16px", color: "#64748b" }}>{l.addedByName || "Unknown"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === "maintenance" && (
+          <div>
+            <h3 style={{ fontSize: "16px", fontWeight: 700, color: "#1e293b", marginBottom: "16px", marginTop: 0 }}>Maintenance Work Orders</h3>
+            {!data.maintenance?.length ? <p style={{ color: "#64748b" }}>No maintenance records found.</p> : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                {data.maintenance.map(m => (
+                  <div key={m.id} style={{ background: "#fff", padding: "16px", borderRadius: "10px", border: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}>
+                        <span style={{ fontWeight: 700, color: "#0f172a", fontSize: "15px" }}>{m.issueTitle}</span>
+                        <span style={{ padding: "2px 8px", borderRadius: "12px", fontSize: "11px", fontWeight: 700, textTransform: "uppercase", background: m.status === "completed" || m.status === "closed" ? "#dcfce7" : m.status === "in_progress" ? "#fef9c3" : "#f1f5f9", color: m.status === "completed" || m.status === "closed" ? "#166534" : m.status === "in_progress" ? "#854d0e" : "#475569" }}>{m.status.replace("_", " ")}</span>
+                        <span style={{ padding: "2px 8px", borderRadius: "12px", fontSize: "11px", fontWeight: 700, textTransform: "uppercase", border: "1px solid #e2e8f0", color: "#64748b" }}>Pri: {m.priority}</span>
+                      </div>
+                      <div style={{ fontSize: "13px", color: "#64748b" }}>
+                        Scheduled: {m.scheduledDate ? new Date(m.scheduledDate).toLocaleDateString() : "Not set"} | Assigned To: {m.assignedToName || "Unassigned"} | Cost: ${m.cost || "0.00"}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === "assignments" && (
+          <div>
+            <h3 style={{ fontSize: "16px", fontWeight: 700, color: "#1e293b", marginBottom: "16px", marginTop: 0 }}>Associated Checklists & Logsheets</h3>
+            <p style={{ fontSize: "13.5px", color: "#64748b", marginBottom: "20px" }}>Templates explicitly bound to this asset that have been assigned to technicians.</p>
+            {!data.assignments?.length ? <p style={{ color: "#64748b" }}>No templates currently assigned.</p> : (
+              <div style={{ overflowX: "auto", background: "#fff", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13.5px" }}>
+                  <thead><tr style={{ background: "#f8fafc" }}>{["Type", "Template Name", "Assigned To", "Assigned On"].map(h => <th key={h} style={{ padding: "12px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", borderBottom: "1px solid #e2e8f0" }}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {data.assignments.map(a => (
+                      <tr key={a.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                        <td style={{ padding: "12px 16px" }}><span style={{ padding: "2px 8px", borderRadius: "20px", fontSize: "11px", fontWeight: 700, textTransform: "uppercase", background: a.templateType === "checklist" ? "#f0fdf4" : "#eff6ff", color: a.templateType === "checklist" ? "#16a34a" : "#2563eb" }}>{a.templateType}</span></td>
+                        <td style={{ padding: "12px 16px", color: "#0f172a", fontWeight: 500 }}>{a.templateName || "Unknown"}</td>
+                        <td style={{ padding: "12px 16px", color: "#475569" }}>{a.assignedToName || "—"}</td>
+                        <td style={{ padding: "12px 16px", color: "#64748b" }}>{new Date(a.createdAt).toLocaleDateString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+/* ─── Fleet Inspection Modal ─────────────────────────────────────── */
+function FleetInspectionModal({ token, fleetAssets, onClose, onSaved }) {
+  const [form, setForm] = useState({ asset_id: "", inspection_date: new Date().toISOString().slice(0, 10), status: "pass", notes: "" });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const handleSave = async () => {
+    if (!form.asset_id) return setError("Vehicle is required");
+    setSaving(true); setError(null);
+    try {
+      const saved = await createFleetInspection(token, { ...form, assetId: form.asset_id });
+      onSaved(saved);
+    } catch (err) { setError(err.message || "Failed to save"); }
+    finally { setSaving(false); }
+  };
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+      <div style={{ background: "#fff", borderRadius: "14px", width: "100%", maxWidth: "500px" }}>
+        <div style={{ padding: "18px 22px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <p style={{ fontWeight: 700, fontSize: "16px", color: "#0f172a" }}>Record Inspection</p>
+          <button onClick={onClose} style={{ width: "28px", height: "28px", borderRadius: "7px", background: "#f1f5f9", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b" }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+          </button>
+        </div>
+        <div style={{ padding: "18px 22px", display: "flex", flexDirection: "column", gap: "14px" }}>
+          {error && <Alert>{error}</Alert>}
+          <div>
+            <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Vehicle *</label>
+            <select value={form.asset_id} onChange={(e) => setForm({ ...form, asset_id: e.target.value })} className="form-select" style={{ width: "100%" }}>
+              <option value="">Select vehicle...</option>
+              {fleetAssets.map((a) => <option key={a.id} value={a.id}>{a.assetName || a.vehicle_number}</option>)}
+            </select>
+          </div>
+          <FInput label="Inspection Date" type="date" value={form.inspection_date} onChange={(e) => setForm({ ...form, inspection_date: e.target.value })} />
+          <div>
+            <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Status</label>
+            <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className="form-select" style={{ width: "100%" }}>
+              <option value="pass">Pass</option>
+              <option value="fail">Fail</option>
+              <option value="needs_attention">Needs Attention</option>
+            </select>
+          </div>
+          <FInput label="Notes" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+        </div>
+        <div style={{ padding: "16px 22px", borderTop: "1px solid #e2e8f0", display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+          <Btn onClick={onClose} outline color="#64748b" bg="#fff">Cancel</Btn>
+          <Btn onClick={handleSave} disabled={saving}>{saving ? "Saving…" : "Save"}</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Fleet Fuel Modal ───────────────────────────────────────────── */
+function FleetFuelModal({ token, fleetAssets, onClose, onSaved }) {
+  const [form, setForm] = useState({ asset_id: "", log_date: new Date().toISOString().slice(0, 10), litres: "", total_cost: "", odometer_reading: "" });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const handleSave = async () => {
+    if (!form.asset_id || !form.litres) return setError("Vehicle and Litres are required");
+    setSaving(true); setError(null);
+    try {
+      const saved = await createFleetFuelLog(token, { ...form, assetId: form.asset_id });
+      onSaved(saved);
+    } catch (err) { setError(err.message || "Failed to save"); }
+    finally { setSaving(false); }
+  };
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+      <div style={{ background: "#fff", borderRadius: "14px", width: "100%", maxWidth: "500px" }}>
+        <div style={{ padding: "18px 22px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <p style={{ fontWeight: 700, fontSize: "16px", color: "#0f172a" }}>Add Fuel Log</p>
+          <button onClick={onClose} style={{ width: "28px", height: "28px", borderRadius: "7px", background: "#f1f5f9", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b" }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+          </button>
+        </div>
+        <div style={{ padding: "18px 22px", display: "flex", flexDirection: "column", gap: "14px" }}>
+          {error && <Alert>{error}</Alert>}
+          <div>
+            <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Vehicle *</label>
+            <select value={form.asset_id} onChange={(e) => setForm({ ...form, asset_id: e.target.value })} className="form-select" style={{ width: "100%" }}>
+              <option value="">Select vehicle...</option>
+              {fleetAssets.map((a) => <option key={a.id} value={a.id}>{a.assetName || a.vehicle_number}</option>)}
+            </select>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+            <FInput label="Date" type="date" value={form.log_date} onChange={(e) => setForm({ ...form, log_date: e.target.value })} />
+            <FInput label="Odometer" type="number" value={form.odometer_reading} onChange={(e) => setForm({ ...form, odometer_reading: e.target.value })} />
+            <FInput label="Litres *" type="number" step="0.01" value={form.litres} onChange={(e) => setForm({ ...form, litres: e.target.value })} />
+            <FInput label="Total Cost ($)" type="number" step="0.01" value={form.total_cost} onChange={(e) => setForm({ ...form, total_cost: e.target.value })} />
+          </div>
+        </div>
+        <div style={{ padding: "16px 22px", borderTop: "1px solid #e2e8f0", display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+          <Btn onClick={onClose} outline color="#64748b" bg="#fff">Cancel</Btn>
+          <Btn onClick={handleSave} disabled={saving}>{saving ? "Saving…" : "Save"}</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Fleet Maintenance Modal ────────────────────────────────────── */
+function FleetMaintModal({ token, fleetAssets, onClose, onSaved }) {
+  const [form, setForm] = useState({ asset_id: "", scheduled_date: new Date().toISOString().slice(0, 10), service_type: "Routine Check", description: "", cost: "", status: "in_progress" });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const handleSave = async () => {
+    if (!form.asset_id || !form.service_type) return setError("Vehicle and Service Type are required");
+    setSaving(true); setError(null);
+    try {
+      const saved = await createFleetMaintenance(token, { ...form, assetId: form.asset_id });
+      onSaved(saved);
+    } catch (err) { setError(err.message || "Failed to save"); }
+    finally { setSaving(false); }
+  };
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+      <div style={{ background: "#fff", borderRadius: "14px", width: "100%", maxWidth: "500px" }}>
+        <div style={{ padding: "18px 22px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <p style={{ fontWeight: 700, fontSize: "16px", color: "#0f172a" }}>Schedule Maintenance</p>
+          <button onClick={onClose} style={{ width: "28px", height: "28px", borderRadius: "7px", background: "#f1f5f9", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b" }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+          </button>
+        </div>
+        <div style={{ padding: "18px 22px", display: "flex", flexDirection: "column", gap: "14px" }}>
+          {error && <Alert>{error}</Alert>}
+          <div>
+            <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Vehicle *</label>
+            <select value={form.asset_id} onChange={(e) => setForm({ ...form, asset_id: e.target.value })} className="form-select" style={{ width: "100%" }}>
+              <option value="">Select vehicle...</option>
+              {fleetAssets.map((a) => <option key={a.id} value={a.id}>{a.assetName || a.vehicle_number}</option>)}
+            </select>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+            <FInput label="Scheduled Date" type="date" value={form.scheduled_date} onChange={(e) => setForm({ ...form, scheduled_date: e.target.value })} />
+            <FInput label="Service Type *" value={form.service_type} onChange={(e) => setForm({ ...form, service_type: e.target.value })} />
+            <FInput label="Est. Cost ($)" type="number" step="0.01" value={form.cost} onChange={(e) => setForm({ ...form, cost: e.target.value })} />
+            <div>
+              <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Status</label>
+              <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className="form-select" style={{ width: "100%" }}>
+                <option value="in_progress">In Progress</option>
+                <option value="completed">Completed</option>
+                <option value="cancelled">Cancelled</option>
+              </select>
+            </div>
+          </div>
+          <FInput label="Description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+        </div>
+        <div style={{ padding: "16px 22px", borderTop: "1px solid #e2e8f0", display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+          <Btn onClick={onClose} outline color="#64748b" bg="#fff">Cancel</Btn>
+          <Btn onClick={handleSave} disabled={saving}>{saving ? "Saving…" : "Save"}</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ─── Main Portal ────────────────────────────────────────────────── */
 export default function CompanyEmployeePortal() {
   const navigate = useNavigate();
@@ -1153,17 +1938,6 @@ export default function CompanyEmployeePortal() {
   const [dashboardRecentTab, setDashboardRecentTab] = useState("logsheets");
   const [logsheetShowAll, setLogsheetShowAll] = useState(false);
   const [checklistShowAll, setChecklistShowAll] = useState(false);
-  // Dashboard quick-view: latest alerts + work orders (admin only)
-  const [dashboardAlerts, setDashboardAlerts]           = useState([]);
-  const [dashboardAlertsLoading, setDashboardAlertsLoading] = useState(false);
-  const [dashboardWorkOrders, setDashboardWorkOrders]   = useState([]);
-  const [dashboardWOLoading, setDashboardWOLoading]     = useState(false);
-  const [dashboardWOUsers, setDashboardWOUsers]         = useState([]);
-  const [dashWOAssign, setDashWOAssign]                 = useState(null);
-  const [dashWOAssignUser, setDashWOAssignUser]         = useState("");
-  const [dashWOAssignNote, setDashWOAssignNote]         = useState("");
-  const [dashWOAssignSaving, setDashWOAssignSaving]     = useState(false);
-  const [dashWOAssignErr, setDashWOAssignErr]           = useState(null);
   const [departments, setDepartments] = useState([]);
   const [assets, setAssets] = useState([]);
   const [checklists, setChecklists] = useState([]);
@@ -1171,7 +1945,6 @@ export default function CompanyEmployeePortal() {
   const [supervisors, setSupervisors] = useState([]);
   const [assignments, setAssignments] = useState([]);
   const [myAssignments, setMyAssignments] = useState([]);
-  const [directFillLogsheet, setDirectFillLogsheet] = useState(null);
   const [logsheetTemplatesList, setLogsheetTemplatesList] = useState([]);
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [assignTarget, setAssignTarget] = useState(null);
@@ -1196,6 +1969,40 @@ export default function CompanyEmployeePortal() {
   const [editChecklist, setEditChecklist] = useState(null);
   const [checklistSubNav, setChecklistSubNav] = useState("templates");
   const [logsheetSubNav, setLogsheetSubNav] = useState("templates");
+  // OJT State
+  const [ojtTrainings, setOjtTrainings] = useState([]);
+  const [ojtSubNav, setOjtSubNav] = useState("trainings"); // trainings|tracking
+  const [showOjtModal, setShowOjtModal] = useState(false);
+  const [editOjt, setEditOjt] = useState(null);
+  const [viewingOjtTraining, setViewingOjtTraining] = useState(null); // Full detail object
+  const [showOjtBuilder, setShowOjtBuilder] = useState(false); // Show full training builder page
+  const [buildingOjtTrainingId, setBuildingOjtTrainingId] = useState(null); // null for new, or ID for editing
+  const [ojtPreviewTraining, setOjtPreviewTraining] = useState(null); // training object for preview modal
+  const [ojtQrTraining, setOjtQrTraining] = useState(null); // training object for QR modal
+  const [ojtQrDataUrl, setOjtQrDataUrl] = useState(""); // QR code data URL
+  const [assetQrModal, setAssetQrModal] = useState(null);
+  const [assetQrDataUrl, setAssetQrDataUrl] = useState("");
+  // Fleet State
+  const [fleetAssets, setFleetAssets] = useState([]);
+  const [fleetInspections, setFleetInspections] = useState([]);
+  const [fleetFuelLogs, setFleetFuelLogs] = useState([]);
+  const [fleetMaintenance, setFleetMaintenance] = useState([]);
+  const [fleetSubNav, setFleetSubNav] = useState("assets"); // assets|checklists|logsheets|history
+  const [fleetDetailTab, setFleetDetailTab] = useState("fuel"); // fuel|checklists|assign
+  const [fleetHistory, setFleetHistory] = useState([]);
+  const [fleetSubmissionDetail, setFleetSubmissionDetail] = useState(null); // { ...submission, answers: [] }
+  const [fleetSubmissionDetailLoading, setFleetSubmissionDetailLoading] = useState(false);
+  const [assignFleetLogsheet, setAssignFleetLogsheet] = useState(null); // logsheet template to assign
+  const [assignFleetChecklist, setAssignFleetChecklist] = useState(null); // checklist template to assign
+  const [showFleetAssetModal, setShowFleetAssetModal] = useState(false);
+  const [editFleetAsset, setEditFleetAsset] = useState(null);
+  const [viewingFleetAsset, setViewingFleetAsset] = useState(null); // Full fleet asset detail
+  const [showFleetInspectionModal, setShowFleetInspectionModal] = useState(false);
+  const [editFleetInspection, setEditFleetInspection] = useState(null);
+  const [showFleetFuelModal, setShowFleetFuelModal] = useState(false);
+  const [editFleetFuel, setEditFleetFuel] = useState(null);
+  const [showFleetMaintModal, setShowFleetMaintModal] = useState(false);
+  const [editFleetMaint, setEditFleetMaint] = useState(null);
 
   useEffect(() => {
     if (!token || !currentUser) {
@@ -1223,46 +2030,29 @@ export default function CompanyEmployeePortal() {
     setRecentEntriesLoading(true);
     getCompanyPortalRecentLogsheetEntries(token)
       .then((d) => d && setRecentEntries(d))
-      .catch(() => {})
+      .catch(() => { })
       .finally(() => setRecentEntriesLoading(false));
     setRecentChecklistsLoading(true);
     getCompanyPortalRecentChecklistSubmissions(token)
       .then((d) => d && setRecentChecklists(d))
-      .catch(() => {})
+      .catch(() => { })
       .finally(() => setRecentChecklistsLoading(false));
     // Preload role-specific data on login so dashboard is immediately useful
     if (currentUser?.role === "admin") {
       // Admin: preload departments and assets so they persist across refreshes
-      getCompanyPortalDepartments(token).then((d) => d && setDepartments(d)).catch(() => {});
-      getCompanyPortalAssets(token).then((d) => d && setAssets(d)).catch(() => {});
-      getCompanyPortalEmployees(token).then((d) => d && setEmployees(d)).catch(() => {});
-      getTemplateUserAssignments(token).then((d) => d && setAssignments(d)).catch(() => {});
-      // Dashboard quick-view: latest open alerts + open work orders
-      setDashboardAlertsLoading(true);
-      getCompanyPortalAdminFlags(token, "status=open&limit=5")
-        .then((d) => d && setDashboardAlerts(d.data ?? []))
-        .catch(() => {})
-        .finally(() => setDashboardAlertsLoading(false));
-      setDashboardWOLoading(true);
-      Promise.all([
-        getCompanyPortalWorkOrders(token, "status=open&limit=5"),
-        getCompanyPortalWOUsers(token),
-      ])
-        .then(([woRes, usersRes]) => {
-          setDashboardWorkOrders(woRes?.data ?? []);
-          setDashboardWOUsers(usersRes ?? []);
-        })
-        .catch(() => {})
-        .finally(() => setDashboardWOLoading(false));
+      getCompanyPortalDepartments(token).then((d) => d && setDepartments(d)).catch(() => { });
+      getCompanyPortalAssets(token).then((d) => d && setAssets(d)).catch(() => { });
+      getCompanyPortalEmployees(token).then((d) => d && setEmployees(d)).catch(() => { });
+      getTemplateUserAssignments(token).then((d) => d && setAssignments(d)).catch(() => { });
     } else if (currentUser?.role === "supervisor") {
-      getMyTemplateAssignments(token).then((d) => d && setMyAssignments(d)).catch(() => {});
-      getTemplateUserAssignments(token).then((d) => d && setAssignments(d)).catch(() => {});
-      getCompanyPortalEmployees(token).then((d) => d && setEmployees(d)).catch(() => {});
-      getCompanyPortalDepartments(token).then((d) => d && setDepartments(d)).catch(() => {});
-      getCompanyPortalAssets(token).then((d) => d && setAssets(d)).catch(() => {});
+      getMyTemplateAssignments(token).then((d) => d && setMyAssignments(d)).catch(() => { });
+      getTemplateUserAssignments(token).then((d) => d && setAssignments(d)).catch(() => { });
+      getCompanyPortalEmployees(token).then((d) => d && setEmployees(d)).catch(() => { });
+      getCompanyPortalDepartments(token).then((d) => d && setDepartments(d)).catch(() => { });
+      getCompanyPortalAssets(token).then((d) => d && setAssets(d)).catch(() => { });
     } else {
       // Employee: preload assigned tasks for dashboard stat card
-      getMyTemplateAssignments(token).then((d) => d && setMyAssignments(d)).catch(() => {});
+      getMyTemplateAssignments(token).then((d) => d && setMyAssignments(d)).catch(() => { });
     }
   }, [token, load]);
 
@@ -1286,32 +2076,13 @@ export default function CompanyEmployeePortal() {
     setRecentEntriesLoading(true);
     getCompanyPortalRecentLogsheetEntries(token)
       .then((d) => d && setRecentEntries(d))
-      .catch(() => {})
+      .catch(() => { })
       .finally(() => setRecentEntriesLoading(false));
     setRecentChecklistsLoading(true);
     getCompanyPortalRecentChecklistSubmissions(token)
       .then((d) => d && setRecentChecklists(d))
-      .catch(() => {})
+      .catch(() => { })
       .finally(() => setRecentChecklistsLoading(false));
-    // Refresh dashboard quick-view (admin only)
-    if (currentUser?.role === "admin") {
-      setDashboardAlertsLoading(true);
-      getCompanyPortalAdminFlags(token, "status=open&limit=5")
-        .then((d) => d && setDashboardAlerts(d.data ?? []))
-        .catch(() => {})
-        .finally(() => setDashboardAlertsLoading(false));
-      setDashboardWOLoading(true);
-      Promise.all([
-        getCompanyPortalWorkOrders(token, "status=open&limit=5"),
-        getCompanyPortalWOUsers(token),
-      ])
-        .then(([woRes, usersRes]) => {
-          setDashboardWorkOrders(woRes?.data ?? []);
-          setDashboardWOUsers(usersRes ?? []);
-        })
-        .catch(() => {})
-        .finally(() => setDashboardWOLoading(false));
-    }
   }, [nav, token]);
 
   useEffect(() => {
@@ -1319,30 +2090,54 @@ export default function CompanyEmployeePortal() {
     if (nav === "departments") load("departments", () => getCompanyPortalDepartments(token)).then((d) => d && setDepartments(d));
     if (nav === "assets") {
       load("assets", () => getCompanyPortalAssets(token)).then((d) => d && setAssets(d));
-      if (!departments.length) getCompanyPortalDepartments(token).then((d) => d && setDepartments(d)).catch(() => {});
+      if (!departments.length) getCompanyPortalDepartments(token).then((d) => d && setDepartments(d)).catch(() => { });
     }
     if (nav === "checklists") {
       load("checklists", () => getCompanyPortalChecklists(token)).then((d) => d && setChecklists(d));
-      if (!assets.length) getCompanyPortalAssets(token).then((d) => d && setAssets(d)).catch(() => {});
+      if (!assets.length) getCompanyPortalAssets(token).then((d) => d && setAssets(d)).catch(() => { });
     }
     if (nav === "employees") {
       load("employees", () => getCompanyPortalEmployees(token)).then((d) => d && setEmployees(d));
       if (currentUser?.role === "admin" || currentUser?.role === "supervisor") {
-        getCompanyPortalSupervisors(token).then((d) => d && setSupervisors(d)).catch(() => {});
-        getTemplateUserAssignments(token).then((d) => d && setAssignments(d)).catch(() => {});
-        if (!checklists.length) getCompanyPortalChecklists(token).then((d) => d && setChecklists(d)).catch(() => {});
-        getCompanyPortalLogsheetTemplates(token).then((d) => d && setLogsheetTemplatesList(d)).catch(() => {});
+        getCompanyPortalSupervisors(token).then((d) => d && setSupervisors(d)).catch(() => { });
+        getTemplateUserAssignments(token).then((d) => d && setAssignments(d)).catch(() => { });
+        if (!checklists.length) getCompanyPortalChecklists(token).then((d) => d && setChecklists(d)).catch(() => { });
+        getCompanyPortalLogsheetTemplates(token).then((d) => d && setLogsheetTemplatesList(d)).catch(() => { });
       }
     }
     if (nav === "mytasks") {
       load("mytasks", () => getMyTemplateAssignments(token)).then((d) => d && setMyAssignments(d));
       // Supervisors also see what they've assigned to their team
       if (currentUser?.role === "supervisor") {
-        getTemplateUserAssignments(token).then((d) => d && setAssignments(d)).catch(() => {});
+        getTemplateUserAssignments(token).then((d) => d && setAssignments(d)).catch(() => { });
       }
     }
+    if (nav === "ojt") {
+      load("ojt", () => getOjtTrainings(token)).then((d) => d && setOjtTrainings(d));
+      if (currentUser?.role === "admin") {
+        getCompanyPortalEmployees(token).then((d) => d && setEmployees(d)).catch(() => { });
+      }
+    }
+    if (nav === "fleet") {
+      // Load all assets to filter for fleet type
+      if (!assets.length) load("assets_for_fleet", () => getCompanyPortalAssets(token)).then((d) => d && setAssets(d));
+      // Load employees for the assign modal
+      if (!employees.length) getCompanyPortalEmployees(token).then((d) => d && setEmployees(d)).catch(() => {});
+      if (fleetSubNav === "checklists") {
+        load("checklists", () => getCompanyPortalChecklists(token)).then((d) => d && setChecklists(d));
+      }
+      if (fleetSubNav === "logsheets") {
+        getCompanyPortalLogsheetTemplates(token).then((d) => d && setLogsheetTemplatesList(d)).catch(() => {});
+      }
+      if (fleetSubNav === "history") {
+        load("fleet_history", () => getFleetSubmissions(token)).then((d) => d && setFleetHistory(d));
+      }
+      if (fleetSubNav === "inspections") load("fleet_inspections", () => getFleetInspections(token)).then((d) => d && setFleetInspections(d));
+      if (fleetSubNav === "fuel") load("fleet_fuel", () => getFleetFuelLogs(token)).then((d) => d && setFleetFuelLogs(d));
+      if (fleetSubNav === "maintenance") load("fleet_maintenance", () => getFleetMaintenance(token)).then((d) => d && setFleetMaintenance(d));
+    }
     if (nav === "logsheets" && !assets.length) load("assets", () => getCompanyPortalAssets(token)).then((d) => d && setAssets(d));
-  }, [nav, token, load, assets.length]);
+  }, [nav, fleetSubNav, token, load, assets.length]);
 
   const handleLogout = () => {
     sessionStorage.removeItem("cp_token");
@@ -1402,15 +2197,22 @@ export default function CompanyEmployeePortal() {
     catch (err) { alert(err.message || "Delete failed"); }
   };
 
-  const handleDownloadAssetQR = async (assetId, assetName) => {
+  const getQrBaseUrl = () => {
     try {
-      const url = `${window.location.origin}/asset-scan/${assetId}`;
-      const canvas = document.createElement("canvas");
-      await QRCode.toCanvas(canvas, url, { width: 400, margin: 2, color: { dark: "#0f172a", light: "#ffffff" } });
-      const link = document.createElement("a");
-      link.download = `QR-${assetName.replace(/[^a-zA-Z0-9]/g, "_")}-${assetId}.png`;
-      link.href = canvas.toDataURL("image/png");
-      link.click();
+      const u = new URL(import.meta.env.VITE_API_URL || "");
+      if (u.hostname !== "localhost" && u.hostname !== "127.0.0.1") {
+        return `${u.protocol}//${u.hostname}:5173`;
+      }
+    } catch {}
+    return window.location.origin;
+  };
+
+  const handleShowAssetQR = async (assetId, assetName) => {
+    try {
+      const url = `${getQrBaseUrl()}/asset-scan/${assetId}`;
+      const dataUrl = await QRCode.toDataURL(url, { width: 300, margin: 2 });
+      setAssetQrDataUrl(dataUrl);
+      setAssetQrModal({ assetId, assetName, url });
     } catch (err) {
       alert("QR generation failed: " + err.message);
     }
@@ -1510,7 +2312,7 @@ export default function CompanyEmployeePortal() {
           </div>
           <button onClick={handleLogout}
             style={{ width: "100%", padding: "8px", borderRadius: "7px", background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca", cursor: "pointer", fontSize: "13px", fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></svg>
             Sign Out
           </button>
         </div>
@@ -1522,23 +2324,25 @@ export default function CompanyEmployeePortal() {
         {/* ── Dashboard ──────────────────────────────────────────── */}
         {nav === "dashboard" && (() => {
           const FREQ_LABELS = { daily: "Daily", weekly: "Weekly", monthly: "Monthly", quarterly: "Quarterly", half_yearly: "Half-Yearly", yearly: "Yearly" };
-          const FREQ_COLORS = { daily: ["#dcfce7","#16a34a"], weekly: ["#dbeafe","#1d4ed8"], monthly: ["#fef9c3","#ca8a04"], quarterly: ["#ede9fe","#7c3aed"], half_yearly: ["#fce7f3","#be185d"], yearly: ["#ffedd5","#c2410c"] };
-          const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+          const FREQ_COLORS = { daily: ["#dcfce7", "#16a34a"], weekly: ["#dbeafe", "#1d4ed8"], monthly: ["#fef9c3", "#ca8a04"], quarterly: ["#ede9fe", "#7c3aed"], half_yearly: ["#fce7f3", "#be185d"], yearly: ["#ffedd5", "#c2410c"] };
+          const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
           const visibleLogsheets = logsheetShowAll ? recentEntries : recentEntries.slice(0, 5);
           const visibleChecklists = checklistShowAll ? recentChecklists : recentChecklists.slice(0, 5);
           const recentTable = (
             <div style={{ marginTop: "28px", background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
               <div style={{ padding: "16px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /></svg>
                   <h2 style={{ fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>Recent Submissions</h2>
                 </div>
                 <div style={{ display: "flex", gap: "4px" }}>
                   {[{ key: "logsheets", label: "Logsheets" }, { key: "checklists", label: "Checklists" }].map((tab) => (
                     <button key={tab.key} onClick={() => setDashboardRecentTab(tab.key)}
-                      style={{ padding: "5px 14px", borderRadius: "8px", fontSize: "13px", fontWeight: 600, cursor: "pointer", border: "none",
+                      style={{
+                        padding: "5px 14px", borderRadius: "8px", fontSize: "13px", fontWeight: 600, cursor: "pointer", border: "none",
                         background: dashboardRecentTab === tab.key ? "#7c3aed" : "#f1f5f9",
-                        color: dashboardRecentTab === tab.key ? "#fff" : "#64748b" }}>
+                        color: dashboardRecentTab === tab.key ? "#fff" : "#64748b"
+                      }}>
                       {tab.label}
                     </button>
                   ))}
@@ -1549,7 +2353,7 @@ export default function CompanyEmployeePortal() {
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
                     <thead>
                       <tr style={{ background: "#f8fafc" }}>
-                        {["#","Template","Asset","Period","Frequency","Filled By","Submitted"].map((h) => (
+                        {["#", "Template", "Asset", "Period", "Frequency", "Filled By", "Submitted"].map((h) => (
                           <th key={h} style={{ padding: "11px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.04em", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>{h}</th>
                         ))}
                       </tr>
@@ -1564,7 +2368,7 @@ export default function CompanyEmployeePortal() {
                         </td></tr>
                       ) : visibleLogsheets.map((e, i) => {
                         const freq = e.frequency || "daily";
-                        const [fbg, ftx] = FREQ_COLORS[freq] || ["#f1f5f9","#475569"];
+                        const [fbg, ftx] = FREQ_COLORS[freq] || ["#f1f5f9", "#475569"];
                         return (
                           <tr key={e.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
                             <td style={{ padding: "12px 16px", color: "#94a3b8", fontWeight: 600 }}>{i + 1}</td>
@@ -1583,7 +2387,7 @@ export default function CompanyEmployeePortal() {
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
                     <thead>
                       <tr style={{ background: "#f8fafc" }}>
-                        {["#","Template","Asset","Status","Filled By","Submitted"].map((h) => (
+                        {["#", "Template", "Asset", "Status", "Filled By", "Submitted"].map((h) => (
                           <th key={h} style={{ padding: "11px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.04em", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>{h}</th>
                         ))}
                       </tr>
@@ -1597,8 +2401,8 @@ export default function CompanyEmployeePortal() {
                           <button onClick={() => setNav("checklists")} style={{ color: "#2563eb", background: "none", border: "none", cursor: "pointer", fontWeight: 600, fontSize: "14px" }}>View Checklists →</button>
                         </td></tr>
                       ) : visibleChecklists.map((c, i) => {
-                        const statusColors = { completed: ["#f0fdf4","#16a34a"], partial: ["#fffbeb","#ca8a04"], pending: ["#f1f5f9","#64748b"] };
-                        const [sbg, stx] = statusColors[c.status] || ["#f1f5f9","#64748b"];
+                        const statusColors = { completed: ["#f0fdf4", "#16a34a"], partial: ["#fffbeb", "#ca8a04"], pending: ["#f1f5f9", "#64748b"] };
+                        const [sbg, stx] = statusColors[c.status] || ["#f1f5f9", "#64748b"];
                         return (
                           <tr key={c.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
                             <td style={{ padding: "12px 16px", color: "#94a3b8", fontWeight: 600 }}>{i + 1}</td>
@@ -1650,19 +2454,19 @@ export default function CompanyEmployeePortal() {
                 {/* Stat cards */}
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px", marginBottom: "28px" }}>
                   <StatCard label="Assigned to Me" value={myAssignments.length} sub="From admin" subCol="#2563eb" iconBg="#eff6ff" iconCol="#2563eb"
-                    icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>} />
+                    icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg>} />
                   <StatCard label="My Team Size" value={myTeam.length} sub="Helpers under you" subCol="#7c3aed" iconBg="#f3e8ff" iconCol="#7c3aed"
-                    icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>} />
+                    icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg>} />
                   <StatCard label="Forwarded" value={forwardedByMe.length} sub="Tasks given to team" subCol="#16a34a" iconBg="#f0fdf4" iconCol="#16a34a"
-                    icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 10 20 15 15 20"/><path d="M4 4v7a4 4 0 0 0 4 4h12"/></svg>} />
+                    icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 10 20 15 15 20" /><path d="M4 4v7a4 4 0 0 0 4 4h12" /></svg>} />
                   <StatCard label="Recent Activity" value={recentEntries.length} sub="Filled logsheets" subCol="#ca8a04" iconBg="#fef9c3" iconCol="#ca8a04"
-                    icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>} />
+                    icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /></svg>} />
                 </div>
 
                 {/* Assigned to Me by Admin */}
                 <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden", marginBottom: "20px" }}>
                   <div style={{ padding: "16px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", gap: "8px" }}>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2563eb" strokeWidth="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2563eb" strokeWidth="2"><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg>
                     <h2 style={{ fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>Assigned to Me by Admin</h2>
                     <span style={{ marginLeft: "auto", fontSize: "12px", color: "#64748b" }}>{myAssignments.length} task{myAssignments.length !== 1 ? "s" : ""}</span>
                   </div>
@@ -1702,7 +2506,7 @@ export default function CompanyEmployeePortal() {
                 <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden", marginBottom: "20px" }}>
                   <div style={{ padding: "16px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /></svg>
                       <h2 style={{ fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>My Team</h2>
                     </div>
                     <button onClick={() => setNav("employees")} style={{ fontSize: "13px", color: "#2563eb", background: "none", border: "none", cursor: "pointer", fontWeight: 600 }}>Manage Team →</button>
@@ -1750,11 +2554,11 @@ export default function CompanyEmployeePortal() {
                 {/* Stat cards */}
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px", marginBottom: "28px" }}>
                   <StatCard label="My Tasks" value={myTaskCount} sub="Assigned to you" subCol="#2563eb" iconBg="#eff6ff" iconCol="#2563eb"
-                    icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>} />
+                    icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg>} />
                   <StatCard label="Filled Logsheets" value={recentEntries.length} sub="Recent submissions" subCol="#16a34a" iconBg="#f0fdf4" iconCol="#16a34a"
-                    icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>} />
+                    icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /></svg>} />
                   <StatCard label="Checklists" value={checklists.length} sub="Available templates" subCol="#7c3aed" iconBg="#f3e8ff" iconCol="#7c3aed"
-                    icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>} />
+                    icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" /><line x1="8" y1="18" x2="21" y2="18" /><line x1="3" y1="6" x2="3.01" y2="6" /><line x1="3" y1="12" x2="3.01" y2="12" /><line x1="3" y1="18" x2="3.01" y2="18" /></svg>} />
                 </div>
 
                 {/* Quick nav */}
@@ -1823,15 +2627,15 @@ export default function CompanyEmployeePortal() {
             const PERIOD_LABELS = { day: "Today", week: "This Week", month: "This Month", year: "This Year" };
             const cs = chartStats;
             const chartData = cs ? [
-              { label: "Filled Logsheets",   value: cs.filledLogsheets,   color: "#2563eb" },
-              { label: "Pending Logsheets",  value: cs.pendingLogsheets,  color: "#93c5fd" },
-              { label: "Filled Checklists",  value: cs.filledChecklists,  color: "#16a34a" },
+              { label: "Filled Logsheets", value: cs.filledLogsheets, color: "#2563eb" },
+              { label: "Pending Logsheets", value: cs.pendingLogsheets, color: "#93c5fd" },
+              { label: "Filled Checklists", value: cs.filledChecklists, color: "#16a34a" },
               { label: "Pending Checklists", value: cs.pendingChecklists, color: "#86efac" },
             ] : [];
             const chartSubtitle = chartError
               ? `⚠ ${chartError}`
               : cs ? `${cs.dateFrom} — ${cs.dateTo}`
-              : "Loading…";
+                : "Loading…";
 
             return (
               <div>
@@ -1850,28 +2654,26 @@ export default function CompanyEmployeePortal() {
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px", marginBottom: "24px" }}>
                     <StatCard label="Active Assets" value={dashboard.activeAssets} sub={`${dashboard.totalAssets} total`} subCol="#22c55e"
                       iconBg="#eff6ff" iconCol="#2563eb"
-                      icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 19.07a10 10 0 0 1 0-14.14"/></svg>} />
+                      icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3" /><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 19.07a10 10 0 0 1 0-14.14" /></svg>} />
                     <StatCard label="Open Work Orders" value={dashboard.openIssues}
                       sub={dashboard.openIssues > 0 ? "Needs attention" : "All clear"}
                       subCol={dashboard.openIssues > 0 ? "#dc2626" : "#22c55e"}
                       iconBg={dashboard.openIssues > 0 ? "#fef2f2" : "#f0fdf4"}
                       iconCol={dashboard.openIssues > 0 ? "#dc2626" : "#22c55e"}
-                      icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>} />
+                      icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></svg>} />
                     <StatCard label="Total Warnings" value={dashboard.flags?.open || 0}
                       sub={`${dashboard.flags?.critical || 0} critical`}
                       subCol={(dashboard.flags?.critical || 0) > 0 ? "#dc2626" : "#64748b"}
                       iconBg={(dashboard.flags?.open || 0) > 0 ? "#fff7ed" : "#f0fdf4"}
                       iconCol={(dashboard.flags?.open || 0) > 0 ? "#ea580c" : "#22c55e"}
-                      icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>} />
+                      icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg>} />
                   </div>
                 )}
 
-                {/* Submission Overview */}
-                {/* ── Main 2-col grid: Submission Overview (left) | Alerts + WO (right) ── */}
-                <style>{`@keyframes blink-dot{0%,100%{opacity:1}50%{opacity:0.12}} @keyframes pulse-dot{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.55);opacity:0.65}}`}</style>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px", marginBottom: "24px", alignItems: "start" }}>
+                {/* Analytics row: Pie chart + Breakdown */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px", marginBottom: "24px" }}>
 
-                  {/* ── Left: Submission Overview ── */}
+                  {/* Left: Pie / Donut Chart */}
                   <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px" }}>
                     {/* Title + Period Filter */}
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "10px" }}>
@@ -1882,7 +2684,7 @@ export default function CompanyEmployeePortal() {
                         </p>
                       </div>
                       <div style={{ display: "flex", gap: "5px", flexWrap: "wrap" }}>
-                        {["day","week","month","year"].map((p) => (
+                        {["day", "week", "month", "year"].map((p) => (
                           <button key={p} onClick={() => { setChartFilter(p); setChartCustomStart(""); setChartCustomEnd(""); }}
                             style={{ padding: "5px 12px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: `1px solid ${chartFilter === p && !chartCustomStart ? "#2563eb" : "#e2e8f0"}`, background: chartFilter === p && !chartCustomStart ? "#eff6ff" : "#f8fafc", color: chartFilter === p && !chartCustomStart ? "#2563eb" : "#64748b" }}>
                             {PERIOD_LABELS[p]}
@@ -1893,7 +2695,7 @@ export default function CompanyEmployeePortal() {
 
                     {/* Custom date range */}
                     <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "20px", background: "#f8fafc", borderRadius: "8px", padding: "8px 12px" }}>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>
                       <input type="date" value={chartCustomStart} onChange={(e) => setChartCustomStart(e.target.value)}
                         style={{ flex: 1, border: "1px solid #e2e8f0", borderRadius: "6px", padding: "4px 8px", fontSize: "12.5px", outline: "none", minWidth: 0 }} />
                       <span style={{ color: "#94a3b8", fontSize: "12px" }}>to</span>
@@ -1924,189 +2726,55 @@ export default function CompanyEmployeePortal() {
                     </div>
                   </div>
 
-                  {/* ── Right column: Latest Alerts + Work Orders stacked ── */}
-                  <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-
-                  {/* Latest Alerts */}
+                  {/* Right: Breakdown stats */}
                   <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-                      <div>
-                        <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", margin: 0 }}>Latest Alerts</p>
-                        <p style={{ fontSize: "12px", color: "#94a3b8", margin: 0, marginTop: "2px" }}>Open warnings &amp; flags</p>
+                    <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", marginBottom: "16px" }}>Submission Breakdown</p>
+                    {/* Logsheets */}
+                    <div style={{ marginBottom: "20px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
+                        <p style={{ fontWeight: 700, fontSize: "13.5px", color: "#1d4ed8", margin: 0 }}>Logsheets</p>
+                        <span style={{ fontSize: "12px", color: "#64748b" }}>{cs ? `${cs.filledLogsheets} / ${cs.totalLogsheets}` : "—"}</span>
                       </div>
-                      <button onClick={() => setNav("warnings")}
-                        style={{ padding: "5px 12px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "1px solid #e2e8f0", background: "#f8fafc", color: "#64748b" }}>
-                        View All →
-                      </button>
-                    </div>
-                    {dashboardAlertsLoading ? (
-                      <p style={{ color: "#94a3b8", fontSize: "13px", padding: "8px 0" }}>Loading…</p>
-                    ) : dashboardAlerts.length === 0 ? (
-                      <div style={{ padding: "24px", textAlign: "center", color: "#94a3b8", background: "#f8fafc", borderRadius: "8px", fontSize: "13px" }}>
-                        ✅ No open alerts
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                        <div style={{ background: "#eff6ff", borderRadius: "10px", padding: "14px", textAlign: "center", border: "1px solid #bfdbfe" }}>
+                          <p style={{ fontSize: "28px", fontWeight: 800, color: "#1d4ed8", margin: 0 }}>{cs?.filledLogsheets ?? "—"}</p>
+                          <p style={{ fontSize: "12px", color: "#3b82f6", margin: 0, marginTop: "4px", fontWeight: 600 }}>Filled</p>
+                        </div>
+                        <div style={{ background: (cs?.pendingLogsheets || 0) > 0 ? "#fef3c7" : "#f0fdf4", borderRadius: "10px", padding: "14px", textAlign: "center", border: `1px solid ${(cs?.pendingLogsheets || 0) > 0 ? "#fde68a" : "#bbf7d0"}` }}>
+                          <p style={{ fontSize: "28px", fontWeight: 800, color: (cs?.pendingLogsheets || 0) > 0 ? "#d97706" : "#16a34a", margin: 0 }}>{cs?.pendingLogsheets ?? "—"}</p>
+                          <p style={{ fontSize: "12px", color: (cs?.pendingLogsheets || 0) > 0 ? "#d97706" : "#16a34a", margin: 0, marginTop: "4px", fontWeight: 600 }}>Pending</p>
+                        </div>
                       </div>
-                    ) : (
-                      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                        {dashboardAlerts.map((f) => {
-                          const sevCols = { critical: { bg: "#fee2e2", color: "#991b1b" }, high: { bg: "#ffedd5", color: "#9a3412" }, medium: { bg: "#fef9c3", color: "#854d0e" }, low: { bg: "#dcfce7", color: "#166534" } };
-                          const sc = sevCols[f.severity] || { bg: "#f1f5f9", color: "#475569" };
-                          const dotCfg = ({ open: { color: "#dc2626", animation: "blink-dot 1s ease-in-out infinite" }, in_progress: { color: "#f97316", animation: "pulse-dot 1.5s ease-in-out infinite" }, resolved: { color: "#16a34a", animation: "none" }, closed: { color: "#94a3b8", animation: "none" } })[f.status || "open"] || { color: "#94a3b8", animation: "none" };
-                          return (
-                            <div key={f.id} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px", borderRadius: "8px", border: `1px solid ${f.status === "open" ? "#fecaca" : "#f1f5f9"}`, background: f.status === "open" ? "#fff8f8" : "#fafafa" }}>
-                              <span title={f.status || "open"} style={{ flexShrink: 0, width: "9px", height: "9px", borderRadius: "50%", display: "inline-block", background: dotCfg.color, animation: dotCfg.animation }} />
-                              <span style={{ flexShrink: 0, padding: "2px 8px", borderRadius: "20px", fontSize: "10.5px", fontWeight: 700, background: sc.bg, color: sc.color, textTransform: "capitalize" }}>
-                                {f.severity || "—"}
-                              </span>
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <p style={{ margin: 0, fontWeight: 600, fontSize: "12.5px", color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                                  {f.assetName || "Unknown asset"}
-                                </p>
-                                <p style={{ margin: 0, fontSize: "11.5px", color: "#64748b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                                  {f.description || "No description"}
-                                </p>
-                              </div>
-                              <span style={{ flexShrink: 0, fontSize: "10.5px", color: "#94a3b8", whiteSpace: "nowrap" }}>
-                                {f.createdAt ? new Date(f.createdAt).toLocaleDateString() : ""}
-                              </span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Work Orders */}
-                  <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-                      <div>
-                        <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", margin: 0 }}>Work Orders</p>
-                        <p style={{ fontSize: "12px", color: "#94a3b8", margin: 0, marginTop: "2px" }}>Open • Assign to team members</p>
-                      </div>
-                      <button onClick={() => setNav("workorders")}
-                        style={{ padding: "5px 12px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "1px solid #e2e8f0", background: "#f8fafc", color: "#64748b" }}>
-                        View All →
-                      </button>
-                    </div>
-                    {dashboardWOLoading ? (
-                      <p style={{ color: "#94a3b8", fontSize: "13px", padding: "8px 0" }}>Loading…</p>
-                    ) : dashboardWorkOrders.length === 0 ? (
-                      <div style={{ padding: "24px", textAlign: "center", color: "#94a3b8", background: "#f8fafc", borderRadius: "8px", fontSize: "13px" }}>
-                        ✅ No open work orders
-                      </div>
-                    ) : (
-                      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                        {dashboardWorkOrders.map((wo) => {
-                          const priCols = { critical: { bg: "#fee2e2", color: "#991b1b" }, high: { bg: "#ffedd5", color: "#9a3412" }, medium: { bg: "#fef9c3", color: "#854d0e" }, low: { bg: "#dcfce7", color: "#166534" } };
-                          const pc = priCols[wo.priority] || { bg: "#f1f5f9", color: "#475569" };
-                          const assignedUser = dashboardWOUsers.find((u) => Number(u.id) === Number(wo.assignedTo));
-                          return (
-                            <div key={wo.id} style={{ display: "flex", alignItems: "flex-start", gap: "10px", padding: "10px 12px", borderRadius: "8px", border: "1px solid #f1f5f9", background: "#fafafa" }}>
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "3px" }}>
-                                  <span style={{ flexShrink: 0, padding: "2px 8px", borderRadius: "20px", fontSize: "10.5px", fontWeight: 700, background: pc.bg, color: pc.color, textTransform: "capitalize" }}>
-                                    {wo.priority || "—"}
-                                  </span>
-                                  <p style={{ margin: 0, fontWeight: 700, fontSize: "12.5px", color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                                    {wo.workOrderNumber || `WO-${wo.id}`}
-                                  </p>
-                                </div>
-                                <p style={{ margin: 0, fontSize: "11.5px", color: "#64748b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                                  {wo.assetName || "No asset"}{wo.description ? ` — ${wo.description}` : ""}
-                                </p>
-                                {assignedUser ? (
-                                  <p style={{ margin: "3px 0 0", fontSize: "10.5px", color: "#2563eb", fontWeight: 600 }}>
-                                    Assigned: {assignedUser.fullName}
-                                  </p>
-                                ) : (
-                                  <p style={{ margin: "3px 0 0", fontSize: "10.5px", color: "#f97316", fontWeight: 600 }}>Unassigned</p>
-                                )}
-                              </div>
-                              <button
-                                onClick={() => {
-                                  setDashWOAssign(wo);
-                                  setDashWOAssignUser(wo.assignedTo ? String(wo.assignedTo) : "");
-                                  setDashWOAssignNote("");
-                                  setDashWOAssignErr(null);
-                                }}
-                                style={{ flexShrink: 0, padding: "4px 10px", borderRadius: "6px", border: "1px solid #2563eb", background: "#eff6ff", color: "#2563eb", fontSize: "11.5px", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>
-                                {wo.assignedTo ? "Re-assign" : "Assign"}
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-
-                  </div>{/* end right column */}
-                </div>{/* end 2-col grid */}
-
-                {/* Assign Work Order Modal */}
-                {dashWOAssign && (
-                  <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <div style={{ background: "#fff", borderRadius: "14px", padding: "28px", width: "480px", maxWidth: "95vw", boxShadow: "0 20px 60px rgba(0,0,0,0.18)" }}>
-                      <h3 style={{ margin: 0, fontSize: "17px", fontWeight: 700, color: "#0f172a", marginBottom: "6px" }}>Assign Work Order</h3>
-                      <p style={{ margin: "0 0 18px", fontSize: "13px", color: "#64748b" }}>
-                        {dashWOAssign.workOrderNumber || `WO-${dashWOAssign.id}`} — {dashWOAssign.assetName || "No asset"}
-                      </p>
-                      {dashWOAssignErr && (
-                        <div style={{ background: "#fef2f2", color: "#dc2626", padding: "9px 12px", borderRadius: "7px", marginBottom: "14px", fontSize: "13px" }}>
-                          {dashWOAssignErr}
+                      {cs && cs.totalLogsheets > 0 && (
+                        <div style={{ marginTop: "8px", background: "#f1f5f9", borderRadius: "6px", overflow: "hidden", height: "6px" }}>
+                          <div style={{ width: `${Math.round((cs.filledLogsheets / cs.totalLogsheets) * 100)}%`, height: "100%", background: "#2563eb", borderRadius: "6px", transition: "width 0.4s" }} />
                         </div>
                       )}
-                      <div style={{ marginBottom: "14px" }}>
-                        <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>
-                          Assign To <span style={{ color: "#ef4444" }}>*</span>
-                        </label>
-                        <select value={dashWOAssignUser} onChange={(e) => setDashWOAssignUser(e.target.value)}
-                          style={{ width: "100%", padding: "9px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13.5px", background: "#fff" }}>
-                          <option value="">— Select employee —</option>
-                          {dashboardWOUsers.map((u) => (
-                            <option key={u.id} value={u.id}>
-                              {u.fullName} ({u.role}{u.designation ? ` · ${u.designation}` : ""})
-                            </option>
-                          ))}
-                        </select>
+                    </div>
+                    {/* Checklists */}
+                    <div>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
+                        <p style={{ fontWeight: 700, fontSize: "13.5px", color: "#16a34a", margin: 0 }}>Checklists</p>
+                        <span style={{ fontSize: "12px", color: "#64748b" }}>{cs ? `${cs.filledChecklists} / ${cs.totalChecklists}` : "—"}</span>
                       </div>
-                      <div style={{ marginBottom: "20px" }}>
-                        <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Note (optional)</label>
-                        <textarea value={dashWOAssignNote} onChange={(e) => setDashWOAssignNote(e.target.value)}
-                          placeholder="Instructions for assignee…" rows={3}
-                          style={{ width: "100%", boxSizing: "border-box", padding: "9px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13.5px", resize: "vertical" }} />
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                        <div style={{ background: "#f0fdf4", borderRadius: "10px", padding: "14px", textAlign: "center", border: "1px solid #bbf7d0" }}>
+                          <p style={{ fontSize: "28px", fontWeight: 800, color: "#16a34a", margin: 0 }}>{cs?.filledChecklists ?? "—"}</p>
+                          <p style={{ fontSize: "12px", color: "#16a34a", margin: 0, marginTop: "4px", fontWeight: 600 }}>Filled</p>
+                        </div>
+                        <div style={{ background: (cs?.pendingChecklists || 0) > 0 ? "#fef3c7" : "#f0fdf4", borderRadius: "10px", padding: "14px", textAlign: "center", border: `1px solid ${(cs?.pendingChecklists || 0) > 0 ? "#fde68a" : "#bbf7d0"}` }}>
+                          <p style={{ fontSize: "28px", fontWeight: 800, color: (cs?.pendingChecklists || 0) > 0 ? "#d97706" : "#16a34a", margin: 0 }}>{cs?.pendingChecklists ?? "—"}</p>
+                          <p style={{ fontSize: "12px", color: (cs?.pendingChecklists || 0) > 0 ? "#d97706" : "#16a34a", margin: 0, marginTop: "4px", fontWeight: 600 }}>Pending</p>
+                        </div>
                       </div>
-                      <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
-                        <button onClick={() => setDashWOAssign(null)}
-                          style={{ padding: "9px 20px", borderRadius: "8px", border: "1px solid #e2e8f0", background: "#f8fafc", color: "#475569", fontWeight: 600, fontSize: "13px", cursor: "pointer" }}>
-                          Cancel
-                        </button>
-                        <button
-                          disabled={dashWOAssignSaving}
-                          onClick={async () => {
-                            if (!dashWOAssignUser) { setDashWOAssignErr("Please select a user."); return; }
-                            setDashWOAssignSaving(true);
-                            setDashWOAssignErr(null);
-                            try {
-                              await assignCompanyPortalWorkOrder(token, dashWOAssign.id, {
-                                assignedTo: Number(dashWOAssignUser),
-                                assignedNote: dashWOAssignNote || undefined,
-                              });
-                              setDashboardWorkOrders((prev) =>
-                                prev.map((w) => w.id === dashWOAssign.id ? { ...w, assignedTo: Number(dashWOAssignUser) } : w)
-                              );
-                              setDashWOAssign(null);
-                            } catch (e) {
-                              setDashWOAssignErr(e.message || "Assignment failed");
-                            } finally {
-                              setDashWOAssignSaving(false);
-                            }
-                          }}
-                          style={{ padding: "9px 20px", borderRadius: "8px", border: "none", background: "#2563eb", color: "#fff", fontWeight: 600, fontSize: "13px", cursor: dashWOAssignSaving ? "not-allowed" : "pointer", opacity: dashWOAssignSaving ? 0.7 : 1 }}>
-                          {dashWOAssignSaving ? "Saving…" : "Assign"}
-                        </button>
-                      </div>
+                      {cs && cs.totalChecklists > 0 && (
+                        <div style={{ marginTop: "8px", background: "#f1f5f9", borderRadius: "6px", overflow: "hidden", height: "6px" }}>
+                          <div style={{ width: `${Math.round((cs.filledChecklists / cs.totalChecklists) * 100)}%`, height: "100%", background: "#16a34a", borderRadius: "6px", transition: "width 0.4s" }} />
+                        </div>
+                      )}
                     </div>
                   </div>
-                )}
+                </div>
 
                 {recentTable}
               </div>
@@ -2118,66 +2786,66 @@ export default function CompanyEmployeePortal() {
         {nav === "departments" && (() => {
           const isAdmin = currentUser.role === "admin";
           return (
-          <div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "22px" }}>
-              <div>
-                <h1 style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px", marginBottom: "4px" }}>Departments</h1>
-                <p style={{ color: "#64748b", fontSize: "13.5px" }}>Operational departments within {currentUser.companyName}</p>
-              </div>
-              {isAdmin && (
-                <Btn onClick={() => { setEditDept(null); setShowDeptModal(true); }}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                  Add Department
-                </Btn>
-              )}
-            </div>
-            {errors.departments && <Alert>{errors.departments}</Alert>}
-            <Card>
-              <CardHeader title="All Departments" subtitle={`${filteredDepts.length} departments`} action={
-                <input value={deptSearch} onChange={(e) => setDeptSearch(e.target.value)} placeholder="Search…"
-                  style={{ padding: "7px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13px", outline: "none", width: "180px" }} />
-              } />
-              {loading.departments
-                ? <p style={{ padding: "24px", color: "#94a3b8", textAlign: "center" }}>Loading…</p>
-                : (
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
-                    <thead>
-                      <tr>
-                        {["#", "Department Name", "Description", "Created", ...(isAdmin ? ["Actions"] : [])].map((h) => (
-                          <th key={h} style={{ padding: "12px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredDepts.length === 0
-                        ? <tr><td colSpan={isAdmin ? 5 : 4} style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>No departments found</td></tr>
-                        : filteredDepts.map((d, i) => (
-                          <tr key={d.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                            <td style={{ padding: "14px 16px", color: "#64748b", fontWeight: 600 }}>{i + 1}</td>
-                            <td style={{ padding: "14px 16px", fontWeight: 600, color: "#0f172a" }}>{d.departmentName}</td>
-                            <td style={{ padding: "14px 16px", color: "#64748b", fontSize: "13px" }}>{d.description || "—"}</td>
-                            <td style={{ padding: "14px 16px", color: "#94a3b8", fontSize: "12px" }}>{d.createdAt ? new Date(d.createdAt).toLocaleDateString() : "—"}</td>
-                            {isAdmin && (
-                              <td style={{ padding: "12px 16px" }}>
-                                <div style={{ display: "flex", gap: "6px" }}>
-                                  <button title="Edit" onClick={() => { setEditDept(d); setShowDeptModal(true); }}
-                                    style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#eff6ff", color: "#2563eb", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                                  </button>
-                                  <button title="Delete" onClick={() => handleDeleteDept(d.id)}
-                                    style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#fef2f2", color: "#dc2626", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-                                  </button>
-                                </div>
-                              </td>
-                            )}
-                          </tr>
-                        ))}
-                    </tbody>
-                  </table>
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "22px" }}>
+                <div>
+                  <h1 style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px", marginBottom: "4px" }}>Departments</h1>
+                  <p style={{ color: "#64748b", fontSize: "13.5px" }}>Operational departments within {currentUser.companyName}</p>
+                </div>
+                {isAdmin && (
+                  <Btn onClick={() => { setEditDept(null); setShowDeptModal(true); }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
+                    Add Department
+                  </Btn>
                 )}
-            </Card>
-          </div>
+              </div>
+              {errors.departments && <Alert>{errors.departments}</Alert>}
+              <Card>
+                <CardHeader title="All Departments" subtitle={`${filteredDepts.length} departments`} action={
+                  <input value={deptSearch} onChange={(e) => setDeptSearch(e.target.value)} placeholder="Search…"
+                    style={{ padding: "7px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13px", outline: "none", width: "180px" }} />
+                } />
+                {loading.departments
+                  ? <p style={{ padding: "24px", color: "#94a3b8", textAlign: "center" }}>Loading…</p>
+                  : (
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
+                      <thead>
+                        <tr>
+                          {["#", "Department Name", "Description", "Created", ...(isAdmin ? ["Actions"] : [])].map((h) => (
+                            <th key={h} style={{ padding: "12px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredDepts.length === 0
+                          ? <tr><td colSpan={isAdmin ? 5 : 4} style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>No departments found</td></tr>
+                          : filteredDepts.map((d, i) => (
+                            <tr key={d.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                              <td style={{ padding: "14px 16px", color: "#64748b", fontWeight: 600 }}>{i + 1}</td>
+                              <td style={{ padding: "14px 16px", fontWeight: 600, color: "#0f172a" }}>{d.departmentName}</td>
+                              <td style={{ padding: "14px 16px", color: "#64748b", fontSize: "13px" }}>{d.description || "—"}</td>
+                              <td style={{ padding: "14px 16px", color: "#94a3b8", fontSize: "12px" }}>{d.createdAt ? new Date(d.createdAt).toLocaleDateString() : "—"}</td>
+                              {isAdmin && (
+                                <td style={{ padding: "12px 16px" }}>
+                                  <div style={{ display: "flex", gap: "6px" }}>
+                                    <button title="Edit" onClick={() => { setEditDept(d); setShowDeptModal(true); }}
+                                      style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#eff6ff", color: "#2563eb", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
+                                    </button>
+                                    <button title="Delete" onClick={() => handleDeleteDept(d.id)}
+                                      style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#fef2f2", color: "#dc2626", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" /></svg>
+                                    </button>
+                                  </div>
+                                </td>
+                              )}
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  )}
+              </Card>
+            </div>
           );
         })()}
 
@@ -2185,90 +2853,90 @@ export default function CompanyEmployeePortal() {
         {nav === "assets" && (() => {
           const isAdmin = currentUser.role === "admin";
           return (
-          <div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "22px" }}>
-              <div>
-                <h1 style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px", marginBottom: "4px" }}>Assets</h1>
-                <p style={{ color: "#64748b", fontSize: "13.5px" }}>All assets registered under {currentUser.companyName}</p>
-              </div>
-              {isAdmin && (
-                <Btn onClick={() => { setEditAsset(null); setShowAssetModal(true); }}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                  Add Asset
-                </Btn>
-              )}
-            </div>
-            {errors.assets && <Alert>{errors.assets}</Alert>}
-            <Card>
-              <CardHeader title="Asset List" subtitle={`${filteredAssets.length} assets`} action={
-                <div style={{ display: "flex", gap: "8px" }}>
-                  <select value={assetTypeFilter} onChange={(e) => setAssetTypeFilter(e.target.value)}
-                    style={{ padding: "7px 10px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13px", background: "#fff", outline: "none" }}>
-                    <option value="">All Types</option>
-                    <option value="soft">Soft</option>
-                    <option value="technical">Technical</option>
-                    <option value="fleet">Fleet</option>
-                  </select>
-                  <input value={assetSearch} onChange={(e) => setAssetSearch(e.target.value)} placeholder="Search…"
-                    style={{ padding: "7px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13px", outline: "none", width: "160px" }} />
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "22px" }}>
+                <div>
+                  <h1 style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px", marginBottom: "4px" }}>Assets</h1>
+                  <p style={{ color: "#64748b", fontSize: "13.5px" }}>All assets registered under {currentUser.companyName}</p>
                 </div>
-              } />
-              {loading.assets
-                ? <p style={{ padding: "24px", color: "#94a3b8", textAlign: "center" }}>Loading…</p>
-                : (
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
-                    <thead>
-                      <tr>
-                        {["#", "Asset Name", "ID", "Type", "Department", "Location", "Status", ...(isAdmin ? ["Actions"] : [])].map((h) => (
-                          <th key={h} style={{ padding: "12px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredAssets.length === 0
-                        ? <tr><td colSpan={isAdmin ? 8 : 7} style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>No assets found</td></tr>
-                        : filteredAssets.map((a, i) => (
-                          <tr key={a.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                            <td style={{ padding: "14px 16px", color: "#64748b" }}>{i + 1}</td>
-                            <td style={{ padding: "14px 16px", fontWeight: 600, color: "#0f172a" }}>{a.assetName}</td>
-                            <td style={{ padding: "14px 16px", color: "#64748b", fontFamily: "monospace", fontSize: "12px" }}>{a.assetUniqueId || "—"}</td>
-                            <td style={{ padding: "14px 16px" }}>
-                              <span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: a.assetType === "technical" ? "#eff6ff" : a.assetType === "fleet" ? "#f3e8ff" : "#f0fdf4", color: a.assetType === "technical" ? "#2563eb" : a.assetType === "fleet" ? "#7c3aed" : "#16a34a" }}>
-                                {a.assetType}
-                              </span>
-                            </td>
-                            <td style={{ padding: "14px 16px", color: "#64748b", fontSize: "13px" }}>{a.departmentName || "—"}</td>
-                            <td style={{ padding: "14px 16px", color: "#64748b", fontSize: "12.5px" }}>{[a.building, a.floor, a.room].filter(Boolean).join(" / ") || "—"}</td>
-                            <td style={{ padding: "14px 16px" }}>
-                              <span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: a.status === "Active" ? "#f0fdf4" : "#f8fafc", color: a.status === "Active" ? "#16a34a" : "#94a3b8" }}>
-                                {a.status}
-                              </span>
-                            </td>
-                            {isAdmin && (
-                              <td style={{ padding: "12px 16px" }}>
-                                <div style={{ display: "flex", gap: "6px" }}>
-                                  <button title="Download QR Code" onClick={() => handleDownloadAssetQR(a.id, a.assetName)}
-                                    style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#f0fdf4", color: "#16a34a", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
-                                  </button>
-                                  <button title="Edit" onClick={() => { setEditAsset(a); setShowAssetModal(true); }}
-                                    style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#eff6ff", color: "#2563eb", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                                  </button>
-                                  <button title="Delete" onClick={() => handleDeleteAsset(a.id)}
-                                    style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#fef2f2", color: "#dc2626", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-                                  </button>
-                                </div>
-                              </td>
-                            )}
-                          </tr>
-                        ))}
-                    </tbody>
-                  </table>
+                {isAdmin && (
+                  <Btn onClick={() => { setEditAsset(null); setShowAssetModal(true); }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
+                    Add Asset
+                  </Btn>
                 )}
-            </Card>
-          </div>
+              </div>
+              {errors.assets && <Alert>{errors.assets}</Alert>}
+              <Card>
+                <CardHeader title="Asset List" subtitle={`${filteredAssets.length} assets`} action={
+                  <div style={{ display: "flex", gap: "8px" }}>
+                    <select value={assetTypeFilter} onChange={(e) => setAssetTypeFilter(e.target.value)}
+                      style={{ padding: "7px 10px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13px", background: "#fff", outline: "none" }}>
+                      <option value="">All Types</option>
+                      <option value="soft">Soft</option>
+                      <option value="technical">Technical</option>
+                      <option value="fleet">Fleet</option>
+                    </select>
+                    <input value={assetSearch} onChange={(e) => setAssetSearch(e.target.value)} placeholder="Search…"
+                      style={{ padding: "7px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13px", outline: "none", width: "160px" }} />
+                  </div>
+                } />
+                {loading.assets
+                  ? <p style={{ padding: "24px", color: "#94a3b8", textAlign: "center" }}>Loading…</p>
+                  : (
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
+                      <thead>
+                        <tr>
+                          {["#", "Asset Name", "ID", "Type", "Department", "Location", "Status", ...(isAdmin ? ["Actions"] : [])].map((h) => (
+                            <th key={h} style={{ padding: "12px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredAssets.length === 0
+                          ? <tr><td colSpan={isAdmin ? 8 : 7} style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>No assets found</td></tr>
+                          : filteredAssets.map((a, i) => (
+                            <tr key={a.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                              <td style={{ padding: "14px 16px", color: "#64748b" }}>{i + 1}</td>
+                              <td style={{ padding: "14px 16px", fontWeight: 600, color: "#0f172a" }}>{a.assetName}</td>
+                              <td style={{ padding: "14px 16px", color: "#64748b", fontFamily: "monospace", fontSize: "12px" }}>{a.assetUniqueId || "—"}</td>
+                              <td style={{ padding: "14px 16px" }}>
+                                <span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: a.assetType === "technical" ? "#eff6ff" : a.assetType === "fleet" ? "#f3e8ff" : "#f0fdf4", color: a.assetType === "technical" ? "#2563eb" : a.assetType === "fleet" ? "#7c3aed" : "#16a34a" }}>
+                                  {a.assetType}
+                                </span>
+                              </td>
+                              <td style={{ padding: "14px 16px", color: "#64748b", fontSize: "13px" }}>{a.departmentName || "—"}</td>
+                              <td style={{ padding: "14px 16px", color: "#64748b", fontSize: "12.5px" }}>{[a.building, a.floor, a.room].filter(Boolean).join(" / ") || "—"}</td>
+                              <td style={{ padding: "14px 16px" }}>
+                                <span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: a.status === "Active" ? "#f0fdf4" : "#f8fafc", color: a.status === "Active" ? "#16a34a" : "#94a3b8" }}>
+                                  {a.status}
+                                </span>
+                              </td>
+                              {isAdmin && (
+                                <td style={{ padding: "12px 16px" }}>
+                                  <div style={{ display: "flex", gap: "6px" }}>
+                                    <button title="Show QR Code" onClick={() => handleShowAssetQR(a.id, a.assetName)}
+                                      style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#f0fdf4", color: "#16a34a", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="14" y="14" width="7" height="7" /><rect x="3" y="14" width="7" height="7" /></svg>
+                                    </button>
+                                    <button title="Edit" onClick={() => { setEditAsset(a); setShowAssetModal(true); }}
+                                      style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#eff6ff", color: "#2563eb", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
+                                    </button>
+                                    <button title="Delete" onClick={() => handleDeleteAsset(a.id)}
+                                      style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#fef2f2", color: "#dc2626", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" /></svg>
+                                    </button>
+                                  </div>
+                                </td>
+                              )}
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  )}
+              </Card>
+            </div>
           );
         })()}
 
@@ -2279,10 +2947,12 @@ export default function CompanyEmployeePortal() {
             <div style={{ display: "flex", gap: "4px", marginBottom: "24px", borderBottom: "2px solid #e2e8f0" }}>
               {[{ k: "templates", label: "Templates" }, { k: "submissions", label: "Submissions & Reports" }].map(({ k, label }) => (
                 <button key={k} type="button" onClick={() => setChecklistSubNav(k)}
-                  style={{ padding: "10px 20px", background: "none", border: "none",
+                  style={{
+                    padding: "10px 20px", background: "none", border: "none",
                     borderBottom: checklistSubNav === k ? "3px solid #2563eb" : "3px solid transparent",
                     marginBottom: "-2px", fontSize: "14px", fontWeight: 600,
-                    color: checklistSubNav === k ? "#2563eb" : "#64748b", cursor: "pointer" }}>
+                    color: checklistSubNav === k ? "#2563eb" : "#64748b", cursor: "pointer"
+                  }}>
                   {label}
                 </button>
               ))}
@@ -2314,10 +2984,12 @@ export default function CompanyEmployeePortal() {
             <div style={{ display: "flex", gap: "4px", marginBottom: "24px", borderBottom: "2px solid #e2e8f0" }}>
               {[{ k: "templates", label: "Templates" }, { k: "submissions", label: "Submissions & Reports" }].map(({ k, label }) => (
                 <button key={k} type="button" onClick={() => setLogsheetSubNav(k)}
-                  style={{ padding: "10px 20px", background: "none", border: "none",
+                  style={{
+                    padding: "10px 20px", background: "none", border: "none",
                     borderBottom: logsheetSubNav === k ? "3px solid #2563eb" : "3px solid transparent",
                     marginBottom: "-2px", fontSize: "14px", fontWeight: 600,
-                    color: logsheetSubNav === k ? "#2563eb" : "#64748b", cursor: "pointer" }}>
+                    color: logsheetSubNav === k ? "#2563eb" : "#64748b", cursor: "pointer"
+                  }}>
                   {label}
                 </button>
               ))}
@@ -2338,8 +3010,6 @@ export default function CompanyEmployeePortal() {
                 fetchGrid={getCompanyPortalLogsheetGrid}
                 canBuild={currentUser.role === "admin" || currentUser.role === "supervisor"}
                 companyPortalMode={true}
-                directFill={directFillLogsheet}
-                onDirectFillConsumed={() => setDirectFillLogsheet(null)}
               />
             )}
             {logsheetSubNav === "submissions" && (
@@ -2387,18 +3057,18 @@ export default function CompanyEmployeePortal() {
                   {showAssign && (
                     <button title="Assign Templates" onClick={() => { setAssignTarget(e); setShowAssignModal(true); }}
                       style={{ padding: "4px 10px", borderRadius: "6px", background: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe", cursor: "pointer", fontSize: "12px", fontWeight: 600, display: "flex", alignItems: "center", gap: "4px" }}>
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 11 12 14 22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg>
                       Assign
                     </button>
                   )}
                   <button title="Edit" onClick={() => { setEditEmp(e); setShowEmpModal(true); }}
                     style={{ width: "28px", height: "28px", borderRadius: "6px", background: "#f8fafc", color: "#475569", border: "1px solid #e2e8f0", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
                   </button>
                   {isAdmin && e.id !== currentUser.id && (
                     <button title="Delete" onClick={() => handleDeleteEmp(e.id)}
                       style={{ width: "28px", height: "28px", borderRadius: "6px", background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" /></svg>
                     </button>
                   )}
                 </div>
@@ -2417,11 +3087,11 @@ export default function CompanyEmployeePortal() {
                 {canManage && (
                   <div style={{ display: "flex", gap: "8px" }}>
                     <Btn onClick={() => setShowImport(true)} outline color="#64748b" bg="#fff">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="16 16 12 12 8 16" /><line x1="12" y1="12" x2="12" y2="21" /><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3" /></svg>
                       Import CSV
                     </Btn>
                     <Btn onClick={() => { setEditEmp(null); setShowEmpModal(true); }}>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
                       Add Employee
                     </Btn>
                   </div>
@@ -2430,10 +3100,10 @@ export default function CompanyEmployeePortal() {
 
               {/* Stat row */}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "14px", marginBottom: "22px" }}>
-                <StatCard label="Total Staff" value={employees.length} sub="All employees" iconBg="#eff6ff" iconCol="#2563eb" icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>} />
-                <StatCard label="Tech Leads" value={employees.filter((e) => e.role === "technical_lead").length} iconBg="#dbeafe" iconCol="#1d4ed8" icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>} />
-                <StatCard label="Active" value={employees.filter((e) => e.status === "Active").length} subCol="#22c55e" sub="✓ Active" iconBg="#f0fdf4" iconCol="#22c55e" icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12"/></svg>} />
-                <StatCard label="Assignments" value={assignments.length} sub="Template tasks" iconBg="#fff7ed" iconCol="#ea580c" icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>} />
+                <StatCard label="Total Staff" value={employees.length} sub="All employees" iconBg="#eff6ff" iconCol="#2563eb" icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /></svg>} />
+                <StatCard label="Tech Leads" value={employees.filter((e) => e.role === "technical_lead").length} iconBg="#dbeafe" iconCol="#1d4ed8" icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>} />
+                <StatCard label="Active" value={employees.filter((e) => e.status === "Active").length} subCol="#22c55e" sub="✓ Active" iconBg="#f0fdf4" iconCol="#22c55e" icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12" /></svg>} />
+                <StatCard label="Assignments" value={assignments.length} sub="Template tasks" iconBg="#fff7ed" iconCol="#ea580c" icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 11 12 14 22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg>} />
               </div>
 
               {errors.employees && <Alert>{errors.employees}</Alert>}
@@ -2496,14 +3166,14 @@ export default function CompanyEmployeePortal() {
                                 {isAdmin && (
                                   <button title="Assign Templates" onClick={() => { setAssignTarget(emp); setShowAssignModal(true); }}
                                     style={{ padding: "4px 10px", borderRadius: "6px", background: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe", cursor: "pointer", fontSize: "11.5px", fontWeight: 600, display: "flex", alignItems: "center", gap: "4px" }}>
-                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 11 12 14 22 4"/></svg>
+                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 11 12 14 22 4" /></svg>
                                     Assign
                                   </button>
                                 )}
                                 {canManage && (
                                   <button title="Edit" onClick={() => { setEditEmp(emp); setShowEmpModal(true); }}
                                     style={{ width: "28px", height: "28px", borderRadius: "6px", background: "#f8fafc", color: "#475569", border: "1px solid #e2e8f0", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
                                   </button>
                                 )}
                               </div>
@@ -2570,7 +3240,7 @@ export default function CompanyEmployeePortal() {
                         {unassignedHierarchy.length > 0 && (
                           <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #fde68a", overflow: "hidden" }}>
                             <div style={{ padding: "10px 16px", background: "#fffbeb", borderBottom: "1px solid #fde68a", display: "flex", alignItems: "center", gap: "8px" }}>
-                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#ca8a04" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#ca8a04" strokeWidth="2"><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>
                               <p style={{ fontWeight: 700, fontSize: "13px", color: "#92400e", margin: 0 }}>Unassigned Hierarchy Staff ({unassignedHierarchy.length})</p>
                               <p style={{ fontSize: "12px", color: "#a16207", margin: 0 }}>— Missing parent assignment</p>
                             </div>
@@ -2584,7 +3254,7 @@ export default function CompanyEmployeePortal() {
                         {nonHierarchyStaff.length > 0 && (
                           <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
                             <div style={{ padding: "10px 16px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", gap: "8px" }}>
-                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg>
                               <p style={{ fontWeight: 700, fontSize: "13px", color: "#475569", margin: 0 }}>Other Staff ({nonHierarchyStaff.length})</p>
                               <p style={{ fontSize: "12px", color: "#94a3b8", margin: 0 }}>— Cleaners, drivers, security, etc.</p>
                             </div>
@@ -2651,12 +3321,12 @@ export default function CompanyEmployeePortal() {
                                       )}
                                       <button title="Edit" onClick={() => { setEditEmp(e); setShowEmpModal(true); }}
                                         style={{ width: "28px", height: "28px", borderRadius: "6px", background: "#eff6ff", color: "#2563eb", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
                                       </button>
                                       {isAdmin && e.id !== currentUser.id && (
                                         <button title="Delete" onClick={() => handleDeleteEmp(e.id)}
                                           style={{ width: "28px", height: "28px", borderRadius: "6px", background: "#fef2f2", color: "#dc2626", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" /></svg>
                                         </button>
                                       )}
                                     </div>
@@ -2686,7 +3356,7 @@ export default function CompanyEmployeePortal() {
               <p style={{ color: "#94a3b8", textAlign: "center", padding: "40px" }}>Loading…</p>
             ) : myAssignments.length === 0 ? (
               <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", padding: "60px 20px", textAlign: "center" }}>
-                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" strokeWidth="1.5" style={{ marginBottom: "12px" }}><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" strokeWidth="1.5" style={{ marginBottom: "12px" }}><polyline points="9 11 12 14 22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg>
                 <p style={{ color: "#94a3b8", fontSize: "15px", marginBottom: "4px" }}>No tasks assigned yet</p>
                 <p style={{ color: "#cbd5e1", fontSize: "13px" }}>Your supervisor or admin will assign checklists and logsheets to you here</p>
               </div>
@@ -2694,23 +3364,23 @@ export default function CompanyEmployeePortal() {
               <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
                 {/* Summary cards */}
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "14px" }}>
-                  <StatCard label="Total Assigned" value={myAssignments.length} sub="Templates to complete" iconBg="#eff6ff" iconCol="#2563eb" icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 11 12 14 22 4"/></svg>} />
-                  <StatCard label="Checklists" value={myAssignments.filter((a) => a.templateType === "checklist").length} iconBg="#f0fdf4" iconCol="#16a34a" icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>} />
-                  <StatCard label="Logsheets" value={myAssignments.filter((a) => a.templateType === "logsheet").length} iconBg="#f3e8ff" iconCol="#7c3aed" icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>} />
+                  <StatCard label="Total Assigned" value={myAssignments.length} sub="Templates to complete" iconBg="#eff6ff" iconCol="#2563eb" icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 11 12 14 22 4" /></svg>} />
+                  <StatCard label="Checklists" value={myAssignments.filter((a) => a.templateType === "checklist").length} iconBg="#f0fdf4" iconCol="#16a34a" icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 11 12 14 22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg>} />
+                  <StatCard label="Logsheets" value={myAssignments.filter((a) => a.templateType === "logsheet").length} iconBg="#f3e8ff" iconCol="#7c3aed" icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /></svg>} />
                 </div>
 
                 {/* Checklists section */}
                 {myAssignments.filter((a) => a.templateType === "checklist").length > 0 && (
                   <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
                     <div style={{ padding: "14px 18px", background: "#f0fdf4", borderBottom: "1px solid #dcfce7", display: "flex", alignItems: "center", gap: "8px" }}>
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2"><polyline points="9 11 12 14 22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg>
                       <h2 style={{ fontSize: "14px", fontWeight: 700, color: "#166534", margin: 0 }}>Assigned Checklists</h2>
                     </div>
                     <div style={{ padding: "12px 18px", display: "flex", flexDirection: "column", gap: "10px" }}>
                       {myAssignments.filter((a) => a.templateType === "checklist").map((a) => (
                         <div key={a.id} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "12px 16px", borderRadius: "9px", border: "1px solid #e2e8f0", background: "#fafafa" }}>
                           <div style={{ width: "36px", height: "36px", borderRadius: "50%", background: "#dcfce7", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2"><polyline points="9 11 12 14 22 4"/></svg>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2"><polyline points="9 11 12 14 22 4" /></svg>
                           </div>
                           <div style={{ flex: 1 }}>
                             <p style={{ fontWeight: 700, fontSize: "14px", color: "#0f172a", margin: 0 }}>{a.templateName}</p>
@@ -2735,26 +3405,26 @@ export default function CompanyEmployeePortal() {
                 {myAssignments.filter((a) => a.templateType === "logsheet").length > 0 && (
                   <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
                     <div style={{ padding: "14px 18px", background: "#f5f3ff", borderBottom: "1px solid #ede9fe", display: "flex", alignItems: "center", gap: "8px" }}>
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /></svg>
                       <h2 style={{ fontSize: "14px", fontWeight: 700, color: "#4c1d95", margin: 0 }}>Assigned Logsheet Templates</h2>
                     </div>
                     <div style={{ padding: "12px 18px", display: "flex", flexDirection: "column", gap: "10px" }}>
                       {myAssignments.filter((a) => a.templateType === "logsheet").map((a) => {
                         const FREQ_LABELS = { daily: "Daily", weekly: "Weekly", monthly: "Monthly", quarterly: "Quarterly", half_yearly: "Half-Yearly", yearly: "Yearly" };
-                        const FREQ_COLORS = { daily: ["#dcfce7","#16a34a"], weekly: ["#dbeafe","#1d4ed8"], monthly: ["#fef9c3","#ca8a04"], quarterly: ["#ede9fe","#7c3aed"], half_yearly: ["#fce7f3","#be185d"], yearly: ["#ffedd5","#c2410c"] };
+                        const FREQ_COLORS = { daily: ["#dcfce7", "#16a34a"], weekly: ["#dbeafe", "#1d4ed8"], monthly: ["#fef9c3", "#ca8a04"], quarterly: ["#ede9fe", "#7c3aed"], half_yearly: ["#fce7f3", "#be185d"], yearly: ["#ffedd5", "#c2410c"] };
                         const freq = a.frequency || "daily";
-                        const [fbg, ftx] = FREQ_COLORS[freq] || ["#f1f5f9","#475569"];
+                        const [fbg, ftx] = FREQ_COLORS[freq] || ["#f1f5f9", "#475569"];
                         return (
                           <div key={a.id} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "12px 16px", borderRadius: "9px", border: "1px solid #e2e8f0", background: "#fafafa" }}>
                             <div style={{ width: "36px", height: "36px", borderRadius: "50%", background: "#ede9fe", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /></svg>
                             </div>
                             <div style={{ flex: 1 }}>
                               <p style={{ fontWeight: 700, fontSize: "14px", color: "#0f172a", margin: 0 }}>{a.templateName}</p>
                               <p style={{ fontSize: "12px", color: "#64748b", margin: 0 }}>{a.assetName ? `Asset: ${a.assetName} · ` : ""} Assigned by {a.assignedByName} · {new Date(a.createdAt).toLocaleDateString()}</p>
                             </div>
                             <span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: fbg, color: ftx }}>{FREQ_LABELS[freq] || freq}</span>
-                            <button onClick={() => { setDirectFillLogsheet({ templateId: a.templateId, assetId: a.assetId, template: a }); setNav("logsheets"); }}
+                            <button onClick={() => setNav("logsheets")}
                               style={{ padding: "6px 16px", borderRadius: "7px", background: "#7c3aed", color: "#fff", border: "none", cursor: "pointer", fontWeight: 600, fontSize: "13px" }}>
                               {currentUser.role === "supervisor" ? "Open & Fill" : "Fill"}
                             </button>
@@ -2769,7 +3439,7 @@ export default function CompanyEmployeePortal() {
                 {currentUser.role === "supervisor" && assignments.length > 0 && (
                   <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden", marginTop: "8px" }}>
                     <div style={{ padding: "14px 18px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", gap: "8px" }}>
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2563eb" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2563eb" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /></svg>
                       <h2 style={{ fontSize: "14px", fontWeight: 700, color: "#0f172a", margin: 0 }}>Assignments I've Made to My Team</h2>
                       <span style={{ marginLeft: "auto", fontSize: "12px", color: "#64748b" }}>{assignments.length} total</span>
                     </div>
@@ -2797,7 +3467,7 @@ export default function CompanyEmployeePortal() {
                               <td style={{ padding: "10px 14px" }}>
                                 <button onClick={async () => { try { await deleteTemplateUserAssignment(token, a.id); handleAssignmentRemoved(a.id); } catch (e) { alert(e.message); } }}
                                   style={{ width: "26px", height: "26px", borderRadius: "6px", background: "#fef2f2", color: "#dc2626", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" /></svg>
                                 </button>
                               </td>
                             </tr>
@@ -2809,6 +3479,639 @@ export default function CompanyEmployeePortal() {
                 )}
               </div>
             )}
+          </div>
+        )}
+
+        {/* ── OJT Management ──────────────────────────────────────── */}
+        {nav === "ojt" && (
+          <div>
+            {showOjtBuilder ? (
+              <OjtTrainingBuilder
+                token={token}
+                assets={assets}
+                trainingId={buildingOjtTrainingId}
+                onBack={() => {
+                  setShowOjtBuilder(false);
+                  setBuildingOjtTrainingId(null);
+                  load("ojt", () => getOjtTrainings(token).then(setOjtTrainings));
+                }}
+              />
+            ) : (
+              <>
+                <div style={{ marginBottom: "24px", display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
+                  <div>
+                    <h1 style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px", marginBottom: "4px" }}>OJT Management</h1>
+                    <p style={{ color: "#64748b", fontSize: "13.5px" }}>Create and manage On-the-Job Trainings and assess employee progress</p>
+                  </div>
+                  <Btn onClick={() => { setShowOjtBuilder(true); setBuildingOjtTrainingId(null); }}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
+                    Create Training
+                  </Btn>
+                </div>
+
+                {/* Sub-navigation */}
+                <div style={{ display: "flex", gap: "24px", borderBottom: "1px solid #e2e8f0", marginBottom: "20px" }}>
+                  {[
+                    { key: "trainings", label: "Trainings" },
+                    { key: "tracking", label: "Progress Tracking" }
+                  ].map((tab) => (
+                    <button
+                      key={tab.key}
+                      onClick={() => setOjtSubNav(tab.key)}
+                      style={{
+                        padding: "10px 4px", fontSize: "14px", fontWeight: 600, background: "none", border: "none", cursor: "pointer",
+                        color: ojtSubNav === tab.key ? "#2563eb" : "#64748b",
+                        borderBottom: ojtSubNav === tab.key ? "2px solid #2563eb" : "2px solid transparent",
+                        transition: "all 0.2s"
+                      }}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+
+                {ojtSubNav === "trainings" && (
+                  <>
+                    {!viewingOjtTraining ? (
+                      <Card>
+                        <div style={{ overflowX: "auto" }}>
+                          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
+                            <thead>
+                              <tr>
+                                {["Training Title", "Description", "Status", "Actions"].map((h) => (
+                                  <th key={h} style={{ padding: "11px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>{h}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {loading.ojt ? (
+                                <tr><td colSpan="4" style={{ padding: "30px", textAlign: "center", color: "#64748b" }}>Loading OJT…</td></tr>
+                              ) : ojtTrainings.length === 0 ? (
+                                <tr><td colSpan="4" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>No training programs available.</td></tr>
+                              ) : ojtTrainings.map((t) => (
+                                <tr key={t.id} style={{ borderBottom: "1px solid #f1f5f9", cursor: "pointer" }} onClick={async () => {
+                                  try {
+                                    const details = await getOjtTraining(token, t.id);
+                                    setViewingOjtTraining(details);
+                                  } catch (e) { alert("Failed to load training details"); }
+                                }}>
+                                  <td style={{ padding: "12px 16px", fontWeight: 600, color: "#2563eb" }}>{t.title}</td>
+                                  <td style={{ padding: "12px 16px", color: "#64748b" }}>{t.description || "—"}</td>
+                                  <td style={{ padding: "12px 16px" }}>
+                                    <span style={{ padding: "4px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: t.status === "published" ? "#dcfce7" : "#f1f5f9", color: t.status === "published" ? "#166534" : "#475569" }}>
+                                      {t.status === "published" ? "Published" : "Draft"}
+                                    </span>
+                                  </td>
+                                  <td style={{ padding: "12px 16px", display: "flex", gap: "6px", flexWrap: "wrap" }} onClick={e => e.stopPropagation()}>
+                                    {/* View Preview */}
+                                    <button title="Preview Training" onClick={async () => {
+                                      try {
+                                        const details = await getOjtTraining(token, t.id);
+                                        setOjtPreviewTraining(details);
+                                      } catch(e) { alert("Failed to load training"); }
+                                    }} style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#eff6ff", color: "#2563eb", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                                    </button>
+                                    {/* QR Code */}
+                                    <button title="Show QR Code" onClick={async () => {
+                                      try {
+                                        const url = t.assetId ? `${getQrBaseUrl()}/asset-scan/${t.assetId}` : `${getQrBaseUrl()}/ojt-training/${t.id}`;
+                                        const dataUrl = await QRCode.toDataURL(url, { width: 300, margin: 2 });
+                                        setOjtQrDataUrl(dataUrl);
+                                        setOjtQrTraining(t);
+                                      } catch(e) { alert("Failed to generate QR"); }
+                                    }} style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#f0fdf4", color: "#16a34a", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3M17 20h3M20 17v3"/></svg>
+                                    </button>
+                                    {/* Edit */}
+                                    <button title="Edit Training" onClick={() => { setShowOjtBuilder(true); setBuildingOjtTrainingId(t.id); }}
+                                      style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#f1f5f9", color: "#475569", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
+                                    </button>
+                                    {/* Unpublish for published trainings */}
+                                    {t.status === "published" && (
+                                      <button title="Unpublish Training" onClick={async () => {
+                                        if (!window.confirm(`Unpublish '${t.title}'? It will become a draft.`)) return;
+                                        try {
+                                          await publishOjtTraining(token, t.id);
+                                          setOjtTrainings(p => p.map(x => x.id === t.id ? { ...x, status: "draft" } : x));
+                                        } catch (e) { alert("Failed to unpublish"); }
+                                      }} style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#fef9c3", color: "#ca8a04", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+                                      </button>
+                                    )}
+                                    {/* Delete - allowed for all statuses */}
+                                    <button title="Delete Training" onClick={async () => {
+                                      if (!window.confirm(`Delete training '${t.title}'? This cannot be undone.`)) return;
+                                      try { await deleteOjtTraining(token, t.id); setOjtTrainings(p => p.filter(x => x.id !== t.id)); }
+                                      catch (e) { alert("Failed to delete training"); }
+                                    }} style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#fef2f2", color: "#dc2626", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" /></svg>
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </Card>
+                    ) : (
+                      <OjtTrainingDetailView
+                        training={viewingOjtTraining}
+                        token={token}
+                        onBack={() => {
+                          setViewingOjtTraining(null);
+                          load("ojt", () => getOjtTrainings(token).then(setOjtTrainings));
+                        }}
+                        onUpdated={(updated) => setViewingOjtTraining(updated)}
+                      />
+                    )}
+                  </>
+                )}
+                {ojtSubNav === "tracking" && (
+                  <TrackingSection token={token} ojtTrainings={ojtTrainings} />
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* OJT Preview Modal */}
+        {ojtPreviewTraining && (
+          <TrainingPreviewModal
+            training={ojtPreviewTraining}
+            onClose={() => setOjtPreviewTraining(null)}
+          />
+        )}
+        {/* OJT QR Modal */}
+        {ojtQrTraining && (
+          <TrainingQRModal
+            training={ojtQrTraining}
+            qrDataUrl={ojtQrDataUrl}
+            onClose={() => { setOjtQrTraining(null); setOjtQrDataUrl(""); }}
+          />
+        )}
+
+        {/* Asset QR Modal */}
+        {assetQrModal && (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
+            <div style={{ background: "#fff", borderRadius: "16px", width: "100%", maxWidth: "360px", padding: "32px", textAlign: "center", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
+              <h3 style={{ margin: "0 0 4px", fontSize: "18px", fontWeight: 800, color: "#0f172a" }}>Asset QR Code</h3>
+              <p style={{ margin: "0 0 20px", fontSize: "13px", color: "#64748b" }}>{assetQrModal.assetName}</p>
+              {assetQrDataUrl ? (
+                <img src={assetQrDataUrl} alt="QR Code" style={{ width: "220px", height: "220px", borderRadius: "12px", border: "1px solid #e2e8f0" }} />
+              ) : (
+                <p style={{ color: "#94a3b8" }}>Generating QR...</p>
+              )}
+              <p style={{ marginTop: "16px", fontSize: "11px", color: "#94a3b8" }}>Scan to view asset details and training on mobile</p>
+              <div style={{ display: "flex", gap: "10px", marginTop: "20px", justifyContent: "center" }}>
+                {assetQrDataUrl && (
+                  <a href={assetQrDataUrl} download={`QR-${assetQrModal.assetName.replace(/[^a-zA-Z0-9]/g, "_")}-${assetQrModal.assetId}.png`} style={{ padding: "8px 18px", borderRadius: "8px", background: "#2563eb", color: "#fff", textDecoration: "none", fontSize: "13px", fontWeight: 600 }}>
+                    Download QR
+                  </a>
+                )}
+                <button onClick={() => { setAssetQrModal(null); setAssetQrDataUrl(""); }} style={{ padding: "8px 18px", borderRadius: "8px", background: "#f1f5f9", color: "#475569", border: "none", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>Close</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Fleet Management ────────────────────────────────────── */}
+        {nav === "fleet" && (
+          <div>
+            <div style={{ marginBottom: "24px", display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
+              <div>
+                <h1 style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px", marginBottom: "4px" }}>Fleet Management</h1>
+                <p style={{ color: "#64748b", fontSize: "13.5px" }}>Manage vehicles, track fuel usage, and schedule maintenance</p>
+              </div>
+              <div style={{ display: "flex", gap: "10px" }}>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: "24px", borderBottom: "1px solid #e2e8f0", marginBottom: "20px", overflowX: "auto" }}>
+              {[
+                { key: "assets", label: "Fleet Assets" },
+                { key: "checklists", label: "Checklists" },
+                { key: "logsheets", label: "Logsheets" },
+                { key: "history", label: "Submission History" }
+              ].map((tab) => (
+                <button
+                  key={tab.key}
+                  onClick={() => setFleetSubNav(tab.key)}
+                  style={{
+                    padding: "10px 4px", fontSize: "14px", fontWeight: 600, background: "none", border: "none", cursor: "pointer", whiteSpace: "nowrap",
+                    color: fleetSubNav === tab.key ? "#2563eb" : "#64748b",
+                    borderBottom: fleetSubNav === tab.key ? "2px solid #2563eb" : "2px solid transparent",
+                    transition: "all 0.2s"
+                  }}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {fleetSubNav === "assets" && (
+              <>
+                {!viewingFleetAsset ? (
+                  <Card>
+                    <div style={{ padding: "16px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <h3 style={{ fontSize: "15px", fontWeight: 600, color: "#0f172a", margin: 0 }}>Registered Vehicles</h3>
+                      <button onClick={() => { setNav("assets"); setAssetTypeFilter("fleet"); }}
+                        style={{ padding: "6px 14px", borderRadius: "6px", background: "#2563eb", color: "#fff", border: "none", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>
+                        + Register New Vehicle
+                      </button>
+                    </div>
+                    <div style={{ overflowX: "auto" }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
+                        <thead>
+                          <tr>
+                            {["Vehicle Number", "Type", "Driver", "Fuel Type", "Insurance", "Status", "Actions"].map((h) => (
+                              <th key={h} style={{ padding: "11px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {loading.assets_for_fleet ? (
+                            <tr><td colSpan="7" style={{ padding: "30px", textAlign: "center", color: "#64748b" }}>Loading fleet vehicles…</td></tr>
+                          ) : (() => {
+                            const fleetAssets = assets.filter(a => a.assetType === "fleet");
+                            return fleetAssets.length === 0 ? (
+                              <tr><td colSpan="7" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>
+                                No vehicles registered. <button onClick={() => { setNav("assets"); setAssetTypeFilter("fleet"); }} style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", fontWeight: 600, textDecoration: "underline" }}>Register one →</button>
+                              </td></tr>
+                            ) : fleetAssets.map((a) => {
+                              const meta = a.metadata || {};
+                              const insStatus = meta.insuranceExpiry ? new Date(meta.insuranceExpiry) > new Date() ? "Active" : "Expired" : "—";
+                              const insColor = insStatus === "Active" ? "#16a34a" : insStatus === "Expired" ? "#dc2626" : "#94a3b8";
+                              return (
+                                <tr key={a.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                                  <td style={{ padding: "12px 16px", fontWeight: 600, color: "#2563eb", cursor: "pointer" }} onClick={() => setViewingFleetAsset(a.id)}>{meta.vehicleNumber || a.assetName}</td>
+                                  <td style={{ padding: "12px 16px", color: "#64748b" }}>{meta.vehicleType || "—"}</td>
+                                  <td style={{ padding: "12px 16px", color: "#64748b" }}>{meta.driver || "—"}</td>
+                                  <td style={{ padding: "12px 16px", color: "#64748b" }}>{meta.fuelType || "—"}</td>
+                                  <td style={{ padding: "12px 16px", color: insColor, fontWeight: 600 }}>{insStatus}</td>
+                                  <td style={{ padding: "12px 16px" }}>
+                                    <span style={{ padding: "3px 9px", borderRadius: "12px", fontSize: "11px", fontWeight: 600, background: a.status?.toLowerCase() === "active" ? "#dcfce7" : "#fee2e2", color: a.status?.toLowerCase() === "active" ? "#166534" : "#991b1b" }}>
+                                      {a.status?.toLowerCase() === "active" ? "✓ Active" : "Inactive"}
+                                    </span>
+                                  </td>
+                                  <td style={{ padding: "12px 16px", display: "flex", gap: "6px" }}>
+                                    <button onClick={() => setViewingFleetAsset(a.id)} style={{ padding: "4px 10px", borderRadius: "6px", background: "#eff6ff", color: "#2563eb", border: "none", fontSize: "11px", fontWeight: 600, cursor: "pointer" }}>Details</button>
+                                    <button onClick={() => { setEditAsset(a); setShowAssetModal(true); }} style={{ padding: "4px 10px", borderRadius: "6px", background: "#f8fafc", color: "#475569", border: "1px solid #e2e8f0", fontSize: "11px", fontWeight: 600, cursor: "pointer" }}>Edit</button>
+                                    <button onClick={() => handleDeleteAsset(a.id)} style={{ padding: "4px 10px", borderRadius: "6px", background: "#fef2f2", color: "#dc2626", border: "none", fontSize: "11px", fontWeight: 600, cursor: "pointer" }}>Delete</button>
+                                  </td>
+                                </tr>
+                              );
+                            });}
+                          )()}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
+                ) : (() => {
+                  const viewingAsset = assets.find(a => a.id === viewingFleetAsset);
+                  const meta = viewingAsset?.metadata || {};
+                  return (
+                    <Card style={{ maxWidth: "100%" }}>
+                      <div style={{ padding: "16px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <h3 style={{ fontSize: "15px", fontWeight: 600, color: "#0f172a", margin: 0 }}>{meta.vehicleNumber || viewingAsset?.assetName}</h3>
+                        <button onClick={() => setViewingFleetAsset(null)} style={{ padding: "6px 14px", borderRadius: "6px", background: "#f8fafc", color: "#475569", border: "1px solid #e2e8f0", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>← Back</button>
+                      </div>
+                      
+                      <div style={{ padding: "20px" }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px", marginBottom: "24px" }}>
+                          <div>
+                            <label style={{ fontSize: "12px", color: "#94a3b8", fontWeight: 600, display: "block", marginBottom: "4px" }}>Vehicle Type</label>
+                            <p style={{ margin: 0, fontWeight: 600, color: "#0f172a" }}>{meta.vehicleType || "—"}</p>
+                          </div>
+                          <div>
+                            <label style={{ fontSize: "12px", color: "#94a3b8", fontWeight: 600, display: "block", marginBottom: "4px" }}>Fuel Type</label>
+                            <p style={{ margin: 0, fontWeight: 600, color: "#0f172a" }}>{meta.fuelType || "—"}</p>
+                          </div>
+                          <div>
+                            <label style={{ fontSize: "12px", color: "#94a3b8", fontWeight: 600, display: "block", marginBottom: "4px" }}>Driver Assigned</label>
+                            <p style={{ margin: 0, fontWeight: 600, color: "#0f172a" }}>{meta.driver || "—"}</p>
+                          </div>
+                          <div>
+                            <label style={{ fontSize: "12px", color: "#94a3b8", fontWeight: 600, display: "block", marginBottom: "4px" }}>Status</label>
+                            <p style={{ margin: 0, fontWeight: 600, color: viewingAsset?.status?.toLowerCase() === "active" ? "#16a34a" : "#dc2626" }}>
+                              {viewingAsset?.status?.toLowerCase() === "active" ? "✓ Active" : "Inactive"}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Insurance & Service Status */}
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px", padding: "16px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+                          <div>
+                            <label style={{ fontSize: "12px", color: "#94a3b8", fontWeight: 600, display: "block", marginBottom: "4px" }}>Insurance Expiry</label>
+                            <p style={{ margin: 0, fontWeight: 600, color: new Date(meta.insuranceExpiry) > new Date() ? "#16a34a" : "#dc2626" }}>
+                              {meta.insuranceExpiry ? new Date(meta.insuranceExpiry).toLocaleDateString() : "—"}
+                            </p>
+                          </div>
+                          <div>
+                            <label style={{ fontSize: "12px", color: "#94a3b8", fontWeight: 600, display: "block", marginBottom: "4px" }}>PUC Expiry</label>
+                            <p style={{ margin: 0, fontWeight: 600, color: meta.pucExpiry && new Date(meta.pucExpiry) < new Date() ? "#dc2626" : "#475569" }}>
+                              {meta.pucExpiry ? new Date(meta.pucExpiry).toLocaleDateString() : "—"}
+                            </p>
+                          </div>
+                          <div>
+                            <label style={{ fontSize: "12px", color: "#94a3b8", fontWeight: 600, display: "block", marginBottom: "4px" }}>Service Due</label>
+                            <p style={{ margin: 0, fontWeight: 600, color: meta.serviceDueDate && new Date(meta.serviceDueDate) < new Date() ? "#dc2626" : "#475569" }}>
+                              {meta.serviceDueDate ? new Date(meta.serviceDueDate).toLocaleDateString() : "—"}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    </Card>
+                  );
+                })()}
+              </>
+            )}
+
+            {fleetSubNav === "checklists" && (() => {
+              const fleetAssetIds = new Set(assets.filter(a => a.assetType === "fleet").map(a => a.id));
+              const fleetChecklists = checklists.filter(c => (c.assetId && fleetAssetIds.has(c.assetId)) || c.assetType === "fleet" || c.category === "fleet");
+              return (
+              <Card>
+                <div style={{ padding: "12px 16px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontWeight: 600, color: "#0f172a", fontSize: "14px" }}>Fleet Checklists ({fleetChecklists.length})</span>
+                  <Btn onClick={() => { setEditChecklist(null); setShowChecklistModal(true); }} style={{ fontSize: "12px", padding: "6px 12px" }}>+ Create Checklist</Btn>
+                </div>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
+                  <thead>
+                    <tr>
+                      {["Checklist Name", "Asset / Vehicle", "Frequency", "Status", "Questions", "Actions"].map((h) => (
+                        <th key={h} style={{ padding: "11px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {loading.checklists ? (
+                      <tr><td colSpan="6" style={{ padding: "30px", textAlign: "center", color: "#64748b" }}>Loading…</td></tr>
+                    ) : fleetChecklists.length === 0 ? (
+                      <tr><td colSpan="6" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>
+                        No checklists found for fleet assets. Use "+ Create Checklist" above.
+                      </td></tr>
+                    ) : fleetChecklists.map((c) => (
+                      <tr key={c.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                        <td style={{ padding: "12px 16px", fontWeight: 600, color: "#0f172a" }}>{c.checklistName || c.templateName}</td>
+                        <td style={{ padding: "12px 16px", color: "#64748b" }}>{c.assetName || assets.find(a => a.id === c.assetId)?.assetName || "—"}</td>
+                        <td style={{ padding: "12px 16px", color: "#64748b" }}>{c.frequency || "—"}</td>
+                        <td style={{ padding: "12px 16px" }}>
+                          <span style={{ padding: "3px 9px", borderRadius: "10px", fontSize: "11px", fontWeight: 600, background: c.isActive || c.status === "active" ? "#dcfce7" : "#f1f5f9", color: c.isActive || c.status === "active" ? "#16a34a" : "#64748b" }}>
+                            {c.isActive || c.status === "active" ? "Active" : (c.status || "Inactive")}
+                          </span>
+                        </td>
+                        <td style={{ padding: "12px 16px", color: "#64748b" }}>{c.questions?.length ?? "—"}</td>
+                        <td style={{ padding: "12px 16px" }}>
+                          <div style={{ display: "flex", gap: "6px" }}>
+                            <button title="Edit" onClick={() => { setEditChecklist(c); setShowChecklistModal(true); }}
+                              style={{ padding: "4px 8px", borderRadius: "6px", background: "#eff6ff", color: "#2563eb", border: "none", fontSize: "11px", fontWeight: 600, cursor: "pointer" }}>Edit</button>
+                            <button title="Assign to employee" onClick={() => setAssignFleetChecklist(c)}
+                              style={{ padding: "4px 8px", borderRadius: "6px", background: "#f0fdf4", color: "#16a34a", border: "none", fontSize: "11px", fontWeight: 600, cursor: "pointer" }}>Assign</button>
+                            <button title="Delete" onClick={async () => {
+                              if (!window.confirm(`Delete checklist '${c.checklistName || c.templateName}'?`)) return;
+                              try { await deleteCompanyPortalChecklist(token, c.id); setChecklists(p => p.filter(x => x.id !== c.id)); }
+                              catch (e) { alert("Delete failed"); }
+                            }} style={{ padding: "4px 8px", borderRadius: "6px", background: "#fef2f2", color: "#dc2626", border: "none", fontSize: "11px", fontWeight: 600, cursor: "pointer" }}>Delete</button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </Card>
+              );
+            })()}
+
+            {fleetSubNav === "logsheets" && (() => {
+              const fleetAssetIds = new Set(assets.filter(a => a.assetType === "fleet").map(a => a.id));
+              const fleetLogsheets = logsheetTemplatesList.filter(l =>
+                (l.assetId && fleetAssetIds.has(l.assetId)) ||
+                (l.assetType && l.assetType.toLowerCase().includes("fleet"))
+              );
+              return (
+              <Card>
+                <div style={{ padding: "12px 16px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontWeight: 600, color: "#0f172a", fontSize: "14px" }}>Fleet Logsheets ({fleetLogsheets.length})</span>
+                  <Btn onClick={() => { setNav("logsheets"); }} style={{ fontSize: "12px", padding: "6px 12px" }}>+ Create Logsheet</Btn>
+                </div>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
+                  <thead>
+                    <tr>
+                      {["Logsheet Name", "Asset / Vehicle", "Frequency", "Status", "Fields", "Actions"].map((h) => (
+                        <th key={h} style={{ padding: "11px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {loading.logsheet_templates ? (
+                      <tr><td colSpan="6" style={{ padding: "30px", textAlign: "center", color: "#64748b" }}>Loading…</td></tr>
+                    ) : fleetLogsheets.length === 0 ? (
+                      <tr><td colSpan="6" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>
+                        No logsheets found for fleet assets. Use "+ Create Logsheet" above.
+                      </td></tr>
+                    ) : fleetLogsheets.map((l) => (
+                      <tr key={l.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                        <td style={{ padding: "12px 16px", fontWeight: 600, color: "#0f172a" }}>{l.name || l.templateName}</td>
+                        <td style={{ padding: "12px 16px", color: "#64748b" }}>{assets.find(a => a.id === l.assetId)?.assetName || "—"}</td>
+                        <td style={{ padding: "12px 16px", color: "#64748b" }}>{l.frequency || "—"}</td>
+                        <td style={{ padding: "12px 16px" }}>
+                          <span style={{ padding: "3px 9px", borderRadius: "10px", fontSize: "11px", fontWeight: 600, background: l.status === "active" ? "#dcfce7" : "#f1f5f9", color: l.status === "active" ? "#16a34a" : "#64748b" }}>
+                            {l.status || "Active"}
+                          </span>
+                        </td>
+                        <td style={{ padding: "12px 16px", color: "#64748b" }}>{l.fields?.length ?? "—"}</td>
+                        <td style={{ padding: "12px 16px" }}>
+                          <div style={{ display: "flex", gap: "6px" }}>
+                            <button title="Edit in Logsheets" onClick={() => setNav("logsheets")}
+                              style={{ padding: "4px 8px", borderRadius: "6px", background: "#eff6ff", color: "#2563eb", border: "none", fontSize: "11px", fontWeight: 600, cursor: "pointer" }}>Edit</button>
+                            <button title="Assign to employee" onClick={() => setAssignFleetLogsheet(l)}
+                              style={{ padding: "4px 8px", borderRadius: "6px", background: "#f0fdf4", color: "#16a34a", border: "none", fontSize: "11px", fontWeight: 600, cursor: "pointer" }}>Assign</button>
+                            <button title="Delete" onClick={async () => {
+                              if (!window.confirm(`Delete logsheet '${l.name || l.templateName}'?`)) return;
+                              try { await deleteCompanyPortalLogsheetTemplate(token, l.id); setLogsheetTemplatesList(p => p.filter(x => x.id !== l.id)); }
+                              catch (e) { alert("Delete failed"); }
+                            }} style={{ padding: "4px 8px", borderRadius: "6px", background: "#fef2f2", color: "#dc2626", border: "none", fontSize: "11px", fontWeight: 600, cursor: "pointer" }}>Delete</button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </Card>
+              );
+            })()}
+
+            {/* Fleet Assignment Modal */}
+            {assignFleetLogsheet && (
+              <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.50)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+                <div style={{ background: "#fff", borderRadius: "14px", width: "100%", maxWidth: "480px", padding: "24px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+                    <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>Assign "{assignFleetLogsheet.name || assignFleetLogsheet.templateName}"</h3>
+                    <button onClick={() => setAssignFleetLogsheet(null)} style={{ background: "#f1f5f9", border: "none", borderRadius: "8px", padding: "6px 10px", cursor: "pointer", color: "#64748b" }}>✕</button>
+                  </div>
+                  <p style={{ fontSize: "13px", color: "#64748b", marginBottom: "16px" }}>Select an employee to assign this logsheet to:</p>
+                  <select id="fleet-assign-emp" style={{ width: "100%", padding: "9px 12px", borderRadius: "8px", border: "1px solid #e2e8f0", fontSize: "14px", marginBottom: "16px" }}
+                    defaultValue="">
+                    <option value="">— Select Employee —</option>
+                    {employees.map(e => (
+                      <option key={e.id} value={e.id}>{e.fullName} ({e.role})</option>
+                    ))}
+                  </select>
+                  <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
+                    <button onClick={() => setAssignFleetLogsheet(null)} style={{ padding: "8px 16px", borderRadius: "8px", background: "#f1f5f9", color: "#475569", border: "none", fontWeight: 600, cursor: "pointer" }}>Cancel</button>
+                    <button onClick={async () => {
+                      const empId = document.getElementById("fleet-assign-emp")?.value;
+                      if (!empId) { alert("Please select an employee"); return; }
+                      try {
+                        await createTemplateUserAssignment(token, { templateType: "logsheet", templateId: assignFleetLogsheet.id, assignedTo: Number(empId) });
+                        alert("Logsheet assigned successfully!");
+                        setAssignFleetLogsheet(null);
+                      } catch (e) { alert(e.message || "Assignment failed"); }
+                    }} style={{ padding: "8px 16px", borderRadius: "8px", background: "#2563eb", color: "#fff", border: "none", fontWeight: 600, cursor: "pointer" }}>Assign</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Fleet Checklist Assignment Modal */}
+            {assignFleetChecklist && (
+              <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.50)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+                <div style={{ background: "#fff", borderRadius: "14px", width: "100%", maxWidth: "480px", padding: "24px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+                    <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>Assign "{assignFleetChecklist.checklistName || assignFleetChecklist.templateName}"</h3>
+                    <button onClick={() => setAssignFleetChecklist(null)} style={{ background: "#f1f5f9", border: "none", borderRadius: "8px", padding: "6px 10px", cursor: "pointer", color: "#64748b" }}>✕</button>
+                  </div>
+                  <p style={{ fontSize: "13px", color: "#64748b", marginBottom: "16px" }}>Select an employee to assign this checklist to:</p>
+                  <select id="fleet-assign-chk-emp" style={{ width: "100%", padding: "9px 12px", borderRadius: "8px", border: "1px solid #e2e8f0", fontSize: "14px", marginBottom: "16px" }}
+                    defaultValue="">
+                    <option value="">— Select Employee —</option>
+                    {employees.map(e => (
+                      <option key={e.id} value={e.id}>{e.fullName} ({e.role})</option>
+                    ))}
+                  </select>
+                  <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
+                    <button onClick={() => setAssignFleetChecklist(null)} style={{ padding: "8px 16px", borderRadius: "8px", background: "#f1f5f9", color: "#475569", border: "none", fontWeight: 600, cursor: "pointer" }}>Cancel</button>
+                    <button onClick={async () => {
+                      const empId = document.getElementById("fleet-assign-chk-emp")?.value;
+                      if (!empId) { alert("Please select an employee"); return; }
+                      try {
+                        await createTemplateUserAssignment(token, { templateType: "checklist", templateId: assignFleetChecklist.id, assignedTo: Number(empId) });
+                        alert("Checklist assigned successfully!");
+                        setAssignFleetChecklist(null);
+                      } catch (e) { alert(e.message || "Assignment failed"); }
+                    }} style={{ padding: "8px 16px", borderRadius: "8px", background: "#2563eb", color: "#fff", border: "none", fontWeight: 600, cursor: "pointer" }}>Assign</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Fleet Submission History */}
+            {fleetSubNav === "history" && (
+              <Card>
+                <div style={{ padding: "12px 16px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontWeight: 600, color: "#0f172a", fontSize: "14px" }}>Submission History ({fleetHistory.length})</span>
+                  <button onClick={async () => { try { await downloadFleetSubmissionsCSV(token); } catch (e) { alert("CSV export failed"); } }}
+                    style={{ padding: "6px 14px", borderRadius: "8px", background: "#16a34a", color: "#fff", border: "none", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}>
+                    ⬇ Export CSV
+                  </button>
+                </div>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
+                  <thead>
+                    <tr>
+                      {["Type", "Template", "Asset / Vehicle", "Submitted By", "Date & Time", "Location", "Actions"].map((h) => (
+                        <th key={h} style={{ padding: "11px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {loading.fleet_history ? (
+                      <tr><td colSpan="7" style={{ padding: "30px", textAlign: "center", color: "#64748b" }}>Loading…</td></tr>
+                    ) : fleetHistory.length === 0 ? (
+                      <tr><td colSpan="7" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>No submissions found for fleet assets yet.</td></tr>
+                    ) : fleetHistory.map((h, i) => (
+                      <tr key={`${h.type}-${h.id}-${i}`} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                        <td style={{ padding: "12px 16px" }}>
+                          <span style={{ padding: "3px 9px", borderRadius: "10px", fontSize: "11px", fontWeight: 600,
+                            background: h.type === "checklist" ? "#ede9fe" : "#dbeafe",
+                            color: h.type === "checklist" ? "#7c3aed" : "#2563eb" }}>
+                            {h.type === "checklist" ? "✅ Checklist" : "📋 Logsheet"}
+                          </span>
+                        </td>
+                        <td style={{ padding: "12px 16px", fontWeight: 600, color: "#0f172a" }}>{h.name || "—"}</td>
+                        <td style={{ padding: "12px 16px", color: "#64748b" }}>{h.assetName || "—"}</td>
+                        <td style={{ padding: "12px 16px", color: "#64748b" }}>{h.submittedBy || "Anonymous"}</td>
+                        <td style={{ padding: "12px 16px", color: "#64748b" }}>{h.submittedAt ? new Date(h.submittedAt).toLocaleString() : "—"}</td>
+                        <td style={{ padding: "12px 16px", color: "#64748b", fontSize: "12px" }}>
+                          {h.lat && h.lng ? (
+                            <a href={`https://maps.google.com/?q=${h.lat},${h.lng}`} target="_blank" rel="noopener noreferrer"
+                              style={{ color: "#2563eb", textDecoration: "none" }}>
+                              📍 {Number(h.lat).toFixed(4)}, {Number(h.lng).toFixed(4)}
+                            </a>
+                          ) : <span style={{ color: "#cbd5e1" }}>—</span>}
+                        </td>
+                        <td style={{ padding: "12px 16px" }}>
+                          <button onClick={async () => {
+                            setFleetSubmissionDetailLoading(true);
+                            try {
+                              const detail = await getFleetSubmissionDetail(token, h.type, h.id);
+                              setFleetSubmissionDetail(detail);
+                            } catch (e) { alert("Failed to load details"); }
+                            finally { setFleetSubmissionDetailLoading(false); }
+                          }} style={{ padding: "4px 10px", borderRadius: "6px", background: "#eff6ff", color: "#2563eb", border: "none", fontSize: "11px", fontWeight: 600, cursor: "pointer" }}>
+                            {fleetSubmissionDetailLoading ? "…" : "Details"}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </Card>
+            )}
+
+            {/* Fleet Submission Detail Modal */}
+            {fleetSubmissionDetail && (
+              <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 1200, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+                <div style={{ background: "#fff", borderRadius: "14px", width: "100%", maxWidth: "600px", maxHeight: "85vh", display: "flex", flexDirection: "column" }}>
+                  <div style={{ padding: "18px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>{fleetSubmissionDetail.name}</h3>
+                      <p style={{ margin: "3px 0 0", fontSize: "12px", color: "#64748b" }}>
+                        {fleetSubmissionDetail.assetName} · {fleetSubmissionDetail.submittedBy} · {fleetSubmissionDetail.submittedAt ? new Date(fleetSubmissionDetail.submittedAt).toLocaleString() : "—"}
+                        {fleetSubmissionDetail.shift ? ` · Shift: ${fleetSubmissionDetail.shift}` : ""}
+                        {fleetSubmissionDetail.lat && fleetSubmissionDetail.lng ? ` · 📍 ${Number(fleetSubmissionDetail.lat).toFixed(4)}, ${Number(fleetSubmissionDetail.lng).toFixed(4)}` : ""}
+                      </p>
+                    </div>
+                    <button onClick={() => setFleetSubmissionDetail(null)} style={{ background: "#f1f5f9", border: "none", borderRadius: "8px", padding: "6px 10px", cursor: "pointer", color: "#64748b", fontSize: "16px" }}>✕</button>
+                  </div>
+                  <div style={{ overflowY: "auto", padding: "16px 20px", flex: 1 }}>
+                    {(!fleetSubmissionDetail.answers || fleetSubmissionDetail.answers.length === 0) ? (
+                      <p style={{ color: "#94a3b8", textAlign: "center", padding: "20px 0" }}>No answer data available.</p>
+                    ) : (
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+                        <thead>
+                          <tr style={{ background: "#f8fafc" }}>
+                            <th style={{ padding: "8px 12px", textAlign: "left", color: "#475569", fontWeight: 600, borderBottom: "1px solid #e2e8f0" }}>Question</th>
+                            <th style={{ padding: "8px 12px", textAlign: "left", color: "#475569", fontWeight: 600, borderBottom: "1px solid #e2e8f0" }}>Answer</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {fleetSubmissionDetail.answers.map((a, i) => (
+                            <tr key={i} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                              <td style={{ padding: "8px 12px", color: "#0f172a", fontWeight: 500 }}>{a.question}</td>
+                              <td style={{ padding: "8px 12px", color: "#475569" }}>{a.answer || "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+
           </div>
         )}
       </main>
@@ -2827,6 +4130,7 @@ export default function CompanyEmployeePortal() {
           token={token}
           existing={editAsset}
           departments={departments}
+          employees={employees}
           onClose={() => { setShowAssetModal(false); setEditAsset(null); }}
           onSaved={handleAssetSaved}
         />
@@ -2875,6 +4179,54 @@ export default function CompanyEmployeePortal() {
           onDone={() => {
             setShowImport(false);
             load("employees", () => getCompanyPortalEmployees(token)).then((d) => d && setEmployees(d));
+          }}
+        />
+      )}
+
+      {/* OJT & Fleet Modals */}
+      {showFleetAssetModal && (
+        <AssetModal
+          token={token}
+          existing={editFleetAsset}
+          departments={departments}
+          employees={employees}
+          onClose={() => { setShowFleetAssetModal(false); setEditFleetAsset(null); }}
+          onSaved={(saved, isEdit) => {
+            setShowFleetAssetModal(false); setEditFleetAsset(null);
+            setFleetAssets(p => isEdit ? p.map(a => a.id === saved.id ? saved : a) : [saved, ...p]);
+          }}
+        />
+      )}
+      {showFleetInspectionModal && (
+        <FleetInspectionModal
+          token={token}
+          fleetAssets={fleetAssets}
+          onClose={() => { setShowFleetInspectionModal(false); setEditFleetInspection(null); }}
+          onSaved={(saved) => {
+            setShowFleetInspectionModal(false); setEditFleetInspection(null);
+            setFleetInspections(p => [saved, ...p]);
+          }}
+        />
+      )}
+      {showFleetFuelModal && (
+        <FleetFuelModal
+          token={token}
+          fleetAssets={fleetAssets}
+          onClose={() => { setShowFleetFuelModal(false); setEditFleetFuel(null); }}
+          onSaved={(saved) => {
+            setShowFleetFuelModal(false); setEditFleetFuel(null);
+            setFleetFuelLogs(p => [saved, ...p]);
+          }}
+        />
+      )}
+      {showFleetMaintModal && (
+        <FleetMaintModal
+          token={token}
+          fleetAssets={fleetAssets}
+          onClose={() => { setShowFleetMaintModal(false); setEditFleetMaint(null); }}
+          onSaved={(saved) => {
+            setShowFleetMaintModal(false); setEditFleetMaint(null);
+            setFleetMaintenance(p => [saved, ...p]);
           }}
         />
       )}

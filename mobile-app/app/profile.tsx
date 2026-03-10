@@ -15,7 +15,6 @@ import {
 } from 'react-native';
 import { clearAuth, getStoredUser, getStoredCompany } from '../utils/api';
 import { SupervisorBottomNav } from './supervisor-dashboard';
-import { TechBottomNav } from './tech-dashboard';
 
 export default function ProfileScreen() {
     const [user, setUser] = useState<any>(null);
@@ -196,11 +195,7 @@ export default function ProfileScreen() {
                 <View style={{ height: 20 }} />
             </ScrollView>
 
-            {user?.role === 'technician' || user?.role === 'tech' ? (
-                <TechBottomNav activeRoute="profile" />
-            ) : (
-                <SupervisorBottomNav activeRoute="profile" />
-            )}
+            <SupervisorBottomNav activeRoute="profile" />
         </SafeAreaView>
     );
 }

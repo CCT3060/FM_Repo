@@ -33,7 +33,7 @@ router.get("/:assetId", async (req, res, next) => {
       `SELECT a.id, a.asset_name AS "assetName", a.asset_unique_id AS "assetUniqueId",
               a.asset_type AS "assetType", a.status, a.building, a.floor, a.room,
               a.company_id AS "companyId",
-              c.name AS "companyName",
+              c.company_name AS "companyName",
               d.name AS "departmentName",
               ad.metadata, ad.documents
        FROM assets a
@@ -54,36 +54,53 @@ router.get("/:assetId", async (req, res, next) => {
     // Logsheet templates assigned to this asset
     const [logsheetTemplates] = await pool.query(
       `SELECT lt.id, lt.template_name AS "templateName", lt.frequency,
-              lt.shift, lt.status, lt.columns, lt.header_fields AS "headerFields"
+              lt.asset_type AS "assetType", lt.description,
+              lt.header_config AS "headerConfig", lt.is_active AS "isActive"
        FROM logsheet_templates lt
-       WHERE lt.asset_id = ? AND lt.status = 'active'
+       WHERE lt.asset_id = ? AND lt.is_active = 1
        ORDER BY lt.template_name`,
       [assetId]
     );
     const normalizedLS = logsheetTemplates.map((t) => ({
       ...t,
-      columns: safeParse(t.columns) || [],
-      headerFields: safeParse(t.headerFields) || [],
+      headerConfig: safeParse(t.headerConfig) || {},
     }));
 
-    // Checklist templates for this asset's type
+    // Checklist templates for this asset's type OR directly assigned to this asset
     const [checklistTemplates] = await pool.query(
       `SELECT ct.id, ct.template_name AS "templateName", ct.asset_type AS "assetType",
-              ct.category, ct.description, ct.frequency, ct.shift, ct.status, ct.questions
+              ct.category, ct.description, ct.frequency, ct.status, ct.questions
        FROM checklist_templates ct
-       WHERE ct.company_id = ? AND ct.asset_type = ? AND ct.is_active = 1
+       WHERE ct.company_id = ? AND (ct.asset_id = ? OR ct.asset_type = ?)
+         AND (ct.is_active = 1 OR ct.is_active IS NULL OR ct.status = 'active')
        ORDER BY ct.template_name`,
-      [asset.companyId, asset.assetType]
+      [asset.companyId, assetId, asset.assetType]
     );
     const normalizedCL = checklistTemplates.map((t) => ({
       ...t,
       questions: safeParse(t.questions) || [],
     }));
 
+    // OJT trainings linked to this asset (published only) — graceful if column missing
+    let ojtTrainings = [];
+    try {
+      const [ojtRows] = await pool.query(
+        `SELECT id, title, description, passing_percentage AS "passingPercentage", status
+         FROM ojt_trainings
+         WHERE asset_id = ? AND status = 'published'
+         ORDER BY created_at DESC`,
+        [assetId]
+      );
+      ojtTrainings = ojtRows || [];
+    } catch (_) {
+      // asset_id column may not exist yet; return empty array
+    }
+
     res.json({
       asset,
       logsheetTemplates: normalizedLS,
       checklistTemplates: normalizedCL,
+      ojtTrainings: ojtTrainings || [],
     });
   } catch (err) {
     next(err);

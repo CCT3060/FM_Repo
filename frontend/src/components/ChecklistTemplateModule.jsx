@@ -342,7 +342,6 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], onBack, on
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [assets, setAssets] = useState(assetsProp);
-  const isFirstRender = useRef(true);
 
   // Fetch assets for the selected company from the API
   useEffect(() => {
@@ -363,9 +362,8 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], onBack, on
     return () => { cancelled = true; };
   }, [token, form.companyId]);  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Reset assetId when company or assetType changes (but not on the first render — edit mode should preserve assetId)
+  // Reset assetId when company or assetType changes
   useEffect(() => {
-    if (isFirstRender.current) { isFirstRender.current = false; return; }
     setForm((p) => ({ ...p, assetId: "" }));
   }, [form.companyId, form.assetType]);  // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -390,7 +388,6 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], onBack, on
     if (!isEdit && !form.companyId) return setError("Select a company");
     if (!form.templateName.trim()) return setError("Template name is required");
     if (!form.assetType.trim()) return setError("Asset type is required");
-    if (!form.assetId) return setError("Please select an asset to link this checklist to");
     for (const [i, q] of questions.entries()) {
       if (!q.questionText.trim()) return setError(`Question ${i + 1} text is required`);
     }
@@ -485,9 +482,9 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], onBack, on
             </Sel>
           </div>
           <div>
-            <Label required>Asset</Label>
+            <Label>Link to Specific Asset</Label>
             <Sel value={form.assetId} onChange={(e) => setForm((p) => ({ ...p, assetId: e.target.value }))}>
-              <option value="">— Select asset —</option>
+              <option value="">— No specific asset —</option>
               {filteredChecklistAssets.map((a) => (
                 <option key={a.id} value={a.id}>{a.assetName || a.asset_name}</option>
               ))}

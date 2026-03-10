@@ -219,19 +219,6 @@ export default function ChecklistManagementScreen() {
         });
     };
 
-    const handleViewChecklistHistory = (template: Template) => {
-        const now = new Date();
-        router.push({
-            pathname: '/checklist-entry-view',
-            params: {
-                templateId: template.id.toString(),
-                templateName: template.templateName,
-                month: String(now.getMonth() + 1),
-                year: String(now.getFullYear()),
-            },
-        } as any);
-    };
-
     const handleAssignToTeam = (template: Template) => {
         if (teamMembers.length === 0) {
             Alert.alert('No Team Members', 'You have no team members to assign to.');
@@ -270,7 +257,7 @@ export default function ChecklistManagementScreen() {
     const renderCard = (item: Template) => {
         const priority = getPriority(item.frequency);
         const isChecklist = item.templateType === 'checklist';
-        const locationText = item.assetName || item.location || item.assetType || '';
+        const locationText = item.location || item.assetType || '';
 
         return (
             <View key={`${item.source}-${item.id}-${item.assignmentId}`} style={styles.card}>
@@ -301,12 +288,6 @@ export default function ChecklistManagementScreen() {
                         <MaterialCommunityIcons name="format-list-bulleted" size={15} color="#2563EB" />
                         <Text style={styles.fillBtnText}>Fill Now</Text>
                     </TouchableOpacity>
-                    {isChecklist && (
-                        <TouchableOpacity style={styles.historyBtn} onPress={() => handleViewChecklistHistory(item)}>
-                            <MaterialCommunityIcons name="table-eye" size={15} color="#7C3AED" />
-                            <Text style={styles.historyBtnText}>History</Text>
-                        </TouchableOpacity>
-                    )}
                     {isSupervisor && (
                         <TouchableOpacity style={styles.assignBtn} onPress={() => handleAssignToTeam(item)}>
                             <MaterialCommunityIcons name="account-plus-outline" size={15} color="#FFFFFF" />
@@ -578,11 +559,6 @@ const styles = StyleSheet.create({
         backgroundColor: '#2563EB', borderRadius: 8, paddingVertical: 10, gap: 6,
     },
     assignBtnText: { fontSize: 13, fontWeight: '700', color: '#FFFFFF' },
-    historyBtn: {
-        flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-        backgroundColor: '#F5F3FF', borderRadius: 8, paddingVertical: 10, gap: 6,
-    },
-    historyBtnText: { fontSize: 13, fontWeight: '700', color: '#7C3AED' },
 
     // States
     center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 },

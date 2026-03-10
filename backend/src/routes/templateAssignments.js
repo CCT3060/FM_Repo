@@ -15,6 +15,12 @@ import { dispatchFlagNotifications } from "../utils/notificationsHelper.js";
 const router = Router();
 router.use(requireCompanyAuth);
 
+// Ensure location columns exist on submission tables
+pool.query("ALTER TABLE checklist_submissions ADD COLUMN IF NOT EXISTS latitude FLOAT8 NULL").catch(() => {});
+pool.query("ALTER TABLE checklist_submissions ADD COLUMN IF NOT EXISTS longitude FLOAT8 NULL").catch(() => {});
+pool.query("ALTER TABLE logsheet_entries ADD COLUMN IF NOT EXISTS latitude FLOAT8 NULL").catch(() => {});
+pool.query("ALTER TABLE logsheet_entries ADD COLUMN IF NOT EXISTS longitude FLOAT8 NULL").catch(() => {});
+
 // Helper to get company ID
 const cid = (req) => req.companyUser.companyId;
 
@@ -282,8 +288,6 @@ router.get(
                   lt.template_name AS "templateName",
                   lt.description,
                   lt.asset_type AS "assetType",
-                  COALESCE(lt.layout_type, 'standard') AS "layoutType",
-                  lt.header_config AS "headerConfig",
                   lta.asset_id AS "assetId",
                   a.asset_name AS "assetName"
            FROM logsheet_templates lt
@@ -294,14 +298,6 @@ router.get(
           [id, cid(req)]
         );
         if (!template) return res.status(404).json({ message: "Template not found" });
-
-        // Parse headerConfig JSON
-        let parsedHeaderConfig = {};
-        try {
-          parsedHeaderConfig = template.headerConfig
-            ? (typeof template.headerConfig === 'string' ? JSON.parse(template.headerConfig) : template.headerConfig)
-            : {};
-        } catch (_) {}
 
         // logsheet_questions are linked via logsheet_sections → template_id
         // column is is_mandatory (not is_required), and rule_json for options
@@ -322,8 +318,7 @@ router.get(
           [id]
         );
 
-        const { headerConfig: _hc, ...templateData } = template;
-        res.json({ ...templateData, headerConfig: parsedHeaderConfig, questions });
+        res.json({ ...template, questions });
       }
     } catch (err) {
       next(err);
@@ -343,7 +338,7 @@ router.post(
   ]),
   async (req, res, next) => {
     try {
-      const { templateId, assetId, answers } = req.body;
+      const { templateId, assetId, answers, latitude, longitude } = req.body;
 
       // Supervisors can fill any company checklist directly; others need an assignment
       if (req.companyUser.role !== 'supervisor') {
@@ -391,14 +386,16 @@ router.post(
 
       // Real schema: checklist_submissions(template_id, asset_id, submitted_by, status, completion_pct, submitted_at)
       // + company_user_id added by migration 2026-02-27-checklist-asset-submitter.sql
+      const lat = typeof latitude === 'number' ? latitude : null;
+      const lon = typeof longitude === 'number' ? longitude : null;
       const [csResult] = await pool.query(
         `INSERT INTO checklist_submissions
-         (template_id, asset_id, submitted_by, company_user_id, status, completion_pct, submitted_at)
-         VALUES (?, ?, NULL, ?, 'submitted', 100, NOW())
+         (template_id, asset_id, submitted_by, company_user_id, status, completion_pct, latitude, longitude, submitted_at)
+         VALUES (?, ?, NULL, ?, 'submitted', 100, ?, ?, NOW())
          RETURNING id`,
-        [templateId, effectiveAssetId, req.companyUser.id]
+        [templateId, effectiveAssetId, req.companyUser.id, lat, lon]
       ).catch(() =>
-        // Fallback if company_user_id column doesn't exist yet (migration not run)
+        // Fallback without lat/lng columns if not yet migrated
         pool.query(
           `INSERT INTO checklist_submissions
            (template_id, asset_id, submitted_by, status, completion_pct, submitted_at)
@@ -547,7 +544,7 @@ router.post(
   ]),
   async (req, res, next) => {
     try {
-      const { templateId, assetId, answers } = req.body;
+      const { templateId, assetId, answers, latitude, longitude } = req.body;
 
       // Supervisors can fill any company logsheet directly; others need an assignment
       if (req.companyUser.role !== 'supervisor') {
@@ -574,13 +571,23 @@ router.post(
       const currentMonth = _now.getMonth() + 1;
       const currentYear  = _now.getFullYear();
       const currentDay   = _now.getDate();
+      const lat = typeof latitude === 'number' ? latitude : null;
+      const lon = typeof longitude === 'number' ? longitude : null;
 
       const [leResult] = await pool.query(
         `INSERT INTO logsheet_entries
-         (template_id, asset_id, submitted_by, company_user_id, entry_date, month, year, status, data, submitted_at)
-         VALUES (?, ?, NULL, ?, CURRENT_DATE, ?, ?, 'submitted', ?, NOW())
+         (template_id, asset_id, submitted_by, company_user_id, entry_date, month, year, status, data, latitude, longitude, submitted_at)
+         VALUES (?, ?, NULL, ?, CURRENT_DATE, ?, ?, 'submitted', ?, ?, ?, NOW())
          RETURNING id`,
-        [templateId, assetId || null, req.companyUser.id, currentMonth, currentYear, JSON.stringify(answers || [])]
+        [templateId, assetId || null, req.companyUser.id, currentMonth, currentYear, JSON.stringify(answers || []), lat, lon]
+      ).catch(() =>
+        pool.query(
+          `INSERT INTO logsheet_entries
+           (template_id, asset_id, submitted_by, company_user_id, entry_date, month, year, status, data, submitted_at)
+           VALUES (?, ?, NULL, ?, CURRENT_DATE, ?, ?, 'submitted', ?, NOW())
+           RETURNING id`,
+          [templateId, assetId || null, req.companyUser.id, currentMonth, currentYear, JSON.stringify(answers || [])]
+        )
       );
       const entryId = leResult.insertId || leResult[0]?.id;
 
@@ -932,15 +939,12 @@ router.get("/my-unassigned-to-team", async (req, res, next) => {
          COALESCE(ct.description,  lt.description)    AS "description",
          COALESCE(ct.asset_type,   lt.asset_type)     AS "assetType",
          COALESCE(ct.frequency,    lt.frequency)      AS "frequency",
-         COALESCE(ct.asset_id,     lt.asset_id)       AS "assetId",
-         COALESCE(a_ct.asset_name, a_lt.asset_name)   AS "assetName"
+         COALESCE(ct.asset_id,     lt.asset_id)       AS "assetId"
        FROM template_user_assignments tua
        LEFT JOIN checklist_templates ct
          ON ct.id = tua.template_id AND tua.template_type = 'checklist' AND ct.company_id = ?
        LEFT JOIN logsheet_templates lt
          ON lt.id = tua.template_id AND tua.template_type = 'logsheet'  AND lt.company_id = ?
-       LEFT JOIN assets a_ct ON a_ct.id = ct.asset_id
-       LEFT JOIN assets a_lt ON a_lt.id = lt.asset_id
        WHERE tua.assigned_to = ?
          AND tua.company_id  = ?
          AND NOT EXISTS (
@@ -1064,98 +1068,5 @@ router.get("/team-assignments", async (req, res, next) => {
     res.json(rows);
   } catch (err) { next(err); }
 });
-
-/* ────────────────────────────────────────────────────────────────────────────
-   GET: Checklist monthly grid data
-   Returns all submissions for a template in a given month/year,
-   keyed by day for a grid display (questions × days).
-──────────────────────────────────────────────────────────────────────────── */
-router.get(
-  "/checklist-grid/:templateId",
-  validate([param("templateId").isInt({ min: 1 })]),
-  async (req, res, next) => {
-    try {
-      const { templateId } = req.params;
-      const month = parseInt(req.query.month) || (new Date().getMonth() + 1);
-      const year  = parseInt(req.query.year)  || new Date().getFullYear();
-
-      // Get template + asset name
-      const [[tmpl]] = await pool.query(
-        `SELECT ct.id, ct.template_name AS "templateName",
-                ct.asset_id AS "assetId", a.asset_name AS "assetName",
-                ct.questions
-         FROM checklist_templates ct
-         LEFT JOIN assets a ON a.id = ct.asset_id
-         WHERE ct.id = ? AND ct.company_id = ?`,
-        [templateId, cid(req)]
-      );
-      if (!tmpl) return res.status(404).json({ message: "Template not found" });
-
-      // Parse questions (JSONB column or fallback table)
-      const rawQs = tmpl.questions;
-      let qs = rawQs ? (Array.isArray(rawQs) ? rawQs : JSON.parse(rawQs)) : [];
-      if (qs.length === 0) {
-        const [tableQs] = await pool.query(
-          `SELECT id, question_text AS "questionText", input_type AS "inputType", order_index AS "orderIndex"
-           FROM checklist_template_questions WHERE template_id = ?
-           ORDER BY order_index ASC, id ASC`,
-          [templateId]
-        );
-        qs = tableQs.map(q => ({
-          id: q.id, questionText: q.questionText,
-          inputType: q.inputType || 'text', orderIndex: q.orderIndex,
-        }));
-      }
-      const questions = qs.map((q, idx) => ({
-        id: q.id ?? idx,
-        questionText: q.questionText || q.text || `Q${idx + 1}`,
-        answerType: q.inputType || q.answerType || 'text',
-        displayOrder: q.orderIndex ?? q.order ?? idx,
-      }));
-
-      // Days in month
-      const daysInMonth = new Date(year, month, 0).getDate();
-
-      // All submissions for this template in the given month/year
-      const [subs] = await pool.query(
-        `SELECT cs.id, cs.submitted_at AS "submittedAt", cu.full_name AS "submittedBy"
-         FROM checklist_submissions cs
-         LEFT JOIN company_users cu ON cu.id = cs.company_user_id
-         WHERE cs.template_id = ?
-           AND EXTRACT(MONTH FROM cs.submitted_at) = ?
-           AND EXTRACT(YEAR  FROM cs.submitted_at) = ?
-         ORDER BY cs.submitted_at ASC`,
-        [templateId, month, year]
-      );
-
-      // Fetch answers for each submission
-      const submissions = [];
-      for (const sub of subs) {
-        const [answers] = await pool.query(
-          `SELECT question_text AS "questionText",
-                  option_selected AS "answerValue",
-                  answer_json     AS "answerJson"
-           FROM checklist_submission_answers WHERE submission_id = ?`,
-          [sub.id]
-        );
-        const day = new Date(sub.submittedAt).getDate();
-        const answerMap = {};
-        for (const a of answers) {
-          const val = a.answerValue ||
-            (a.answerJson
-              ? (typeof a.answerJson === 'string'
-                  ? JSON.parse(a.answerJson)?.value
-                  : a.answerJson?.value)
-              : null) || '';
-          answerMap[a.questionText] = val;
-        }
-        submissions.push({ id: sub.id, day, date: sub.submittedAt, submittedBy: sub.submittedBy, answers: answerMap });
-      }
-
-      const { questions: _dropQs, ...templateInfo } = tmpl;
-      res.json({ template: { ...templateInfo, id: Number(templateId) }, questions, submissions, month, year, daysInMonth });
-    } catch (err) { next(err); }
-  }
-);
 
 export default router;

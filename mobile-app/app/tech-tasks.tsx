@@ -12,7 +12,6 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
-import Animated, { FadeInUp } from 'react-native-reanimated';
 import { getMyAssignments, type Assignment } from '../utils/api';
 import { TechBottomNav } from './tech-dashboard';
 
@@ -65,56 +64,55 @@ export default function TechTasksScreen() {
         });
     };
 
-    const renderTask = (item: Assignment, index: number) => {
+    const renderTask = (item: Assignment) => {
         const isChecklist = item.templateType === 'checklist';
-        const accentColor = isChecklist ? '#6366F1' : '#2563EB'; // Lighter, more premium indigo/blue
+        const accentColor = isChecklist ? '#7C3AED' : '#2563EB';
 
         return (
-            <Animated.View key={item.assignmentId} entering={FadeInUp.delay(50 * index).duration(400).springify()}>
-                <TouchableOpacity
-                    style={styles.taskCard}
-                    activeOpacity={0.7}
-                    onPress={() => handleTaskPress(item)}
-                >
-                    <View style={[styles.cardLeftBorder, { backgroundColor: accentColor }]} />
+            <TouchableOpacity
+                key={item.assignmentId}
+                style={styles.taskCard}
+                activeOpacity={0.8}
+                onPress={() => handleTaskPress(item)}
+            >
+                <View style={[styles.cardLeftBorder, { backgroundColor: accentColor }]} />
 
-                    <View style={styles.cardContent}>
-                        <View style={styles.cardHeaderRow}>
-                            <View style={styles.pillGroup}>
-                                <View style={[styles.statusPill, { backgroundColor: isChecklist ? '#EEF2FF' : '#EFF6FF' }]}>
-                                    <Text style={[styles.statusPillText, { color: accentColor }]}>
-                                        {isChecklist ? 'CHECKLIST' : 'LOGSHEET'}
-                                    </Text>
-                                </View>
-                                {item.assetType ? (
-                                    <Text style={[styles.tagText, { color: '#64748B' }]}>{item.assetType}</Text>
-                                ) : null}
-                            </View>
-                            <MaterialCommunityIcons name="chevron-right" size={20} color="#CBD5E1" />
-                        </View>
-
-                        <Text style={styles.taskTitle} numberOfLines={2}>{item.templateName}</Text>
-
-                        {item.description ? (
-                            <Text style={styles.taskDesc} numberOfLines={2}>{item.description}</Text>
-                        ) : null}
-
-                        <View style={styles.cardFooterRow}>
-                            {item.assetName ? (
-                                <View style={styles.locationGroup}>
-                                    <MaterialCommunityIcons name="office-building" size={14} color="#64748B" />
-                                    <Text style={styles.locationText}>{item.assetName}</Text>
-                                </View>
-                            ) : null}
-                            {item.assignedBy ? (
-                                <Text style={styles.timeText}>
-                                    By {item.assignedBy}
+                <View style={styles.cardContent}>
+                    <View style={styles.cardHeaderRow}>
+                        <View style={styles.pillGroup}>
+                            <View style={[styles.statusPill, { backgroundColor: isChecklist ? '#EDE9FE' : '#DBEAFE' }]}>
+                                <Text style={[styles.statusPillText, { color: accentColor }]}>
+                                    {isChecklist ? 'CHECKLIST' : 'LOGSHEET'}
                                 </Text>
+                            </View>
+                            {item.assetType ? (
+                                <Text style={[styles.tagText, { color: '#718096' }]}>{item.assetType}</Text>
                             ) : null}
                         </View>
+                        <MaterialCommunityIcons name="chevron-right" size={20} color="#A0AEC0" />
                     </View>
-                </TouchableOpacity>
-            </Animated.View>
+
+                    <Text style={styles.taskTitle} numberOfLines={2}>{item.templateName}</Text>
+
+                    {item.description ? (
+                        <Text style={styles.taskDesc} numberOfLines={2}>{item.description}</Text>
+                    ) : null}
+
+                    <View style={styles.cardFooterRow}>
+                        {item.assetName ? (
+                            <View style={styles.locationGroup}>
+                                <MaterialCommunityIcons name="office-building-outline" size={14} color="#2B6CB0" />
+                                <Text style={styles.locationText}>{item.assetName}</Text>
+                            </View>
+                        ) : null}
+                        {item.assignedBy ? (
+                            <Text style={styles.timeText}>
+                                By {item.assignedBy}
+                            </Text>
+                        ) : null}
+                    </View>
+                </View>
+            </TouchableOpacity>
         );
     };
 
@@ -138,7 +136,7 @@ export default function TechTasksScreen() {
             <ScrollView
                 style={styles.scrollArea}
                 showsVerticalScrollIndicator={false}
-                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#2563EB" colors={['#2563EB']} />}
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
             >
                 {/* Top Tabs */}
                 <View style={styles.tabContainer}>
@@ -161,7 +159,7 @@ export default function TechTasksScreen() {
                 </View>
 
                 {/* Date & Progress Area */}
-                <Animated.View entering={FadeInUp.delay(100).duration(400)} style={styles.progressHeader}>
+                <View style={styles.progressHeader}>
                     <View>
                         <Text style={styles.todayLabel}>TODAY</Text>
                         <Text style={styles.dateText}>{today}</Text>
@@ -172,43 +170,41 @@ export default function TechTasksScreen() {
                             <Text style={styles.progressFraction}>{filteredAssignments.length} task{filteredAssignments.length !== 1 ? 's' : ''}</Text>
                         </View>
                     </View>
-                </Animated.View>
+                </View>
 
                 {/* Content */}
                 <View style={styles.listContainer}>
                     {isLoading ? (
                         <View style={styles.centeredMsg}>
-                            <ActivityIndicator size="large" color="#2563EB" />
+                            <ActivityIndicator size="large" color="#1E3A8A" />
                             <Text style={styles.loadingText}>Loading tasks...</Text>
                         </View>
                     ) : error ? (
-                        <Animated.View entering={FadeInUp.duration(400)} style={styles.centeredMsg}>
+                        <View style={styles.centeredMsg}>
                             <MaterialCommunityIcons name="alert-circle-outline" size={48} color="#EF4444" />
                             <Text style={styles.errorText}>{error}</Text>
                             <TouchableOpacity style={styles.retryBtn} onPress={loadAssignments}>
                                 <Text style={styles.retryText}>Retry</Text>
                             </TouchableOpacity>
-                        </Animated.View>
+                        </View>
                     ) : filteredAssignments.length === 0 ? (
-                        <Animated.View entering={FadeInUp.duration(400)} style={styles.centeredMsg}>
-                            <View style={styles.emptyIconCircle}>
-                                <MaterialCommunityIcons
-                                    name={activeTab === 'Checklists' ? 'clipboard-check-outline' : 'notebook-outline'}
-                                    size={40}
-                                    color="#10B981"
-                                />
-                            </View>
+                        <View style={styles.centeredMsg}>
+                            <MaterialCommunityIcons
+                                name={activeTab === 'Checklists' ? 'clipboard-check-outline' : 'notebook-outline'}
+                                size={56}
+                                color="#CBD5E0"
+                            />
                             <Text style={styles.emptyText}>No {activeTab.toLowerCase()} assigned yet</Text>
                             <Text style={styles.emptySubText}>Your supervisor will assign tasks here</Text>
-                        </Animated.View>
+                        </View>
                     ) : (
-                        filteredAssignments.map((a, i) => renderTask(a, i))
+                        filteredAssignments.map(renderTask)
                     )}
                 </View>
             </ScrollView>
 
             {/* Bottom Nav */}
-            <TechBottomNav activeRoute="home" />
+            <TechBottomNav activeRoute="tasks" />
         </SafeAreaView>
     );
 }
@@ -216,35 +212,32 @@ export default function TechTasksScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#FAF9F6', // Lighter bg
+        backgroundColor: '#FAFAFA',
     },
     header: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        paddingHorizontal: 20,
-        paddingTop: Platform.OS === 'android' ? 48 : 20,
-        paddingBottom: 16,
-        backgroundColor: '#FAF9F6',
+        paddingHorizontal: 16,
+        paddingVertical: 16,
+        backgroundColor: '#FFFFFF',
+        marginTop: Platform.OS === 'android' ? 30 : 0,
     },
     backButton: {
         padding: 4,
     },
     headerTitle: {
         fontSize: 18,
-        fontWeight: '800',
-        color: '#0F172A',
-        letterSpacing: -0.5,
+        fontWeight: '700',
+        color: '#1E3A8A',
     },
     profileCircle: {
-        width: 36,
-        height: 36,
-        borderRadius: 18,
-        backgroundColor: '#F1F5F9',
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: '#EBF8FF',
         justifyContent: 'center',
         alignItems: 'center',
-        borderWidth: 1,
-        borderColor: '#E2E8F0',
     },
     scrollArea: {
         flex: 1,
@@ -253,32 +246,28 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         marginHorizontal: 16,
         marginTop: 16,
-        backgroundColor: '#F1F5F9',
-        borderRadius: 12,
+        backgroundColor: '#FFFFFF',
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: '#EDF2F7',
         padding: 4,
     },
     tabBtn: {
         flex: 1,
         paddingVertical: 10,
         alignItems: 'center',
-        borderRadius: 10,
+        borderRadius: 6,
     },
     tabBtnActive: {
-        backgroundColor: '#FFFFFF',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 4,
-        elevation: 2,
+        backgroundColor: '#1E3A8A',
     },
     tabText: {
-        color: '#64748B',
+        color: '#A0AEC0',
         fontWeight: '600',
         fontSize: 13,
     },
     tabTextActive: {
-        color: '#0F172A',
-        fontWeight: '700',
+        color: '#FFFFFF',
     },
     progressHeader: {
         flexDirection: 'row',
@@ -289,53 +278,70 @@ const styles = StyleSheet.create({
         marginBottom: 16,
     },
     todayLabel: {
-        fontSize: 11,
+        fontSize: 10,
         fontWeight: '700',
-        color: '#94A3B8',
-        letterSpacing: 1.2,
+        color: '#718096',
+        letterSpacing: 1,
         marginBottom: 4,
-        textTransform: 'uppercase',
     },
     dateText: {
-        fontSize: 20,
-        fontWeight: '800',
-        color: '#0F172A',
-        letterSpacing: -0.5,
+        fontSize: 18,
+        fontWeight: '700',
+        color: '#1A202C',
     },
     progressRight: {
         flexDirection: 'row',
         alignItems: 'center',
     },
     progressLabel: {
-        fontSize: 11,
-        color: '#64748B',
+        fontSize: 10,
+        color: '#718096',
         textAlign: 'right',
-        fontWeight: '500',
     },
     progressFraction: {
-        fontSize: 13,
-        fontWeight: '800',
-        color: '#2563EB',
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#1E3A8A',
         textAlign: 'right',
     },
-
+    progressCircle: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        borderWidth: 3,
+        borderColor: '#1E3A8A',
+        marginLeft: 12,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    progressCircleInner: {
+        width: 26,
+        height: 26,
+        borderRadius: 13,
+        borderWidth: 3,
+        borderColor: '#EDF2F7',
+        position: 'absolute',
+        borderTopColor: 'transparent',
+        borderRightColor: 'transparent',
+        transform: [{ rotate: '45deg' }]
+    },
     listContainer: {
         paddingHorizontal: 16,
         paddingBottom: 40,
     },
     taskCard: {
         backgroundColor: '#FFFFFF',
-        borderRadius: 16,
-        marginBottom: 14,
+        borderRadius: 12,
+        marginBottom: 16,
         flexDirection: 'column',
         overflow: 'hidden',
-        shadowColor: '#64748B',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.04,
-        shadowRadius: 8,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
         elevation: 2,
         borderWidth: 1,
-        borderColor: '#F1F5F9',
+        borderColor: '#F3F4F6',
         position: 'relative',
     },
     cardLeftBorder: {
@@ -354,7 +360,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: 10,
+        marginBottom: 12,
     },
     pillGroup: {
         flexDirection: 'row',
@@ -363,13 +369,12 @@ const styles = StyleSheet.create({
     statusPill: {
         paddingHorizontal: 8,
         paddingVertical: 4,
-        borderRadius: 6,
+        borderRadius: 4,
         marginRight: 8,
     },
     statusPillText: {
         fontSize: 10,
-        fontWeight: '700',
-        letterSpacing: 0.5,
+        fontWeight: '800',
     },
     tagText: {
         fontSize: 12,
@@ -378,55 +383,86 @@ const styles = StyleSheet.create({
     taskTitle: {
         fontSize: 16,
         fontWeight: '700',
-        color: '#0F172A',
+        color: '#1A202C',
         marginBottom: 6,
-        letterSpacing: -0.2,
     },
     taskDesc: {
         fontSize: 13,
-        color: '#64748B',
+        color: '#718096',
         lineHeight: 18,
         marginBottom: 16,
+    },
+    textStrikeout: {
+        textDecorationLine: 'line-through',
+        color: '#A0AEC0',
     },
     cardFooterRow: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        borderTopWidth: 1,
-        borderTopColor: '#F8FAFC',
-        paddingTop: 12,
+    },
+    timeGroup: {
+        flexDirection: 'row',
+        alignItems: 'center',
     },
     timeText: {
         fontSize: 12,
-        color: '#94A3B8',
-        fontWeight: '500',
+        color: '#718096',
+        marginLeft: 6,
+    },
+    userAvatar: {
+        width: 20,
+        height: 20,
+        borderRadius: 10,
+        backgroundColor: '#ED8936',
     },
     locationGroup: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 4,
     },
     locationText: {
         fontSize: 12,
         fontWeight: '600',
-        color: '#64748B',
+        color: '#2B6CB0',
+        marginLeft: 4,
+    },
+    completedText: {
+        fontSize: 11,
+        color: '#48BB78',
+        fontWeight: '500',
+    },
+    doneCheckCircle: {
+        width: 20,
+        height: 20,
+        borderRadius: 10,
+        backgroundColor: '#F0FFF4',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    resumeBanner: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        backgroundColor: '#FFFFF0',
+        paddingHorizontal: 20,
+        paddingVertical: 12,
+        borderTopWidth: 1,
+        borderTopColor: '#FEFCBF',
+    },
+    resumeText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#975A16',
     },
     centeredMsg: {
         alignItems: 'center',
         justifyContent: 'center',
         paddingVertical: 60,
         gap: 12,
-        backgroundColor: '#FFFFFF',
-        borderRadius: 16,
-        borderWidth: 1,
-        borderColor: '#F1F5F9',
-        borderStyle: 'dashed',
     },
-    emptyIconCircle: { width: 64, height: 64, borderRadius: 32, backgroundColor: '#ECFDF5', alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
     loadingText: {
         fontSize: 15,
-        color: '#64748B',
-        fontWeight: '500',
+        color: '#718096',
         marginTop: 8,
     },
     errorText: {
@@ -436,7 +472,7 @@ const styles = StyleSheet.create({
         paddingHorizontal: 20,
     },
     retryBtn: {
-        backgroundColor: '#2563EB',
+        backgroundColor: '#1E3A8A',
         paddingHorizontal: 24,
         paddingVertical: 10,
         borderRadius: 8,
@@ -449,13 +485,13 @@ const styles = StyleSheet.create({
     },
     emptyText: {
         fontSize: 16,
-        fontWeight: '700',
-        color: '#0F172A',
+        fontWeight: '600',
+        color: '#4A5568',
         marginTop: 8,
     },
     emptySubText: {
-        fontSize: 14,
-        color: '#94A3B8',
+        fontSize: 13,
+        color: '#A0AEC0',
         textAlign: 'center',
     },
 });

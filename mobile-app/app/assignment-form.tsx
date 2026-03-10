@@ -1,5 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
+import * as Location from 'expo-location';
 import React, { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
@@ -14,7 +15,7 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
-import { getMyAssets, getTemplateDetails, submitChecklist, submitLogsheet, submitTabularLogsheet, type TemplateDetails, type TabularColumnGroup } from '../utils/api';
+import { getMyAssets, getTemplateDetails, submitChecklist, submitLogsheet, type GeoLocation, type TemplateDetails } from '../utils/api';
 
 export default function AssignmentFormScreen() {
     const params = useLocalSearchParams();
@@ -33,14 +34,6 @@ export default function AssignmentFormScreen() {
     const [assetId, setAssetId] = useState<string>('');
     const [assets, setAssets] = useState<Array<{id: number; assetName: string; assetType: string}>>([]);
     const [showAssetPicker, setShowAssetPicker] = useState(false);
-
-    // --- Tabular logsheet state ---
-    const _now = new Date();
-    const [tabReadings, setTabReadings] = useState<Record<string, string>>({});
-    const [tabMonth, setTabMonth] = useState(_now.getMonth() + 1);
-    const [tabYear, setTabYear] = useState(_now.getFullYear());
-    const [tabShift, setTabShift] = useState('');
-    const MONTHS_LIST = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
     useEffect(() => {
         loadTemplate();
@@ -86,38 +79,6 @@ export default function AssignmentFormScreen() {
         // Validate required fields
         if (!template) return;
 
-        // --- Tabular logsheet submit ---
-        if (template.layoutType === 'tabular') {
-            // Tabular templates may not have a pre-bound asset; asset is optional
-            const effectiveAssetId = template.assetId ?? routeAssetId ?? (assetId ? parseInt(assetId) : null);
-            const readingsMap: Record<string, Record<string, string>> = {};
-            for (const [key, val] of Object.entries(tabReadings)) {
-                if (!val) continue;
-                const parts = key.split('__');
-                const rowId = parts[0];
-                const colKey = parts.slice(1).join('__');
-                if (!readingsMap[rowId]) readingsMap[rowId] = {};
-                readingsMap[rowId][colKey] = val;
-            }
-            setIsSubmitting(true);
-            try {
-                await submitTabularLogsheet(
-                    templateId,
-                    effectiveAssetId,
-                    tabMonth,
-                    tabYear,
-                    tabShift || null,
-                    { readings: readingsMap, summary: {}, footer: {} }
-                );
-                Alert.alert('Success', 'Logsheet submitted successfully!', [{ text: 'OK', onPress: () => router.back() }]);
-            } catch (error: any) {
-                Alert.alert('Error', error.message || 'Failed to submit. Please try again.');
-            } finally {
-                setIsSubmitting(false);
-            }
-            return;
-        }
-
         const missingRequired = template.questions
             .filter(q => q.isRequired && !answers[q.id])
             .map(q => q.questionText);
@@ -144,17 +105,29 @@ export default function AssignmentFormScreen() {
 
         setIsSubmitting(true);
         try {
+            // Attempt to capture GPS location (non-blocking — failure is acceptable)
+            let geoLocation: GeoLocation | null = null;
+            try {
+                const { status } = await Location.requestForegroundPermissionsAsync();
+                if (status === 'granted') {
+                    const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+                    geoLocation = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
+                }
+            } catch (_) { /* location optional */ }
+
             if (templateType === 'checklist') {
                 await submitChecklist(
                     templateId,
                     assetId ? parseInt(assetId) : null,
-                    formattedAnswers
+                    formattedAnswers,
+                    geoLocation
                 );
             } else {
                 await submitLogsheet(
                     templateId,
                     assetId ? parseInt(assetId) : null,
-                    formattedAnswers
+                    formattedAnswers,
+                    geoLocation
                 );
             }
 
@@ -319,7 +292,6 @@ export default function AssignmentFormScreen() {
                     <Text style={styles.headerTitle}>{templateName}</Text>
                     <Text style={styles.headerSubtitle}>
                         {templateType === 'checklist' ? 'Checklist' : 'Logsheet'}
-                        {(template?.assetName || routeAssetName) ? ` · ${template?.assetName || routeAssetName}` : ''}
                     </Text>
                 </View>
                 <View style={styles.headerSpacer} />
@@ -393,104 +365,7 @@ export default function AssignmentFormScreen() {
                         </View>
 
                         {/* Questions */}
-                        {template.layoutType === 'tabular' ? (
-                            // ---- Tabular logsheet grid ----
-                            <View>
-                                {/* Month / Year / Shift pickers */}
-                                <View style={tabStyles.metaRow}>
-                                    <View style={[tabStyles.metaField, { flex: 2 }]}>
-                                        <Text style={tabStyles.metaLabel}>Year</Text>
-                                        <TextInput
-                                            style={tabStyles.metaInput}
-                                            keyboardType="numeric"
-                                            value={String(tabYear)}
-                                            onChangeText={t => setTabYear(parseInt(t) || tabYear)}
-                                            maxLength={4}
-                                        />
-                                    </View>
-                                    <View style={[tabStyles.metaField, { flex: 2 }]}>
-                                        <Text style={tabStyles.metaLabel}>Shift (opt.)</Text>
-                                        <TextInput
-                                            style={tabStyles.metaInput}
-                                            placeholder="e.g. Day"
-                                            value={tabShift}
-                                            onChangeText={setTabShift}
-                                        />
-                                    </View>
-                                </View>
-                                <View style={tabStyles.monthRow}>
-                                    {MONTHS_LIST.map((m, i) => (
-                                        <TouchableOpacity
-                                            key={m}
-                                            style={[tabStyles.monthChip, tabMonth === i + 1 && tabStyles.monthChipActive]}
-                                            onPress={() => setTabMonth(i + 1)}
-                                        >
-                                            <Text style={[tabStyles.monthChipText, tabMonth === i + 1 && tabStyles.monthChipTextActive]}>{m}</Text>
-                                        </TouchableOpacity>
-                                    ))}
-                                </View>
-
-                                {/* Scrollable table */}
-                                {template.headerConfig && (
-                                    <ScrollView horizontal showsHorizontalScrollIndicator
-                                        style={{ marginTop: 12 }}
-                                        contentContainerStyle={{ flexDirection: 'column' }}
-                                    >
-                                        {/* Group header row */}
-                                        <View style={{ flexDirection: 'row' }}>
-                                            <View style={[tabStyles.headerCell, tabStyles.rowLabelCell]}>
-                                                <Text style={tabStyles.headerText}>
-                                                    {template.headerConfig.rowLabelHeader || 'Time'}
-                                                </Text>
-                                            </View>
-                                            {(template.headerConfig.columnGroups as TabularColumnGroup[]).map((g: TabularColumnGroup) => (
-                                                <View key={g.id}
-                                                    style={[tabStyles.headerCell, { width: g.columns.length * 80 }]}>
-                                                    <Text style={tabStyles.headerText}>{g.label}</Text>
-                                                </View>
-                                            ))}
-                                        </View>
-                                        {/* Sub-column header row */}
-                                        <View style={{ flexDirection: 'row' }}>
-                                            <View style={[tabStyles.subHeaderCell, tabStyles.rowLabelCell]} />
-                                            {(template.headerConfig.columnGroups as TabularColumnGroup[]).flatMap((g: TabularColumnGroup) =>
-                                                g.columns.map((c) => (
-                                                    <View key={`${g.id}_${c.id}`} style={tabStyles.subHeaderCell}>
-                                                        <Text style={tabStyles.subHeaderText}>{c.label}</Text>
-                                                        {c.subLabel ? <Text style={tabStyles.subLabelText}>{c.subLabel}</Text> : null}
-                                                    </View>
-                                                ))
-                                            )}
-                                        </View>
-                                        {/* Data rows */}
-                                        {(template.headerConfig.rows as Array<{id:string;label:string}>).map((row) => (
-                                            <View key={row.id} style={{ flexDirection: 'row' }}>
-                                                <View style={[tabStyles.dataCell, tabStyles.rowLabelCell]}>
-                                                    <Text style={tabStyles.rowLabelText}>{row.label}</Text>
-                                                </View>
-                                                {(template.headerConfig!.columnGroups as TabularColumnGroup[]).flatMap((g: TabularColumnGroup) =>
-                                                    g.columns.map((c) => {
-                                                        const key = `${row.id}__${g.id}__${c.id}`;
-                                                        return (
-                                                            <View key={key} style={tabStyles.dataCell}>
-                                                                <TextInput
-                                                                    style={tabStyles.cellInput}
-                                                                    keyboardType="numeric"
-                                                                    placeholder="-"
-                                                                    value={tabReadings[key] || ''}
-                                                                    onChangeText={v => setTabReadings(prev => ({ ...prev, [key]: v }))}
-                                                                />
-                                                            </View>
-                                                        );
-                                                    })
-                                                )}
-                                            </View>
-                                        ))}
-                                    </ScrollView>
-                                )}
-                            </View>
-                        ) : (
-                        template.questions.map((question, index) => (
+                        {template.questions.map((question, index) => (
                             <View key={question.id} style={styles.questionCard}>
                                 <View style={styles.questionHeader}>
                                     <Text style={styles.questionNumber}>Q{index + 1}</Text>
@@ -501,8 +376,7 @@ export default function AssignmentFormScreen() {
                                 <Text style={styles.questionText}>{question.questionText}</Text>
                                 {renderQuestionInput(question)}
                             </View>
-                        ))
-                        )}
+                        ))}
 
                         {/* Submit Button */}
                         <TouchableOpacity
@@ -807,46 +681,5 @@ const styles = StyleSheet.create({
         color: '#A0AEC0',
         fontSize: 14,
         textAlign: 'center',
-    },
-});
-
-const tabStyles = StyleSheet.create({
-    metaRow: { flexDirection: 'row', gap: 10, marginBottom: 10 },
-    metaField: { flex: 1 },
-    metaLabel: { fontSize: 11, fontWeight: '600', color: '#718096', marginBottom: 4, textTransform: 'uppercase' },
-    metaInput: {
-        borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8,
-        padding: 10, fontSize: 14, color: '#1A202C', backgroundColor: '#FFFFFF',
-    },
-    monthRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 4 },
-    monthChip: {
-        paddingHorizontal: 10, paddingVertical: 6, borderRadius: 20,
-        borderWidth: 1, borderColor: '#CBD5E0', backgroundColor: '#F8F9FA',
-    },
-    monthChipActive: { backgroundColor: '#1E3A8A', borderColor: '#1E3A8A' },
-    monthChipText: { fontSize: 12, fontWeight: '600', color: '#718096' },
-    monthChipTextActive: { color: '#FFFFFF' },
-    headerCell: {
-        minWidth: 80, height: 40, justifyContent: 'center', alignItems: 'center',
-        backgroundColor: '#1E3A8A', borderWidth: 1, borderColor: '#2D4EAA',
-        paddingHorizontal: 4,
-    },
-    headerText: { color: '#FFFFFF', fontSize: 11, fontWeight: '700', textAlign: 'center' },
-    subHeaderCell: {
-        width: 80, height: 44, justifyContent: 'center', alignItems: 'center',
-        backgroundColor: '#EFF6FF', borderWidth: 1, borderColor: '#BFDBFE',
-        paddingHorizontal: 2,
-    },
-    subHeaderText: { fontSize: 10, fontWeight: '600', color: '#1E3A8A', textAlign: 'center' },
-    subLabelText: { fontSize: 9, color: '#3B82F6', textAlign: 'center' },
-    rowLabelCell: { width: 70, backgroundColor: '#F1F5F9' },
-    dataCell: {
-        width: 80, height: 44, justifyContent: 'center', alignItems: 'center',
-        borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#FFFFFF',
-    },
-    rowLabelText: { fontSize: 11, fontWeight: '600', color: '#374151', textAlign: 'center' },
-    cellInput: {
-        width: '100%', height: '100%', textAlign: 'center',
-        fontSize: 13, color: '#1A202C', paddingHorizontal: 2,
     },
 });

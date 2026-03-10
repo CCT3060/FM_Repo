@@ -18,18 +18,18 @@ const getApiBase = () => {
   // Development URLs
   if (Platform.OS === 'android') {
     // For physical Android device, use your PC's IP
-    return 'http://192.168.1.28:4000';
+    return 'http://192.168.1.56:4000';
     // For Android emulator, use: return 'http://10.0.2.2:4000';
   } else if (Platform.OS === 'ios') {
     // For physical iOS device, use your PC's IP
-    return 'http://192.168.1.28:4000';
+    return 'http://192.168.1.56:4000';
     // For iOS simulator, use: return 'http://localhost:4000';
   } else {
     return 'http://localhost:4000'; // Web or other platforms
   }
 };
 
-const API_BASE = getApiBase();
+export const API_BASE = getApiBase();
 
 console.log('🔗 API_BASE configured as:', API_BASE);
 
@@ -311,21 +311,6 @@ export interface Assignment {
   assignedBy?: string;
 }
 
-export interface TabularColumnGroup {
-  id: string;
-  label: string;
-  columns: Array<{ id: string; label: string; subLabel?: string }>;
-}
-
-export interface TabularHeaderConfig {
-  layoutType: 'tabular';
-  rowLabelHeader?: string;
-  rows: Array<{ id: string; label: string }>;
-  columnGroups: TabularColumnGroup[];
-  summaryRows?: any[];
-  footerBlocks?: any[];
-}
-
 export interface TemplateDetails {
   id: number;
   templateName: string;
@@ -333,8 +318,6 @@ export interface TemplateDetails {
   assetType?: string;
   assetId?: number;
   assetName?: string;
-  layoutType?: string;
-  headerConfig?: TabularHeaderConfig | Record<string, any>;
   questions: Array<{
     id: number;
     questionText: string;
@@ -391,13 +374,18 @@ export async function reassignTemplate(assignmentId: number, assignedTo: number,
   }
 }
 
+export interface GeoLocation {
+  latitude: number;
+  longitude: number;
+}
+
 /**
- * Submit checklist response
+ * Submit checklist response (with optional GPS location)
  */
-export async function submitChecklist(templateId: number, assetId: number | null, answers: SubmissionAnswer[]): Promise<void> {
+export async function submitChecklist(templateId: number, assetId: number | null, answers: SubmissionAnswer[], location?: GeoLocation | null): Promise<void> {
   const response = await authenticatedFetch('/api/template-assignments/submit-checklist', {
     method: 'POST',
-    body: JSON.stringify({ templateId, assetId, answers }),
+    body: JSON.stringify({ templateId, assetId, answers, latitude: location?.latitude ?? null, longitude: location?.longitude ?? null }),
   });
   
   if (!response.ok) {
@@ -407,102 +395,18 @@ export async function submitChecklist(templateId: number, assetId: number | null
 }
 
 /**
- * Submit tabular logsheet entry via company-portal endpoint
+ * Submit logsheet entry (with optional GPS location)
  */
-export async function submitTabularLogsheet(
-  templateId: number,
-  assetId: number | null,
-  month: number,
-  year: number,
-  shift: string | null,
-  tabularData: Record<string, any>
-): Promise<void> {
-  const response = await authenticatedFetch(`/api/company-portal/logsheet-templates/${templateId}/entries`, {
-    method: 'POST',
-    body: JSON.stringify({ assetId, month, year, shift, tabularData }),
-  });
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to submit' }));
-    throw new Error((error as any).message || 'Failed to submit tabular logsheet');
-  }
-}
-
-/**
- * Submit logsheet entry
- */
-export async function submitLogsheet(templateId: number, assetId: number | null, answers: SubmissionAnswer[]): Promise<void> {
+export async function submitLogsheet(templateId: number, assetId: number | null, answers: SubmissionAnswer[], location?: GeoLocation | null): Promise<void> {
   const response = await authenticatedFetch('/api/template-assignments/submit-logsheet', {
     method: 'POST',
-    body: JSON.stringify({ templateId, assetId, answers }),
+    body: JSON.stringify({ templateId, assetId, answers, latitude: location?.latitude ?? null, longitude: location?.longitude ?? null }),
   });
   
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.message || 'Failed to submit logsheet');
   }
-}
-
-export interface LogsheetEntry {
-  id: number;
-  templateId: number;
-  assetId: number | null;
-  month: number;
-  year: number;
-  shift: string | null;
-  submittedAt: string;
-  submittedByName: string | null;
-  data: { readings?: Record<string, Record<string, string>>; summary?: Record<string, any>; footer?: Record<string, any> };
-}
-
-/**
- * Get all submitted entries for a logsheet template (filterable by month/year)
- */
-export async function getLogsheetEntries(templateId: number, month?: number, year?: number): Promise<LogsheetEntry[]> {
-  const params = new URLSearchParams();
-  if (month) params.set('month', String(month));
-  if (year) params.set('year', String(year));
-  const query = params.toString() ? `?${params}` : '';
-  const response = await authenticatedFetch(`/api/company-portal/logsheet-templates/${templateId}/entries${query}`);
-  if (!response.ok) throw new Error('Failed to fetch logsheet entries');
-  return await response.json();
-}
-
-export interface ChecklistGridData {
-  template: { id: number; templateName: string; assetId?: number | null; assetName?: string | null };
-  questions: Array<{ id: number; questionText: string; answerType: string; displayOrder: number }>;
-  submissions: Array<{
-    id: number;
-    day: number;
-    date: string | null;
-    submittedBy: string | null;
-    answers: Record<string, string>;
-  }>;
-  month: number;
-  year: number;
-  daysInMonth: number;
-}
-
-/**
- * Get checklist monthly grid data (questions × days of month)
- */
-export async function getChecklistGridData(templateId: number, month: number, year: number): Promise<ChecklistGridData> {
-  const response = await authenticatedFetch(`/api/template-assignments/checklist-grid/${templateId}?month=${month}&year=${year}`);
-  if (!response.ok) throw new Error('Failed to fetch checklist grid');
-  return response.json();
-}
-
-/**
- * Get logsheet grid data (template + submitted entries) for a given month/year
- */
-export async function getLogsheetGridData(templateId: number, month: number, year: number): Promise<{
-  template: TemplateDetails & { headerConfig: TabularHeaderConfig | Record<string, any> };
-  entries: LogsheetEntry[];
-  entry: LogsheetEntry | null;
-  daysInMonth: number;
-}> {
-  const response = await authenticatedFetch(`/api/company-portal/logsheet-templates/${templateId}/grid?month=${month}&year=${year}`);
-  if (!response.ok) throw new Error('Failed to fetch logsheet grid');
-  return await response.json();
 }
 
 /**
@@ -611,9 +515,8 @@ export async function supervisorAssignTemplate(
 /**
  * Get work orders (company portal). Returns { total, data[] }
  */
-export async function getWorkOrders(limit = 5, assignedToMe = false): Promise<any[]> {
-  const url = `/api/company-portal/work-orders?limit=${limit}${assignedToMe ? '&assignedToMe=true' : ''}`;
-  const response = await authenticatedFetch(url);
+export async function getWorkOrders(limit = 5): Promise<any[]> {
+  const response = await authenticatedFetch(`/api/company-portal/work-orders?limit=${limit}`);
   if (!response.ok) throw new Error('Failed to fetch work orders');
   const json = await response.json();
   return json.data || [];
@@ -694,5 +597,88 @@ export async function getTeamAssignments(filters?: {
   const query = params.toString() ? `?${params.toString()}` : '';
   const response = await authenticatedFetch(`/api/template-assignments/team-assignments${query}`);
   if (!response.ok) throw new Error('Failed to fetch team assignments');
+  return response.json();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OJT TRAINING
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function getMyOjtTrainings(): Promise<any[]> {
+  const response = await authenticatedFetch('/api/company-portal/ojt/mobile/trainings');
+  if (!response.ok) throw new Error('Failed to fetch trainings');
+  return response.json();
+}
+
+export async function getOjtTrainingDetail(id: number | string): Promise<any> {
+  const response = await authenticatedFetch(`/api/company-portal/ojt/mobile/trainings/${id}`);
+  if (!response.ok) throw new Error('Failed to fetch training');
+  return response.json();
+}
+
+export async function startOjtTraining(trainingId: number | string): Promise<any> {
+  const response = await authenticatedFetch(`/api/company-portal/ojt/mobile/trainings/${trainingId}/start`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error((err as any).message || 'Failed to start training');
+  }
+  return response.json();
+}
+
+export async function completeOjtModule(trainingId: number | string, moduleId: number | string): Promise<any> {
+  const response = await authenticatedFetch(`/api/company-portal/ojt/mobile/trainings/${trainingId}/complete-module`, {
+    method: 'POST',
+    body: JSON.stringify({ moduleId }),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error((err as any).message || 'Failed to complete module');
+  }
+  return response.json();
+}
+
+export async function submitOjtTest(trainingId: number | string, answers: Record<number, string>): Promise<{
+  score: number;
+  earned: number;
+  totalMarks: number;
+  passed: boolean;
+  passingPct: number;
+  status: string;
+}> {
+  const response = await authenticatedFetch(`/api/company-portal/ojt/mobile/trainings/${trainingId}/submit-test`, {
+    method: 'POST',
+    body: JSON.stringify({ answers }),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error((err as any).message || 'Failed to submit test');
+  }
+  return response.json();
+}
+
+export async function getMyOjtProgress(): Promise<any[]> {
+  const response = await authenticatedFetch('/api/company-portal/ojt/mobile/my-progress');
+  if (!response.ok) throw new Error('Failed to fetch progress');
+  return response.json();
+}
+
+/**
+ * Get asset details by QR scan (public endpoint — no auth required)
+ */
+export async function getAssetQrData(assetId: string | number): Promise<{
+  asset: any;
+  logsheetTemplates: any[];
+  checklistTemplates: any[];
+  ojtTrainings: any[];
+}> {
+  const response = await fetch(`${API_BASE}/api/asset-qr/${assetId}`);
+  if (!response.ok) {
+    let msg = 'Asset not found';
+    try { const body = await response.json(); msg = body.message || msg; } catch {}
+    throw new Error(msg);
+  }
   return response.json();
 }

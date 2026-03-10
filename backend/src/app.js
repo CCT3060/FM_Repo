@@ -2,6 +2,10 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import morgan from "morgan";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import clientsRouter from "./routes/clients.js";
 import usersRouter from "./routes/users.js";
 import authRouter from "./routes/auth.js";
@@ -61,6 +65,13 @@ app.use("/api/template-assignments", templateAssignmentsRouter);
 app.use("/api/flags", flagsRouter);
 app.use("/api/flag-rules", flagRulesRouter);
 app.use("/api/notifications", notificationsRouter);
+
+// Serve uploaded files (OJT videos, documents)
+// Cross-Origin-Resource-Policy must be cross-origin so the frontend on a different port can load media
+app.use("/uploads", (req, res, next) => {
+  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+  next();
+}, express.static(path.join(__dirname, "../uploads")));
 
 // Basic 404 handler
 app.use((req, res) => res.status(404).json({ message: "Not found", path: req.originalUrl }));
