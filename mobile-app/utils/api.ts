@@ -29,7 +29,7 @@ const getApiBase = () => {
   }
 };
 
-const API_BASE = getApiBase();
+export const API_BASE = getApiBase();
 
 console.log('🔗 API_BASE configured as:', API_BASE);
 
@@ -394,13 +394,18 @@ export async function reassignTemplate(assignmentId: number, assignedTo: number,
   }
 }
 
+export interface GeoLocation {
+  latitude: number;
+  longitude: number;
+}
+
 /**
- * Submit checklist response
+ * Submit checklist response (with optional GPS location)
  */
-export async function submitChecklist(templateId: number, assetId: number | null, answers: SubmissionAnswer[]): Promise<void> {
+export async function submitChecklist(templateId: number, assetId: number | null, answers: SubmissionAnswer[], location?: GeoLocation | null): Promise<void> {
   const response = await authenticatedFetch('/api/template-assignments/submit-checklist', {
     method: 'POST',
-    body: JSON.stringify({ templateId, assetId, answers }),
+    body: JSON.stringify({ templateId, assetId, answers, latitude: location?.latitude ?? null, longitude: location?.longitude ?? null }),
   });
   
   if (!response.ok) {
@@ -431,12 +436,12 @@ export async function submitTabularLogsheet(
 }
 
 /**
- * Submit logsheet entry
+ * Submit logsheet entry (with optional GPS location)
  */
-export async function submitLogsheet(templateId: number, assetId: number | null, answers: SubmissionAnswer[]): Promise<void> {
+export async function submitLogsheet(templateId: number, assetId: number | null, answers: SubmissionAnswer[], location?: GeoLocation | null): Promise<void> {
   const response = await authenticatedFetch('/api/template-assignments/submit-logsheet', {
     method: 'POST',
-    body: JSON.stringify({ templateId, assetId, answers }),
+    body: JSON.stringify({ templateId, assetId, answers, latitude: location?.latitude ?? null, longitude: location?.longitude ?? null }),
   });
   
   if (!response.ok) {

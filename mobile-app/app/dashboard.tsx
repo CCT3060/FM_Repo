@@ -35,6 +35,8 @@ export default function DashboardScreen() {
                     router.push('/warnings');
                 } else if (item.title === 'CheckList') {
                     router.push('/checklists');
+                } else if (item.title === 'Training') {
+                    router.push('/ojt-training-list');
                 }
             }}
         >
