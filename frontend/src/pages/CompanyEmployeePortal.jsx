@@ -9,6 +9,7 @@ import SubmissionsPanel from "../components/SubmissionsPanel.jsx";
 import WarningsPanel from "../components/WarningsPanel.jsx";
 import WorkOrdersPanel from "../components/WorkOrdersPanel.jsx";
 import AssetDashboard from "../components/AssetDashboard.jsx";
+import OjtTrainingBuilder, { TrainingPreviewModal, TrainingQRModal } from "../components/OjtTrainingBuilder.jsx";
 import { useAlertSound } from "../hooks/useAlertSound";
 import {
   getCompanyPortalMe,
@@ -59,6 +60,15 @@ import {
   getShiftEmployees,
   assignShiftEmployees,
   removeShiftEmployee,
+  // OJT
+  getOjtTrainings, getOjtTraining, createOjtTraining, updateOjtTraining, deleteOjtTraining, publishOjtTraining,
+  createOjtModule, updateOjtModule, deleteOjtModule, addOjtModuleContent, deleteOjtContent,
+  createOjtTest, addOjtQuestion, updateOjtQuestion, deleteOjtQuestion, getOjtTrainingUsers, grantOjtCertificate, uploadOjtFile,
+  // Fleet
+  getFleetAssets, getFleetAssetDetails, getFleetInspections, createFleetInspection, updateFleetInspection, deleteFleetInspection,
+  getFleetFuelLogs, createFleetFuelLog, updateFleetFuelLog, deleteFleetFuelLog,
+  getFleetMaintenance, createFleetMaintenance, updateFleetMaintenance, updateFleetMaintenanceStatus, deleteFleetMaintenance,
+  getFleetSubmissions, getFleetSubmissionDetail, downloadFleetSubmissionsCSV,
 } from "../api.js";
 
 /* ─── Role definitions ────────────────────────────────────────────── */
@@ -100,6 +110,8 @@ const NAV_ALL = [
   { key: "warnings", label: "Warnings", roles: ["admin","supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> },
   { key: "workorders", label: "Work Orders", roles: ["admin","supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-4 0v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg> },
   { key: "shifts", label: "Shifts", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> },
+  { key: "ojt", label: "OJT Management", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg> },
+  { key: "fleet", label: "Fleet Management", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="1" y="3" width="15" height="13" rx="2"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg> },
   { key: "mytasks", label: "My Tasks", roles: ["supervisor","*"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg> },
 ];
 // Returns nav items visible for a given role
@@ -1151,6 +1163,776 @@ function ImportModal({ token, onClose, onDone }) {
   );
 }
 
+/* ─── OJT Training Detail View ────────────────────────────────────── */
+function OjtTrainingDetailView({ training, token, onBack, onUpdated }) {
+  const [activeTab, setActiveTab] = useState("details"); // details, modules, test, tracking
+  const [data, setData] = useState(training);
+  const [loading, setLoading] = useState(false);
+
+  // Re-fetch helper
+  const refresh = async () => {
+    try {
+      setLoading(true);
+      const updated = await getOjtTraining(token, data.id);
+      setData(updated);
+      onUpdated(updated);
+    } catch (e) { console.error(e); } finally { setLoading(false); }
+  };
+
+  if (!data) return <div style={{ padding: "40px", textAlign: "center" }}>Loading...</div>;
+
+  return (
+    <Card style={{ borderTop: "4px solid #2563eb" }}>
+      <div style={{ padding: "20px 24px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#f8fafc" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+          <button onClick={onBack} style={{ width: "36px", height: "36px", borderRadius: "50%", background: "#fff", border: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#64748b", transition: "all 0.2s" }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" /></svg>
+          </button>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              <h2 style={{ fontSize: "20px", fontWeight: 800, color: "#0f172a", margin: 0 }}>{data.title}</h2>
+              <span style={{ padding: "4px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 700, background: data.status === "published" ? "#dcfce7" : "#f1f5f9", color: data.status === "published" ? "#166534" : "#475569" }}>
+                {data.status === "published" ? "Published" : "Draft"}
+              </span>
+            </div>
+            <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: "13.5px" }}>{data.description || "No description provided."}</p>
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: "10px" }}>
+          <Btn outline color="#2563eb" bg="#fff" onClick={refresh}>Refresh</Btn>
+          {data.status !== "published" && (
+            <Btn onClick={async () => {
+              if (!window.confirm("Publish this training? It will become visible to technicians.")) return;
+              try { await publishOjtTraining(token, data.id); refresh(); } catch (e) { alert("Failed to publish"); }
+            }} style={{ background: "#16a34a" }}>
+              Publish Course
+            </Btn>
+          )}
+        </div>
+      </div>
+
+      <div style={{ display: "flex", borderBottom: "1px solid #e2e8f0", background: "#fff", padding: "0 24px" }}>
+        {[
+          { id: "details", label: "Overview" },
+          { id: "modules", label: `Modules (${data.modules?.length || 0})` },
+          { id: "test", label: "Test Builder" },
+          { id: "tracking", label: "User Progress" }
+        ].map(tab => (
+          <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+            style={{ padding: "16px 20px", background: "none", border: "none", borderBottom: activeTab === tab.id ? "3px solid #2563eb" : "3px solid transparent", color: activeTab === tab.id ? "#2563eb" : "#64748b", fontSize: "14px", fontWeight: 600, cursor: "pointer", transition: "all 0.2s" }}>
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ padding: "24px", background: "#f8fafc", minHeight: "400px" }}>
+        {activeTab === "details" && (
+          <div style={{ maxWidth: "600px", background: "#fff", padding: "24px", borderRadius: "12px", border: "1px solid #e2e8f0" }}>
+            <h3 style={{ fontSize: "16px", fontWeight: 700, color: "#1e293b", marginBottom: "20px" }}>Course Settings</h3>
+            <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+              <div>
+                <label style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>Passing Percentage</label>
+                <div style={{ fontSize: "15px", fontWeight: 600, color: "#0f172a" }}>{data.passingPercentage}% Required</div>
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>Associated Asset</label>
+                <div style={{ fontSize: "15px", color: data.assetName ? "#0f172a" : "#94a3b8" }}>{data.assetName || "None - General Training"}</div>
+              </div>
+              <div style={{ marginTop: "10px", paddingTop: "16px", borderTop: "1px solid #e2e8f0", fontSize: "13px", color: "#64748b" }}>
+                Created on {new Date(data.createdAt).toLocaleString()}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === "modules" && (
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+              <h3 style={{ fontSize: "16px", fontWeight: 700, color: "#1e293b", margin: 0 }}>Course Modules</h3>
+              <Btn onClick={async () => {
+                const title = window.prompt("Enter Module Title:");
+                if (!title) return;
+                try { await createOjtModule(token, data.id, { title, orderNumber: data.modules?.length || 0 }); refresh(); }
+                catch (e) { alert("Failed to add module"); }
+              }}>+ Add Module</Btn>
+            </div>
+
+            {loading ? <p style={{ color: "#64748b" }}>Loading...</p> : data.modules?.length === 0 ? (
+              <div style={{ padding: "40px", textAlign: "center", background: "#fff", borderRadius: "12px", border: "1px dashed #cbd5e1", color: "#94a3b8" }}>
+                No modules added yet. Click "+ Add Module" to start building curriculum.
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                {data.modules.map((m, idx) => (
+                  <div key={m.id} style={{ background: "#fff", borderRadius: "10px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
+                    <div style={{ padding: "16px 20px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <h4 style={{ margin: 0, fontSize: "15px", fontWeight: 700, color: "#334155" }}>{idx + 1}. {m.title}</h4>
+                      <button onClick={async () => {
+                        if (!window.confirm("Delete this module and all its content?")) return;
+                        try { await deleteOjtModule(token, m.id); refresh(); } catch (e) { alert("Failed to delete"); }
+                      }} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>Remove</button>
+                    </div>
+                    <div style={{ padding: "16px 20px" }}>
+                      {m.contents?.length > 0 ? (
+                        <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginBottom: "16px" }}>
+                          {m.contents.map(c => (
+                            <div key={c.id} style={{ padding: "12px", background: "#f1f5f9", borderRadius: "8px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                              <div>
+                                <span style={{ display: "inline-block", padding: "2px 8px", background: "#e2e8f0", borderRadius: "12px", fontSize: "11px", fontWeight: 700, textTransform: "uppercase", color: "#475569", marginRight: "10px" }}>{c.type}</span>
+                                <span style={{ fontSize: "14px", color: "#334155" }}>{c.description || c.url || "Content block"}</span>
+                              </div>
+                              <button onClick={async () => {
+                                try { await deleteOjtContent(token, c.id); refresh(); } catch (e) { }
+                              }} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer" }}>✕</button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p style={{ margin: "0 0 16px", color: "#94a3b8", fontSize: "13px" }}>No content in this module.</p>
+                      )}
+
+                      <div style={{ display: "flex", gap: "10px" }}>
+                        <Btn outline color="#2563eb" bg="#fff" onClick={async () => {
+                          const url = window.prompt("Enter Video/Document URL:");
+                          if (!url) return;
+                          const desc = window.prompt("Enter short description:");
+                          try { await addOjtModuleContent(token, m.id, { type: "url", url, description: desc }); refresh(); } catch (e) { }
+                        }}>+ Add Link / Video</Btn>
+                        <Btn outline color="#2563eb" bg="#fff" onClick={async () => {
+                          const desc = window.prompt("Enter Text Content:");
+                          if (!desc) return;
+                          try { await addOjtModuleContent(token, m.id, { type: "text", description: desc }); refresh(); } catch (e) { }
+                        }}>+ Add Text</Btn>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === "test" && (
+          <div>
+            {!data.test ? (
+              <div style={{ padding: "40px", textAlign: "center", background: "#fff", borderRadius: "12px", border: "1px dashed #cbd5e1", color: "#64748b" }}>
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" strokeWidth="1.5" style={{ marginBottom: "16px", display: "inline-block" }}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="16" y1="13" x2="8" y2="13" /><line x1="16" y1="17" x2="8" y2="17" /><polyline points="10 9 9 9 8 9" /></svg>
+                <h3 style={{ fontSize: "16px", color: "#334155", marginBottom: "8px" }}>No Test Configured</h3>
+                <p style={{ fontSize: "14px", maxWidth: "400px", margin: "0 auto", marginBottom: "20px" }}>Initialize an assessment to add verification questions for this training.</p>
+                <Btn onClick={async () => {
+                  try { await createOjtTest(token, data.id, { totalMarks: 100 }); refresh(); } catch (e) { alert("Failed"); }
+                }}>Initialize Test Assessment</Btn>
+              </div>
+            ) : (
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+                  <div>
+                    <h3 style={{ fontSize: "16px", fontWeight: 700, color: "#1e293b", margin: 0 }}>Test Questions</h3>
+                    <p style={{ color: "#64748b", fontSize: "13px", margin: "4px 0 0" }}>Total Marks: {data.test.totalMarks} — Add questions to assess knowledge.</p>
+                  </div>
+                  <Btn onClick={() => {
+                    const qType = window.prompt("Type of question? (mcq / descriptive / multiselect)", "mcq");
+                    if (!qType || !["mcq", "descriptive", "multiselect"].includes(qType.toLowerCase())) return;
+                    const text = window.prompt("Enter the question:");
+                    if (!text) return;
+                    let opts = null, ans = "";
+                    if (qType.toLowerCase() === "mcq") {
+                      opts = ["Option A", "Option B", "Option C", "Option D"];
+                      ans = "Option A";
+                    }
+                    if (qType.toLowerCase() === "multiselect") {
+                      opts = ["Option 1", "Option 2", "Option 3"];
+                      ans = "Option 1,Option 2";
+                    }
+                    try {
+                      addOjtQuestion(token, data.test.id, { question: text, options: opts, correctAnswer: ans, marks: 10 }).then(refresh);
+                    } catch (e) { alert("Failed"); }
+                  }}>+ Add Question</Btn>
+                </div>
+
+                {data.test.questions?.length > 0 ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                    {data.test.questions.map((q, i) => (
+                      <div key={q.id} style={{ background: "#fff", borderRadius: "10px", padding: "20px", border: "1px solid #e2e8f0" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "12px" }}>
+                          <h4 style={{ margin: 0, fontSize: "15px", color: "#0f172a", fontWeight: 600 }}>{i + 1}. {q.question}</h4>
+                          <span style={{ fontSize: "12px", fontWeight: 700, color: "#2563eb", background: "#eff6ff", padding: "3px 8px", borderRadius: "12px" }}>{q.marks} Marks</span>
+                        </div>
+
+                        {q.options && Array.isArray(q.options) && q.options.length > 0 && (
+                          <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "12px" }}>
+                            {q.options.map((opt, oIdx) => (
+                              <div key={oIdx} style={{ padding: "8px 12px", borderRadius: "6px", background: q.correctAnswer?.includes(opt) ? "#dcfce7" : "#f8fafc", border: q.correctAnswer?.includes(opt) ? "1px solid #86efac" : "1px solid #e2e8f0", fontSize: "13.5px", color: q.correctAnswer?.includes(opt) ? "#166534" : "#475569" }}>
+                                {opt} {q.correctAnswer?.includes(opt) && <strong style={{ marginLeft: "8px" }}>(Correct)</strong>}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {!q.options && (
+                          <p style={{ margin: "0 0 12px", fontSize: "13px", color: "#64748b", fontStyle: "italic" }}>Descriptive answer expected.</p>
+                        )}
+
+                        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                          <button onClick={async () => {
+                            if (!window.confirm("Delete this question?")) return;
+                            try { await deleteOjtQuestion(token, q.id); refresh(); } catch (e) { }
+                          }} style={{ background: "none", border: "none", color: "#ef4444", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>Delete Question</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ padding: "30px", textAlign: "center", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0", color: "#94a3b8" }}>
+                    No questions added yet.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === "tracking" && (
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+              <h3 style={{ fontSize: "16px", fontWeight: 700, color: "#1e293b", margin: 0 }}>Enrollment & Progress</h3>
+            </div>
+
+            {loading ? <p style={{ color: "#64748b" }}>Loading...</p> : !data.users || data.users.length === 0 ? (
+              <div style={{ padding: "40px", textAlign: "center", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0", color: "#94a3b8" }}>
+                No technicians are currently enrolled in this training.
+              </div>
+            ) : (
+              <div style={{ overflowX: "auto", background: "#fff", border: "1px solid #e2e8f0", borderRadius: "10px" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13.5px" }}>
+                  <thead>
+                    <tr style={{ background: "#f8fafc" }}>
+                      {["Technician", "Status", "Score", "Actions"].map((h) => (
+                        <th key={h} style={{ padding: "12px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", borderBottom: "1px solid #e2e8f0" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.users.map(u => (
+                      <tr key={u.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                        <td style={{ padding: "12px 16px", fontWeight: 600, color: "#0f172a" }}>{u.userName}</td>
+                        <td style={{ padding: "12px 16px" }}>
+                          <span style={{ padding: "4px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: u.status === "completed" ? "#dcfce7" : u.status === "in_progress" ? "#fef9c3" : "#f1f5f9", color: u.status === "completed" ? "#166534" : u.status === "in_progress" ? "#854d0e" : "#475569" }}>
+                            {u.status.replace("_", " ").toUpperCase()}
+                          </span>
+                        </td>
+                        <td style={{ padding: "12px 16px", color: u.score >= data.passingPercentage ? "#16a34a" : "#dc2626", fontWeight: 600 }}>
+                          {u.score != null ? `${u.score}%` : "—"}
+                        </td>
+                        <td style={{ padding: "12px 16px" }}>
+                          {u.status === "completed" && u.score >= data.passingPercentage && !u.certificateUrl && (
+                            <Btn outline color="#16a34a" bg="#fff" onClick={async () => {
+                              try { await grantOjtCertificate(token, u.id); refresh(); } catch (e) { alert("Failed to grant"); }
+                            }}>Grant Certificate</Btn>
+                          )}
+                          {u.certificateUrl && (
+                            <a href={u.certificateUrl} target="_blank" rel="noreferrer" style={{ fontSize: "13px", color: "#2563eb", fontWeight: 600, textDecoration: "none" }}>View Certificate</a>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+/* ─── OJT Progress Tracking Section ──────────────────────────────── */
+function TrackingSection({ token, ojtTrainings = [] }) {
+  const [selectedId, setSelectedId] = useState("");
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [passingPct, setPassingPct] = useState(0);
+  const [totalModules, setTotalModules] = useState(0);
+
+  const loadUsers = async (id) => {
+    if (!id) { setUsers([]); return; }
+    setLoading(true);
+    try {
+      const data = await getOjtTrainingUsers(token, id);
+      if (Array.isArray(data)) {
+        setUsers(data);
+        setPassingPct(0);
+        setTotalModules(0);
+      } else {
+        setUsers(data.users || []);
+        setPassingPct(data.passingPercentage ?? 0);
+        setTotalModules(data.totalModules ?? 0);
+      }
+    } catch (e) { setUsers([]); }
+    setLoading(false);
+  };
+
+  const handleSelect = (id) => { setSelectedId(id); loadUsers(id); };
+
+  const handleGrant = async (progressId) => {
+    try {
+      await grantOjtCertificate(token, progressId);
+      setUsers(p => p.map(u => u.id === progressId ? { ...u, certificateUrl: "granted" } : u));
+    } catch (e) { alert("Failed to grant certificate"); }
+  };
+
+  return (
+    <Card style={{ padding: "0" }}>
+      <div style={{ padding: "16px 20px", borderBottom: "1px solid #e2e8f0" }}>
+        <h3 style={{ fontSize: "15px", fontWeight: 700, color: "#0f172a", margin: "0 0 12px" }}>Employee Training Progress</h3>
+        <select value={selectedId} onChange={e => handleSelect(e.target.value)}
+          style={{ width: "320px", padding: "9px 12px", borderRadius: "8px", border: "1px solid #e2e8f0", fontSize: "14px", outline: "none" }}>
+          <option value="">— Select a training to view progress —</option>
+          {ojtTrainings.map(t => (
+            <option key={t.id} value={t.id}>{t.title} ({t.status})</option>
+          ))}
+        </select>
+      </div>
+      {!selectedId ? (
+        <div style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" strokeWidth="1.5" style={{ marginBottom: "12px", display: "inline-block" }}><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
+          <p style={{ margin: 0, fontSize: "14px" }}>Select a training above to see employee progress and issue certificates.</p>
+        </div>
+      ) : loading ? (
+        <div style={{ padding: "40px", textAlign: "center", color: "#64748b" }}>Loading progress…</div>
+      ) : users.length === 0 ? (
+        <div style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>No employees enrolled in this training yet.</div>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
+            <thead>
+              <tr style={{ background: "#f8fafc" }}>
+                {["Employee", "Status", "Progress", "Score", "Certificate", "Actions"].map(h => (
+                  <th key={h} style={{ padding: "11px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", borderBottom: "1px solid #e2e8f0" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {users.map(u => {
+                const completedCount = (() => {
+                  try { return Array.isArray(u.completedModules) ? u.completedModules.length : JSON.parse(u.completedModules || "[]").length; }
+                  catch { return 0; }
+                })();
+                const effectiveTotal = totalModules > 0 ? totalModules : completedCount;
+                const modulePct = effectiveTotal > 0 ? Math.round((completedCount / effectiveTotal) * 100) : 0;
+                const testPassed = u.score != null && u.score >= passingPct;
+                const canGrantCert = u.status === "completed" && !u.certificateUrl;
+                return (
+                  <tr key={u.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                    <td style={{ padding: "12px 16px" }}>
+                      <div style={{ fontWeight: 600, color: "#0f172a" }}>{u.userName || u.fullName || "Employee"}</div>
+                      {u.email && <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "2px" }}>{u.email}</div>}
+                    </td>
+                    <td style={{ padding: "12px 16px" }}>
+                      <span style={{ padding: "3px 10px", borderRadius: "12px", fontSize: "12px", fontWeight: 600,
+                        background: u.status === "completed" ? "#dcfce7" : u.status === "in_progress" ? "#fef9c3" : u.status === "failed" ? "#fee2e2" : "#f1f5f9",
+                        color: u.status === "completed" ? "#166534" : u.status === "in_progress" ? "#854d0e" : u.status === "failed" ? "#991b1b" : "#475569" }}>
+                        {(u.status || "not_started").replace("_", " ").toUpperCase()}
+                      </span>
+                    </td>
+                    <td style={{ padding: "12px 16px", minWidth: "140px" }}>
+                      <div style={{ fontSize: "12px", color: "#475569", marginBottom: "5px", fontWeight: 600 }}>
+                        {completedCount}/{effectiveTotal} modules
+                      </div>
+                      <div style={{ height: "6px", background: "#e2e8f0", borderRadius: "3px", overflow: "hidden" }}>
+                        <div style={{ height: "100%", width: `${modulePct}%`, background: modulePct === 100 ? "#16a34a" : "#2563eb", borderRadius: "3px", transition: "width 0.3s" }} />
+                      </div>
+                      <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "3px" }}>{modulePct}%</div>
+                    </td>
+                    <td style={{ padding: "12px 16px", fontWeight: 600, color: testPassed ? "#16a34a" : "#dc2626" }}>
+                      {u.score != null ? `${u.score}%` : "—"}
+                    </td>
+                    <td style={{ padding: "12px 16px" }}>
+                      {u.certificateUrl ? (
+                        <span style={{ padding: "3px 10px", borderRadius: "12px", fontSize: "12px", fontWeight: 600, background: "#dcfce7", color: "#166534" }}>🏅 Issued</span>
+                      ) : <span style={{ color: "#94a3b8", fontSize: "12px" }}>—</span>}
+                    </td>
+                    <td style={{ padding: "12px 16px" }}>
+                      {canGrantCert ? (
+                        <button onClick={() => handleGrant(u.id)} style={{ padding: "5px 12px", borderRadius: "6px", background: "#dcfce7", color: "#166534", border: "none", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}>
+                          Grant Certificate
+                        </button>
+                      ) : u.status !== "completed" && !u.certificateUrl ? (
+                        <span style={{ fontSize: "11px", color: "#94a3b8" }}>Awaiting test completion</span>
+                      ) : null}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/* ─── Fleet Asset Detail View ─────────────────────────────────────── */
+function FleetAssetDetailView({ assetId, token, onBack }) {
+  const [activeTab, setActiveTab] = useState("overview");
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const refresh = async () => {
+    try {
+      setLoading(true);
+      const res = await getFleetAssetDetails(token, assetId);
+      setData(res);
+    } catch (e) { console.error(e); } finally { setLoading(false); }
+  };
+
+  useEffect(() => { refresh(); }, [assetId]);
+
+  if (loading && !data) return <div style={{ padding: "40px", textAlign: "center", color: "#64748b" }}>Loading Asset Details...</div>;
+  if (!data) return <div style={{ padding: "40px", textAlign: "center", color: "#ef4444" }}>Failed to load asset.</div>;
+
+  return (
+    <Card style={{ borderTop: "4px solid #10b981", padding: 0, overflow: "hidden" }}>
+      <div style={{ padding: "20px 24px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#f8fafc" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+          <button onClick={onBack} style={{ width: "36px", height: "36px", borderRadius: "50%", background: "#fff", border: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#64748b", transition: "all 0.2s" }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" /></svg>
+          </button>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              <h2 style={{ fontSize: "20px", fontWeight: 800, color: "#0f172a", margin: 0 }}>{data.assetName}</h2>
+              <span style={{ padding: "4px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 700, background: data.status === "Active" ? "#dcfce7" : "#f1f5f9", color: data.status === "Active" ? "#166534" : "#475569" }}>
+                {data.status || "Unknown"}
+              </span>
+            </div>
+            <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: "13.5px" }}>ID: {data.assetUniqueId} | Dept: {data.departmentName || "N/A"}</p>
+          </div>
+        </div>
+        <div>
+          <Btn outline color="#10b981" bg="#fff" onClick={refresh}>Refresh Data</Btn>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", borderBottom: "1px solid #e2e8f0", background: "#fff", padding: "0 24px", overflowX: "auto" }}>
+        {[
+          { id: "overview", label: "Overview" },
+          { id: "inspections", label: `Inspections (${data.inspections?.length || 0})` },
+          { id: "fuel", label: `Fuel Logs (${data.fuelLogs?.length || 0})` },
+          { id: "maintenance", label: `Maintenance (${data.maintenance?.length || 0})` },
+          { id: "assignments", label: `Checklists & Logs (${data.assignments?.length || 0})` }
+        ].map(tab => (
+          <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+            style={{ padding: "16px 20px", background: "none", border: "none", borderBottom: activeTab === tab.id ? "3px solid #10b981" : "3px solid transparent", color: activeTab === tab.id ? "#10b981" : "#64748b", fontSize: "14px", fontWeight: 600, cursor: "pointer", transition: "all 0.2s", whiteSpace: "nowrap" }}>
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ padding: "24px", background: "#f8fafc", minHeight: "400px" }}>
+        {activeTab === "overview" && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
+            <div style={{ background: "#fff", padding: "24px", borderRadius: "12px", border: "1px solid #e2e8f0" }}>
+              <h3 style={{ fontSize: "16px", fontWeight: 700, color: "#1e293b", margin: "0 0 20px 0" }}>Asset Details</h3>
+              <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid #f1f5f9", paddingBottom: "8px" }}>
+                  <span style={{ color: "#64748b", fontSize: "13.5px" }}>Make/Model:</span>
+                  <span style={{ fontWeight: 600, color: "#0f172a", fontSize: "13.5px" }}>{data.metadata?.make || "—"} / {data.metadata?.model || "—"}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid #f1f5f9", paddingBottom: "8px" }}>
+                  <span style={{ color: "#64748b", fontSize: "13.5px" }}>License Plate:</span>
+                  <span style={{ fontWeight: 600, color: "#0f172a", fontSize: "13.5px" }}>{data.metadata?.license_plate || "—"}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid #f1f5f9", paddingBottom: "8px" }}>
+                  <span style={{ color: "#64748b", fontSize: "13.5px" }}>VIN Number:</span>
+                  <span style={{ fontWeight: 600, color: "#0f172a", fontSize: "13.5px", fontFamily: "monospace" }}>{data.metadata?.vin || "—"}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid #f1f5f9", paddingBottom: "8px" }}>
+                  <span style={{ color: "#64748b", fontSize: "13.5px" }}>Year:</span>
+                  <span style={{ fontWeight: 600, color: "#0f172a", fontSize: "13.5px" }}>{data.metadata?.year || "—"}</span>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ background: "#fff", padding: "24px", borderRadius: "12px", border: "1px solid #e2e8f0" }}>
+              <h3 style={{ fontSize: "16px", fontWeight: 700, color: "#1e293b", margin: "0 0 20px 0" }}>Cost Overview</h3>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+                <div style={{ background: "#f0fdf4", padding: "16px", borderRadius: "10px", border: "1px solid #bbf7d0" }}>
+                  <div style={{ fontSize: "12px", fontWeight: 600, color: "#166534", textTransform: "uppercase", marginBottom: "4px" }}>Total Fuel Cost</div>
+                  <div style={{ fontSize: "24px", fontWeight: 800, color: "#14532d" }}>${data.stats?.totalFuelCost?.toFixed(2) || "0.00"}</div>
+                </div>
+                <div style={{ background: "#fef2f2", padding: "16px", borderRadius: "10px", border: "1px solid #fecaca" }}>
+                  <div style={{ fontSize: "12px", fontWeight: 600, color: "#991b1b", textTransform: "uppercase", marginBottom: "4px" }}>Total Maintenance</div>
+                  <div style={{ fontSize: "24px", fontWeight: 800, color: "#7f1d1d" }}>${data.stats?.totalMaintenanceCost?.toFixed(2) || "0.00"}</div>
+                </div>
+                <div style={{ background: "#f8fafc", padding: "16px", borderRadius: "10px", border: "1px solid #e2e8f0", gridColumn: "span 2", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <div style={{ fontSize: "12px", fontWeight: 600, color: "#475569", textTransform: "uppercase", marginBottom: "4px" }}>Open Maintenance Issues</div>
+                    <div style={{ fontSize: "20px", fontWeight: 800, color: "#0f172a" }}>{data.stats?.openIssues || 0}</div>
+                  </div>
+                  {data.stats?.openIssues > 0 && (
+                    <button onClick={() => setActiveTab("maintenance")} style={{ background: "#0f172a", color: "#fff", border: "none", padding: "6px 14px", borderRadius: "6px", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}>View Issues</button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === "inspections" && (
+          <div>
+            <h3 style={{ fontSize: "16px", fontWeight: 700, color: "#1e293b", marginBottom: "16px", marginTop: 0 }}>Inspection History</h3>
+            {!data.inspections?.length ? <p style={{ color: "#64748b" }}>No inspections recorded.</p> : (
+              <div style={{ overflowX: "auto", background: "#fff", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13.5px" }}>
+                  <thead><tr style={{ background: "#f8fafc" }}>{["Date", "Status", "Inspector", "Notes"].map(h => <th key={h} style={{ padding: "12px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", borderBottom: "1px solid #e2e8f0" }}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {data.inspections.map(i => (
+                      <tr key={i.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                        <td style={{ padding: "12px 16px", color: "#0f172a", fontWeight: 500 }}>{new Date(i.inspectionDate || i.createdAt).toLocaleDateString()}</td>
+                        <td style={{ padding: "12px 16px" }}><span style={{ padding: "3px 8px", borderRadius: "12px", fontSize: "11px", fontWeight: 700, textTransform: "uppercase", background: i.status === "passed" ? "#dcfce7" : i.status === "failed" ? "#fee2e2" : "#f1f5f9", color: i.status === "passed" ? "#16a34a" : i.status === "failed" ? "#dc2626" : "#475569" }}>{i.status}</span></td>
+                        <td style={{ padding: "12px 16px", color: "#475569" }}>{i.inspectedByName || "Unknown"}</td>
+                        <td style={{ padding: "12px 16px", color: "#64748b", maxWidth: "200px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{i.notes || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === "fuel" && (
+          <div>
+            <h3 style={{ fontSize: "16px", fontWeight: 700, color: "#1e293b", marginBottom: "16px", marginTop: 0 }}>Fuel Logs</h3>
+            {!data.fuelLogs?.length ? <p style={{ color: "#64748b" }}>No fuel logs recorded.</p> : (
+              <div style={{ overflowX: "auto", background: "#fff", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13.5px" }}>
+                  <thead><tr style={{ background: "#f8fafc" }}>{["Date", "Amount", "Cost", "Odometer", "Logged By"].map(h => <th key={h} style={{ padding: "12px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", borderBottom: "1px solid #e2e8f0" }}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {data.fuelLogs.map(l => (
+                      <tr key={l.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                        <td style={{ padding: "12px 16px", color: "#0f172a", fontWeight: 500 }}>{new Date(l.logDate || l.createdAt).toLocaleDateString()}</td>
+                        <td style={{ padding: "12px 16px", color: "#475569" }}>{l.fuelAmount} {l.fuelType && `(${l.fuelType})`}</td>
+                        <td style={{ padding: "12px 16px", color: "#16a34a", fontWeight: 600 }}>${l.cost}</td>
+                        <td style={{ padding: "12px 16px", color: "#475569" }}>{l.odometer || "—"}</td>
+                        <td style={{ padding: "12px 16px", color: "#64748b" }}>{l.addedByName || "Unknown"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === "maintenance" && (
+          <div>
+            <h3 style={{ fontSize: "16px", fontWeight: 700, color: "#1e293b", marginBottom: "16px", marginTop: 0 }}>Maintenance Work Orders</h3>
+            {!data.maintenance?.length ? <p style={{ color: "#64748b" }}>No maintenance records found.</p> : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                {data.maintenance.map(m => (
+                  <div key={m.id} style={{ background: "#fff", padding: "16px", borderRadius: "10px", border: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}>
+                        <span style={{ fontWeight: 700, color: "#0f172a", fontSize: "15px" }}>{m.issueTitle}</span>
+                        <span style={{ padding: "2px 8px", borderRadius: "12px", fontSize: "11px", fontWeight: 700, textTransform: "uppercase", background: m.status === "completed" || m.status === "closed" ? "#dcfce7" : m.status === "in_progress" ? "#fef9c3" : "#f1f5f9", color: m.status === "completed" || m.status === "closed" ? "#166534" : m.status === "in_progress" ? "#854d0e" : "#475569" }}>{m.status.replace("_", " ")}</span>
+                        <span style={{ padding: "2px 8px", borderRadius: "12px", fontSize: "11px", fontWeight: 700, textTransform: "uppercase", border: "1px solid #e2e8f0", color: "#64748b" }}>Pri: {m.priority}</span>
+                      </div>
+                      <div style={{ fontSize: "13px", color: "#64748b" }}>
+                        Scheduled: {m.scheduledDate ? new Date(m.scheduledDate).toLocaleDateString() : "Not set"} | Assigned To: {m.assignedToName || "Unassigned"} | Cost: ${m.cost || "0.00"}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === "assignments" && (
+          <div>
+            <h3 style={{ fontSize: "16px", fontWeight: 700, color: "#1e293b", marginBottom: "16px", marginTop: 0 }}>Associated Checklists & Logsheets</h3>
+            <p style={{ fontSize: "13.5px", color: "#64748b", marginBottom: "20px" }}>Templates explicitly bound to this asset that have been assigned to technicians.</p>
+            {!data.assignments?.length ? <p style={{ color: "#64748b" }}>No templates currently assigned.</p> : (
+              <div style={{ overflowX: "auto", background: "#fff", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13.5px" }}>
+                  <thead><tr style={{ background: "#f8fafc" }}>{["Type", "Template Name", "Assigned To", "Assigned On"].map(h => <th key={h} style={{ padding: "12px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", borderBottom: "1px solid #e2e8f0" }}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {data.assignments.map(a => (
+                      <tr key={a.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                        <td style={{ padding: "12px 16px" }}><span style={{ padding: "2px 8px", borderRadius: "20px", fontSize: "11px", fontWeight: 700, textTransform: "uppercase", background: a.templateType === "checklist" ? "#f0fdf4" : "#eff6ff", color: a.templateType === "checklist" ? "#16a34a" : "#2563eb" }}>{a.templateType}</span></td>
+                        <td style={{ padding: "12px 16px", color: "#0f172a", fontWeight: 500 }}>{a.templateName || "Unknown"}</td>
+                        <td style={{ padding: "12px 16px", color: "#475569" }}>{a.assignedToName || "—"}</td>
+                        <td style={{ padding: "12px 16px", color: "#64748b" }}>{new Date(a.createdAt).toLocaleDateString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+/* ─── Fleet Inspection Modal ──────────────────────────────────────── */
+function FleetInspectionModal({ token, fleetAssets, onClose, onSaved }) {
+  const [form, setForm] = useState({ asset_id: "", inspection_date: new Date().toISOString().slice(0, 10), status: "pass", notes: "" });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const handleSave = async () => {
+    if (!form.asset_id) return setError("Vehicle is required");
+    setSaving(true); setError(null);
+    try {
+      const saved = await createFleetInspection(token, { ...form, assetId: form.asset_id });
+      onSaved(saved);
+    } catch (err) { setError(err.message || "Failed to save"); }
+    finally { setSaving(false); }
+  };
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+      <div style={{ background: "#fff", borderRadius: "14px", width: "100%", maxWidth: "500px" }}>
+        <div style={{ padding: "18px 22px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <p style={{ fontWeight: 700, fontSize: "16px", color: "#0f172a" }}>Record Inspection</p>
+          <button onClick={onClose} style={{ width: "28px", height: "28px", borderRadius: "7px", background: "#f1f5f9", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b" }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+          </button>
+        </div>
+        <div style={{ padding: "18px 22px", display: "flex", flexDirection: "column", gap: "14px" }}>
+          {error && <Alert>{error}</Alert>}
+          <div>
+            <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Vehicle *</label>
+            <select value={form.asset_id} onChange={(e) => setForm({ ...form, asset_id: e.target.value })} className="form-select" style={{ width: "100%" }}>
+              <option value="">Select vehicle...</option>
+              {fleetAssets.map((a) => <option key={a.id} value={a.id}>{a.assetName || a.vehicle_number}</option>)}
+            </select>
+          </div>
+          <FInput label="Inspection Date" type="date" value={form.inspection_date} onChange={(e) => setForm({ ...form, inspection_date: e.target.value })} />
+          <div>
+            <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Status</label>
+            <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className="form-select" style={{ width: "100%" }}>
+              <option value="pass">Pass</option>
+              <option value="fail">Fail</option>
+              <option value="needs_attention">Needs Attention</option>
+            </select>
+          </div>
+          <FInput label="Notes" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+        </div>
+        <div style={{ padding: "16px 22px", borderTop: "1px solid #e2e8f0", display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+          <Btn onClick={onClose} outline color="#64748b" bg="#fff">Cancel</Btn>
+          <Btn onClick={handleSave} disabled={saving}>{saving ? "Saving…" : "Save"}</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Fleet Fuel Modal ────────────────────────────────────────────── */
+function FleetFuelModal({ token, fleetAssets, onClose, onSaved }) {
+  const [form, setForm] = useState({ asset_id: "", log_date: new Date().toISOString().slice(0, 10), litres: "", total_cost: "", odometer_reading: "" });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const handleSave = async () => {
+    if (!form.asset_id || !form.litres) return setError("Vehicle and Litres are required");
+    setSaving(true); setError(null);
+    try {
+      const saved = await createFleetFuelLog(token, { ...form, assetId: form.asset_id });
+      onSaved(saved);
+    } catch (err) { setError(err.message || "Failed to save"); }
+    finally { setSaving(false); }
+  };
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+      <div style={{ background: "#fff", borderRadius: "14px", width: "100%", maxWidth: "500px" }}>
+        <div style={{ padding: "18px 22px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <p style={{ fontWeight: 700, fontSize: "16px", color: "#0f172a" }}>Add Fuel Log</p>
+          <button onClick={onClose} style={{ width: "28px", height: "28px", borderRadius: "7px", background: "#f1f5f9", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b" }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+          </button>
+        </div>
+        <div style={{ padding: "18px 22px", display: "flex", flexDirection: "column", gap: "14px" }}>
+          {error && <Alert>{error}</Alert>}
+          <div>
+            <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Vehicle *</label>
+            <select value={form.asset_id} onChange={(e) => setForm({ ...form, asset_id: e.target.value })} className="form-select" style={{ width: "100%" }}>
+              <option value="">Select vehicle...</option>
+              {fleetAssets.map((a) => <option key={a.id} value={a.id}>{a.assetName || a.vehicle_number}</option>)}
+            </select>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+            <FInput label="Date" type="date" value={form.log_date} onChange={(e) => setForm({ ...form, log_date: e.target.value })} />
+            <FInput label="Odometer" type="number" value={form.odometer_reading} onChange={(e) => setForm({ ...form, odometer_reading: e.target.value })} />
+            <FInput label="Litres *" type="number" step="0.01" value={form.litres} onChange={(e) => setForm({ ...form, litres: e.target.value })} />
+            <FInput label="Total Cost ($)" type="number" step="0.01" value={form.total_cost} onChange={(e) => setForm({ ...form, total_cost: e.target.value })} />
+          </div>
+        </div>
+        <div style={{ padding: "16px 22px", borderTop: "1px solid #e2e8f0", display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+          <Btn onClick={onClose} outline color="#64748b" bg="#fff">Cancel</Btn>
+          <Btn onClick={handleSave} disabled={saving}>{saving ? "Saving…" : "Save"}</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Fleet Maintenance Modal ─────────────────────────────────────── */
+function FleetMaintModal({ token, fleetAssets, onClose, onSaved }) {
+  const [form, setForm] = useState({ asset_id: "", scheduled_date: new Date().toISOString().slice(0, 10), service_type: "Routine Check", description: "", cost: "", status: "in_progress" });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const handleSave = async () => {
+    if (!form.asset_id || !form.service_type) return setError("Vehicle and Service Type are required");
+    setSaving(true); setError(null);
+    try {
+      const saved = await createFleetMaintenance(token, { ...form, assetId: form.asset_id });
+      onSaved(saved);
+    } catch (err) { setError(err.message || "Failed to save"); }
+    finally { setSaving(false); }
+  };
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+      <div style={{ background: "#fff", borderRadius: "14px", width: "100%", maxWidth: "500px" }}>
+        <div style={{ padding: "18px 22px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <p style={{ fontWeight: 700, fontSize: "16px", color: "#0f172a" }}>Schedule Maintenance</p>
+          <button onClick={onClose} style={{ width: "28px", height: "28px", borderRadius: "7px", background: "#f1f5f9", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b" }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+          </button>
+        </div>
+        <div style={{ padding: "18px 22px", display: "flex", flexDirection: "column", gap: "14px" }}>
+          {error && <Alert>{error}</Alert>}
+          <div>
+            <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Vehicle *</label>
+            <select value={form.asset_id} onChange={(e) => setForm({ ...form, asset_id: e.target.value })} className="form-select" style={{ width: "100%" }}>
+              <option value="">Select vehicle...</option>
+              {fleetAssets.map((a) => <option key={a.id} value={a.id}>{a.assetName || a.vehicle_number}</option>)}
+            </select>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+            <FInput label="Scheduled Date" type="date" value={form.scheduled_date} onChange={(e) => setForm({ ...form, scheduled_date: e.target.value })} />
+            <FInput label="Service Type *" value={form.service_type} onChange={(e) => setForm({ ...form, service_type: e.target.value })} />
+            <FInput label="Est. Cost ($)" type="number" step="0.01" value={form.cost} onChange={(e) => setForm({ ...form, cost: e.target.value })} />
+            <div>
+              <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Status</label>
+              <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className="form-select" style={{ width: "100%" }}>
+                <option value="in_progress">In Progress</option>
+                <option value="completed">Completed</option>
+                <option value="cancelled">Cancelled</option>
+              </select>
+            </div>
+          </div>
+          <FInput label="Description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+        </div>
+        <div style={{ padding: "16px 22px", borderTop: "1px solid #e2e8f0", display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+          <Btn onClick={onClose} outline color="#64748b" bg="#fff">Cancel</Btn>
+          <Btn onClick={handleSave} disabled={saving}>{saving ? "Saving…" : "Save"}</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ─── Main Portal ────────────────────────────────────────────────── */
 export default function CompanyEmployeePortal() {
   const navigate = useNavigate();
@@ -1269,6 +2051,40 @@ export default function CompanyEmployeePortal() {
   const [checklistSubNav, setChecklistSubNav] = useState("templates");
   const [logsheetSubNav, setLogsheetSubNav] = useState("templates");
   const [assetSubNav, setAssetSubNav] = useState("dashboard");
+  // OJT State
+  const [ojtTrainings, setOjtTrainings] = useState([]);
+  const [ojtSubNav, setOjtSubNav] = useState("trainings");
+  const [showOjtModal, setShowOjtModal] = useState(false);
+  const [editOjt, setEditOjt] = useState(null);
+  const [viewingOjtTraining, setViewingOjtTraining] = useState(null);
+  const [showOjtBuilder, setShowOjtBuilder] = useState(false);
+  const [buildingOjtTrainingId, setBuildingOjtTrainingId] = useState(null);
+  const [ojtPreviewTraining, setOjtPreviewTraining] = useState(null);
+  const [ojtQrTraining, setOjtQrTraining] = useState(null);
+  const [ojtQrDataUrl, setOjtQrDataUrl] = useState("");
+  const [assetQrModal, setAssetQrModal] = useState(null);
+  const [assetQrDataUrl, setAssetQrDataUrl] = useState("");
+  // Fleet State
+  const [fleetAssets, setFleetAssets] = useState([]);
+  const [fleetInspections, setFleetInspections] = useState([]);
+  const [fleetFuelLogs, setFleetFuelLogs] = useState([]);
+  const [fleetMaintenance, setFleetMaintenance] = useState([]);
+  const [fleetSubNav, setFleetSubNav] = useState("assets");
+  const [fleetDetailTab, setFleetDetailTab] = useState("fuel");
+  const [fleetHistory, setFleetHistory] = useState([]);
+  const [fleetSubmissionDetail, setFleetSubmissionDetail] = useState(null);
+  const [fleetSubmissionDetailLoading, setFleetSubmissionDetailLoading] = useState(false);
+  const [assignFleetLogsheet, setAssignFleetLogsheet] = useState(null);
+  const [assignFleetChecklist, setAssignFleetChecklist] = useState(null);
+  const [showFleetAssetModal, setShowFleetAssetModal] = useState(false);
+  const [editFleetAsset, setEditFleetAsset] = useState(null);
+  const [viewingFleetAsset, setViewingFleetAsset] = useState(null);
+  const [showFleetInspectionModal, setShowFleetInspectionModal] = useState(false);
+  const [editFleetInspection, setEditFleetInspection] = useState(null);
+  const [showFleetFuelModal, setShowFleetFuelModal] = useState(false);
+  const [editFleetFuel, setEditFleetFuel] = useState(null);
+  const [showFleetMaintModal, setShowFleetMaintModal] = useState(false);
+  const [editFleetMaint, setEditFleetMaint] = useState(null);
 
   useEffect(() => {
     if (!token || !currentUser) {
@@ -1510,6 +2326,16 @@ export default function CompanyEmployeePortal() {
       }
     }
     if (nav === "logsheets" && !assets.length) load("assets", () => getCompanyPortalAssets(token)).then((d) => d && setAssets(d));
+    if (nav === "ojt") {
+      load("ojt", () => getOjtTrainings(token)).then((d) => d && setOjtTrainings(d));
+      if (!assets.length) getCompanyPortalAssets(token).then((d) => d && setAssets(d)).catch(() => {});
+    }
+    if (nav === "fleet") {
+      if (!assets.length) load("assets", () => getCompanyPortalAssets(token)).then((d) => d && setAssets(d));
+      load("fleet_history", () => getFleetSubmissions(token)).then((d) => d && setFleetHistory(d));
+      if (!checklists.length) getCompanyPortalChecklists(token).then((d) => d && setChecklists(d)).catch(() => {});
+      if (!logsheetTemplatesList.length) getCompanyPortalLogsheetTemplates(token).then((d) => d && setLogsheetTemplatesList(d)).catch(() => {});
+    }
   }, [nav, token, load, assets.length]);
 
   const handleLogout = () => {
@@ -1579,6 +2405,27 @@ export default function CompanyEmployeePortal() {
       link.download = `QR-${assetName.replace(/[^a-zA-Z0-9]/g, "_")}-${assetId}.png`;
       link.href = canvas.toDataURL("image/png");
       link.click();
+    } catch (err) {
+      alert("QR generation failed: " + err.message);
+    }
+  };
+
+  const getQrBaseUrl = () => {
+    try {
+      const u = new URL(import.meta.env.VITE_API_URL || "");
+      if (u.hostname !== "localhost" && u.hostname !== "127.0.0.1") {
+        return `${u.protocol}//${u.hostname}:5173`;
+      }
+    } catch {}
+    return window.location.origin;
+  };
+
+  const handleShowAssetQR = async (assetId, assetName) => {
+    try {
+      const url = `${getQrBaseUrl()}/asset-scan/${assetId}`;
+      const dataUrl = await QRCode.toDataURL(url, { width: 300, margin: 2 });
+      setAssetQrDataUrl(dataUrl);
+      setAssetQrModal({ assetId, assetName, url });
     } catch (err) {
       alert("QR generation failed: " + err.message);
     }
@@ -3290,6 +4137,624 @@ export default function CompanyEmployeePortal() {
           );
         })()}
 
+        {/* ── OJT Management ──────────────────────────────── */}
+        {nav === "ojt" && (
+          <div>
+            {showOjtBuilder ? (
+              <OjtTrainingBuilder
+                token={token}
+                assets={assets}
+                trainingId={buildingOjtTrainingId}
+                onBack={() => {
+                  setShowOjtBuilder(false);
+                  setBuildingOjtTrainingId(null);
+                  load("ojt", () => getOjtTrainings(token).then(setOjtTrainings));
+                }}
+              />
+            ) : (
+              <>
+                <div style={{ marginBottom: "24px", display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
+                  <div>
+                    <h1 style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px", marginBottom: "4px" }}>OJT Management</h1>
+                    <p style={{ color: "#64748b", fontSize: "13.5px" }}>Create and manage On-the-Job Trainings and assess employee progress</p>
+                  </div>
+                  <Btn onClick={() => { setShowOjtBuilder(true); setBuildingOjtTrainingId(null); }}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
+                    Create Training
+                  </Btn>
+                </div>
+
+                {/* Sub-navigation */}
+                <div style={{ display: "flex", gap: "24px", borderBottom: "1px solid #e2e8f0", marginBottom: "20px" }}>
+                  {[
+                    { key: "trainings", label: "Trainings" },
+                    { key: "tracking", label: "Progress Tracking" }
+                  ].map((tab) => (
+                    <button
+                      key={tab.key}
+                      onClick={() => setOjtSubNav(tab.key)}
+                      style={{
+                        padding: "10px 4px", fontSize: "14px", fontWeight: 600, background: "none", border: "none", cursor: "pointer",
+                        color: ojtSubNav === tab.key ? "#2563eb" : "#64748b",
+                        borderBottom: ojtSubNav === tab.key ? "2px solid #2563eb" : "2px solid transparent",
+                        transition: "all 0.2s"
+                      }}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+
+                {ojtSubNav === "trainings" && (
+                  <>
+                    {!viewingOjtTraining ? (
+                      <Card>
+                        <div style={{ overflowX: "auto" }}>
+                          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
+                            <thead>
+                              <tr>
+                                {["Training Title", "Description", "Status", "Actions"].map((h) => (
+                                  <th key={h} style={{ padding: "11px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>{h}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {loading.ojt ? (
+                                <tr><td colSpan="4" style={{ padding: "30px", textAlign: "center", color: "#64748b" }}>Loading OJT…</td></tr>
+                              ) : ojtTrainings.length === 0 ? (
+                                <tr><td colSpan="4" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>No training programs available.</td></tr>
+                              ) : ojtTrainings.map((t) => (
+                                <tr key={t.id} style={{ borderBottom: "1px solid #f1f5f9", cursor: "pointer" }} onClick={async () => {
+                                  try {
+                                    const details = await getOjtTraining(token, t.id);
+                                    setViewingOjtTraining(details);
+                                  } catch (e) { alert("Failed to load training details"); }
+                                }}>
+                                  <td style={{ padding: "12px 16px", fontWeight: 600, color: "#2563eb" }}>{t.title}</td>
+                                  <td style={{ padding: "12px 16px", color: "#64748b" }}>{t.description || "—"}</td>
+                                  <td style={{ padding: "12px 16px" }}>
+                                    <span style={{ padding: "4px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: t.status === "published" ? "#dcfce7" : "#f1f5f9", color: t.status === "published" ? "#166534" : "#475569" }}>
+                                      {t.status === "published" ? "Published" : "Draft"}
+                                    </span>
+                                  </td>
+                                  <td style={{ padding: "12px 16px", display: "flex", gap: "6px", flexWrap: "wrap" }} onClick={e => e.stopPropagation()}>
+                                    <button title="Preview Training" onClick={async () => {
+                                      try {
+                                        const details = await getOjtTraining(token, t.id);
+                                        setOjtPreviewTraining(details);
+                                      } catch(e) { alert("Failed to load training"); }
+                                    }} style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#eff6ff", color: "#2563eb", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                                    </button>
+                                    <button title="Show QR Code" onClick={async () => {
+                                      try {
+                                        const url = t.assetId ? `${getQrBaseUrl()}/asset-scan/${t.assetId}` : `${getQrBaseUrl()}/ojt-training/${t.id}`;
+                                        const dataUrl = await QRCode.toDataURL(url, { width: 300, margin: 2 });
+                                        setOjtQrDataUrl(dataUrl);
+                                        setOjtQrTraining(t);
+                                      } catch(e) { alert("Failed to generate QR"); }
+                                    }} style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#f0fdf4", color: "#16a34a", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3M17 20h3M20 17v3"/></svg>
+                                    </button>
+                                    <button title="Edit Training" onClick={() => { setShowOjtBuilder(true); setBuildingOjtTrainingId(t.id); }}
+                                      style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#f1f5f9", color: "#475569", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
+                                    </button>
+                                    {t.status === "published" && (
+                                      <button title="Unpublish Training" onClick={async () => {
+                                        if (!window.confirm(`Unpublish '${t.title}'? It will become a draft.`)) return;
+                                        try {
+                                          await publishOjtTraining(token, t.id);
+                                          setOjtTrainings(p => p.map(x => x.id === t.id ? { ...x, status: "draft" } : x));
+                                        } catch (e) { alert("Failed to unpublish"); }
+                                      }} style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#fef9c3", color: "#ca8a04", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+                                      </button>
+                                    )}
+                                    <button title="Delete Training" onClick={async () => {
+                                      if (!window.confirm(`Delete training '${t.title}'? This cannot be undone.`)) return;
+                                      try { await deleteOjtTraining(token, t.id); setOjtTrainings(p => p.filter(x => x.id !== t.id)); }
+                                      catch (e) { alert("Failed to delete training"); }
+                                    }} style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#fef2f2", color: "#dc2626", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" /></svg>
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </Card>
+                    ) : (
+                      <OjtTrainingDetailView
+                        training={viewingOjtTraining}
+                        token={token}
+                        onBack={() => {
+                          setViewingOjtTraining(null);
+                          load("ojt", () => getOjtTrainings(token).then(setOjtTrainings));
+                        }}
+                        onUpdated={(updated) => setViewingOjtTraining(updated)}
+                      />
+                    )}
+                  </>
+                )}
+                {ojtSubNav === "tracking" && (
+                  <TrackingSection token={token} ojtTrainings={ojtTrainings} />
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* OJT Preview Modal */}
+        {ojtPreviewTraining && (
+          <TrainingPreviewModal
+            training={ojtPreviewTraining}
+            onClose={() => setOjtPreviewTraining(null)}
+          />
+        )}
+        {/* OJT QR Modal */}
+        {ojtQrTraining && (
+          <TrainingQRModal
+            training={ojtQrTraining}
+            qrDataUrl={ojtQrDataUrl}
+            onClose={() => { setOjtQrTraining(null); setOjtQrDataUrl(""); }}
+          />
+        )}
+
+        {/* Asset QR Modal */}
+        {assetQrModal && (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
+            <div style={{ background: "#fff", borderRadius: "16px", width: "100%", maxWidth: "360px", padding: "32px", textAlign: "center", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
+              <h3 style={{ margin: "0 0 4px", fontSize: "18px", fontWeight: 800, color: "#0f172a" }}>Asset QR Code</h3>
+              <p style={{ margin: "0 0 20px", fontSize: "13px", color: "#64748b" }}>{assetQrModal.assetName}</p>
+              {assetQrDataUrl ? (
+                <img src={assetQrDataUrl} alt="QR Code" style={{ width: "220px", height: "220px", borderRadius: "12px", border: "1px solid #e2e8f0" }} />
+              ) : (
+                <p style={{ color: "#94a3b8" }}>Generating QR...</p>
+              )}
+              <p style={{ marginTop: "16px", fontSize: "11px", color: "#94a3b8" }}>Scan to view asset details and training on mobile</p>
+              <div style={{ display: "flex", gap: "10px", marginTop: "20px", justifyContent: "center" }}>
+                {assetQrDataUrl && (
+                  <a href={assetQrDataUrl} download={`QR-${assetQrModal.assetName.replace(/[^a-zA-Z0-9]/g, "_")}-${assetQrModal.assetId}.png`} style={{ padding: "8px 18px", borderRadius: "8px", background: "#2563eb", color: "#fff", textDecoration: "none", fontSize: "13px", fontWeight: 600 }}>
+                    Download QR
+                  </a>
+                )}
+                <button onClick={() => { setAssetQrModal(null); setAssetQrDataUrl(""); }} style={{ padding: "8px 18px", borderRadius: "8px", background: "#f1f5f9", color: "#475569", border: "none", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>Close</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Fleet Management ─────────────────────────────── */}
+        {nav === "fleet" && (
+          <div>
+            <div style={{ marginBottom: "24px", display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
+              <div>
+                <h1 style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px", marginBottom: "4px" }}>Fleet Management</h1>
+                <p style={{ color: "#64748b", fontSize: "13.5px" }}>Manage vehicles, track fuel usage, and schedule maintenance</p>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: "24px", borderBottom: "1px solid #e2e8f0", marginBottom: "20px", overflowX: "auto" }}>
+              {[
+                { key: "assets", label: "Fleet Assets" },
+                { key: "checklists", label: "Checklists" },
+                { key: "logsheets", label: "Logsheets" },
+                { key: "history", label: "Submission History" }
+              ].map((tab) => (
+                <button
+                  key={tab.key}
+                  onClick={() => setFleetSubNav(tab.key)}
+                  style={{
+                    padding: "10px 4px", fontSize: "14px", fontWeight: 600, background: "none", border: "none", cursor: "pointer", whiteSpace: "nowrap",
+                    color: fleetSubNav === tab.key ? "#2563eb" : "#64748b",
+                    borderBottom: fleetSubNav === tab.key ? "2px solid #2563eb" : "2px solid transparent",
+                    transition: "all 0.2s"
+                  }}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {fleetSubNav === "assets" && (
+              <>
+                {!viewingFleetAsset ? (
+                  <Card>
+                    <div style={{ padding: "16px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <h3 style={{ fontSize: "15px", fontWeight: 600, color: "#0f172a", margin: 0 }}>Registered Vehicles</h3>
+                      <button onClick={() => { setNav("assets"); setAssetTypeFilter("fleet"); }}
+                        style={{ padding: "6px 14px", borderRadius: "6px", background: "#2563eb", color: "#fff", border: "none", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>
+                        + Register New Vehicle
+                      </button>
+                    </div>
+                    <div style={{ overflowX: "auto" }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
+                        <thead>
+                          <tr>
+                            {["Vehicle Number", "Type", "Driver", "Fuel Type", "Insurance", "Status", "Actions"].map((h) => (
+                              <th key={h} style={{ padding: "11px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(() => {
+                            const fleetAssetsFiltered = assets.filter(a => a.assetType === "fleet");
+                            return fleetAssetsFiltered.length === 0 ? (
+                              <tr><td colSpan="7" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>
+                                No vehicles registered. <button onClick={() => { setNav("assets"); setAssetTypeFilter("fleet"); }} style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", fontWeight: 600, textDecoration: "underline" }}>Register one →</button>
+                              </td></tr>
+                            ) : fleetAssetsFiltered.map((a) => {
+                              const meta = a.metadata || {};
+                              const insStatus = meta.insuranceExpiry ? new Date(meta.insuranceExpiry) > new Date() ? "Active" : "Expired" : "—";
+                              const insColor = insStatus === "Active" ? "#16a34a" : insStatus === "Expired" ? "#dc2626" : "#94a3b8";
+                              return (
+                                <tr key={a.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                                  <td style={{ padding: "12px 16px", fontWeight: 600, color: "#2563eb", cursor: "pointer" }} onClick={() => setViewingFleetAsset(a.id)}>{meta.vehicleNumber || a.assetName}</td>
+                                  <td style={{ padding: "12px 16px", color: "#64748b" }}>{meta.vehicleType || "—"}</td>
+                                  <td style={{ padding: "12px 16px", color: "#64748b" }}>{meta.driver || "—"}</td>
+                                  <td style={{ padding: "12px 16px", color: "#64748b" }}>{meta.fuelType || "—"}</td>
+                                  <td style={{ padding: "12px 16px", color: insColor, fontWeight: 600 }}>{insStatus}</td>
+                                  <td style={{ padding: "12px 16px" }}>
+                                    <span style={{ padding: "3px 9px", borderRadius: "12px", fontSize: "11px", fontWeight: 600, background: a.status?.toLowerCase() === "active" ? "#dcfce7" : "#fee2e2", color: a.status?.toLowerCase() === "active" ? "#166534" : "#991b1b" }}>
+                                      {a.status?.toLowerCase() === "active" ? "✔ Active" : "Inactive"}
+                                    </span>
+                                  </td>
+                                  <td style={{ padding: "12px 16px", display: "flex", gap: "6px" }}>
+                                    <button onClick={() => setViewingFleetAsset(a.id)} style={{ padding: "4px 10px", borderRadius: "6px", background: "#eff6ff", color: "#2563eb", border: "none", fontSize: "11px", fontWeight: 600, cursor: "pointer" }}>Details</button>
+                                    <button onClick={() => { setEditAsset(a); setShowAssetModal(true); }} style={{ padding: "4px 10px", borderRadius: "6px", background: "#f8fafc", color: "#475569", border: "1px solid #e2e8f0", fontSize: "11px", fontWeight: 600, cursor: "pointer" }}>Edit</button>
+                                    <button onClick={() => handleDeleteAsset(a.id)} style={{ padding: "4px 10px", borderRadius: "6px", background: "#fef2f2", color: "#dc2626", border: "none", fontSize: "11px", fontWeight: 600, cursor: "pointer" }}>Delete</button>
+                                  </td>
+                                </tr>
+                              );
+                            });
+                          })()}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
+                ) : (() => {
+                  const viewingAsset = assets.find(a => a.id === viewingFleetAsset);
+                  const meta = viewingAsset?.metadata || {};
+                  return (
+                    <Card style={{ maxWidth: "100%" }}>
+                      <div style={{ padding: "16px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <h3 style={{ fontSize: "15px", fontWeight: 600, color: "#0f172a", margin: 0 }}>{meta.vehicleNumber || viewingAsset?.assetName}</h3>
+                        <button onClick={() => setViewingFleetAsset(null)} style={{ padding: "6px 14px", borderRadius: "6px", background: "#f8fafc", color: "#475569", border: "1px solid #e2e8f0", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>← Back</button>
+                      </div>
+                      <div style={{ padding: "20px" }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px", marginBottom: "24px" }}>
+                          <div>
+                            <label style={{ fontSize: "12px", color: "#94a3b8", fontWeight: 600, display: "block", marginBottom: "4px" }}>Vehicle Type</label>
+                            <p style={{ margin: 0, fontWeight: 600, color: "#0f172a" }}>{meta.vehicleType || "—"}</p>
+                          </div>
+                          <div>
+                            <label style={{ fontSize: "12px", color: "#94a3b8", fontWeight: 600, display: "block", marginBottom: "4px" }}>Fuel Type</label>
+                            <p style={{ margin: 0, fontWeight: 600, color: "#0f172a" }}>{meta.fuelType || "—"}</p>
+                          </div>
+                          <div>
+                            <label style={{ fontSize: "12px", color: "#94a3b8", fontWeight: 600, display: "block", marginBottom: "4px" }}>Driver Assigned</label>
+                            <p style={{ margin: 0, fontWeight: 600, color: "#0f172a" }}>{meta.driver || "—"}</p>
+                          </div>
+                          <div>
+                            <label style={{ fontSize: "12px", color: "#94a3b8", fontWeight: 600, display: "block", marginBottom: "4px" }}>Status</label>
+                            <p style={{ margin: 0, fontWeight: 600, color: viewingAsset?.status?.toLowerCase() === "active" ? "#16a34a" : "#dc2626" }}>
+                              {viewingAsset?.status?.toLowerCase() === "active" ? "✔ Active" : "Inactive"}
+                            </p>
+                          </div>
+                        </div>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px", padding: "16px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+                          <div>
+                            <label style={{ fontSize: "12px", color: "#94a3b8", fontWeight: 600, display: "block", marginBottom: "4px" }}>Insurance Expiry</label>
+                            <p style={{ margin: 0, fontWeight: 600, color: new Date(meta.insuranceExpiry) > new Date() ? "#16a34a" : "#dc2626" }}>
+                              {meta.insuranceExpiry ? new Date(meta.insuranceExpiry).toLocaleDateString() : "—"}
+                            </p>
+                          </div>
+                          <div>
+                            <label style={{ fontSize: "12px", color: "#94a3b8", fontWeight: 600, display: "block", marginBottom: "4px" }}>PUC Expiry</label>
+                            <p style={{ margin: 0, fontWeight: 600, color: meta.pucExpiry && new Date(meta.pucExpiry) < new Date() ? "#dc2626" : "#475569" }}>
+                              {meta.pucExpiry ? new Date(meta.pucExpiry).toLocaleDateString() : "—"}
+                            </p>
+                          </div>
+                          <div>
+                            <label style={{ fontSize: "12px", color: "#94a3b8", fontWeight: 600, display: "block", marginBottom: "4px" }}>Service Due</label>
+                            <p style={{ margin: 0, fontWeight: 600, color: meta.serviceDueDate && new Date(meta.serviceDueDate) < new Date() ? "#dc2626" : "#475569" }}>
+                              {meta.serviceDueDate ? new Date(meta.serviceDueDate).toLocaleDateString() : "—"}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    </Card>
+                  );
+                })()}
+              </>
+            )}
+
+            {fleetSubNav === "checklists" && (() => {
+              const fleetAssetIds = new Set(assets.filter(a => a.assetType === "fleet").map(a => a.id));
+              const fleetChecklists = checklists.filter(c => (c.assetId && fleetAssetIds.has(c.assetId)) || c.assetType === "fleet" || c.category === "fleet");
+              return (
+              <Card>
+                <div style={{ padding: "12px 16px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontWeight: 600, color: "#0f172a", fontSize: "14px" }}>Fleet Checklists ({fleetChecklists.length})</span>
+                  <Btn onClick={() => { setEditChecklist(null); setShowChecklistModal(true); }} style={{ fontSize: "12px", padding: "6px 12px" }}>+ Create Checklist</Btn>
+                </div>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
+                  <thead>
+                    <tr>
+                      {["Checklist Name", "Asset / Vehicle", "Frequency", "Status", "Questions", "Actions"].map((h) => (
+                        <th key={h} style={{ padding: "11px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {loading.checklists ? (
+                      <tr><td colSpan="6" style={{ padding: "30px", textAlign: "center", color: "#64748b" }}>Loading…</td></tr>
+                    ) : fleetChecklists.length === 0 ? (
+                      <tr><td colSpan="6" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>
+                        No checklists found for fleet assets. Use "+ Create Checklist" above.
+                      </td></tr>
+                    ) : fleetChecklists.map((c) => (
+                      <tr key={c.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                        <td style={{ padding: "12px 16px", fontWeight: 600, color: "#0f172a" }}>{c.checklistName || c.templateName}</td>
+                        <td style={{ padding: "12px 16px", color: "#64748b" }}>{c.assetName || assets.find(a => a.id === c.assetId)?.assetName || "—"}</td>
+                        <td style={{ padding: "12px 16px", color: "#64748b" }}>{c.frequency || "—"}</td>
+                        <td style={{ padding: "12px 16px" }}>
+                          <span style={{ padding: "3px 9px", borderRadius: "10px", fontSize: "11px", fontWeight: 600, background: c.isActive || c.status === "active" ? "#dcfce7" : "#f1f5f9", color: c.isActive || c.status === "active" ? "#16a34a" : "#64748b" }}>
+                            {c.isActive || c.status === "active" ? "Active" : (c.status || "Inactive")}
+                          </span>
+                        </td>
+                        <td style={{ padding: "12px 16px", color: "#64748b" }}>{c.questions?.length ?? "—"}</td>
+                        <td style={{ padding: "12px 16px" }}>
+                          <div style={{ display: "flex", gap: "6px" }}>
+                            <button title="Edit" onClick={() => { setEditChecklist(c); setShowChecklistModal(true); }}
+                              style={{ padding: "4px 8px", borderRadius: "6px", background: "#eff6ff", color: "#2563eb", border: "none", fontSize: "11px", fontWeight: 600, cursor: "pointer" }}>Edit</button>
+                            <button title="Assign to employee" onClick={() => setAssignFleetChecklist(c)}
+                              style={{ padding: "4px 8px", borderRadius: "6px", background: "#f0fdf4", color: "#16a34a", border: "none", fontSize: "11px", fontWeight: 600, cursor: "pointer" }}>Assign</button>
+                            <button title="Delete" onClick={async () => {
+                              if (!window.confirm(`Delete checklist '${c.checklistName || c.templateName}'?`)) return;
+                              try { await deleteCompanyPortalChecklist(token, c.id); setChecklists(p => p.filter(x => x.id !== c.id)); }
+                              catch (e) { alert("Delete failed"); }
+                            }} style={{ padding: "4px 8px", borderRadius: "6px", background: "#fef2f2", color: "#dc2626", border: "none", fontSize: "11px", fontWeight: 600, cursor: "pointer" }}>Delete</button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </Card>
+              );
+            })()}
+
+            {fleetSubNav === "logsheets" && (() => {
+              const fleetAssetIds = new Set(assets.filter(a => a.assetType === "fleet").map(a => a.id));
+              const fleetLogsheets = logsheetTemplatesList.filter(l =>
+                (l.assetId && fleetAssetIds.has(l.assetId)) ||
+                (l.assetType && l.assetType.toLowerCase().includes("fleet"))
+              );
+              return (
+              <Card>
+                <div style={{ padding: "12px 16px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontWeight: 600, color: "#0f172a", fontSize: "14px" }}>Fleet Logsheets ({fleetLogsheets.length})</span>
+                  <Btn onClick={() => { setNav("logsheets"); }} style={{ fontSize: "12px", padding: "6px 12px" }}>+ Create Logsheet</Btn>
+                </div>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
+                  <thead>
+                    <tr>
+                      {["Logsheet Name", "Asset / Vehicle", "Frequency", "Status", "Fields", "Actions"].map((h) => (
+                        <th key={h} style={{ padding: "11px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {loading.logsheet_templates ? (
+                      <tr><td colSpan="6" style={{ padding: "30px", textAlign: "center", color: "#64748b" }}>Loading…</td></tr>
+                    ) : fleetLogsheets.length === 0 ? (
+                      <tr><td colSpan="6" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>
+                        No logsheets found for fleet assets. Use "+ Create Logsheet" above.
+                      </td></tr>
+                    ) : fleetLogsheets.map((l) => (
+                      <tr key={l.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                        <td style={{ padding: "12px 16px", fontWeight: 600, color: "#0f172a" }}>{l.name || l.templateName}</td>
+                        <td style={{ padding: "12px 16px", color: "#64748b" }}>{assets.find(a => a.id === l.assetId)?.assetName || "—"}</td>
+                        <td style={{ padding: "12px 16px", color: "#64748b" }}>{l.frequency || "—"}</td>
+                        <td style={{ padding: "12px 16px" }}>
+                          <span style={{ padding: "3px 9px", borderRadius: "10px", fontSize: "11px", fontWeight: 600, background: l.status === "active" ? "#dcfce7" : "#f1f5f9", color: l.status === "active" ? "#16a34a" : "#64748b" }}>
+                            {l.status || "Active"}
+                          </span>
+                        </td>
+                        <td style={{ padding: "12px 16px", color: "#64748b" }}>{l.fields?.length ?? "—"}</td>
+                        <td style={{ padding: "12px 16px" }}>
+                          <div style={{ display: "flex", gap: "6px" }}>
+                            <button title="Edit in Logsheets" onClick={() => setNav("logsheets")}
+                              style={{ padding: "4px 8px", borderRadius: "6px", background: "#eff6ff", color: "#2563eb", border: "none", fontSize: "11px", fontWeight: 600, cursor: "pointer" }}>Edit</button>
+                            <button title="Assign to employee" onClick={() => setAssignFleetLogsheet(l)}
+                              style={{ padding: "4px 8px", borderRadius: "6px", background: "#f0fdf4", color: "#16a34a", border: "none", fontSize: "11px", fontWeight: 600, cursor: "pointer" }}>Assign</button>
+                            <button title="Delete" onClick={async () => {
+                              if (!window.confirm(`Delete logsheet '${l.name || l.templateName}'?`)) return;
+                              try { await deleteCompanyPortalLogsheetTemplate(token, l.id); setLogsheetTemplatesList(p => p.filter(x => x.id !== l.id)); }
+                              catch (e) { alert("Delete failed"); }
+                            }} style={{ padding: "4px 8px", borderRadius: "6px", background: "#fef2f2", color: "#dc2626", border: "none", fontSize: "11px", fontWeight: 600, cursor: "pointer" }}>Delete</button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </Card>
+              );
+            })()}
+
+            {/* Fleet Logsheet Assignment Modal */}
+            {assignFleetLogsheet && (
+              <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.50)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+                <div style={{ background: "#fff", borderRadius: "14px", width: "100%", maxWidth: "480px", padding: "24px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+                    <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>Assign "{assignFleetLogsheet.name || assignFleetLogsheet.templateName}"</h3>
+                    <button onClick={() => setAssignFleetLogsheet(null)} style={{ background: "#f1f5f9", border: "none", borderRadius: "8px", padding: "6px 10px", cursor: "pointer", color: "#64748b" }}>✕</button>
+                  </div>
+                  <p style={{ fontSize: "13px", color: "#64748b", marginBottom: "16px" }}>Select an employee to assign this logsheet to:</p>
+                  <select id="fleet-assign-emp" style={{ width: "100%", padding: "9px 12px", borderRadius: "8px", border: "1px solid #e2e8f0", fontSize: "14px", marginBottom: "16px" }} defaultValue="">
+                    <option value="">— Select Employee —</option>
+                    {employees.map(e => (
+                      <option key={e.id} value={e.id}>{e.fullName} ({e.role})</option>
+                    ))}
+                  </select>
+                  <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
+                    <button onClick={() => setAssignFleetLogsheet(null)} style={{ padding: "8px 16px", borderRadius: "8px", background: "#f1f5f9", color: "#475569", border: "none", fontWeight: 600, cursor: "pointer" }}>Cancel</button>
+                    <button onClick={async () => {
+                      const empId = document.getElementById("fleet-assign-emp")?.value;
+                      if (!empId) { alert("Please select an employee"); return; }
+                      try {
+                        await createTemplateUserAssignment(token, { templateType: "logsheet", templateId: assignFleetLogsheet.id, assignedTo: Number(empId) });
+                        alert("Logsheet assigned successfully!");
+                        setAssignFleetLogsheet(null);
+                      } catch (e) { alert(e.message || "Assignment failed"); }
+                    }} style={{ padding: "8px 16px", borderRadius: "8px", background: "#2563eb", color: "#fff", border: "none", fontWeight: 600, cursor: "pointer" }}>Assign</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Fleet Checklist Assignment Modal */}
+            {assignFleetChecklist && (
+              <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.50)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+                <div style={{ background: "#fff", borderRadius: "14px", width: "100%", maxWidth: "480px", padding: "24px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+                    <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>Assign "{assignFleetChecklist.checklistName || assignFleetChecklist.templateName}"</h3>
+                    <button onClick={() => setAssignFleetChecklist(null)} style={{ background: "#f1f5f9", border: "none", borderRadius: "8px", padding: "6px 10px", cursor: "pointer", color: "#64748b" }}>✕</button>
+                  </div>
+                  <p style={{ fontSize: "13px", color: "#64748b", marginBottom: "16px" }}>Select an employee to assign this checklist to:</p>
+                  <select id="fleet-assign-chk-emp" style={{ width: "100%", padding: "9px 12px", borderRadius: "8px", border: "1px solid #e2e8f0", fontSize: "14px", marginBottom: "16px" }} defaultValue="">
+                    <option value="">— Select Employee —</option>
+                    {employees.map(e => (
+                      <option key={e.id} value={e.id}>{e.fullName} ({e.role})</option>
+                    ))}
+                  </select>
+                  <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
+                    <button onClick={() => setAssignFleetChecklist(null)} style={{ padding: "8px 16px", borderRadius: "8px", background: "#f1f5f9", color: "#475569", border: "none", fontWeight: 600, cursor: "pointer" }}>Cancel</button>
+                    <button onClick={async () => {
+                      const empId = document.getElementById("fleet-assign-chk-emp")?.value;
+                      if (!empId) { alert("Please select an employee"); return; }
+                      try {
+                        await createTemplateUserAssignment(token, { templateType: "checklist", templateId: assignFleetChecklist.id, assignedTo: Number(empId) });
+                        alert("Checklist assigned successfully!");
+                        setAssignFleetChecklist(null);
+                      } catch (e) { alert(e.message || "Assignment failed"); }
+                    }} style={{ padding: "8px 16px", borderRadius: "8px", background: "#2563eb", color: "#fff", border: "none", fontWeight: 600, cursor: "pointer" }}>Assign</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Fleet Submission History */}
+            {fleetSubNav === "history" && (
+              <Card>
+                <div style={{ padding: "12px 16px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontWeight: 600, color: "#0f172a", fontSize: "14px" }}>Submission History ({fleetHistory.length})</span>
+                  <button onClick={async () => { try { await downloadFleetSubmissionsCSV(token); } catch (e) { alert("CSV export failed"); } }}
+                    style={{ padding: "6px 14px", borderRadius: "8px", background: "#16a34a", color: "#fff", border: "none", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}>
+                    ⬇ Export CSV
+                  </button>
+                </div>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
+                  <thead>
+                    <tr>
+                      {["Type", "Template", "Asset / Vehicle", "Submitted By", "Date & Time", "Location", "Actions"].map((h) => (
+                        <th key={h} style={{ padding: "11px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {loading.fleet_history ? (
+                      <tr><td colSpan="7" style={{ padding: "30px", textAlign: "center", color: "#64748b" }}>Loading…</td></tr>
+                    ) : fleetHistory.length === 0 ? (
+                      <tr><td colSpan="7" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>No submissions found for fleet assets yet.</td></tr>
+                    ) : fleetHistory.map((h, i) => (
+                      <tr key={`${h.type}-${h.id}-${i}`} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                        <td style={{ padding: "12px 16px" }}>
+                          <span style={{ padding: "3px 9px", borderRadius: "10px", fontSize: "11px", fontWeight: 600,
+                            background: h.type === "checklist" ? "#ede9fe" : "#dbeafe",
+                            color: h.type === "checklist" ? "#7c3aed" : "#2563eb" }}>
+                            {h.type === "checklist" ? "✓ Checklist" : "📋 Logsheet"}
+                          </span>
+                        </td>
+                        <td style={{ padding: "12px 16px", fontWeight: 600, color: "#0f172a" }}>{h.name || "—"}</td>
+                        <td style={{ padding: "12px 16px", color: "#64748b" }}>{h.assetName || "—"}</td>
+                        <td style={{ padding: "12px 16px", color: "#64748b" }}>{h.submittedBy || "Anonymous"}</td>
+                        <td style={{ padding: "12px 16px", color: "#64748b" }}>{h.submittedAt ? new Date(h.submittedAt).toLocaleString() : "—"}</td>
+                        <td style={{ padding: "12px 16px", color: "#64748b", fontSize: "12px" }}>
+                          {h.lat && h.lng ? (
+                            <a href={`https://maps.google.com/?q=${h.lat},${h.lng}`} target="_blank" rel="noopener noreferrer"
+                              style={{ color: "#2563eb", textDecoration: "none" }}>
+                              📍 {Number(h.lat).toFixed(4)}, {Number(h.lng).toFixed(4)}
+                            </a>
+                          ) : <span style={{ color: "#cbd5e1" }}>—</span>}
+                        </td>
+                        <td style={{ padding: "12px 16px" }}>
+                          <button onClick={async () => {
+                            setFleetSubmissionDetailLoading(true);
+                            try {
+                              const detail = await getFleetSubmissionDetail(token, h.type, h.id);
+                              setFleetSubmissionDetail(detail);
+                            } catch (e) { alert("Failed to load details"); }
+                            finally { setFleetSubmissionDetailLoading(false); }
+                          }} style={{ padding: "4px 10px", borderRadius: "6px", background: "#eff6ff", color: "#2563eb", border: "none", fontSize: "11px", fontWeight: 600, cursor: "pointer" }}>
+                            {fleetSubmissionDetailLoading ? "…" : "Details"}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </Card>
+            )}
+
+            {/* Fleet Submission Detail Modal */}
+            {fleetSubmissionDetail && (
+              <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 1200, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+                <div style={{ background: "#fff", borderRadius: "14px", width: "100%", maxWidth: "600px", maxHeight: "85vh", display: "flex", flexDirection: "column" }}>
+                  <div style={{ padding: "18px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>{fleetSubmissionDetail.name}</h3>
+                      <p style={{ margin: "3px 0 0", fontSize: "12px", color: "#64748b" }}>
+                        {fleetSubmissionDetail.assetName} · {fleetSubmissionDetail.submittedBy} · {fleetSubmissionDetail.submittedAt ? new Date(fleetSubmissionDetail.submittedAt).toLocaleString() : "—"}
+                        {fleetSubmissionDetail.shift ? ` · Shift: ${fleetSubmissionDetail.shift}` : ""}
+                        {fleetSubmissionDetail.lat && fleetSubmissionDetail.lng ? ` · 📍 ${Number(fleetSubmissionDetail.lat).toFixed(4)}, ${Number(fleetSubmissionDetail.lng).toFixed(4)}` : ""}
+                      </p>
+                    </div>
+                    <button onClick={() => setFleetSubmissionDetail(null)} style={{ background: "#f1f5f9", border: "none", borderRadius: "8px", padding: "6px 10px", cursor: "pointer", color: "#64748b", fontSize: "16px" }}>✕</button>
+                  </div>
+                  <div style={{ overflowY: "auto", padding: "16px 20px", flex: 1 }}>
+                    {(!fleetSubmissionDetail.answers || fleetSubmissionDetail.answers.length === 0) ? (
+                      <p style={{ color: "#94a3b8", textAlign: "center", padding: "20px 0" }}>No answer data available.</p>
+                    ) : (
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+                        <thead>
+                          <tr style={{ background: "#f8fafc" }}>
+                            <th style={{ padding: "8px 12px", textAlign: "left", color: "#475569", fontWeight: 600, borderBottom: "1px solid #e2e8f0" }}>Question</th>
+                            <th style={{ padding: "8px 12px", textAlign: "left", color: "#475569", fontWeight: 600, borderBottom: "1px solid #e2e8f0" }}>Answer</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {fleetSubmissionDetail.answers.map((a, i) => (
+                            <tr key={i} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                              <td style={{ padding: "8px 12px", color: "#0f172a", fontWeight: 500 }}>{a.question}</td>
+                              <td style={{ padding: "8px 12px", color: "#475569" }}>{a.answer || "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+          </div>
+        )}
+
         {/* ── My Tasks ──────────────────────────────────────── */}
         {nav === "mytasks" && (
           <div>
@@ -3491,6 +4956,47 @@ export default function CompanyEmployeePortal() {
           onDone={() => {
             setShowImport(false);
             load("employees", () => getCompanyPortalEmployees(token)).then((d) => d && setEmployees(d));
+          }}
+        />
+      )}
+
+      {/* ── Fleet Modals ── */}
+      {showFleetInspectionModal && (
+        <FleetInspectionModal
+          token={token}
+          fleetAssets={assets.filter(a => a.assetType === "fleet")}
+          editData={editFleetInspection}
+          onClose={() => { setShowFleetInspectionModal(false); setEditFleetInspection(null); }}
+          onSaved={(saved) => {
+            setShowFleetInspectionModal(false);
+            setEditFleetInspection(null);
+            setFleetInspections(p => editFleetInspection ? p.map(x => x.id === saved.id ? saved : x) : [saved, ...p]);
+          }}
+        />
+      )}
+      {showFleetFuelModal && (
+        <FleetFuelModal
+          token={token}
+          fleetAssets={assets.filter(a => a.assetType === "fleet")}
+          editData={editFleetFuel}
+          onClose={() => { setShowFleetFuelModal(false); setEditFleetFuel(null); }}
+          onSaved={(saved) => {
+            setShowFleetFuelModal(false);
+            setEditFleetFuel(null);
+            setFleetFuelLogs(p => editFleetFuel ? p.map(x => x.id === saved.id ? saved : x) : [saved, ...p]);
+          }}
+        />
+      )}
+      {showFleetMaintModal && (
+        <FleetMaintModal
+          token={token}
+          fleetAssets={assets.filter(a => a.assetType === "fleet")}
+          editData={editFleetMaint}
+          onClose={() => { setShowFleetMaintModal(false); setEditFleetMaint(null); }}
+          onSaved={(saved) => {
+            setShowFleetMaintModal(false);
+            setEditFleetMaint(null);
+            setFleetMaintenance(p => editFleetMaint ? p.map(x => x.id === saved.id ? saved : x) : [saved, ...p]);
           }}
         />
       )}

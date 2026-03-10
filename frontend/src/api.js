@@ -219,3 +219,60 @@ export const getShiftEmployees     = (token, id)      => request("GET",    `/api
 export const assignShiftEmployees  = (token, id, userIds) => request("POST", `/api/shifts/${id}/employees`, { userIds }, { authToken: token });
 export const removeShiftEmployee   = (token, id, userId)  => request("DELETE", `/api/shifts/${id}/employees/${userId}`, undefined, { authToken: token });
 
+// ── OJT Management ────────────────────────────────────────────────────────────
+const cp = "/api/company-portal";
+export const getOjtTrainings       = (token)           => request("GET",   `${cp}/ojt/trainings`,                             undefined, { authToken: token });
+export const getOjtTraining        = (token, id)        => request("GET",   `${cp}/ojt/trainings/${id}`,                       undefined, { authToken: token });
+export const createOjtTraining     = (token, data)      => request("POST",  `${cp}/ojt/trainings`,                             data,      { authToken: token });
+export const updateOjtTraining     = (token, id, data)  => request("PUT",   `${cp}/ojt/trainings/${id}`,                       data,      { authToken: token });
+export const deleteOjtTraining     = (token, id)        => request("DELETE",`${cp}/ojt/trainings/${id}`,                       undefined, { authToken: token });
+export const publishOjtTraining    = (token, id)        => request("PATCH", `${cp}/ojt/trainings/${id}/publish`,               undefined, { authToken: token });
+export const createOjtModule       = (token, tid, data) => request("POST",  `${cp}/ojt/trainings/${tid}/modules`,              data,      { authToken: token });
+export const updateOjtModule       = (token, mid, data) => request("PUT",   `${cp}/ojt/modules/${mid}`,                        data,      { authToken: token });
+export const deleteOjtModule       = (token, mid)       => request("DELETE",`${cp}/ojt/modules/${mid}`,                        undefined, { authToken: token });
+export const addOjtModuleContent   = (token, mid, data) => request("POST",  `${cp}/ojt/modules/${mid}/content`,                data,      { authToken: token });
+export const deleteOjtContent      = (token, cid)       => request("DELETE",`${cp}/ojt/contents/${cid}`,                       undefined, { authToken: token });
+export const createOjtTest         = (token, tid, data) => request("POST",  `${cp}/ojt/trainings/${tid}/test`,                 data,      { authToken: token });
+export const addOjtQuestion        = (token, testId, d) => request("POST",  `${cp}/ojt/tests/${testId}/questions`,             d,         { authToken: token });
+export const updateOjtQuestion     = (token, qid, data) => request("PUT",   `${cp}/ojt/questions/${qid}`,                      data,      { authToken: token });
+export const deleteOjtQuestion     = (token, qid)       => request("DELETE",`${cp}/ojt/questions/${qid}`,                      undefined, { authToken: token });
+export const getOjtTrainingUsers   = (token, id)        => request("GET",   `${cp}/ojt/trainings/${id}/users`,                 undefined, { authToken: token });
+export const grantOjtCertificate   = (token, pid)       => request("POST",  `${cp}/ojt/progress/${pid}/certificate`,           undefined, { authToken: token });
+export const uploadOjtFile = async (token, file) => {
+  const BASE_URL = import.meta.env.VITE_API_URL || "";
+  const fd = new FormData();
+  fd.append("file", file);
+  const res = await fetch(`${BASE_URL}/api/company-portal/ojt/upload`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: fd,
+  });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.message || "Upload failed"); }
+  return res.json();
+};
+
+// ── Fleet Management ──────────────────────────────────────────────────────────
+export const getFleetAssets                = (token)           => request("GET",   `${cp}/fleet/assets`,                              undefined, { authToken: token });
+export const getFleetAssetDetails          = (token, id)        => request("GET",   `${cp}/fleet/assets/${id}`,                        undefined, { authToken: token });
+export const getFleetInspections           = (token, assetId)   => request("GET",   `${cp}/fleet/inspections${assetId ? `/${assetId}` : ""}`, undefined, { authToken: token });
+export const createFleetInspection         = (token, data)      => request("POST",  `${cp}/fleet/inspections`,                         data,      { authToken: token });
+export const updateFleetInspection         = (token, id, data)  => request("PUT",   `${cp}/fleet/inspections/${id}`,                   data,      { authToken: token });
+export const deleteFleetInspection         = (token, id)        => request("DELETE",`${cp}/fleet/inspections/${id}`,                   undefined, { authToken: token });
+export const getFleetFuelLogs              = (token, assetId)   => request("GET",   `${cp}/fleet/fuel${assetId ? `?assetId=${assetId}` : ""}`, undefined, { authToken: token });
+export const createFleetFuelLog            = (token, data)      => request("POST",  `${cp}/fleet/fuel`,                                data,      { authToken: token });
+export const updateFleetFuelLog            = (token, id, data)  => request("PUT",   `${cp}/fleet/fuel/${id}`,                          data,      { authToken: token });
+export const deleteFleetFuelLog            = (token, id)        => request("DELETE",`${cp}/fleet/fuel/${id}`,                          undefined, { authToken: token });
+export const getFleetMaintenance           = (token, params="") => request("GET",   `${cp}/fleet/maintenance${params ? `?${params}` : ""}`, undefined, { authToken: token });
+export const createFleetMaintenance        = (token, data)      => request("POST",  `${cp}/fleet/maintenance`,                         data,      { authToken: token });
+export const updateFleetMaintenance        = (token, id, data)  => request("PUT",   `${cp}/fleet/maintenance/${id}`,                   data,      { authToken: token });
+export const updateFleetMaintenanceStatus  = (token, id, status)=> request("PATCH", `${cp}/fleet/maintenance/${id}/status`,            { status }, { authToken: token });
+export const deleteFleetMaintenance        = (token, id)        => request("DELETE",`${cp}/fleet/maintenance/${id}`,                   undefined, { authToken: token });
+export const getFleetSubmissions           = (token)            => request("GET",   `${cp}/fleet/submissions`,                         undefined, { authToken: token });
+export const getFleetSubmissionDetail      = (token, type, id)  => request("GET",   `${cp}/fleet/submissions/detail/${type}/${id}`,    undefined, { authToken: token });
+export const downloadFleetSubmissionsCSV   = (token)            => {
+  const BASE_URL = import.meta.env.VITE_API_URL || "";
+  return fetch(`${BASE_URL}/api/company-portal/fleet/submissions/export-csv`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+};
+

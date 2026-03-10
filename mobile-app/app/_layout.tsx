@@ -35,6 +35,12 @@ export default function RootLayout() {
         <Stack.Screen name="logsheet-entry-view" options={{ headerShown: false }} />
         {/* Checklist entry view (monthly grid history) */}
         <Stack.Screen name="checklist-entry-view" options={{ headerShown: false }} />
+
+        {/* OJT & Asset QR Scan */}
+        <Stack.Screen name="ojt-training-list" options={{ headerShown: false }} />
+        <Stack.Screen name="ojt-training-detail" options={{ headerShown: false }} />
+        <Stack.Screen name="qr-scanner" options={{ headerShown: false }} />
+        <Stack.Screen name="asset-scan" options={{ headerShown: false }} />
       </Stack>
       <StatusBar style="auto" />
     </>

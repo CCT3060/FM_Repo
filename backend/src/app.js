@@ -2,6 +2,8 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import morgan from "morgan";
+import path from "path";
+import { fileURLToPath } from "url";
 import clientsRouter from "./routes/clients.js";
 import usersRouter from "./routes/users.js";
 import authRouter from "./routes/auth.js";
@@ -28,6 +30,7 @@ import templateImportRouter from "./routes/templateImport.js";
 import assetDashboardRouter from "./routes/assetDashboard.js";
 import companyPortalAssetDashboardRouter from "./routes/companyPortalAssetDashboard.js";
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 
 const allowedOrigins = process.env.ALLOW_ORIGIN?.split(",").map((o) => o.trim());
@@ -69,6 +72,11 @@ app.use("/api/notifications", notificationsRouter);
 app.use("/api/template-import", templateImportRouter);
 app.use("/api/asset-dashboard", assetDashboardRouter);
 app.use("/api/company-portal/asset-dashboard", companyPortalAssetDashboardRouter);
+
+app.use("/uploads", (req, res, next) => {
+  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+  next();
+}, express.static(path.join(__dirname, "../uploads")));
 
 // Basic 404 handler
 app.use((req, res) => res.status(404).json({ message: "Not found", path: req.originalUrl }));
