@@ -1,8 +1,10 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { router } from 'expo-router';
-import React, { useState } from 'react';
+import { router, useFocusEffect } from 'expo-router';
+import React, { useCallback, useState } from 'react';
 import {
+    ActivityIndicator,
     Platform,
+    RefreshControl,
     SafeAreaView,
     ScrollView,
     StyleSheet,
@@ -10,223 +12,241 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
-import Animated, { FadeInUp, Layout } from 'react-native-reanimated';
+import { getMyOjtTrainings } from '../utils/api';
 import { TechBottomNav } from './tech-dashboard';
 
-interface TrainingModule {
-    id: string;
+interface OjtTraining {
+    id: number;
     title: string;
-    category: string;
-    duration: string;
-    progress: number; // 0–100
-    icon: string;
-    iconColor: string;
-    iconBg: string;
-    tags: string[];
+    description?: string;
+    passingPercentage: number;
+    assetName?: string;
+    moduleCount: number;
+    hasTest: number;
+    myProgress?: {
+        status: string;
+        score?: number;
+        completedModules?: number[];
+        certificateUrl?: string;
+    } | null;
 }
 
-const TRAINING_MODULES: TrainingModule[] = [
-    {
-        id: '1',
-        title: 'Electrical Safety Fundamentals',
-        category: 'Safety',
-        duration: '45 min',
-        progress: 100,
-        icon: 'flash-outline',
-        iconColor: '#D97706',
-        iconBg: '#FEF3C7',
-        tags: ['Required', 'Safety'],
-    },
-    {
-        id: '2',
-        title: 'HVAC Preventive Maintenance',
-        category: 'Equipment',
-        duration: '60 min',
-        progress: 60,
-        icon: 'air-conditioner',
-        iconColor: '#2563EB',
-        iconBg: '#DBEAFE',
-        tags: ['Equipment', 'Maintenance'],
-    },
-    {
-        id: '3',
-        title: 'Fire Suppression Systems',
-        category: 'Safety',
-        duration: '30 min',
-        progress: 0,
-        icon: 'fire-extinguisher',
-        iconColor: '#DC2626',
-        iconBg: '#FEE2E2',
-        tags: ['Required', 'Safety', 'Fire'],
-    },
-    {
-        id: '4',
-        title: 'Work Order Management',
-        category: 'Operations',
-        duration: '20 min',
-        progress: 100,
-        icon: 'clipboard-text-outline',
-        iconColor: '#7C3AED',
-        iconBg: '#EDE9FE',
-        tags: ['Operations'],
-    },
-    {
-        id: '5',
-        title: 'Plumbing Inspection Checklist',
-        category: 'Equipment',
-        duration: '40 min',
-        progress: 30,
-        icon: 'pipe',
-        iconColor: '#0891B2',
-        iconBg: '#CFFAFE',
-        tags: ['Equipment', 'Inspection'],
-    },
-    {
-        id: '6',
-        title: 'Emergency Response Procedures',
-        category: 'Safety',
-        duration: '50 min',
-        progress: 0,
-        icon: 'alert-circle-outline',
-        iconColor: '#EF4444',
-        iconBg: '#FEE2E2',
-        tags: ['Required', 'Safety'],
-    },
-];
+type FilterKey = 'all' | 'completed' | 'in_progress' | 'not_started';
 
-const CATEGORIES = ['All', 'Safety', 'Equipment', 'Operations'];
+function getStatusInfo(t: OjtTraining) {
+    const p = t.myProgress;
+    if (!p) return { label: 'Not Started', bg: '#F1F5F9', color: '#64748B', iconName: 'play-circle-outline' as const, isCompleted: false, isInProgress: false };
+    if (p.status === 'completed') return { label: 'Completed', bg: '#DCFCE7', color: '#16A34A', iconName: 'check-circle' as const, isCompleted: true, isInProgress: false };
+    if (p.status === 'failed') return { label: 'Failed', bg: '#FEE2E2', color: '#DC2626', iconName: 'close-circle-outline' as const, isCompleted: false, isInProgress: false };
+    return { label: 'In Progress', bg: '#DBEAFE', color: '#2563EB', iconName: 'progress-clock' as const, isCompleted: false, isInProgress: true };
+}
+
+function getCompletedModulesCount(t: OjtTraining): number {
+    const p = t.myProgress;
+    if (!p) return 0;
+    if (p.status === 'completed') return Number(t.moduleCount) || 0;
+    return Array.isArray(p.completedModules) ? p.completedModules.length : 0;
+}
+
+function getProgressPct(t: OjtTraining): number {
+    const p = t.myProgress;
+    if (!p) return 0;
+    if (p.status === 'completed') return 100;
+    const done = Array.isArray(p.completedModules) ? p.completedModules.length : 0;
+    const total = Number(t.moduleCount) || 1;
+    return Math.round((done / total) * 100);
+}
 
 export default function TechTrainingScreen() {
-    const [activeCategory, setActiveCategory] = useState('All');
+    const [trainings, setTrainings] = useState<OjtTraining[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
+    const [activeFilter, setActiveFilter] = useState<FilterKey>('all');
 
-    const filtered = activeCategory === 'All'
-        ? TRAINING_MODULES
-        : TRAINING_MODULES.filter(m => m.category === activeCategory);
+    const load = useCallback(async (isRefresh = false) => {
+        if (!isRefresh) setLoading(true);
+        try {
+            const data = await getMyOjtTrainings();
+            setTrainings(Array.isArray(data) ? data : []);
+        } catch (e) {
+            console.warn('Failed to load trainings:', e instanceof Error ? e.message : e);
+        } finally {
+            setLoading(false);
+            setRefreshing(false);
+        }
+    }, []);
 
-    const completed = TRAINING_MODULES.filter(m => m.progress === 100).length;
-    const total = TRAINING_MODULES.length;
-    const overallPct = Math.round((completed / total) * 100);
+    useFocusEffect(useCallback(() => { load(); }, [load]));
 
-    const getProgressColor = (pct: number) => {
-        if (pct === 100) return '#10B981';
-        if (pct > 0) return '#2563EB';
-        return '#E2E8F0';
-    };
+    const onRefresh = () => { setRefreshing(true); load(true); };
+
+    const total = trainings.length;
+    const doneCount = trainings.filter(t => t.myProgress?.status === 'completed').length;
+    const inProgressCount = trainings.filter(t => t.myProgress?.status === 'in_progress').length;
+    const notStartedCount = trainings.filter(t => !t.myProgress).length;
+
+    const filteredTrainings = trainings.filter(t => {
+        if (activeFilter === 'completed') return t.myProgress?.status === 'completed';
+        if (activeFilter === 'in_progress') return t.myProgress?.status === 'in_progress';
+        if (activeFilter === 'not_started') return !t.myProgress;
+        return true;
+    });
+
+    const stats: { key: FilterKey; label: string; value: number }[] = [
+        { key: 'all', label: 'Total', value: total },
+        { key: 'completed', label: 'Done', value: doneCount },
+        { key: 'in_progress', label: 'In Progress', value: inProgressCount },
+        { key: 'not_started', label: 'Not Started', value: notStartedCount },
+    ];
 
     return (
         <SafeAreaView style={styles.container}>
-            {/* Header */}
+            {/* Blue Header */}
             <View style={styles.header}>
                 <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
-                    <MaterialCommunityIcons name="arrow-left" size={24} color="#1E293B" />
+                    <MaterialCommunityIcons name="arrow-left" size={24} color="#FFFFFF" />
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>Training</Text>
-                <View style={{ width: 32 }} />
+                <View style={styles.headerCenter}>
+                    <Text style={styles.headerTitle}>Training Programs</Text>
+                    <Text style={styles.headerSubtitle}>{total} available</Text>
+                </View>
+                <View style={styles.headerIconBtn}>
+                    <MaterialCommunityIcons name="school" size={20} color="#1D4ED8" />
+                </View>
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
-
-                {/* Overall progress card */}
-                <Animated.View entering={FadeInUp.duration(400)} style={styles.progressCard}>
-                    <View style={styles.progressRow}>
-                        <View>
-                            <Text style={styles.progressLabel}>Your Progress</Text>
-                            <Text style={styles.progressValue}>{completed}/{total} modules completed</Text>
-                        </View>
-                        <View style={styles.pctCircle}>
-                            <Text style={styles.pctText}>{overallPct}%</Text>
-                        </View>
-                    </View>
-                    <View style={styles.progressBarBg}>
-                        <View style={[styles.progressBarFill, { width: `${overallPct}%` as any }]} />
-                    </View>
-                </Animated.View>
-
-                {/* Category filter */}
+            {loading ? (
+                <View style={styles.center}>
+                    <ActivityIndicator size="large" color="#2563EB" />
+                    <Text style={styles.loadingText}>Loading trainings...</Text>
+                </View>
+            ) : (
                 <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    style={styles.catScroll}
-                    contentContainerStyle={styles.catContent}
+                    showsVerticalScrollIndicator={false}
+                    contentContainerStyle={styles.scroll}
+                    refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#2563EB']} />}
                 >
-                    {CATEGORIES.map(cat => (
-                        <TouchableOpacity
-                            key={cat}
-                            style={[styles.catChip, activeCategory === cat && styles.catChipActive]}
-                            onPress={() => setActiveCategory(cat)}
-                        >
-                            <Text style={[styles.catChipText, activeCategory === cat && styles.catChipTextActive]}>
-                                {cat}
-                            </Text>
-                        </TouchableOpacity>
-                    ))}
-                </ScrollView>
-
-                {/* Module list */}
-                <Animated.View layout={Layout.springify()} style={styles.listContainer}>
-                    {filtered.map((mod, idx) => (
-                        <Animated.View key={mod.id} entering={FadeInUp.delay(50 * idx).duration(500).springify()}>
-                            <TouchableOpacity style={styles.moduleCard} activeOpacity={0.7}>
-                                {/* Icon */}
-                                <View style={[styles.moduleIcon, { backgroundColor: mod.iconBg }]}>
-                                    <MaterialCommunityIcons name={mod.icon as any} size={24} color={mod.iconColor} />
-                                </View>
-
-                                {/* Content */}
-                                <View style={styles.moduleContent}>
-                                    <View style={styles.moduleTitleRow}>
-                                        <Text style={styles.moduleTitle} numberOfLines={2}>{mod.title}</Text>
-                                        {mod.progress === 100 && (
-                                            <MaterialCommunityIcons name="check-circle" size={20} color="#10B981" />
-                                        )}
-                                    </View>
-
-                                    {/* Tags */}
-                                    <View style={styles.tagsRow}>
-                                        {mod.tags.map(tag => (
-                                            <View
-                                                key={tag}
-                                                style={[
-                                                    styles.tag,
-                                                    tag === 'Required' && styles.tagRequired,
-                                                ]}
-                                            >
-                                                <Text style={[styles.tagText, tag === 'Required' && styles.tagTextRequired]}>
-                                                    {tag}
-                                                </Text>
-                                            </View>
-                                        ))}
-                                    </View>
-
-                                    {/* Duration + progress */}
-                                    <View style={styles.moduleFooter}>
-                                        <View style={styles.durationRow}>
-                                            <MaterialCommunityIcons name="clock-outline" size={13} color="#94A3B8" />
-                                            <Text style={styles.durationText}>{mod.duration}</Text>
-                                        </View>
-                                        <View style={styles.moduleProgressBg}>
-                                            <View
-                                                style={[
-                                                    styles.moduleProgressFill,
-                                                    {
-                                                        width: `${mod.progress}%` as any,
-                                                        backgroundColor: getProgressColor(mod.progress),
-                                                    },
-                                                ]}
-                                            />
-                                        </View>
-                                        <Text style={[styles.moduleProgressText, { color: getProgressColor(mod.progress === 0 ? 100 : mod.progress) }]}>
-                                            {mod.progress === 0 ? 'Start' : mod.progress === 100 ? 'Done' : `${mod.progress}%`}
-                                        </Text>
-                                    </View>
-                                </View>
+                    {/* Stats / Filter Row */}
+                    <View style={styles.statsRow}>
+                        {stats.map(s => (
+                            <TouchableOpacity
+                                key={s.key}
+                                style={[styles.statCard, activeFilter === s.key && styles.statCardActive]}
+                                onPress={() => setActiveFilter(s.key)}
+                                activeOpacity={0.75}
+                            >
+                                <Text style={[styles.statValue, activeFilter === s.key && styles.statValueActive]}>{s.value}</Text>
+                                <Text style={[styles.statLabel, activeFilter === s.key && styles.statLabelActive]}>{s.label}</Text>
                             </TouchableOpacity>
-                        </Animated.View>
-                    ))}
-                </Animated.View>
+                        ))}
+                    </View>
 
-                <View style={{ height: 20 }} />
-            </ScrollView>
+                    {/* Training list */}
+                    {filteredTrainings.length === 0 ? (
+                        <View style={styles.emptyBox}>
+                            <MaterialCommunityIcons name="school-outline" size={56} color="#CBD5E1" />
+                            <Text style={styles.emptyTitle}>No Trainings Found</Text>
+                            <Text style={styles.emptyText}>
+                                {activeFilter === 'all'
+                                    ? 'Published training programs will appear here.'
+                                    : `No ${activeFilter.replace('_', ' ')} trainings.`}
+                            </Text>
+                        </View>
+                    ) : (
+                        <View style={styles.listContainer}>
+                            {filteredTrainings.map((t) => {
+                                const status = getStatusInfo(t);
+                                const pct = getProgressPct(t);
+                                const doneMods = getCompletedModulesCount(t);
+                                const totalMods = Number(t.moduleCount) || 0;
+                                const isCertified = !!(t.myProgress?.certificateUrl);
+                                const barColor = status.isCompleted ? '#16A34A' : pct > 0 ? '#2563EB' : '#E2E8F0';
+
+                                return (
+                                    <TouchableOpacity
+                                        key={t.id}
+                                        style={styles.card}
+                                        activeOpacity={0.75}
+                                        onPress={() => router.push({ pathname: '/ojt-training-detail', params: { id: String(t.id) } } as any)}
+                                    >
+                                        {/* Card Top Row */}
+                                        <View style={styles.cardTopRow}>
+                                            {/* Circle Icon */}
+                                            <View style={[
+                                                styles.circleIcon,
+                                                status.isCompleted
+                                                    ? styles.circleCompleted
+                                                    : status.isInProgress
+                                                        ? styles.circleInProgress
+                                                        : styles.circleNotStarted,
+                                            ]}>
+                                                <MaterialCommunityIcons
+                                                    name={status.iconName}
+                                                    size={26}
+                                                    color={status.isCompleted ? '#FFFFFF' : status.color}
+                                                />
+                                            </View>
+
+                                            {/* Title + Status */}
+                                            <View style={styles.cardTitleArea}>
+                                                <View style={styles.cardTitleRow}>
+                                                    <Text style={styles.cardTitle} numberOfLines={2}>{t.title}</Text>
+                                                    <View style={[styles.statusBadge, { backgroundColor: status.bg }]}>
+                                                        <Text style={[styles.statusText, { color: status.color }]}>{status.label}</Text>
+                                                    </View>
+                                                </View>
+                                                {t.assetName ? (
+                                                    <Text style={styles.assetSubtitle}>Asset: {t.assetName}</Text>
+                                                ) : null}
+                                            </View>
+                                        </View>
+
+                                        {/* Description */}
+                                        {!!t.description && (
+                                            <Text style={styles.cardDescription} numberOfLines={2}>{t.description}</Text>
+                                        )}
+
+                                        {/* Progress */}
+                                        <View style={styles.progressRow}>
+                                            <Text style={styles.progressText}>{doneMods}/{totalMods} modules completed</Text>
+                                            <Text style={[styles.progressPct, { color: barColor === '#E2E8F0' ? '#94A3B8' : barColor }]}>{pct}%</Text>
+                                        </View>
+                                        <View style={styles.progressBarBg}>
+                                            <View style={[styles.progressBarFill, { width: `${pct}%` as any, backgroundColor: barColor }]} />
+                                        </View>
+
+                                        {/* Footer chips */}
+                                        <View style={styles.chipRow}>
+                                            <View style={styles.chip}>
+                                                <MaterialCommunityIcons name="view-list-outline" size={12} color="#64748B" />
+                                                <Text style={styles.chipText}>{totalMods} {totalMods === 1 ? 'Module' : 'Modules'}</Text>
+                                            </View>
+                                            {!!t.hasTest && (
+                                                <View style={styles.chip}>
+                                                    <MaterialCommunityIcons name="help-circle-outline" size={12} color="#64748B" />
+                                                    <Text style={styles.chipText}>Has Test</Text>
+                                                </View>
+                                            )}
+                                            <View style={styles.chip}>
+                                                <MaterialCommunityIcons name="percent" size={12} color="#64748B" />
+                                                <Text style={styles.chipText}>Pass: {t.passingPercentage}%</Text>
+                                            </View>
+                                            {isCertified && (
+                                                <View style={[styles.chip, styles.chipCertified]}>
+                                                    <MaterialCommunityIcons name="certificate-outline" size={12} color="#16A34A" />
+                                                    <Text style={[styles.chipText, { color: '#16A34A' }]}>Certified</Text>
+                                                </View>
+                                            )}
+                                        </View>
+                                    </TouchableOpacity>
+                                );
+                            })}
+                        </View>
+                    )}
+
+                    <View style={{ height: 24 }} />
+                </ScrollView>
+            )}
 
             <TechBottomNav activeRoute="training" />
         </SafeAreaView>
@@ -234,90 +254,117 @@ export default function TechTrainingScreen() {
 }
 
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: '#FAF9F6' },
+    container: { flex: 1, backgroundColor: '#F1F5F9' },
+
+    /* Header */
     header: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingHorizontal: 20,
-        paddingTop: Platform.OS === 'android' ? 48 : 20,
-        paddingBottom: 16,
-        backgroundColor: '#FAF9F6',
+        paddingHorizontal: 16,
+        paddingTop: Platform.OS === 'android' ? 44 : 16,
+        paddingBottom: 20,
+        backgroundColor: '#1D4ED8',
+        gap: 12,
     },
-    headerBtn: { padding: 4, width: 32 },
-    headerTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A', letterSpacing: -0.5 },
-    scroll: { padding: 16 },
-
-    progressCard: {
+    headerBtn: { width: 36, height: 36, justifyContent: 'center', alignItems: 'center' },
+    headerCenter: { flex: 1 },
+    headerTitle: { fontSize: 20, fontWeight: '800', color: '#FFFFFF', letterSpacing: -0.5 },
+    headerSubtitle: { fontSize: 13, color: '#BFDBFE', marginTop: 2, fontWeight: '500' },
+    headerIconBtn: {
+        width: 36, height: 36, borderRadius: 18,
         backgroundColor: '#FFFFFF',
-        borderRadius: 16,
-        padding: 20,
-        marginBottom: 20,
-        borderWidth: 1,
-        borderColor: '#E2E8F0',
-        shadowColor: '#64748B',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 2,
-    },
-    progressRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-    progressLabel: { fontSize: 12, color: '#64748B', fontWeight: '700', marginBottom: 6, letterSpacing: 0.5, textTransform: 'uppercase' },
-    progressValue: { fontSize: 16, fontWeight: '800', color: '#0F172A', letterSpacing: -0.2 },
-    pctCircle: {
-        width: 52, height: 52, borderRadius: 26,
-        backgroundColor: '#F1F5F9', // subtle gray-blue
         justifyContent: 'center', alignItems: 'center',
     },
-    pctText: { fontSize: 15, fontWeight: '800', color: '#2563EB' },
-    progressBarBg: { height: 8, backgroundColor: '#F1F5F9', borderRadius: 4, overflow: 'hidden' },
-    progressBarFill: { height: 8, backgroundColor: '#2563EB', borderRadius: 4 },
 
-    catScroll: { marginBottom: 16, marginHorizontal: -16 },
-    catContent: { flexDirection: 'row', gap: 8, paddingHorizontal: 16 },
-    catChip: {
-        paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20,
-        backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#E2E8F0',
-    },
-    catChipActive: { backgroundColor: '#2563EB', borderColor: '#2563EB' },
-    catChipText: { fontSize: 13, fontWeight: '600', color: '#64748B' },
-    catChipTextActive: { color: '#FFFFFF' },
+    center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 60 },
+    loadingText: { color: '#64748B', marginTop: 12, fontSize: 14 },
+    scroll: { padding: 16, paddingBottom: 40 },
 
-    listContainer: { gap: 14 },
-    moduleCard: {
+    /* Stats Row */
+    statsRow: {
         flexDirection: 'row',
+        gap: 10,
+        marginBottom: 20,
+    },
+    statCard: {
+        flex: 1,
+        backgroundColor: '#FFFFFF',
+        borderRadius: 12,
+        paddingVertical: 14,
+        paddingHorizontal: 6,
+        alignItems: 'center',
+        borderWidth: 1.5,
+        borderColor: '#E2E8F0',
+        shadowColor: '#64748B',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.04,
+        shadowRadius: 4,
+        elevation: 1,
+    },
+    statCardActive: {
+        backgroundColor: '#EFF6FF',
+        borderColor: '#2563EB',
+    },
+    statValue: { fontSize: 22, fontWeight: '800', color: '#64748B', letterSpacing: -0.5 },
+    statValueActive: { color: '#1D4ED8' },
+    statLabel: { fontSize: 11, color: '#94A3B8', marginTop: 3, fontWeight: '600', textAlign: 'center' },
+    statLabelActive: { color: '#2563EB' },
+
+    /* Empty */
+    emptyBox: { alignItems: 'center', paddingVertical: 60 },
+    emptyTitle: { fontSize: 17, fontWeight: '700', color: '#475569', marginTop: 16 },
+    emptyText: { fontSize: 13, color: '#94A3B8', textAlign: 'center', marginTop: 6, paddingHorizontal: 32 },
+
+    /* List & Card */
+    listContainer: { gap: 14 },
+    card: {
         backgroundColor: '#FFFFFF',
         borderRadius: 16,
         padding: 16,
         borderWidth: 1,
-        borderColor: '#F1F5F9',
-        shadowColor: '#64748B',
+        borderColor: '#E2E8F0',
+        shadowColor: '#1D4ED8',
         shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.04,
-        shadowRadius: 6,
-        elevation: 1,
-        gap: 16,
+        shadowOpacity: 0.06,
+        shadowRadius: 8,
+        elevation: 2,
     },
-    moduleIcon: {
-        width: 52, height: 52, borderRadius: 14,
+
+    /* Card top row */
+    cardTopRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginBottom: 10 },
+    circleIcon: {
+        width: 52, height: 52, borderRadius: 26,
         justifyContent: 'center', alignItems: 'center',
         flexShrink: 0,
     },
-    moduleContent: { flex: 1 },
-    moduleTitleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8, gap: 8 },
-    moduleTitle: { fontSize: 15, fontWeight: '700', color: '#0F172A', flex: 1, lineHeight: 20, letterSpacing: -0.2 },
-    tagsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 14 },
-    tag: {
-        paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6,
-        backgroundColor: '#F1F5F9',
+    circleCompleted: { backgroundColor: '#16A34A' },
+    circleInProgress: { backgroundColor: '#FFFFFF', borderWidth: 2, borderColor: '#2563EB', borderStyle: 'dashed' },
+    circleNotStarted: { backgroundColor: '#F1F5F9' },
+    cardTitleArea: { flex: 1 },
+    cardTitleRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+    cardTitle: { flex: 1, fontSize: 15, fontWeight: '800', color: '#0F172A', lineHeight: 21, letterSpacing: -0.3 },
+    statusBadge: { paddingHorizontal: 9, paddingVertical: 4, borderRadius: 20, flexShrink: 0, marginTop: 1 },
+    statusText: { fontSize: 11, fontWeight: '700' },
+    assetSubtitle: { fontSize: 12, color: '#94A3B8', marginTop: 4, fontWeight: '500' },
+
+    /* Description */
+    cardDescription: { fontSize: 13, color: '#64748B', lineHeight: 18, marginBottom: 12 },
+
+    /* Progress */
+    progressRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
+    progressText: { fontSize: 12, color: '#2563EB', fontWeight: '600' },
+    progressPct: { fontSize: 13, fontWeight: '800' },
+    progressBarBg: { height: 8, backgroundColor: '#F1F5F9', borderRadius: 4, overflow: 'hidden', marginBottom: 12 },
+    progressBarFill: { height: 8, borderRadius: 4 },
+
+    /* Footer chips */
+    chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+    chip: {
+        flexDirection: 'row', alignItems: 'center', gap: 4,
+        paddingHorizontal: 8, paddingVertical: 4,
+        backgroundColor: '#F8FAFC', borderRadius: 6,
+        borderWidth: 1, borderColor: '#E2E8F0',
     },
-    tagRequired: { backgroundColor: '#FEF3C7' },
-    tagText: { fontSize: 10, fontWeight: '700', color: '#64748B' },
-    tagTextRequired: { color: '#D97706' },
-    moduleFooter: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-    durationRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-    durationText: { fontSize: 12, color: '#94A3B8', fontWeight: '600' },
-    moduleProgressBg: { flex: 1, height: 6, backgroundColor: '#F1F5F9', borderRadius: 3, overflow: 'hidden' },
-    moduleProgressFill: { height: 6, borderRadius: 3 },
-    moduleProgressText: { fontSize: 12, fontWeight: '700', minWidth: 36, textAlign: 'right' },
+    chipText: { fontSize: 11, color: '#64748B', fontWeight: '600' },
+    chipCertified: { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0' },
 });

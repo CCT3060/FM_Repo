@@ -42,7 +42,7 @@ export const TechBottomNav = ({ activeRoute }: { activeRoute: string }) => {
             </TouchableOpacity>
 
             {/* QR Scanner center FAB */}
-            <TouchableOpacity style={navStyles.qrBtn} activeOpacity={0.85}>
+            <TouchableOpacity style={navStyles.qrBtn} activeOpacity={0.85} onPress={() => router.push('/qr-scanner' as any)}>
                 <MaterialCommunityIcons name="qrcode-scan" size={24} color="#FFFFFF" />
             </TouchableOpacity>
 
@@ -140,7 +140,7 @@ export default function TechDashboardScreen() {
             setUser(storedUser);
             setShifts(myShifts);
         } catch (error: any) {
-            console.error('Failed to load dashboard:', error);
+            console.warn('Failed to load dashboard:', error instanceof Error ? error.message : error);
         } finally {
             setIsLoading(false);
             setRefreshing(false);
@@ -212,7 +212,7 @@ export default function TechDashboardScreen() {
                 <Animated.View entering={FadeInDown.duration(400).springify()} style={styles.progressCard}>
                     <View style={styles.progressTop}>
                         <View>
-                            <Text style={styles.progressLabel}>Today's Progress</Text>
+                            <Text style={styles.progressLabel}>Today&apos;s Progress</Text>
                             <Text style={styles.progressFraction}>
                                 <Text style={styles.progressDone}>{completed}</Text>
                                 <Text style={styles.progressTotal}> / {total} Tasks</Text>
@@ -279,7 +279,7 @@ export default function TechDashboardScreen() {
                         <View style={styles.emptyIconCircle}>
                             <MaterialCommunityIcons name="check-all" size={32} color="#10B981" />
                         </View>
-                        <Text style={styles.emptyTitle}>You're all caught up!</Text>
+                        <Text style={styles.emptyTitle}>You&apos;re all caught up!</Text>
                         <Text style={styles.emptyText}>No pending tasks for now.</Text>
                     </Animated.View>
                 ) : (

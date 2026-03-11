@@ -642,7 +642,7 @@ function DeptModal({ existing, token, onClose, onSaved }) {
 }
 
 /* ─── Asset Modal ─────────────────────────────────────────────── */
-function AssetModal({ existing, token, departments, onClose, onSaved }) {
+function AssetModal({ existing, token, departments, employees = [], onClose, onSaved }) {
   const isEdit = !!existing;
 
   const buildForm = (src) => {
@@ -675,6 +675,11 @@ function AssetModal({ existing, token, departments, onClose, onSaved }) {
       lastServiceDate:      meta.lastServiceDate      || "",
       nextServiceDate:      meta.nextServiceDate      || "",
       technician:           meta.technician           || "",
+      // Asset Valuation (all types)
+      purchaseValue:    meta.purchaseValue    || "",
+      usefulLifeYears:  meta.usefulLifeYears  || "",
+      // Assign To
+      assignedToId:    meta.assignedToId    != null ? String(meta.assignedToId) : "",
       // Fleet
       vehicleNumber:   meta.vehicleNumber   || "",
       vehicleType:     meta.vehicleType     || "",
@@ -710,12 +715,14 @@ function AssetModal({ existing, token, departments, onClose, onSaved }) {
       maintenanceFrequency: "", lastServiceDate: "", nextServiceDate: "", technician: "",
       vehicleNumber: "", vehicleType: "", fuelType: "", driver: "", rcNumber: "",
       insuranceExpiry: "", pucExpiry: "", serviceDueDate: "", purchaseDate: "", vendor: "", dailyKmTracking: false,
+      // keep assignedToId across type changes
     }));
   };
 
   const buildMetadata = () => {
     const t = form.assetType;
-    const base = { description: form.description };
+    const assignedEmployee = employees.find(e => String(e.id) === String(form.assignedToId));
+    const base = { description: form.description, purchaseValue: form.purchaseValue ? parseFloat(form.purchaseValue) : null, usefulLifeYears: form.usefulLifeYears ? parseFloat(form.usefulLifeYears) : null, assignedToId: form.assignedToId || null, assignedToName: assignedEmployee?.fullName || null };
     if (t === "soft") return { ...base, serviceArea: form.serviceArea, frequency: form.frequency, shift: form.shift, supervisor: form.supervisor, staffRequired: form.staffRequired, specialInstructions: form.specialInstructions };
     if (t === "technical") return { ...base, machineName: form.machineName, brand: form.brand, modelNumber: form.modelNumber, serialNumber: form.serialNumber, installationDate: form.installationDate, warrantyExpiry: form.warrantyExpiry, maintenanceFrequency: form.maintenanceFrequency, lastServiceDate: form.lastServiceDate, nextServiceDate: form.nextServiceDate, technician: form.technician };
     if (t === "fleet") return { ...base, vehicleNumber: form.vehicleNumber, vehicleType: form.vehicleType, fuelType: form.fuelType, driver: form.driver, rcNumber: form.rcNumber, insuranceExpiry: form.insuranceExpiry, pucExpiry: form.pucExpiry, serviceDueDate: form.serviceDueDate, purchaseDate: form.purchaseDate, vendor: form.vendor, dailyKmTracking: form.dailyKmTracking };
@@ -788,6 +795,15 @@ function AssetModal({ existing, token, departments, onClose, onSaved }) {
             <option value="Active">Active</option>
             <option value="Inactive">Inactive</option>
           </FSelect>
+          <FSelect label="Assign To (Employee)" name="assignedToId" value={form.assignedToId} onChange={handleChange}>
+            <option value="">— None —</option>
+            {employees.map(e => <option key={e.id} value={e.id}>{e.fullName}{e.designation ? ` · ${e.designation}` : ""}</option>)}
+          </FSelect>
+
+          {/* ── Asset Valuation (feeds dashboard depreciation) ── */}
+          <FSec title="Asset Valuation" />
+          <FInput label="Purchase Value (₹)" name="purchaseValue" type="number" value={form.purchaseValue} onChange={handleChange} placeholder="e.g. 250000" />
+          <FInput label="Useful Life (Years)" name="usefulLifeYears" type="number" value={form.usefulLifeYears} onChange={handleChange} placeholder="e.g. 10" />
 
           {/* ── Location ── */}
           {form.assetType !== "fleet" && <>
@@ -3426,7 +3442,7 @@ export default function CompanyEmployeePortal() {
                             {isAdmin && (
                               <td style={{ padding: "12px 16px" }}>
                                 <div style={{ display: "flex", gap: "6px" }}>
-                                  <button title="Download QR Code" onClick={() => handleDownloadAssetQR(a.id, a.assetName)}
+                                  <button title="Show QR Code" onClick={() => handleShowAssetQR(a.id, a.assetName)}
                                     style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#f0fdf4", color: "#16a34a", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
                                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
                                   </button>
@@ -4314,11 +4330,24 @@ export default function CompanyEmployeePortal() {
                 <p style={{ color: "#94a3b8" }}>Generating QR...</p>
               )}
               <p style={{ marginTop: "16px", fontSize: "11px", color: "#94a3b8" }}>Scan to view asset details and training on mobile</p>
-              <div style={{ display: "flex", gap: "10px", marginTop: "20px", justifyContent: "center" }}>
+              <div style={{ display: "flex", gap: "10px", marginTop: "20px", justifyContent: "center", flexWrap: "wrap" }}>
                 {assetQrDataUrl && (
-                  <a href={assetQrDataUrl} download={`QR-${assetQrModal.assetName.replace(/[^a-zA-Z0-9]/g, "_")}-${assetQrModal.assetId}.png`} style={{ padding: "8px 18px", borderRadius: "8px", background: "#2563eb", color: "#fff", textDecoration: "none", fontSize: "13px", fontWeight: 600 }}>
+                  <a href={assetQrDataUrl} download={`QR-${assetQrModal.assetName.replace(/[^a-zA-Z0-9]/g, "_")}-${assetQrModal.assetId}.png`} style={{ padding: "8px 18px", borderRadius: "8px", background: "#2563eb", color: "#fff", textDecoration: "none", fontSize: "13px", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                     Download QR
                   </a>
+                )}
+                {assetQrDataUrl && (
+                  <button onClick={() => {
+                    const w = window.open("", "_blank");
+                    w.document.write(`<html><head><title>QR - ${assetQrModal.assetName}</title><style>body{margin:0;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:sans-serif;background:#fff} h3{margin-bottom:8px;font-size:18px;color:#0f172a} p{margin:0 0 16px;color:#64748b;font-size:13px}</style></head><body><h3>${assetQrModal.assetName}</h3><p>Scan to open on mobile</p><img src="${assetQrDataUrl}" style="width:260px;height:260px"/></body></html>`);
+                    w.document.close();
+                    w.focus();
+                    setTimeout(() => { w.print(); }, 400);
+                  }} style={{ padding: "8px 18px", borderRadius: "8px", background: "#f0fdf4", color: "#16a34a", border: "1px solid #bbf7d0", cursor: "pointer", fontSize: "13px", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                    Print QR
+                  </button>
                 )}
                 <button onClick={() => { setAssetQrModal(null); setAssetQrDataUrl(""); }} style={{ padding: "8px 18px", borderRadius: "8px", background: "#f1f5f9", color: "#475569", border: "none", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>Close</button>
               </div>
@@ -4360,6 +4389,89 @@ export default function CompanyEmployeePortal() {
 
             {fleetSubNav === "assets" && (
               <>
+                {/* ── Fleet Expiry Warnings ── */}
+                {(() => {
+                  const daysUntil = (dateStr) => {
+                    if (!dateStr) return null;
+                    const diff = new Date(dateStr).setHours(0,0,0,0) - new Date().setHours(0,0,0,0);
+                    return Math.ceil(diff / (1000 * 60 * 60 * 24));
+                  };
+                  const fleetWarnings = [];
+                  assets.filter(a => a.assetType === "fleet").forEach(a => {
+                    const meta = a.metadata || {};
+                    const name = meta.vehicleNumber || a.assetName;
+                    [
+                      { field: "insuranceExpiry", label: "Insurance" },
+                      { field: "pucExpiry",       label: "PUC" },
+                      { field: "serviceDueDate",  label: "Service Due" },
+                    ].forEach(({ field, label }) => {
+                      const days = daysUntil(meta[field]);
+                      if (days === null || days > 5) return;
+                      const severity = days <= 0 ? "critical" : days <= 2 ? "high" : "medium";
+                      fleetWarnings.push({ id: `${a.id}-${field}`, name, label, days, severity, dateStr: meta[field] });
+                    });
+                  });
+                  if (!fleetWarnings.length) return null;
+                  // play sound when warnings appear
+                  const sevOrder = { critical: 0, high: 1, medium: 2 };
+                  fleetWarnings.sort((a, b) => sevOrder[a.severity] - sevOrder[b.severity]);
+                  const topSev = fleetWarnings[0].severity;
+                  const sevCfg = {
+                    critical: { bg: "#fef2f2", border: "#fca5a5", title: "#991b1b", badge: { bg: "#fee2e2", color: "#dc2626" }, icon: "🚨" },
+                    high:     { bg: "#fff7ed", border: "#fdba74", title: "#9a3412", badge: { bg: "#ffedd5", color: "#ea580c" }, icon: "⚠️" },
+                    medium:   { bg: "#fffbeb", border: "#fde68a", title: "#92400e", badge: { bg: "#fef3c7", color: "#d97706" }, icon: "🔔" },
+                  };
+                  const playWarningSound = () => {
+                    try {
+                      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                      const beeps = topSev === "critical" ? 3 : topSev === "high" ? 2 : 1;
+                      for (let i = 0; i < beeps; i++) {
+                        const osc = ctx.createOscillator();
+                        const gain = ctx.createGain();
+                        osc.connect(gain); gain.connect(ctx.destination);
+                        osc.frequency.value = topSev === "critical" ? 880 : topSev === "high" ? 660 : 440;
+                        osc.type = "sine";
+                        gain.gain.setValueAtTime(0.4, ctx.currentTime + i * 0.35);
+                        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.35 + 0.25);
+                        osc.start(ctx.currentTime + i * 0.35);
+                        osc.stop(ctx.currentTime + i * 0.35 + 0.25);
+                      }
+                    } catch(_) {}
+                  };
+                  return (
+                    <div style={{ marginBottom: "20px", background: sevCfg[topSev].bg, border: `1.5px solid ${sevCfg[topSev].border}`, borderRadius: "12px", overflow: "hidden" }}>
+                      <div style={{ padding: "12px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: `1px solid ${sevCfg[topSev].border}` }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                          <span style={{ fontSize: "20px" }}>{sevCfg[topSev].icon}</span>
+                          <span style={{ fontWeight: 800, fontSize: "14px", color: sevCfg[topSev].title }}>Fleet Expiry Warnings ({fleetWarnings.length})</span>
+                        </div>
+                        <button onClick={playWarningSound} style={{ padding: "5px 12px", borderRadius: "7px", background: "#fff", border: `1px solid ${sevCfg[topSev].border}`, color: sevCfg[topSev].title, fontSize: "12px", fontWeight: 600, cursor: "pointer" }}>
+                          🔊 Play Alert
+                        </button>
+                      </div>
+                      <div style={{ padding: "10px 18px 14px", display: "flex", flexDirection: "column", gap: "7px" }}>
+                        {fleetWarnings.map(w => {
+                          const cfg = sevCfg[w.severity];
+                          return (
+                            <div key={w.id} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "8px 12px", background: "#fff", borderRadius: "8px", border: `1px solid ${cfg.border}` }}>
+                              <span style={{ background: cfg.badge.bg, color: cfg.badge.color, fontWeight: 800, fontSize: "10px", padding: "2px 8px", borderRadius: "12px", textTransform: "uppercase", flexShrink: 0 }}>{w.severity}</span>
+                              <div style={{ flex: 1 }}>
+                                <span style={{ fontWeight: 700, fontSize: "13px", color: "#0f172a" }}>{w.name}</span>
+                                <span style={{ fontSize: "12px", color: "#64748b", marginLeft: "8px" }}>— {w.label}</span>
+                              </div>
+                              <span style={{ fontSize: "12.5px", fontWeight: 700, color: cfg.badge.color, flexShrink: 0 }}>
+                                {w.days <= 0 ? "Expired" : `${w.days} day${w.days !== 1 ? "s" : ""} left`}
+                              </span>
+                              <span style={{ fontSize: "11.5px", color: "#94a3b8", flexShrink: 0 }}>
+                                {new Date(w.dateStr).toLocaleDateString()}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
                 {!viewingFleetAsset ? (
                   <Card>
                     <div style={{ padding: "16px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -4908,6 +5020,7 @@ export default function CompanyEmployeePortal() {
           token={token}
           existing={editAsset}
           departments={departments}
+          employees={employees}
           onClose={() => { setShowAssetModal(false); setEditAsset(null); }}
           onSaved={handleAssetSaved}
         />
