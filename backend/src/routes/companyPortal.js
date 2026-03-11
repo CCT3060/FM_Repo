@@ -3090,7 +3090,7 @@ router.get("/ojt/mobile/trainings/:id", async (req, res, next) => {
     let questions = [];
     if (test) {
       const [qRows] = await pool.query(
-        `SELECT id, question, options, correct_answer AS "correctAnswer", marks FROM ojt_questions WHERE test_id = ? ORDER BY id`,
+        `SELECT id, question, options, marks FROM ojt_questions WHERE test_id = ? ORDER BY id`,
         [test.id]
       );
       questions = qRows.map(q => ({ ...q, options: safeParse(q.options) || [] }));

@@ -295,6 +295,22 @@ export default function OjtTrainingBuilder({ token, assets = [], onBack, trainin
         }
       }
 
+      // Re-fetch full training (includes modules and test data) so overview tabs show correctly
+      const freshData = await getOjtTraining(token, currentTrainingId);
+      if (freshData) {
+        setTraining(freshData);
+        setModules(freshData.modules || []);
+        setQuestions(freshData.test?.questions || []);
+        setTestInitialized(!!freshData.test);
+        setPassingPercentage(freshData.passingPercentage || 70);
+      } else {
+        setTraining(null);
+        setModules([]);
+        setQuestions([]);
+        setTestInitialized(false);
+        setPassingPercentage(70);
+      }
+
       alert("✓ Training saved successfully!");
       setView("overview");
     } catch (err) {

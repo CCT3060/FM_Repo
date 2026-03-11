@@ -18,18 +18,18 @@ const getApiBase = () => {
   // Development URLs
   if (Platform.OS === 'android') {
     // For physical Android device, use your PC's IP
-    return 'http://192.168.1.55:4000';
+    return 'http://192.168.1.28:4000';
     // For Android emulator, use: return 'http://10.0.2.2:4000';
   } else if (Platform.OS === 'ios') {
     // For physical iOS device, use your PC's IP
-    return 'http://192.168.1.55:4000';
+    return 'http://192.168.1.28:4000';
     // For iOS simulator, use: return 'http://localhost:4000';
   } else {
     return 'http://localhost:4000'; // Web or other platforms
   }
 };
 
-const API_BASE = getApiBase();
+export const API_BASE = getApiBase();
 
 console.log('🔗 API_BASE configured as:', API_BASE);
 
@@ -206,37 +206,64 @@ export async function loginEmployee(username: string, password: string, companyI
 }
 
 /**
- * Verify stored token and get fresh user data
+ * Verify stored token and get fresh user data.
+ * Falls back to cached user data when the server is unreachable (network error).
+ * Only forces logout when the server explicitly rejects the token (401 / 403).
  */
 export async function verifyToken(): Promise<VerifyResponse | null> {
-  try {
-    const token = await SecureStore.getItemAsync(TOKEN_KEY);
-    
-    if (!token) {
-      return null;
-    }
+  const token = await SecureStore.getItemAsync(TOKEN_KEY).catch(() => null);
 
+  if (!token) {
+    return null;
+  }
+
+  try {
     const response = await fetch(`${API_BASE}/api/mobile-auth/verify`, {
       method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-      },
+      headers: { 'Authorization': `Bearer ${token}` },
     });
 
-    if (!response.ok) {
-      // Token is invalid or expired, clear storage
+    if (response.status === 401 || response.status === 403) {
+      // Server explicitly rejected the token — log out
       await clearAuth();
       return null;
     }
 
+    if (!response.ok) {
+      // Other server error — fall back to cached data rather than logging out
+      const userJson = await SecureStore.getItemAsync(USER_KEY).catch(() => null);
+      if (userJson) {
+        try {
+          const cachedUser = JSON.parse(userJson);
+          console.log('Server error during verify, using cached credentials');
+          return { user: cachedUser };
+        } catch (parseErr) {
+          console.log('Cached credentials corrupted, clearing', parseErr);
+          await SecureStore.deleteItemAsync(USER_KEY).catch(() => null);
+        }
+      }
+      return null;
+    }
+
     const data: VerifyResponse = await response.json();
-    
-    // Update stored user data
     await SecureStore.setItemAsync(USER_KEY, JSON.stringify(data.user));
-    
     return data;
-  } catch (error) {
-    console.error('Token verification error:', error);
+
+  } catch {
+    // Network error (server unreachable, no connection, wrong IP)
+    // Use cached credentials so the user isn't logged out unnecessarily
+    const userJson = await SecureStore.getItemAsync(USER_KEY).catch(() => null);
+    if (userJson) {
+      try {
+        const cachedUser = JSON.parse(userJson);
+        console.log('Server unreachable, using cached credentials');
+        return { user: cachedUser };
+      } catch (parseErr) {
+        console.log('Cached credentials corrupted, clearing', parseErr);
+        await SecureStore.deleteItemAsync(USER_KEY).catch(() => null);
+      }
+    }
+    console.log('No cached credentials available');
     return null;
   }
 }
@@ -394,13 +421,18 @@ export async function reassignTemplate(assignmentId: number, assignedTo: number,
   }
 }
 
+export interface GeoLocation {
+  latitude: number;
+  longitude: number;
+}
+
 /**
- * Submit checklist response
+ * Submit checklist response (with optional GPS location)
  */
-export async function submitChecklist(templateId: number, assetId: number | null, answers: SubmissionAnswer[]): Promise<void> {
+export async function submitChecklist(templateId: number, assetId: number | null, answers: SubmissionAnswer[], location?: GeoLocation | null): Promise<void> {
   const response = await authenticatedFetch('/api/template-assignments/submit-checklist', {
     method: 'POST',
-    body: JSON.stringify({ templateId, assetId, answers }),
+    body: JSON.stringify({ templateId, assetId, answers, latitude: location?.latitude ?? null, longitude: location?.longitude ?? null }),
   });
   
   if (!response.ok) {
@@ -431,12 +463,12 @@ export async function submitTabularLogsheet(
 }
 
 /**
- * Submit logsheet entry
+ * Submit logsheet entry (with optional GPS location)
  */
-export async function submitLogsheet(templateId: number, assetId: number | null, answers: SubmissionAnswer[]): Promise<void> {
+export async function submitLogsheet(templateId: number, assetId: number | null, answers: SubmissionAnswer[], location?: GeoLocation | null): Promise<void> {
   const response = await authenticatedFetch('/api/template-assignments/submit-logsheet', {
     method: 'POST',
-    body: JSON.stringify({ templateId, assetId, answers }),
+    body: JSON.stringify({ templateId, assetId, answers, latitude: location?.latitude ?? null, longitude: location?.longitude ?? null }),
   });
   
   if (!response.ok) {
@@ -738,5 +770,83 @@ export async function getActiveShifts(): Promise<Shift[]> {
 export async function getMyShifts(): Promise<Shift[]> {
   const response = await authenticatedFetch('/api/shifts/my-shifts');
   if (!response.ok) throw new Error('Failed to fetch my shifts');
+  return response.json();
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Asset QR (public – no auth required)
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Fetch asset details, OJT trainings, checklist templates and logsheet templates
+ * for the given asset ID via the public QR endpoint.
+ */
+export async function getAssetQrData(assetId: string | number): Promise<any> {
+  const response = await fetch(`${API_BASE}/api/asset-qr/${assetId}`);
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error((err as any).message || 'Asset not found');
+  }
+  return response.json();
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// OJT Training (mobile / technician)
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Get all published OJT trainings for the current user's company,
+ * including the logged-in user's progress for each.
+ */
+export async function getMyOjtTrainings(): Promise<any[]> {
+  const response = await authenticatedFetch('/api/company-portal/ojt/mobile/trainings');
+  if (!response.ok) throw new Error('Failed to fetch trainings');
+  return response.json();
+}
+
+/**
+ * Get a single published OJT training with modules, contents, test questions
+ * and the logged-in user's progress.
+ */
+export async function getOjtTrainingDetail(id: string | number): Promise<any> {
+  const response = await authenticatedFetch(`/api/company-portal/ojt/mobile/trainings/${id}`);
+  if (!response.ok) throw new Error('Training not found');
+  return response.json();
+}
+
+/**
+ * Start (enrol in) an OJT training – creates a progress record.
+ */
+export async function startOjtTraining(id: number): Promise<void> {
+  const response = await authenticatedFetch(
+    `/api/company-portal/ojt/mobile/trainings/${id}/start`,
+    { method: 'POST' }
+  );
+  if (!response.ok) throw new Error('Failed to start training');
+}
+
+/**
+ * Mark a specific module as completed for the given training.
+ */
+export async function completeOjtModule(trainingId: number, moduleId: number): Promise<void> {
+  const response = await authenticatedFetch(
+    `/api/company-portal/ojt/mobile/trainings/${trainingId}/complete-module`,
+    { method: 'POST', body: JSON.stringify({ moduleId }) }
+  );
+  if (!response.ok) throw new Error('Failed to complete module');
+}
+
+/**
+ * Submit test answers for an OJT training and receive the score result.
+ */
+export async function submitOjtTest(
+  trainingId: number,
+  answers: Record<number, string>
+): Promise<{ score: number; passed: boolean; status: string; passingPct: number }> {
+  const response = await authenticatedFetch(
+    `/api/company-portal/ojt/mobile/trainings/${trainingId}/submit-test`,
+    { method: 'POST', body: JSON.stringify({ answers }) }
+  );
+  if (!response.ok) throw new Error('Failed to submit test');
   return response.json();
 }
