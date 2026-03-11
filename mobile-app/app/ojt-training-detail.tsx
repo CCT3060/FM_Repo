@@ -39,6 +39,10 @@ interface Training {
     assetName?: string;
     modules: OjtModule[];
     test?: { id: number; totalMarks: number; questions: OjtQuestion[] } | null;
+    category?: string;
+    estimatedDurationMinutes?: number;
+    isSequential?: boolean;
+    maxAttempts?: number;
     myProgress?: {
         id?: number;
         status: string;
@@ -47,6 +51,9 @@ interface Training {
         completedModules?: number[];
         startedAt?: string;
         completedAt?: string;
+        dueDate?: string;
+        attemptNumber?: number;
+        trainerSignOffAt?: string;
     } | null;
 }
 
@@ -256,7 +263,7 @@ export default function OjtTrainingDetailScreen() {
     const [expandedModule, setExpandedModule] = useState<number | null>(null);
     const [answers, setAnswers] = useState<Record<number, string>>({});
     const [submitting, setSubmitting] = useState(false);
-    const [testResult, setTestResult] = useState<{ score: number; passed: boolean; earned: number; totalMarks: number; passingPct: number } | null>(null);
+    const [testResult, setTestResult] = useState<{ score: number; passed: boolean; earned: number; totalMarks: number; passingPct: number; attemptNumber?: number; attemptsRemaining?: number; maxAttempts?: number } | null>(null);
     const scrollRef = useRef<ScrollView>(null);
 
     const loadTraining = async () => {
@@ -297,6 +304,15 @@ export default function OjtTrainingDetailScreen() {
     const isCertified = !!progress?.certificateUrl;
     const isCompleted = progress?.status === 'completed';
     const hasFailed = progress?.status === 'failed';
+    const maxAttempts = training.maxAttempts || 3;
+    const attemptNumber = progress?.attemptNumber || 1;
+    const attemptsRemaining = Math.max(0, maxAttempts - attemptNumber);
+    const isSequential = training.isSequential || false;
+    const dueDate = progress?.dueDate ? (() => { const d = new Date(progress!.dueDate!); d.setHours(0,0,0,0); return d; })() : null;
+    const todayDate = (() => { const d = new Date(); d.setHours(0,0,0,0); return d; })();
+    const isOverdue = dueDate && dueDate < todayDate && !isCompleted;
+    const daysUntilDue = dueDate ? Math.ceil((dueDate.getTime() - todayDate.getTime()) / (1000 * 60 * 60 * 24)) : null;
+    const canRetake = hasFailed && attemptsRemaining > 0;
 
     const handleStart = async () => {
         setStarting(true);
@@ -346,6 +362,7 @@ export default function OjtTrainingDetailScreen() {
 
     // ─── RESULT VIEW ─────────────────────────────────────────────────────────
     if (view === 'result' && testResult) {
+        const resAttemptsLeft = testResult.attemptsRemaining ?? attemptsRemaining;
         return (
             <SafeAreaView style={styles.container}>
                 <View style={styles.header}>
@@ -373,6 +390,10 @@ export default function OjtTrainingDetailScreen() {
                             <Text style={{ color: '#0F172A', fontSize: 14, fontWeight: '700' }}>{testResult.passingPct}%</Text>
                         </View>
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                            <Text style={{ color: '#64748B', fontSize: 14 }}>Attempt</Text>
+                            <Text style={{ color: '#0F172A', fontSize: 14, fontWeight: '700' }}>{testResult.attemptNumber ?? attemptNumber} of {testResult.maxAttempts ?? maxAttempts}</Text>
+                        </View>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                             <Text style={{ color: '#64748B', fontSize: 14 }}>Result</Text>
                             <Text style={{ color: testResult.passed ? '#16A34A' : '#DC2626', fontSize: 14, fontWeight: '700' }}>
                                 {testResult.passed ? '✓ PASSED' : '✗ FAILED'}
@@ -388,11 +409,29 @@ export default function OjtTrainingDetailScreen() {
                                 Your certificate will be granted by your admin once they review your results.
                             </Text>
                         </View>
+                    ) : resAttemptsLeft > 0 ? (
+                        <View style={{ width: '100%', gap: 12 }}>
+                            <View style={{ backgroundColor: '#FFF7ED', borderRadius: 16, padding: 20, borderWidth: 1, borderColor: '#FED7AA' }}>
+                                <Text style={{ fontWeight: '700', color: '#EA580C', fontSize: 15, marginBottom: 6 }}>What's Next?</Text>
+                                <Text style={{ color: '#78716C', fontSize: 13, lineHeight: 20 }}>
+                                    Review the module content and try again. You need {testResult.passingPct}% to pass.
+                                </Text>
+                                <Text style={{ color: '#D97706', fontSize: 13, fontWeight: '700', marginTop: 8 }}>
+                                    {resAttemptsLeft} attempt{resAttemptsLeft !== 1 ? 's' : ''} remaining
+                                </Text>
+                            </View>
+                            <TouchableOpacity
+                                onPress={() => { setAnswers({}); setTestResult(null); setView('test'); scrollRef.current?.scrollTo({ y: 0 }); }}
+                                style={{ backgroundColor: '#7C3AED', paddingVertical: 14, borderRadius: 12, alignItems: 'center' }}
+                            >
+                                <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 15 }}>Retake Test ({resAttemptsLeft} left)</Text>
+                            </TouchableOpacity>
+                        </View>
                     ) : (
-                        <View style={{ width: '100%', backgroundColor: '#FFF7ED', borderRadius: 16, padding: 20, borderWidth: 1, borderColor: '#FED7AA' }}>
-                            <Text style={{ fontWeight: '700', color: '#EA580C', fontSize: 15, marginBottom: 6 }}>What's Next?</Text>
+                        <View style={{ width: '100%', backgroundColor: '#FEF2F2', borderRadius: 16, padding: 20, borderWidth: 1, borderColor: '#FECACA' }}>
+                            <Text style={{ fontWeight: '700', color: '#DC2626', fontSize: 15, marginBottom: 6 }}>Maximum Attempts Reached</Text>
                             <Text style={{ color: '#78716C', fontSize: 13, lineHeight: 20 }}>
-                                Review the module content again and retake the test to improve your score. You need {testResult.passingPct}% to pass.
+                                You have used all {testResult.maxAttempts ?? maxAttempts} attempts. Please speak with your supervisor.
                             </Text>
                         </View>
                     )}
@@ -516,13 +555,43 @@ export default function OjtTrainingDetailScreen() {
             </View>
 
             <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32, gap: 14 }}>
+                {/* Due Date / Overdue Banner */}
+                {isOverdue && (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#FEF2F2', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: '#FECACA' }}>
+                        <Ionicons name="warning-outline" size={18} color="#DC2626" />
+                        <View style={{ flex: 1 }}>
+                            <Text style={{ color: '#DC2626', fontWeight: '800', fontSize: 13 }}>Training Overdue</Text>
+                            <Text style={{ color: '#F87171', fontSize: 12, marginTop: 1 }}>Due {dueDate!.toLocaleDateString()} — please complete as soon as possible.</Text>
+                        </View>
+                    </View>
+                )}
+                {dueDate && !isOverdue && daysUntilDue !== null && daysUntilDue <= 7 && (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#FFFBEB', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: '#FDE68A' }}>
+                        <Ionicons name="calendar-outline" size={16} color="#D97706" />
+                        <Text style={{ color: '#92400E', fontWeight: '600', fontSize: 13, flex: 1 }}>
+                            {daysUntilDue === 0 ? 'Due today' : daysUntilDue === 1 ? 'Due tomorrow' : `Due in ${daysUntilDue} days`} — {dueDate.toLocaleDateString()}
+                        </Text>
+                    </View>
+                )}
+
                 {/* Progress Card */}
                 <View style={styles.progressCard}>
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
                         <Text style={styles.progressTitle}>Your Progress</Text>
                         <Text style={styles.progressPctText}>{progressPct}%</Text>
                     </View>
                     <Text style={styles.progressSub}>{completedCount}/{totalModules} modules completed</Text>
+
+                    {/* Attempt counter */}
+                    {progress && hasTest && maxAttempts > 1 && (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                            <MaterialCommunityIcons name="refresh" size={14} color={attemptsRemaining <= 1 && hasFailed ? '#DC2626' : '#64748B'} />
+                            <Text style={{ fontSize: 12, color: attemptsRemaining <= 1 && hasFailed ? '#DC2626' : '#64748B', fontWeight: '600' }}>
+                                Attempt {attemptNumber} of {maxAttempts}{hasFailed && attemptsRemaining > 0 ? ` · ${attemptsRemaining} remaining` : ''}
+                            </Text>
+                        </View>
+                    )}
+
                     <View style={styles.progressTrack}>
                         <View style={[styles.progressFill, { width: `${progressPct}%` as any, backgroundColor: progressPct === 100 ? '#16A34A' : '#2563EB' }]} />
                     </View>
@@ -551,13 +620,29 @@ export default function OjtTrainingDetailScreen() {
                     )}
 
                     {isCompleted && !isCertified && (
-                        <View style={{ marginTop: 12, backgroundColor: '#EFF6FF', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: '#BFDBFE' }}>
-                            <Text style={{ fontWeight: '700', color: '#2563EB', fontSize: 13 }}>
-                                ✓ Test Passed — Score: {progress?.score}%
-                            </Text>
-                            <Text style={{ color: '#60A5FA', fontSize: 12, marginTop: 3 }}>
-                                Certificate will be issued by your admin.
-                            </Text>
+                        <View style={{ marginTop: 12, gap: 8 }}>
+                            <View style={{ backgroundColor: '#EFF6FF', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: '#BFDBFE' }}>
+                                <Text style={{ fontWeight: '700', color: '#2563EB', fontSize: 13 }}>
+                                    ✓ Test Passed — Score: {progress?.score}%
+                                </Text>
+                                <Text style={{ color: '#60A5FA', fontSize: 12, marginTop: 3 }}>
+                                    Certificate will be issued by your admin.
+                                </Text>
+                            </View>
+                            {progress?.trainerSignOffAt ? (
+                                <View style={{ backgroundColor: '#F0FDF4', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: '#BBF7D0', flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                    <MaterialCommunityIcons name="check-decagram" size={18} color="#16A34A" />
+                                    <View style={{ flex: 1 }}>
+                                        <Text style={{ fontWeight: '700', color: '#16A34A', fontSize: 12 }}>Trainer Sign-off Complete</Text>
+                                        <Text style={{ color: '#4ADE80', fontSize: 11, marginTop: 1 }}>{new Date(progress.trainerSignOffAt).toLocaleDateString()}</Text>
+                                    </View>
+                                </View>
+                            ) : (
+                                <View style={{ backgroundColor: '#FFF7ED', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: '#FED7AA', flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                    <MaterialCommunityIcons name="clock-outline" size={18} color="#D97706" />
+                                    <Text style={{ color: '#92400E', fontSize: 12, flex: 1, fontWeight: '600' }}>Awaiting trainer practical sign-off</Text>
+                                </View>
+                            )}
                         </View>
                     )}
 
@@ -567,7 +652,9 @@ export default function OjtTrainingDetailScreen() {
                                 Test Result: {progress?.score}% — Not Passed
                             </Text>
                             <Text style={{ color: '#F87171', fontSize: 12, marginTop: 3 }}>
-                                Review the modules and try the test again.
+                                {canRetake
+                                    ? `Review the modules and retake the test. ${attemptsRemaining} attempt${attemptsRemaining !== 1 ? 's' : ''} remaining.`
+                                    : 'Maximum attempts reached. Please speak with your supervisor.'}
                             </Text>
                         </View>
                     )}
@@ -578,18 +665,27 @@ export default function OjtTrainingDetailScreen() {
                 {training.modules.map((m, idx) => {
                     const isDone = completedModuleIds.includes(m.id);
                     const isExpanded = expandedModule === m.id;
-                    const isLocked = !progress && idx > 0;
+                    const prevDone = idx === 0 || completedModuleIds.includes(training.modules[idx - 1].id);
+                    const isLocked = (isSequential && !prevDone && !isDone) || (!progress && idx > 0);
 
                     return (
                         <View key={m.id} style={[styles.moduleCard, isDone && { borderColor: '#BBF7D0', borderWidth: 1.5 }]}>
                             {/* Module Header */}
                             <TouchableOpacity
                                 style={styles.moduleHeader}
-                                onPress={() => setExpandedModule(isExpanded ? null : m.id)}
+                                onPress={() => {
+                                    if (isLocked) {
+                                        Alert.alert('Module Locked', isSequential ? 'Complete the previous module first.' : 'Start the training to unlock this module.');
+                                        return;
+                                    }
+                                    setExpandedModule(isExpanded ? null : m.id);
+                                }}
                                 activeOpacity={0.7}
                             >
-                                <View style={[styles.moduleNum, { backgroundColor: isDone ? '#DCFCE7' : '#EFF6FF' }]}>
-                                    {isDone ? (
+                                <View style={[styles.moduleNum, { backgroundColor: isDone ? '#DCFCE7' : isLocked ? '#F1F5F9' : '#EFF6FF' }]}>
+                                    {isLocked ? (
+                                        <MaterialCommunityIcons name="lock-outline" size={16} color="#94A3B8" />
+                                    ) : isDone ? (
                                         <MaterialCommunityIcons name="check" size={16} color="#16A34A" />
                                     ) : (
                                         <Text style={{ fontSize: 12, fontWeight: '700', color: '#2563EB' }}>{idx + 1}</Text>
@@ -700,7 +796,7 @@ export default function OjtTrainingDetailScreen() {
                 })}
 
                 {/* Take Test Button */}
-                {hasTest && allModulesDone && !isCompleted && (
+                {hasTest && allModulesDone && !isCompleted && (!hasFailed || canRetake) && (
                     <TouchableOpacity
                         onPress={() => { setAnswers({}); setView('test'); scrollRef.current?.scrollTo({ y: 0 }); }}
                         style={styles.testBtn}
@@ -708,9 +804,18 @@ export default function OjtTrainingDetailScreen() {
                     >
                         <MaterialCommunityIcons name="pencil-circle-outline" size={22} color="#FFFFFF" />
                         <Text style={styles.testBtnText}>
-                            {hasFailed ? 'Retake Test' : 'Take Final Test'}
+                            {hasFailed ? `Retake Test (${attemptsRemaining} left)` : 'Take Final Test'}
                         </Text>
                     </TouchableOpacity>
+                )}
+
+                {hasTest && allModulesDone && hasFailed && !canRetake && (
+                    <View style={[styles.testLockedCard, { borderWidth: 1, borderColor: '#FECACA', backgroundColor: '#FEF2F2' }]}>
+                        <MaterialCommunityIcons name="close-circle-outline" size={18} color="#DC2626" />
+                        <Text style={[styles.testLockedText, { color: '#DC2626' }]}>
+                            Maximum attempts reached ({maxAttempts}/{maxAttempts}). Please contact your supervisor.
+                        </Text>
+                    </View>
                 )}
 
                 {hasTest && !allModulesDone && progress && (

@@ -18,6 +18,24 @@ router.use(requireCompanyAuth);
 // Helper to get company ID
 const cid = (req) => req.companyUser.companyId;
 
+/* ── Helper: is this shift's time window currently active? ──────────────────
+   Handles overnight shifts (end_time < start_time).                          */
+const isShiftActive = (startTime, endTime) => {
+  const now = new Date();
+  const toMin = (t) => {
+    const [h, m] = String(t).split(":").map(Number);
+    return h * 60 + m;
+  };
+  const nowMin   = now.getHours() * 60 + now.getMinutes();
+  const startMin = toMin(startTime);
+  const endMin   = toMin(endTime);
+  if (startMin <= endMin) {
+    return nowMin >= startMin && nowMin < endMin;
+  } else {
+    return nowMin >= startMin || nowMin < endMin;
+  }
+};
+
 /* ────────────────────────────────────────────────────────────────────────────
    ADMIN: Assign checklist or logsheet templates to supervisors
    ──────────────────────────────────────────────────────────────────────────── */
@@ -413,6 +431,40 @@ router.post(
         if (!tmpl) return res.status(404).json({ message: "Checklist template not found" });
       }
 
+      // ── Shift Enforcement ────────────────────────────────────────────────
+      // Tech users (non-admin, non-supervisor) can only submit during their
+      // active shift window. Admins and supervisors are exempt.
+      if (req.companyUser.role !== 'admin' && req.companyUser.role !== 'supervisor') {
+        const [[shiftInfo]] = await pool.query(
+          `SELECT s.id, s.name AS "shiftName", s.start_time AS "startTime",
+                  s.end_time AS "endTime", s.status AS "shiftStatus",
+                  es.id AS "employeeShiftId"
+           FROM checklist_templates ct
+           JOIN shifts s ON s.id = ct.shift_id
+           LEFT JOIN employee_shifts es
+             ON es.shift_id = s.id AND es.company_user_id = ?
+           WHERE ct.id = ? AND ct.company_id = ?`,
+          [req.companyUser.id, templateId, cid(req)]
+        ).catch(() => [[null]]);
+
+        if (shiftInfo) {
+          if (!shiftInfo.employeeShiftId) {
+            return res.status(403).json({
+              message: `You are not assigned to the "${shiftInfo.shiftName}" shift.`,
+              shiftLocked: true,
+              shiftName: shiftInfo.shiftName,
+            });
+          }
+          if (shiftInfo.shiftStatus !== 'active' || !isShiftActive(shiftInfo.startTime, shiftInfo.endTime)) {
+            return res.status(403).json({
+              message: `The "${shiftInfo.shiftName}" shift is not currently active (${shiftInfo.startTime}–${shiftInfo.endTime}).`,
+              shiftLocked: true,
+              shiftName: shiftInfo.shiftName,
+            });
+          }
+        }
+      }
+
       // Fetch template (includes asset_id + questions column)
       const [[tmplWithQ]] = await pool.query(
         `SELECT ct.questions, ct.asset_id AS assetId
@@ -614,6 +666,38 @@ router.post(
           [templateId, cid(req)]
         );
         if (!tmpl) return res.status(404).json({ message: "Logsheet template not found" });
+      }
+
+      // ── Shift Enforcement ────────────────────────────────────────────────
+      if (req.companyUser.role !== 'admin' && req.companyUser.role !== 'supervisor') {
+        const [[shiftInfo]] = await pool.query(
+          `SELECT s.id, s.name AS "shiftName", s.start_time AS "startTime",
+                  s.end_time AS "endTime", s.status AS "shiftStatus",
+                  es.id AS "employeeShiftId"
+           FROM logsheet_templates lt
+           JOIN shifts s ON s.id = lt.shift_id
+           LEFT JOIN employee_shifts es
+             ON es.shift_id = s.id AND es.company_user_id = ?
+           WHERE lt.id = ? AND lt.company_id = ?`,
+          [req.companyUser.id, templateId, cid(req)]
+        ).catch(() => [[null]]);
+
+        if (shiftInfo) {
+          if (!shiftInfo.employeeShiftId) {
+            return res.status(403).json({
+              message: `You are not assigned to the "${shiftInfo.shiftName}" shift.`,
+              shiftLocked: true,
+              shiftName: shiftInfo.shiftName,
+            });
+          }
+          if (shiftInfo.shiftStatus !== 'active' || !isShiftActive(shiftInfo.startTime, shiftInfo.endTime)) {
+            return res.status(403).json({
+              message: `The "${shiftInfo.shiftName}" shift is not currently active (${shiftInfo.startTime}–${shiftInfo.endTime}).`,
+              shiftLocked: true,
+              shiftName: shiftInfo.shiftName,
+            });
+          }
+        }
       }
 
       // Create logsheet entry — month/year derived from current date.

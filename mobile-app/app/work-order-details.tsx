@@ -155,6 +155,28 @@ export default function WorkOrderDetailsScreen() {
                     </View>
                 </View>
 
+                {/* Escalation alert banner */}
+                {Number(wo.escalationLevel) > 0 && (
+                    <View style={styles.escalationBanner}>
+                        <MaterialCommunityIcons name="arrow-up-bold-circle-outline" size={18} color="#7C3AED" />
+                        <View style={{ flex: 1 }}>
+                            <Text style={styles.escalationTitle}>Escalated — Level {wo.escalationLevel}</Text>
+                            {wo.escalationNote ? (
+                                <Text style={styles.escalationNote} numberOfLines={2}>{wo.escalationNote}</Text>
+                            ) : null}
+                        </View>
+                        {wo.expectedCompletionAt && new Date(wo.expectedCompletionAt) < new Date() ? (
+                            <View style={styles.overduePill}>
+                                <Text style={styles.overduePillText}>OVERDUE</Text>
+                            </View>
+                        ) : wo.cutoffStatus === 'at_risk' ? (
+                            <View style={[styles.overduePill, { backgroundColor: '#FFF7ED' }]}>
+                                <Text style={[styles.overduePillText, { color: '#C2410C' }]}>AT RISK</Text>
+                            </View>
+                        ) : null}
+                    </View>
+                )}
+
                 {/* Issue description card */}
                 <View style={styles.card}>
                     <Text style={styles.cardSectionLabel}>ISSUE DESCRIPTION</Text>
@@ -171,6 +193,29 @@ export default function WorkOrderDetailsScreen() {
                     <DetailRow icon="source-branch" label="Source" value={wo.issueSource === 'flag' ? 'Flag / Alert' : wo.issueSource === 'logsheet' ? 'Logsheet' : 'Manual'} />
                     <DetailRow icon="calendar-plus" label="Created" value={formatDate(wo.createdAt)} />
                     {wo.createdByName ? <DetailRow icon="account-outline" label="Created By" value={wo.createdByName} /> : null}
+                    {wo.expectedCompletionAt ? (
+                        <>
+                            <DetailRow
+                                icon="clock-alert-outline"
+                                label="Deadline"
+                                value={formatDate(wo.expectedCompletionAt)}
+                            />
+                            {wo.cutoffStatus === 'overdue' && (
+                                <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 6 }}>
+                                    <View style={{ backgroundColor: '#FEE2E2', paddingHorizontal: 10, paddingVertical: 3, borderRadius: 20 }}>
+                                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#991B1B' }}>⏰ OVERDUE</Text>
+                                    </View>
+                                </View>
+                            )}
+                            {wo.cutoffStatus === 'at_risk' && (
+                                <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 6 }}>
+                                    <View style={{ backgroundColor: '#FFEDD5', paddingHorizontal: 10, paddingVertical: 3, borderRadius: 20 }}>
+                                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#9A3412' }}>⚠ Due Soon</Text>
+                                    </View>
+                                </View>
+                            )}
+                        </>
+                    ) : null}
                     {wo.closedAt ? <DetailRow icon="calendar-check" label="Closed" value={formatDate(wo.closedAt)} /> : null}
                 </View>
 
@@ -197,8 +242,7 @@ export default function WorkOrderDetailsScreen() {
                 {wo.history && wo.history.length > 0 && (
                     <View style={styles.card}>
                         <Text style={styles.cardSectionLabel}>STATUS TIMELINE</Text>
-                        {wo.history.map((h: any, idx: number) => {
-                            const hsc = STATUS_CFG[(h.status as WOStatus)] || STATUS_CFG.open;
+                        {wo.history.map((h: any, idx: number) => {                            const hsc = STATUS_CFG[(h.status as WOStatus)] || STATUS_CFG.open;
                             const isLast = idx === wo.history.length - 1;
                             return (
                                 <View key={h.id} style={styles.timelineRow}>
@@ -221,6 +265,36 @@ export default function WorkOrderDetailsScreen() {
                                 </View>
                             );
                         })}
+                    </View>
+                )}
+
+                {/* Escalation History */}
+                {wo.escalationHistory && wo.escalationHistory.length > 0 && (
+                    <View style={styles.card}>
+                        <Text style={styles.cardSectionLabel}>ESCALATION HISTORY</Text>
+                        {wo.escalationHistory.map((e: any, idx: number) => (
+                            <View key={e.id ?? idx} style={[styles.timelineRow, { marginBottom: 8 }]}>
+                                <View style={styles.timelineLeft}>
+                                    <View style={[styles.timelineDot, { backgroundColor: '#7C3AED' }]} />
+                                    {idx < wo.escalationHistory.length - 1 && <View style={styles.timelineLine} />}
+                                </View>
+                                <View style={styles.timelineContent}>
+                                    <View style={styles.timelineHeader}>
+                                        <View style={[styles.timelineStatusBadge, { backgroundColor: '#F5F3FF' }]}>
+                                            <Text style={[styles.timelineStatusText, { color: '#7C3AED' }]}>
+                                                ⏫ LEVEL {e.escalationLevel}
+                                            </Text>
+                                        </View>
+                                    </View>
+                                    {e.previousAssigneeName || e.newAssigneeName ? (
+                                        <Text style={styles.timelineRemark}>
+                                            {e.previousAssigneeName ? `${e.previousAssigneeName} → ` : ''}{e.newAssigneeName || 'No new assignee'}
+                                        </Text>
+                                    ) : null}
+                                    <Text style={styles.timelineTs}>{formatDate(e.escalatedAt)}</Text>
+                                </View>
+                            </View>
+                        ))}
                     </View>
                 )}
 
@@ -450,4 +524,18 @@ const styles = StyleSheet.create({
     errorText: { fontSize: 14, color: '#EF4444', marginTop: 12, textAlign: 'center' },
     retryBtn: { marginTop: 16, backgroundColor: '#2563EB', paddingHorizontal: 24, paddingVertical: 10, borderRadius: 8 },
     retryText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14 },
+
+    // Escalation banner
+    escalationBanner: {
+        flexDirection: 'row', alignItems: 'center', gap: 10,
+        backgroundColor: '#F5F3FF', borderRadius: 12, padding: 12, marginBottom: 12,
+        borderWidth: 1, borderColor: '#DDD6FE',
+    },
+    escalationTitle: { fontSize: 13, fontWeight: '700', color: '#7C3AED' },
+    escalationNote: { fontSize: 12, color: '#6D28D9', marginTop: 2, lineHeight: 17 },
+    overduePill: {
+        backgroundColor: '#FEE2E2', paddingHorizontal: 8, paddingVertical: 3,
+        borderRadius: 6, borderWidth: 1, borderColor: '#FECACA',
+    },
+    overduePillText: { fontSize: 10, fontWeight: '800', color: '#DC2626' },
 });

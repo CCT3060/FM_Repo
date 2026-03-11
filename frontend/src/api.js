@@ -191,6 +191,8 @@ export const getCompanyPortalWOUsers = (token) =>
   request("GET", "/api/company-portal/work-orders/users", undefined, { authToken: token });
 export const assignCompanyPortalWorkOrder = (token, id, data) =>
   request("PUT", `/api/company-portal/work-orders/${id}/assign`, data, { authToken: token });
+export const updateWorkOrderCutoff = (token, id, expectedCompletionAt) =>
+  request("PATCH", `/api/company-portal/work-orders/${id}/cutoff`, { expectedCompletionAt }, { authToken: token });
 
 // ── Company Portal Admin Flags (dashboard) ────────────────────────────────────
 export const getCompanyPortalAdminFlags = (token, params = "") =>
@@ -238,6 +240,8 @@ export const updateOjtQuestion     = (token, qid, data) => request("PUT",   `${c
 export const deleteOjtQuestion     = (token, qid)       => request("DELETE",`${cp}/ojt/questions/${qid}`,                      undefined, { authToken: token });
 export const getOjtTrainingUsers   = (token, id)        => request("GET",   `${cp}/ojt/trainings/${id}/users`,                 undefined, { authToken: token });
 export const grantOjtCertificate   = (token, pid)       => request("POST",  `${cp}/ojt/progress/${pid}/certificate`,           undefined, { authToken: token });
+export const assignOjtTraining     = (token, id, data)  => request("POST",  `${cp}/ojt/trainings/${id}/assign`,                data,      { authToken: token });
+export const trainerOjtSignOff     = (token, pid, data) => request("POST",  `${cp}/ojt/progress/${pid}/trainer-signoff`,       data,      { authToken: token });
 export const uploadOjtFile = async (token, file) => {
   const BASE_URL = import.meta.env.VITE_API_URL || "";
   const fd = new FormData();

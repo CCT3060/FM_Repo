@@ -4,7 +4,9 @@ import {
   getOjtTraining, createOjtTraining, updateOjtTraining, deleteOjtTraining, publishOjtTraining,
   createOjtModule, deleteOjtModule, addOjtModuleContent, deleteOjtContent,
   createOjtTest, addOjtQuestion, deleteOjtQuestion, getOjtTrainingUsers, grantOjtCertificate, uploadOjtFile,
+  assignOjtTraining, trainerOjtSignOff,
 } from "../api.js";
+import { getCompanyPortalWOUsers } from "../api.js";
 
 // Helper to get marks from questions
 const getTotalMarks = (questions) => questions.reduce((sum, q) => sum + (Number(q.marks) || 1), 0);
@@ -57,6 +59,11 @@ export default function OjtTrainingBuilder({ token, assets = [], onBack, trainin
 
   // Form state for create/edit
   const [form, setForm] = useState({ assetId: "", title: "", description: "" });
+  const [category, setCategory] = useState("general");
+  const [estimatedDurationMinutes, setEstimatedDurationMinutes] = useState(60);
+  const [isSequential, setIsSequential] = useState(false);
+  const [maxAttempts, setMaxAttempts] = useState(3);
+  const [trainerId, setTrainerId] = useState("");
   const [modules, setModules] = useState([]);
   const [newModule, setNewModule] = useState({ title: "" });
   const [questions, setQuestions] = useState([]);
@@ -89,6 +96,11 @@ export default function OjtTrainingBuilder({ token, assets = [], onBack, trainin
             description: data.description || "",
           });
           setPassingPercentage(data.passingPercentage || 70);
+          setCategory(data.category || "general");
+          setEstimatedDurationMinutes(data.estimatedDurationMinutes || 60);
+          setIsSequential(!!data.isSequential);
+          setMaxAttempts(data.maxAttempts || 3);
+          setTrainerId(data.trainerId || "");
           setModules(data.modules || []);
           setQuestions(data.test?.questions || []);
           setTestInitialized(!!data.test);
@@ -213,6 +225,11 @@ export default function OjtTrainingBuilder({ token, assets = [], onBack, trainin
         description: form.description.trim() || null,
         assetId: form.assetId ? Number(form.assetId) : null,
         passingPercentage: Number(passingPercentage),
+        category,
+        estimatedDurationMinutes: Number(estimatedDurationMinutes) || 60,
+        isSequential,
+        maxAttempts: Number(maxAttempts) || 3,
+        trainerId: trainerId ? Number(trainerId) : null,
       };
 
       let currentTrainingId;
@@ -349,6 +366,26 @@ export default function OjtTrainingBuilder({ token, assets = [], onBack, trainin
                     <option key={a.id} value={a.id}>{a.assetName || a.assetUniqueId || `Asset #${a.id}`}</option>
                   ))}
                 </FSelect>
+                <FSelect label="Training Category *" required value={category} onChange={(e) => setCategory(e.target.value)}>
+                  <option value="general">General</option>
+                  <option value="safety">Safety & Compliance</option>
+                  <option value="equipment">Equipment Operation</option>
+                  <option value="technical">Technical Skills</option>
+                  <option value="maintenance">Preventive Maintenance</option>
+                  <option value="quality">Quality Control</option>
+                  <option value="emergency">Emergency Procedures</option>
+                </FSelect>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "16px", marginBottom: "16px" }}>
+                <FInput label="Estimated Duration (minutes)" type="number" min="10" max="480" value={estimatedDurationMinutes} onChange={(e) => setEstimatedDurationMinutes(Math.max(10, Number(e.target.value) || 60))} />
+                <FInput label="Max Test Attempts" type="number" min="1" max="10" value={maxAttempts} onChange={(e) => setMaxAttempts(Math.max(1, Number(e.target.value) || 3))} />
+                <div>
+                  <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Sequential Modules</label>
+                  <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", padding: "8px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontWeight: 500, fontSize: "13.5px", background: isSequential ? "#eff6ff" : "#fff" }}>
+                    <input type="checkbox" checked={isSequential} onChange={(e) => setIsSequential(e.target.checked)} style={{ width: 16, height: 16, accentColor: "#2563eb" }} />
+                    <span style={{ color: isSequential ? "#2563eb" : "#475569" }}>{isSequential ? "Locked in order" : "Any order"}</span>
+                  </label>
+                </div>
               </div>
               <FInput label="Training Title *" required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="e.g. HVAC Maintenance Certification" />
               <div style={{ marginTop: "16px" }}>
@@ -599,11 +636,12 @@ export default function OjtTrainingBuilder({ token, assets = [], onBack, trainin
         </div>
 
         {/* Tabs */}
-        <div style={{ display: "flex", borderBottom: "1px solid #e2e8f0", background: "#fff", padding: "0 24px" }}>
+        <div style={{ display: "flex", borderBottom: "1px solid #e2e8f0", background: "#fff", padding: "0 24px", flexWrap: "wrap" }}>
           {[
             { id: "overview", label: "Overview" },
             { id: "modules", label: `Modules (${training.modules?.length || 0})` },
             { id: "test", label: "Test" },
+            { id: "assign", label: "Assign Users" },
             { id: "tracking", label: "Enrollment" }
           ].map(tab => (
             <button key={tab.id} onClick={() => setView(tab.id)}
@@ -618,10 +656,14 @@ export default function OjtTrainingBuilder({ token, assets = [], onBack, trainin
       {view === "overview" && (
         <Card style={{ padding: "24px" }}>
           <h3 style={{ fontSize: "16px", fontWeight: 700, color: "#1e293b", margin: "0 0 16px" }}>Training Details</h3>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "16px" }}>
             <div>
               <div style={{ color: "#94a3b8", fontSize: "12px", marginBottom: "4px", fontWeight: "500" }}>Title</div>
               <div style={{ fontWeight: "600", color: "#0f172a" }}>{training.title}</div>
+            </div>
+            <div>
+              <div style={{ color: "#94a3b8", fontSize: "12px", marginBottom: "4px", fontWeight: "500" }}>Category</div>
+              <div style={{ fontWeight: "600", color: "#0f172a", textTransform: "capitalize" }}>{(training.category || "general").replace(/_/g, " ")}</div>
             </div>
             <div>
               <div style={{ color: "#94a3b8", fontSize: "12px", marginBottom: "4px", fontWeight: "500" }}>Associated Asset</div>
@@ -632,14 +674,51 @@ export default function OjtTrainingBuilder({ token, assets = [], onBack, trainin
               <div style={{ fontWeight: "600", color: "#0f172a" }}>{training.passingPercentage}%</div>
             </div>
             <div>
+              <div style={{ color: "#94a3b8", fontSize: "12px", marginBottom: "4px", fontWeight: "500" }}>Estimated Duration</div>
+              <div style={{ fontWeight: "600", color: "#0f172a" }}>
+                {Number(training.estimatedDurationMinutes) >= 60
+                  ? `${Math.floor(Number(training.estimatedDurationMinutes) / 60)}h ${Number(training.estimatedDurationMinutes) % 60 > 0 ? `${Number(training.estimatedDurationMinutes) % 60}m` : ""}`
+                  : `${training.estimatedDurationMinutes}m`}
+              </div>
+            </div>
+            <div>
               <div style={{ color: "#94a3b8", fontSize: "12px", marginBottom: "4px", fontWeight: "500" }}>Number of Modules</div>
               <div style={{ fontWeight: "600", color: "#0f172a" }}>{training.modules?.length || 0}</div>
             </div>
+            <div>
+              <div style={{ color: "#94a3b8", fontSize: "12px", marginBottom: "4px", fontWeight: "500" }}>Sequential Modules</div>
+              <div style={{ fontWeight: "600", color: training.isSequential ? "#2563eb" : "#64748b" }}>{training.isSequential ? "Yes – locked in order" : "No – any order"}</div>
+            </div>
+            <div>
+              <div style={{ color: "#94a3b8", fontSize: "12px", marginBottom: "4px", fontWeight: "500" }}>Max Test Attempts</div>
+              <div style={{ fontWeight: "600", color: "#0f172a" }}>{training.maxAttempts || 3}</div>
+            </div>
+            {training.trainerName && (
+              <div>
+                <div style={{ color: "#94a3b8", fontSize: "12px", marginBottom: "4px", fontWeight: "500" }}>Assigned Trainer</div>
+                <div style={{ fontWeight: "600", color: "#0f172a" }}>{training.trainerName}</div>
+              </div>
+            )}
           </div>
           {training.description && (
             <div style={{ marginTop: "16px", paddingTop: "16px", borderTop: "1px solid #e2e8f0" }}>
               <div style={{ color: "#94a3b8", fontSize: "12px", marginBottom: "6px", fontWeight: "500" }}>Description</div>
               <p style={{ color: "#475569", fontSize: "13.5px", lineHeight: 1.6, margin: 0 }}>{training.description}</p>
+            </div>
+          )}
+          {/* Analytics row */}
+          {(training.enrolledCount > 0 || training.completedCount > 0) && (
+            <div style={{ marginTop: "20px", paddingTop: "16px", borderTop: "1px solid #e2e8f0", display: "flex", gap: "16px", flexWrap: "wrap" }}>
+              {[
+                { label: "Enrolled", value: training.enrolledCount, color: "#2563eb", bg: "#eff6ff" },
+                { label: "Completed", value: training.completedCount, color: "#16a34a", bg: "#f0fdf4" },
+                { label: "Avg Score", value: training.avgScore != null ? `${Math.round(training.avgScore)}%` : "—", color: "#ca8a04", bg: "#fefce8" },
+              ].map(s => (
+                <div key={s.label} style={{ background: s.bg, borderRadius: "10px", padding: "12px 20px", textAlign: "center", minWidth: "90px" }}>
+                  <div style={{ fontSize: "22px", fontWeight: 800, color: s.color }}>{s.value}</div>
+                  <div style={{ fontSize: "11px", color: "#64748b", fontWeight: 600, marginTop: "2px" }}>{s.label}</div>
+                </div>
+              ))}
             </div>
           )}
         </Card>
@@ -718,6 +797,8 @@ export default function OjtTrainingBuilder({ token, assets = [], onBack, trainin
         </Card>
       )}
 
+      {view === "assign" && <AssignTab training={training} token={token} />}
+
       {view === "tracking" && <EnrollmentTab training={training} token={token} />}
 
       {/* Modals */}
@@ -731,18 +812,27 @@ export default function OjtTrainingBuilder({ token, assets = [], onBack, trainin
   );
 }
 
-function EnrollmentTab({ training, token }) {
+function AssignTab({ training, token }) {
   const [users, setUsers] = useState([]);
+  const [enrolled, setEnrolled] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [selectedUserId, setSelectedUserId] = useState("");
+  const [dueDate, setDueDate] = useState("");
+  const [assigning, setAssigning] = useState(false);
+  const [msg, setMsg] = useState(null);
 
   useEffect(() => {
     const load = async () => {
       setLoading(true);
       try {
-        const data = await getOjtTrainingUsers(token, training.id);
-        setUsers(Array.isArray(data) ? data : []);
+        const [u, e] = await Promise.all([
+          getCompanyPortalWOUsers(token),
+          getOjtTrainingUsers(token, training.id),
+        ]);
+        setUsers(Array.isArray(u) ? u : []);
+        setEnrolled(Array.isArray(e.users) ? e.users : []);
       } catch (e) {
-        console.error("Error loading users:", e);
+        console.error(e);
       } finally {
         setLoading(false);
       }
@@ -750,87 +840,280 @@ function EnrollmentTab({ training, token }) {
     load();
   }, [token, training.id]);
 
-  if (loading) return <p style={{ color: "#64748b" }}>Loading enrollment data...</p>;
+  const enrolledIds = new Set(enrolled.map(e => e.companyUserId));
+  const unassigned = users.filter(u => !enrolledIds.has(u.id));
+
+  const handleAssign = async () => {
+    if (!selectedUserId) return;
+    setAssigning(true);
+    setMsg(null);
+    try {
+      await assignOjtTraining(token, training.id, { userId: Number(selectedUserId), dueDate: dueDate || null });
+      const freshEnrolled = await getOjtTrainingUsers(token, training.id);
+      setEnrolled(Array.isArray(freshEnrolled.users) ? freshEnrolled.users : []);
+      setMsg({ type: "success", text: "Training assigned successfully." });
+      setSelectedUserId("");
+      setDueDate("");
+    } catch (e) {
+      setMsg({ type: "error", text: e.message || "Failed to assign training" });
+    } finally {
+      setAssigning(false);
+    }
+  };
+
+  if (loading) return <Card style={{ padding: "32px", textAlign: "center", color: "#64748b" }}>Loading users...</Card>;
 
   return (
     <Card style={{ padding: "24px" }}>
+      <h3 style={{ fontSize: "16px", fontWeight: 700, color: "#1e293b", margin: "0 0 6px" }}>Assign Training to Employees</h3>
+      <p style={{ margin: "0 0 20px", color: "#64748b", fontSize: "13.5px" }}>
+        Assign this training to specific technicians and optionally set a completion deadline.
+        Assigned employees will see it in their "My Assignments" list even before they start.
+      </p>
+
+      {/* Assignment form */}
+      <div style={{ background: "#f8fafc", borderRadius: "10px", padding: "16px", marginBottom: "20px", border: "1px solid #e2e8f0" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: "12px", alignItems: "flex-end" }}>
+          <FSelect label="Select Employee" value={selectedUserId} onChange={(e) => setSelectedUserId(e.target.value)}>
+            <option value="">— Choose a technician —</option>
+            {unassigned.map(u => (
+              <option key={u.id} value={u.id}>{u.fullName} ({u.role || "Technician"})</option>
+            ))}
+            {unassigned.length === 0 && users.length > 0 && (
+              <option disabled>All employees already assigned</option>
+            )}
+          </FSelect>
+          <FInput label="Due Date (optional)" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} style={{ minWidth: "160px" }} />
+          <div>
+            <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#fff", marginBottom: "5px" }}>‌</label>
+            <Btn onClick={handleAssign} disabled={assigning || !selectedUserId} style={{ background: "#16a34a" }}>
+              {assigning ? "Assigning..." : "Assign"}
+            </Btn>
+          </div>
+        </div>
+        {msg && <div style={{ marginTop: "10px", padding: "8px 12px", borderRadius: "6px", fontSize: "13px", background: msg.type === "success" ? "#f0fdf4" : "#fef2f2", color: msg.type === "success" ? "#16a34a" : "#dc2626", border: `1px solid ${msg.type === "success" ? "#bbf7d0" : "#fecaca"}` }}>{msg.text}</div>}
+      </div>
+
+      {/* Assigned users list */}
+      <h4 style={{ fontSize: "13px", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "12px" }}>
+        Assigned Employees ({enrolled.length})
+      </h4>
+      {enrolled.length === 0 ? (
+        <p style={{ color: "#94a3b8", fontSize: "13.5px" }}>No one assigned yet. Use the form above to assign this training.</p>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13.5px" }}>
+            <thead>
+              <tr style={{ background: "#f8fafc", borderBottom: "2px solid #e2e8f0" }}>
+                <th style={{ padding: "10px 12px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "11px", textTransform: "uppercase" }}>Employee</th>
+                <th style={{ padding: "10px 12px", textAlign: "center", color: "#475569", fontWeight: 600, fontSize: "11px", textTransform: "uppercase" }}>Status</th>
+                <th style={{ padding: "10px 12px", textAlign: "center", color: "#475569", fontWeight: 600, fontSize: "11px", textTransform: "uppercase" }}>Due Date</th>
+                <th style={{ padding: "10px 12px", textAlign: "center", color: "#475569", fontWeight: 600, fontSize: "11px", textTransform: "uppercase" }}>Assigned By</th>
+                <th style={{ padding: "10px 12px", textAlign: "center", color: "#475569", fontWeight: 600, fontSize: "11px", textTransform: "uppercase" }}>Score</th>
+              </tr>
+            </thead>
+            <tbody>
+              {enrolled.map(u => {
+                const isOverdue = u.dueDate && new Date(u.dueDate) < new Date() && u.status !== "completed";
+                return (
+                  <tr key={u.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                    <td style={{ padding: "12px" }}>
+                      <div style={{ fontWeight: 600, color: "#0f172a" }}>{u.userName}</div>
+                      <div style={{ fontSize: "11px", color: "#94a3b8" }}>{u.email}</div>
+                    </td>
+                    <td style={{ padding: "12px", textAlign: "center" }}>
+                      <span style={{ padding: "3px 10px", borderRadius: "10px", fontSize: "11px", fontWeight: 600,
+                        background: u.status === "completed" ? "#dcfce7" : u.status === "in_progress" ? "#fef3c7" : u.status === "failed" ? "#fee2e2" : "#f1f5f9",
+                        color: u.status === "completed" ? "#166534" : u.status === "in_progress" ? "#92400e" : u.status === "failed" ? "#991b1b" : "#475569"
+                      }}>
+                        {u.status === "completed" ? "✓ Completed" : u.status === "in_progress" ? "⟳ In Progress" : u.status === "failed" ? "✗ Failed" : "● Not Started"}
+                      </span>
+                    </td>
+                    <td style={{ padding: "12px", textAlign: "center" }}>
+                      {u.dueDate ? (
+                        <span style={{ color: isOverdue ? "#dc2626" : "#0f172a", fontWeight: isOverdue ? 700 : 500, fontSize: "13px" }}>
+                          {isOverdue ? "⚠ Overdue — " : ""}{new Date(u.dueDate).toLocaleDateString()}
+                        </span>
+                      ) : "—"}
+                    </td>
+                    <td style={{ padding: "12px", textAlign: "center", fontSize: "12px", color: "#475569" }}>{u.assignedByName || "—"}</td>
+                    <td style={{ padding: "12px", textAlign: "center", fontWeight: 600, color: u.score >= training.passingPercentage ? "#16a34a" : u.score != null ? "#dc2626" : "#94a3b8" }}>
+                      {u.score != null ? `${u.score}%` : "—"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function EnrollmentTab({ training, token }) {
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [signingOff, setSigningOff] = useState(null);
+  const [signOffNotes, setSignOffNotes] = useState("");
+  const [signOffProgressId, setSignOffProgressId] = useState(null);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const data = await getOjtTrainingUsers(token, training.id);
+      setUsers(Array.isArray(data.users) ? data.users : Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error("Error loading users:", e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, [token, training.id]);
+
+  const handleSignOff = async () => {
+    if (!signOffProgressId) return;
+    setSigningOff(signOffProgressId);
+    try {
+      await trainerOjtSignOff(token, signOffProgressId, { notes: signOffNotes });
+      setSignOffProgressId(null);
+      setSignOffNotes("");
+      await load();
+    } catch (e) {
+      alert("Sign-off failed: " + e.message);
+    } finally {
+      setSigningOff(null);
+    }
+  };
+
+  if (loading) return <p style={{ color: "#64748b", padding: "20px" }}>Loading enrollment data...</p>;
+
+  const today = new Date();
+  const completed = users.filter(u => u.status === "completed").length;
+  const inProgress = users.filter(u => u.status === "in_progress").length;
+  const avgScore = users.filter(u => u.score != null).length > 0
+    ? Math.round(users.filter(u => u.score != null).reduce((s, u) => s + u.score, 0) / users.filter(u => u.score != null).length)
+    : null;
+
+  return (
+    <Card style={{ padding: "24px" }}>
+      {/* Sign-off modal */}
+      {signOffProgressId && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ background: "#fff", borderRadius: "12px", padding: "28px", width: "420px", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
+            <h3 style={{ margin: "0 0 8px", fontSize: "17px", fontWeight: 700, color: "#0f172a" }}>Trainer Sign-Off</h3>
+            <p style={{ margin: "0 0 16px", color: "#64748b", fontSize: "13.5px" }}>Confirm practical competency verification for this technician.</p>
+            <textarea
+              placeholder="Sign-off notes (practical skills verified, observations, etc.)"
+              value={signOffNotes}
+              onChange={e => setSignOffNotes(e.target.value)}
+              style={{ width: "100%", minHeight: "90px", padding: "10px", borderRadius: "8px", border: "1px solid #e2e8f0", fontSize: "13px", resize: "vertical", boxSizing: "border-box" }}
+            />
+            <div style={{ display: "flex", gap: "10px", marginTop: "14px", justifyContent: "flex-end" }}>
+              <button onClick={() => { setSignOffProgressId(null); setSignOffNotes(""); }} style={{ padding: "8px 18px", border: "1px solid #e2e8f0", borderRadius: "8px", background: "#fff", cursor: "pointer", fontWeight: 600, fontSize: "13px" }}>Cancel</button>
+              <button onClick={handleSignOff} disabled={signingOff === signOffProgressId} style={{ padding: "8px 18px", border: "none", borderRadius: "8px", background: "#16a34a", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: "13px" }}>
+                {signingOff === signOffProgressId ? "Signing..." : "Confirm Sign-Off"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {users.length === 0 ? (
         <div style={{ textAlign: "center", padding: "40px", color: "#94a3b8" }}>
           <p style={{ fontSize: "14px", margin: 0 }}>No technicians have enrolled in this training yet.</p>
         </div>
       ) : (
         <>
-          <div style={{ marginBottom: "16px", padding: "12px", background: "#f8fafc", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
-            <p style={{ margin: 0, fontSize: "12px", color: "#475569", fontWeight: 600 }}>
-              Total Enrolled: <span style={{ color: "#2563eb", fontWeight: 700 }}>{users.length}</span> | 
-              Completed: <span style={{ color: "#16a34a", fontWeight: 700 }}>{users.filter(u => u.status === "completed").length}</span> | 
-              In Progress: <span style={{ color: "#ca8a04", fontWeight: 700 }}>{users.filter(u => u.status === "in_progress").length}</span>
-            </p>
+          {/* Summary stats */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "12px", marginBottom: "20px" }}>
+            {[
+              { label: "Total Enrolled", value: users.length, color: "#2563eb" },
+              { label: "Completed", value: completed, color: "#16a34a" },
+              { label: "In Progress", value: inProgress, color: "#ca8a04" },
+              { label: "Avg. Score", value: avgScore != null ? `${avgScore}%` : "—", color: avgScore >= training.passingPercentage ? "#16a34a" : avgScore != null ? "#dc2626" : "#64748b" },
+            ].map(({ label, value, color }) => (
+              <div key={label} style={{ padding: "12px 16px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0", textAlign: "center" }}>
+                <div style={{ fontSize: "22px", fontWeight: 700, color }}>{value}</div>
+                <div style={{ fontSize: "11px", color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.4px" }}>{label}</div>
+              </div>
+            ))}
           </div>
 
           <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13.5px" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
               <thead>
                 <tr style={{ background: "#f8fafc", borderBottom: "2px solid #e2e8f0" }}>
-                  <th style={{ padding: "12px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase" }}>Technician</th>
-                  <th style={{ padding: "12px", textAlign: "center", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase" }}>Status</th>
-                  <th style={{ padding: "12px", textAlign: "center", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase" }}>Modules Done</th>
-                  <th style={{ padding: "12px", textAlign: "center", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase" }}>Test Score</th>
-                  <th style={{ padding: "12px", textAlign: "center", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase" }}>Result</th>
-                  <th style={{ padding: "12px", textAlign: "center", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase" }}>Certificate</th>
+                  <th style={{ padding: "10px 12px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "11px", textTransform: "uppercase" }}>Technician</th>
+                  <th style={{ padding: "10px 12px", textAlign: "center", color: "#475569", fontWeight: 600, fontSize: "11px", textTransform: "uppercase" }}>Status</th>
+                  <th style={{ padding: "10px 12px", textAlign: "center", color: "#475569", fontWeight: 600, fontSize: "11px", textTransform: "uppercase" }}>Due Date</th>
+                  <th style={{ padding: "10px 12px", textAlign: "center", color: "#475569", fontWeight: 600, fontSize: "11px", textTransform: "uppercase" }}>Attempts</th>
+                  <th style={{ padding: "10px 12px", textAlign: "center", color: "#475569", fontWeight: 600, fontSize: "11px", textTransform: "uppercase" }}>Score</th>
+                  <th style={{ padding: "10px 12px", textAlign: "center", color: "#475569", fontWeight: 600, fontSize: "11px", textTransform: "uppercase" }}>Trainer Sign-Off</th>
+                  <th style={{ padding: "10px 12px", textAlign: "center", color: "#475569", fontWeight: 600, fontSize: "11px", textTransform: "uppercase" }}>Certificate</th>
                 </tr>
               </thead>
               <tbody>
                 {users.map(u => {
-                  const isPassed = u.score && u.score >= training.passingPercentage;
-                  const modulesCompleted = u.completedModules ? JSON.parse(u.completedModules || "[]").length : 0;
-                  const totalModules = training.modules?.length || 0;
+                  const isPassed = u.score != null && u.score >= training.passingPercentage;
+                  const isOverdue = u.dueDate && new Date(u.dueDate) < today && u.status !== "completed";
 
                   return (
                     <tr key={u.id} style={{ borderBottom: "1px solid #f1f5f9", backgroundColor: u.status === "completed" ? "#f0fdf4" : "#fff" }}>
                       <td style={{ padding: "12px" }}>
-                        <div style={{ fontWeight: 600, color: "#0f172a" }}>{u.fullName || u.userName || `User #${u.companyUserId}`}</div>
+                        <div style={{ fontWeight: 600, color: "#0f172a" }}>{u.userName || `User #${u.companyUserId}`}</div>
                         <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "2px" }}>{u.email || "—"}</div>
+                        {u.assignedByName && <div style={{ fontSize: "10px", color: "#94a3b8", marginTop: "2px" }}>Assigned by {u.assignedByName}</div>}
                       </td>
                       <td style={{ padding: "12px", textAlign: "center" }}>
-                        <span style={{
-                          padding: "4px 10px",
-                          borderRadius: "12px",
-                          fontSize: "11px",
-                          fontWeight: 600,
-                          background: u.status === "completed" ? "#dcfce7" : u.status === "in_progress" ? "#fef3c7" : "#f1f5f9",
-                          color: u.status === "completed" ? "#166534" : u.status === "in_progress" ? "#92400e" : "#475569"
+                        <span style={{ padding: "3px 10px", borderRadius: "10px", fontSize: "11px", fontWeight: 600,
+                          background: u.status === "completed" ? "#dcfce7" : u.status === "in_progress" ? "#fef3c7" : u.status === "failed" ? "#fee2e2" : "#f1f5f9",
+                          color: u.status === "completed" ? "#166534" : u.status === "in_progress" ? "#92400e" : u.status === "failed" ? "#991b1b" : "#475569"
                         }}>
-                          {u.status === "completed" ? "✓ Completed" : u.status === "in_progress" ? "⟳ In Progress" : "—"}
+                          {u.status === "completed" ? "✓ Completed" : u.status === "in_progress" ? "⟳ In Progress" : u.status === "failed" ? "✗ Failed" : "● Not Started"}
                         </span>
                       </td>
-                      <td style={{ padding: "12px", textAlign: "center", fontWeight: 600, color: "#0f172a" }}>
-                        {modulesCompleted}/{totalModules}
-                      </td>
                       <td style={{ padding: "12px", textAlign: "center" }}>
-                        {u.score !== null && u.score !== undefined ? (
+                        {u.dueDate ? (
                           <div>
-                            <span style={{ fontWeight: 700, fontSize: "14px", color: isPassed ? "#16a34a" : "#dc2626" }}>{u.score}%</span>
+                            <div style={{ fontWeight: 600, fontSize: "12.5px", color: isOverdue ? "#dc2626" : "#0f172a" }}>
+                              {new Date(u.dueDate).toLocaleDateString()}
+                            </div>
+                            {isOverdue && <div style={{ fontSize: "10px", color: "#dc2626", fontWeight: 700 }}>OVERDUE</div>}
                           </div>
-                        ) : (
-                          <span style={{ color: "#94a3b8" }}>—</span>
+                        ) : <span style={{ color: "#94a3b8" }}>—</span>}
+                      </td>
+                      <td style={{ padding: "12px", textAlign: "center", fontWeight: 700, color: (u.attemptNumber || 1) >= training.maxAttempts ? "#dc2626" : "#0f172a" }}>
+                        {u.attemptNumber || 1} / {training.maxAttempts}
+                        {(u.attemptNumber || 1) >= training.maxAttempts && u.status !== "completed" && (
+                          <div style={{ fontSize: "10px", color: "#dc2626" }}>Max attempts reached</div>
                         )}
                       </td>
                       <td style={{ padding: "12px", textAlign: "center" }}>
-                        {u.score !== null && u.score !== undefined ? (
-                          <span style={{
-                            padding: "4px 8px",
-                            borderRadius: "6px",
-                            fontSize: "11px",
-                            fontWeight: 600,
-                            background: isPassed ? "#dcfce7" : "#fee2e2",
-                            color: isPassed ? "#166534" : "#991b1b"
-                          }}>
-                            {isPassed ? "✓ PASS" : "✗ FAIL"}
-                          </span>
-                        ) : (
-                          <span style={{ color: "#94a3b8", fontSize: "12px" }}>Pending</span>
-                        )}
+                        {u.score != null ? (
+                          <>
+                            <span style={{ fontWeight: 700, fontSize: "14px", color: isPassed ? "#16a34a" : "#dc2626" }}>{u.score}%</span>
+                            <div style={{ fontSize: "10px", marginTop: "2px" }}>
+                              <span style={{ padding: "2px 6px", borderRadius: "6px", fontWeight: 700, background: isPassed ? "#dcfce7" : "#fee2e2", color: isPassed ? "#166534" : "#991b1b" }}>
+                                {isPassed ? "PASS" : "FAIL"}
+                              </span>
+                            </div>
+                          </>
+                        ) : <span style={{ color: "#94a3b8" }}>—</span>}
+                      </td>
+                      <td style={{ padding: "12px", textAlign: "center" }}>
+                        {u.trainerSignOffAt ? (
+                          <div>
+                            <span style={{ color: "#16a34a", fontWeight: 700, fontSize: "11px" }}>✓ Signed Off</span>
+                            <div style={{ fontSize: "10px", color: "#64748b" }}>{new Date(u.trainerSignOffAt).toLocaleDateString()}</div>
+                            {u.trainerSignOffNotes && <div style={{ fontSize: "10px", color: "#94a3b8", maxWidth: "120px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={u.trainerSignOffNotes}>{u.trainerSignOffNotes}</div>}
+                          </div>
+                        ) : isPassed && u.status === "completed" ? (
+                          <button onClick={() => setSignOffProgressId(u.id)} style={{ padding: "4px 10px", borderRadius: "6px", fontSize: "11px", fontWeight: 700, background: "#f0fdf4", color: "#16a34a", border: "1px solid #bbf7d0", cursor: "pointer" }}>
+                            Sign Off
+                          </button>
+                        ) : <span style={{ color: "#94a3b8", fontSize: "11px" }}>—</span>}
                       </td>
                       <td style={{ padding: "12px", textAlign: "center" }}>
                         {u.certificateUrl ? (
@@ -838,7 +1121,7 @@ function EnrollmentTab({ training, token }) {
                             <span style={{ color: "#16a34a", fontWeight: 700 }}>✓</span>
                             <a href={u.certificateUrl} target="_blank" rel="noopener noreferrer" style={{ color: "#2563eb", fontSize: "11px", textDecoration: "underline" }}>View</a>
                           </div>
-                        ) : isPassed && u.status === "completed" ? (
+                        ) : isPassed && u.status === "completed" && u.trainerSignOffAt ? (
                           <button onClick={async () => {
                             try {
                               await grantOjtCertificate(token, u.id);
@@ -846,11 +1129,9 @@ function EnrollmentTab({ training, token }) {
                               alert("Certificate granted!");
                             } catch (e) { alert("Failed: " + e.message); }
                           }} style={{ padding: "4px 10px", borderRadius: "6px", fontSize: "11px", fontWeight: 700, background: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe", cursor: "pointer" }}>
-                            Grant Certificate
+                            Grant
                           </button>
-                        ) : (
-                          <span style={{ color: "#94a3b8", fontSize: "12px" }}>—</span>
-                        )}
+                        ) : <span style={{ color: "#94a3b8", fontSize: "12px" }}>—</span>}
                       </td>
                     </tr>
                   );

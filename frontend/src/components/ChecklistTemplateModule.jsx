@@ -351,7 +351,9 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
     const companyId = form.companyId || (companies[0]?.id ?? "");
     if (!companyId) return;
     let cancelled = false;
-    setAssets([]);
+    // In edit mode, keep existing assets visible while re-fetching to prevent the
+    // asset dropdown from visually "deselecting" during the loading phase.
+    if (!isEdit) setAssets([]);
     const assetUrl = companyPortalMode
       ? `${API_BASE}/api/company-portal/assets`
       : `${API_BASE}/api/assets?companyId=${companyId}`;
@@ -364,11 +366,17 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
     return () => { cancelled = true; };
   }, [token, form.companyId]);  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Reset assetId when company or assetType changes (but not on the first render — edit mode should preserve assetId)
+  // Reset assetId when company or assetType changes, but only if the current asset
+  // is no longer valid for the new filter — never reset on the very first render so
+  // that edit mode preserves the saved assetId.
   useEffect(() => {
     if (isFirstRender.current) { isFirstRender.current = false; return; }
-    setForm((p) => ({ ...p, assetId: "" }));
-  }, [form.companyId, form.assetType]);  // eslint-disable-line react-hooks/exhaustive-deps
+    setForm((p) => {
+      const filtered = assets.filter((a) => !form.assetType || form.assetType === "generic" || (a.assetType || a.asset_type) === form.assetType);
+      const stillValid = filtered.some((a) => String(a.id) === String(p.assetId));
+      return stillValid ? p : { ...p, assetId: "" };
+    });
+  }, [form.companyId, form.assetType, assets]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const filteredChecklistAssets = useMemo(
     () => assets.filter((a) => !form.assetType || form.assetType === "generic" || (a.assetType || a.asset_type) === form.assetType),

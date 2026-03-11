@@ -179,6 +179,21 @@ export default function TechWorkOrdersScreen() {
                                                 <Text style={styles.woDesc} numberOfLines={2}>{wo.issueDescription}</Text>
                                             ) : null}
 
+                                            {/* Cutoff status badge */}
+                                            {wo.cutoffStatus === 'overdue' ? (
+                                                <View style={{ flexDirection: 'row', marginBottom: 6 }}>
+                                                    <View style={{ backgroundColor: '#FEE2E2', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 12 }}>
+                                                        <Text style={{ fontSize: 10, fontWeight: '700', color: '#991B1B' }}>⏰ OVERDUE</Text>
+                                                    </View>
+                                                </View>
+                                            ) : wo.cutoffStatus === 'at_risk' ? (
+                                                <View style={{ flexDirection: 'row', marginBottom: 6 }}>
+                                                    <View style={{ backgroundColor: '#FFEDD5', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 12 }}>
+                                                        <Text style={{ fontSize: 10, fontWeight: '700', color: '#9A3412' }}>⚠ Due Soon</Text>
+                                                    </View>
+                                                </View>
+                                            ) : null}
+
                                             {/* Footer */}
                                             <View style={styles.woFooter}>
                                                 {wo.assetName ? (

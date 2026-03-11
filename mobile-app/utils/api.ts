@@ -18,11 +18,11 @@ const getApiBase = () => {
   // Development URLs
   if (Platform.OS === 'android') {
     // For physical Android device, use your PC's IP
-    return 'http://192.168.1.28:4000';
+    return 'http://192.168.1.55:4000';
     // For Android emulator, use: return 'http://10.0.2.2:4000';
   } else if (Platform.OS === 'ios') {
     // For physical iOS device, use your PC's IP
-    return 'http://192.168.1.28:4000';
+    return 'http://192.168.1.55:4000';
     // For iOS simulator, use: return 'http://localhost:4000';
   } else {
     return 'http://localhost:4000'; // Web or other platforms
@@ -362,6 +362,8 @@ export interface TemplateDetails {
   assetType?: string;
   assetId?: number;
   assetName?: string;
+  shiftId?: number | null;
+  shiftName?: string | null;
   layoutType?: string;
   headerConfig?: TabularHeaderConfig | Record<string, any>;
   questions: Array<{
@@ -437,7 +439,9 @@ export async function submitChecklist(templateId: number, assetId: number | null
   
   if (!response.ok) {
     const error = await response.json();
-    throw new Error(error.message || 'Failed to submit checklist');
+    const err: any = new Error(error.message || 'Failed to submit checklist');
+    if (error.shiftLocked) { err.shiftLocked = true; err.shiftName = error.shiftName; }
+    throw err;
   }
 }
 
@@ -458,7 +462,9 @@ export async function submitTabularLogsheet(
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to submit' }));
-    throw new Error((error as any).message || 'Failed to submit tabular logsheet');
+    const err: any = new Error((error as any).message || 'Failed to submit tabular logsheet');
+    if ((error as any).shiftLocked) { err.shiftLocked = true; err.shiftName = (error as any).shiftName; }
+    throw err;
   }
 }
 
@@ -473,7 +479,9 @@ export async function submitLogsheet(templateId: number, assetId: number | null,
   
   if (!response.ok) {
     const error = await response.json();
-    throw new Error(error.message || 'Failed to submit logsheet');
+    const err: any = new Error(error.message || 'Failed to submit logsheet');
+    if (error.shiftLocked) { err.shiftLocked = true; err.shiftName = error.shiftName; }
+    throw err;
   }
 }
 
@@ -678,6 +686,42 @@ export async function updateWorkOrderStatus(id: number | string, status: string,
 }
 
 /**
+ * Get escalation history for a work order
+ */
+export async function getWorkOrderEscalationHistory(id: number | string): Promise<Array<{
+  id: number;
+  escalationLevel: number;
+  escalatedAt: string;
+  previousAssigneeName: string | null;
+  newAssigneeName: string | null;
+  reason: string | null;
+}>> {
+  const response = await authenticatedFetch(`/api/company-portal/work-orders/${id}/escalation-history`);
+  if (!response.ok) throw new Error('Failed to fetch escalation history');
+  return response.json();
+}
+
+/**
+ * Check if the current user is allowed to access content locked to a specific shift.
+ * Pass shiftId = null / undefined to get { allowed: true } (unrestricted).
+ */
+export async function checkShiftAccess(shiftId?: number | null): Promise<{
+  allowed: boolean;
+  shiftName?: string;
+  message?: string;
+}> {
+  const url = shiftId
+    ? `/api/shifts/check-access?shiftId=${shiftId}`
+    : `/api/shifts/check-access`;
+  const response = await authenticatedFetch(url);
+  if (!response.ok) {
+    // On network error, fail open to avoid blocking the user
+    return { allowed: true };
+  }
+  return response.json();
+}
+
+/**
  * Get assignment counts per team member (supervisor only)
  */
 export async function getTeamStats(): Promise<Array<{
@@ -842,11 +886,29 @@ export async function completeOjtModule(trainingId: number, moduleId: number): P
 export async function submitOjtTest(
   trainingId: number,
   answers: Record<number, string>
-): Promise<{ score: number; passed: boolean; status: string; passingPct: number }> {
+): Promise<{ score: number; passed: boolean; status: string; passingPct: number; attemptNumber: number; attemptsRemaining: number; maxAttempts: number }> {
   const response = await authenticatedFetch(
     `/api/company-portal/ojt/mobile/trainings/${trainingId}/submit-test`,
     { method: 'POST', body: JSON.stringify({ answers }) }
   );
   if (!response.ok) throw new Error('Failed to submit test');
+  return response.json();
+}
+
+/**
+ * Get all trainings assigned to the current user (including not_started ones).
+ */
+export async function getMyOjtAssignments(): Promise<any[]> {
+  const response = await authenticatedFetch('/api/company-portal/ojt/mobile/my-assignments');
+  if (!response.ok) throw new Error('Failed to fetch assignments');
+  return response.json();
+}
+
+/**
+ * Get the test attempt history for the current user for a specific training.
+ */
+export async function getOjtTestAttempts(trainingId: number): Promise<any[]> {
+  const response = await authenticatedFetch(`/api/company-portal/ojt/mobile/test-attempts/${trainingId}`);
+  if (!response.ok) throw new Error('Failed to fetch attempt history');
   return response.json();
 }

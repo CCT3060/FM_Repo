@@ -325,14 +325,15 @@ export default function WarningsPanel({ token, companyId: initialCompanyId, comp
                                 </button>
                               )}
                               {f.status === "resolved" && <span style={{ fontSize: "12px", color: "#22c55e", fontWeight: 700 }}>✓ Resolved</span>}
-                              {/* Work Order button */}
-                              {(f.status === "open" || f.status === "in_progress") && !f.workOrderId && !f.workOrderCreated && (
+                              {/* Work Order button — show whenever flag is open/in-progress and no WO has been
+                                  manually created via this panel. Auto-created WOs (workOrderId) do NOT hide the button. */}
+                              {(f.status === "open" || f.status === "in_progress") && !f.workOrderCreated && (
                                 <button disabled={isUpd} onClick={() => openWoModal(f)}
                                   style={{ padding: "5px 9px", borderRadius: "6px", border: "1px solid #fde68a", background: "#fefce8", color: "#92400e", fontSize: "11px", fontWeight: 700, cursor: "pointer", opacity: isUpd ? 0.5 : 1, whiteSpace: "nowrap" }}>
-                                  🔧 Work Order
+                                  🔧 Create Work Order
                                 </button>
                               )}
-                              {(f.workOrderId || f.workOrderCreated) && (
+                              {f.workOrderCreated && (
                                 <span style={{ padding: "4px 9px", borderRadius: "6px", background: "#f0fdf4", color: "#166534", fontSize: "11px", fontWeight: 700, border: "1px solid #86efac" }}>✓ WO Created</span>
                               )}
                             </div>

@@ -15,7 +15,6 @@ const poolInstance = new Pool({
   ssl: sslConfig,
   max: Number(process.env.DB_POOL_SIZE || 10),
   idleTimeoutMillis: 30000,
-  family: 4,
 });
 
 const isBulkRows = (value) => Array.isArray(value) && value.length > 0 && Array.isArray(value[0]);
