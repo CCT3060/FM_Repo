@@ -1252,7 +1252,7 @@ function AssignModal({ token, companyId, template, templateType, onClose }) {
               style={{ width: "100%", padding: "9px 12px", borderRadius: "8px", border: "1px solid #d1d5db", fontSize: "14px", marginBottom: "14px", background: "#fff" }}>
               <option value="">— Choose a user —</option>
               {users.map((u) => (
-                <option key={u.id} value={u.id}>{u.displayName || u.username || u.email || `User #${u.id}`}</option>
+                <option key={u.id} value={u.id}>{u.fullName || u.username || u.email || `User #${u.id}`}</option>
               ))}
             </select>
             <label style={{ fontSize: "13px", fontWeight: 600, color: "#374151", display: "block", marginBottom: "6px" }}>Note (optional)</label>
@@ -1335,7 +1335,7 @@ function TemplateList({ token, companies, assets, onBuild, onImport, onFill, fet
   return (
     <div>
       {viewTemplate && <LogsheetGridViewModal template={viewTemplate} token={token} onClose={() => setViewTemplate(null)} fetchGrid={fetchGrid} />}
-      {assignTarget && <AssignModal token={token} companyId={filterCompanyId || companies?.[0]?.id} template={assignTarget} templateType="logsheet" onClose={() => setAssignTarget(null)} />}
+      {assignTarget && <AssignModal token={token} companyId={assignTarget?.companyId || filterCompanyId || companies?.[0]?.id} template={assignTarget} templateType="logsheet" onClose={() => setAssignTarget(null)} />}
       {/* Header */}
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "22px" }}>
         <div>

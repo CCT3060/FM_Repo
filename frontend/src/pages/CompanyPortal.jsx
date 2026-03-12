@@ -87,6 +87,7 @@ const emptyUser = {
   role: "employee",
   status: "Active",
   password: "",
+  username: "",
 };
 
 const emptyAsset = {
@@ -1081,7 +1082,7 @@ const CompanyPortal = () => {
 
   const handleOpenEditUser = (u) => {
     setEditUserId(u.id);
-    setUserForm({ fullName: u.fullName, email: u.email, phone: u.phone || "", designation: u.designation || "", role: u.role || "employee", status: u.status, password: "" });
+    setUserForm({ fullName: u.fullName, email: u.email, phone: u.phone || "", designation: u.designation || "", role: u.role || "employee", status: u.status, password: "", username: u.username || "" });
     setUserFormError(null);
     setShowAddUserModal(true);
   };
@@ -1695,6 +1696,12 @@ const CompanyPortal = () => {
                             <option value="Active">Active</option>
                             <option value="Inactive">Inactive</option>
                           </select>
+                        </div>
+                        <div>
+                          <label style={{ display: "block", fontSize: "12.5px", fontWeight: "600", color: "#475569", marginBottom: "5px" }}>
+                            Username <span style={{ color: "#94a3b8", fontWeight: "400" }}>(for mobile login)</span>
+                          </label>
+                          <input name="username" value={userForm.username} onChange={handleUserFormChange} className="form-input" placeholder="e.g. john.doe" style={{ width: "100%" }} />
                         </div>
                         <div>
                           <label style={{ display: "block", fontSize: "12.5px", fontWeight: "600", color: "#475569", marginBottom: "5px" }}>Password{!editUserId && <span style={{ color: "#ef4444", marginLeft: "2px" }}>*</span>}{editUserId && <span style={{ color: "#94a3b8", fontWeight: "400", marginLeft: "4px" }}>(leave blank to keep)</span>}</label>

@@ -25,7 +25,9 @@ const router = Router();
     `);
     // Patch existing tables that were created before the role column was added
     await pool.query(`ALTER TABLE company_users ADD COLUMN IF NOT EXISTS role VARCHAR(60) NOT NULL DEFAULT 'employee'`);
+    await pool.query(`ALTER TABLE company_users ADD COLUMN IF NOT EXISTS username VARCHAR(100) NULL`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_company_users_email ON company_users(email)`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_company_users_username ON company_users(LOWER(username)) WHERE username IS NOT NULL`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_company_users_company ON company_users(company_id)`);
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -62,6 +64,7 @@ router.get("/", async (req, res, next) => {
               designation,
               role,
               status,
+              username,
               created_at   AS "createdAt"
        FROM company_users
        WHERE company_id = ?
@@ -77,7 +80,7 @@ router.get("/", async (req, res, next) => {
 // ── POST /api/company-users ───────────────────────────────────────────────────
 router.post("/", async (req, res, next) => {
   try {
-    const { companyId, fullName, email, phone, designation, role = "employee", status = "Active", password } = req.body;
+    const { companyId, fullName, email, phone, designation, role = "employee", status = "Active", password, username } = req.body;
 
     if (!companyId || !fullName || !email) {
       return res.status(400).json({ message: "companyId, fullName and email are required" });
@@ -92,8 +95,8 @@ router.post("/", async (req, res, next) => {
     }
 
     const [rows] = await pool.query(
-      `INSERT INTO company_users (company_id, full_name, email, phone, designation, role, status, password_hash)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO company_users (company_id, full_name, email, phone, designation, role, status, password_hash, username)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        RETURNING id,
                  company_id   AS "companyId",
                  full_name    AS "fullName",
@@ -102,13 +105,15 @@ router.post("/", async (req, res, next) => {
                  designation,
                  role,
                  status,
+                 username,
                  created_at   AS "createdAt"`,
-      [Number(companyId), fullName, email, phone || null, designation || null, role, status, passwordHash]
+      [Number(companyId), fullName, email, phone || null, designation || null, role, status, passwordHash, username || null]
     );
 
     res.status(201).json(rows[0]);
   } catch (err) {
     if (err.code === "23505") {
+      if (err.constraint === "uq_company_users_username") return res.status(409).json({ message: "A user with this username already exists" });
       return res.status(409).json({ message: "A user with this email already exists" });
     }
     next(err);
@@ -119,7 +124,7 @@ router.post("/", async (req, res, next) => {
 router.put("/:id", async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { fullName, email, phone, designation, role, status, password } = req.body;
+    const { fullName, email, phone, designation, role, status, password, username } = req.body;
 
     if (!fullName || !email) {
       return res.status(400).json({ message: "fullName and email are required" });
@@ -136,7 +141,7 @@ router.put("/:id", async (req, res, next) => {
     if (!check.length) return res.status(403).json({ message: "Access denied" });
 
     let passwordClause = "";
-    const params = [fullName, email, phone || null, designation || null, role || "employee", status || "Active"];
+    const params = [fullName, email, phone || null, designation || null, role || "employee", status || "Active", username || null];
     if (password) {
       const passwordHash = await bcrypt.hash(password, 10);
       passwordClause = ", password_hash = ?";
@@ -146,7 +151,7 @@ router.put("/:id", async (req, res, next) => {
 
     const [rows] = await pool.query(
       `UPDATE company_users
-       SET full_name = ?, email = ?, phone = ?, designation = ?, role = ?, status = ?${passwordClause}, updated_at = NOW()
+       SET full_name = ?, email = ?, phone = ?, designation = ?, role = ?, status = ?, username = ?${passwordClause}, updated_at = NOW()
        WHERE id = ?
        RETURNING id,
                  company_id   AS "companyId",
@@ -155,13 +160,15 @@ router.put("/:id", async (req, res, next) => {
                  phone,
                  designation,
                  role,
-                 status`,
+                 status,
+                 username`,
       params
     );
 
     res.json(rows[0]);
   } catch (err) {
     if (err.code === "23505") {
+      if (err.constraint === "uq_company_users_username") return res.status(409).json({ message: "A user with this username already exists" });
       return res.status(409).json({ message: "A user with this email already exists" });
     }
     next(err);
