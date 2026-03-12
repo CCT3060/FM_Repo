@@ -572,7 +572,7 @@ function AssignModal({ token, companyId, template, templateType, onClose, compan
   const [err, setErr] = useState(null);
 
   useEffect(() => {
-    if (!companyId) { setLoadingUsers(false); return; }
+    if (!companyPortalMode && !companyId) { setLoadingUsers(false); return; }
     const usersUrl = companyPortalMode
       ? `${API_BASE}/api/company-portal/employees`
       : `${API_BASE}/api/company-users?companyId=${companyId}`;
@@ -581,7 +581,7 @@ function AssignModal({ token, companyId, template, templateType, onClose, compan
       .then((d) => setUsers(Array.isArray(d) ? d : []))
       .catch(() => setUsers([]))
       .finally(() => setLoadingUsers(false));
-  }, [token, companyId]);
+  }, [token, companyId, companyPortalMode]);
 
   const handleSubmit = async () => {
     if (!selectedUser) { setErr("Please select a user."); return; }

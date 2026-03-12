@@ -51,6 +51,7 @@ import SubmissionsPanel from "../components/SubmissionsPanel.jsx";
 import WarningsPanel from "../components/WarningsPanel.jsx";
 import AssetDashboard from "../components/AssetDashboard.jsx";
 import { useAlertSound } from "../hooks/useAlertSound";
+import QRCode from "qrcode";
 
 const TOKEN_KEY = "company_portal_token";
 
@@ -178,6 +179,8 @@ const CompanyPortal = () => {
   const [assetLoading, setAssetLoading] = useState(false);
   const [assetError, setAssetError] = useState(null);
   const [showAssetModal, setShowAssetModal] = useState(false);
+  const [assetQrModal, setAssetQrModal] = useState(null);
+  const [assetQrDataUrl, setAssetQrDataUrl] = useState("");
   const [assetSearch, setAssetSearch] = useState("");
   const [assetTypeFilter, setAssetTypeFilter] = useState("all");
   const [editingAssetId, setEditingAssetId] = useState(null);
@@ -217,6 +220,27 @@ const CompanyPortal = () => {
   const [logsheetShowAll, setLogsheetShowAll] = useState(false);
   const [checklistShowAll, setChecklistShowAll] = useState(false);
   const [detailModal, setDetailModal] = useState({ open: false, type: null, data: null, loading: false, error: null });
+
+  const getQrBaseUrl = () => {
+    try {
+      const u = new URL(import.meta.env.VITE_API_URL || "");
+      if (u.hostname !== "localhost" && u.hostname !== "127.0.0.1") {
+        return `${u.protocol}//${u.hostname}:5173`;
+      }
+    } catch {}
+    return window.location.origin;
+  };
+
+  const handleShowAssetQR = async (assetId, assetName) => {
+    try {
+      const url = `${getQrBaseUrl()}/asset-scan/${assetId}`;
+      const dataUrl = await QRCode.toDataURL(url, { width: 300, margin: 2 });
+      setAssetQrDataUrl(dataUrl);
+      setAssetQrModal({ assetId, assetName, url });
+    } catch (err) {
+      alert("QR generation failed: " + err.message);
+    }
+  };
 
   const openDetail = async (type, id) => {
     setDetailModal({ open: true, type, data: null, loading: true, error: null });
@@ -2367,6 +2391,10 @@ const CompanyPortal = () => {
                             </td>
                             <td style={{ padding: "12px 16px" }}>
                               <div style={{ display: "flex", gap: "6px" }}>
+                                <button title="Show QR Code" type="button" onClick={() => handleShowAssetQR(a.id, a.assetName)}
+                                  style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#f0fdf4", color: "#16a34a", border: "none", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                                </button>
                                 <button title="Edit" type="button" onClick={() => handleEditAsset(a)}
                                   style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#eff6ff", color: "#2563eb", border: "none", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
                                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
@@ -2538,6 +2566,41 @@ const CompanyPortal = () => {
                   </div>
                 </form>
               </div>
+              </div>
+            )}
+            {assetQrModal && (
+              <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
+                <div style={{ background: "#fff", borderRadius: "16px", width: "100%", maxWidth: "360px", padding: "32px", textAlign: "center", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
+                  <h3 style={{ margin: "0 0 4px", fontSize: "18px", fontWeight: 800, color: "#0f172a" }}>Asset QR Code</h3>
+                  <p style={{ margin: "0 0 20px", fontSize: "13px", color: "#64748b" }}>{assetQrModal.assetName}</p>
+                  {assetQrDataUrl ? (
+                    <img src={assetQrDataUrl} alt="QR Code" style={{ width: "220px", height: "220px", borderRadius: "12px", border: "1px solid #e2e8f0" }} />
+                  ) : (
+                    <p style={{ color: "#94a3b8" }}>Generating QR...</p>
+                  )}
+                  <p style={{ marginTop: "16px", fontSize: "11px", color: "#94a3b8" }}>Scan to view asset details and training on mobile</p>
+                  <div style={{ display: "flex", gap: "10px", marginTop: "20px", justifyContent: "center", flexWrap: "wrap" }}>
+                    {assetQrDataUrl && (
+                      <a href={assetQrDataUrl} download={`QR-${assetQrModal.assetName.replace(/[^a-zA-Z0-9]/g, "_")}-${assetQrModal.assetId}.png`} style={{ padding: "8px 18px", borderRadius: "8px", background: "#2563eb", color: "#fff", textDecoration: "none", fontSize: "13px", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        Download QR
+                      </a>
+                    )}
+                    {assetQrDataUrl && (
+                      <button onClick={() => {
+                        const w = window.open("", "_blank");
+                        w.document.write(`<html><head><title>QR - ${assetQrModal.assetName}</title><style>body{margin:0;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:sans-serif;background:#fff} h3{margin-bottom:8px;font-size:18px;color:#0f172a} p{margin:0 0 16px;color:#64748b;font-size:13px}</style></head><body><h3>${assetQrModal.assetName}</h3><p>Scan to open on mobile</p><img src="${assetQrDataUrl}" style="width:260px;height:260px"/></body></html>`);
+                        w.document.close();
+                        w.focus();
+                        setTimeout(() => { w.print(); }, 400);
+                      }} style={{ padding: "8px 18px", borderRadius: "8px", background: "#f0fdf4", color: "#16a34a", border: "1px solid #bbf7d0", cursor: "pointer", fontSize: "13px", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                        Print QR
+                      </button>
+                    )}
+                    <button onClick={() => { setAssetQrModal(null); setAssetQrDataUrl(""); }} style={{ padding: "8px 18px", borderRadius: "8px", background: "#f1f5f9", color: "#475569", border: "none", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>Close</button>
+                  </div>
+                </div>
               </div>
             )}
             </>)} {/* end assetSubNav === "manage" */}

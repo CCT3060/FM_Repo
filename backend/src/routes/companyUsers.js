@@ -37,11 +37,12 @@ const router = Router();
 
 router.use(requireAuth);
 
-// Verify company belongs to request user; returns true if allowed
-const verifyCompanyOwner = async (companyId, userId) => {
+// Verify company exists and the authenticated admin has access to it.
+// All platform admins have equal access to all companies.
+const verifyCompanyOwner = async (companyId) => {
   const [rows] = await pool.query(
-    "SELECT id FROM companies WHERE id = ? AND user_id = ?",
-    [companyId, userId]
+    "SELECT id FROM companies WHERE id = ?",
+    [companyId]
   );
   return rows.length > 0;
 };
@@ -52,7 +53,7 @@ router.get("/", async (req, res, next) => {
     const companyId = Number(req.query.companyId);
     if (!companyId) return res.status(400).json({ message: "companyId is required" });
 
-    const ok = await verifyCompanyOwner(companyId, req.user.id);
+    const ok = await verifyCompanyOwner(companyId);
     if (!ok) return res.status(403).json({ message: "Access denied" });
 
     const [rows] = await pool.query(
@@ -86,7 +87,7 @@ router.post("/", async (req, res, next) => {
       return res.status(400).json({ message: "companyId, fullName and email are required" });
     }
 
-    const ok = await verifyCompanyOwner(Number(companyId), req.user.id);
+    const ok = await verifyCompanyOwner(Number(companyId));
     if (!ok) return res.status(403).json({ message: "Access denied" });
 
     let passwordHash = null;
@@ -130,13 +131,13 @@ router.put("/:id", async (req, res, next) => {
       return res.status(400).json({ message: "fullName and email are required" });
     }
 
-    // Ensure user belongs to a company owned by the requester
+    // Ensure user belongs to a valid company
     const [check] = await pool.query(
       `SELECT cu.id
        FROM company_users cu
        JOIN companies c ON c.id = cu.company_id
-       WHERE cu.id = ? AND c.user_id = ?`,
-      [id, req.user.id]
+       WHERE cu.id = ?`,
+      [id]
     );
     if (!check.length) return res.status(403).json({ message: "Access denied" });
 
@@ -184,8 +185,8 @@ router.delete("/:id", async (req, res, next) => {
       `SELECT cu.id
        FROM company_users cu
        JOIN companies c ON c.id = cu.company_id
-       WHERE cu.id = ? AND c.user_id = ?`,
-      [id, req.user.id]
+       WHERE cu.id = ?`,
+      [id]
     );
     if (!check.length) return res.status(403).json({ message: "Access denied" });
 

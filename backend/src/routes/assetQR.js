@@ -33,7 +33,7 @@ router.get("/:assetId", async (req, res, next) => {
       `SELECT a.id, a.asset_name AS "assetName", a.asset_unique_id AS "assetUniqueId",
               a.asset_type AS "assetType", a.status, a.building, a.floor, a.room,
               a.company_id AS "companyId",
-              c.name AS "companyName",
+              c.company_name AS "companyName",
               d.name AS "departmentName",
               ad.metadata, ad.documents
        FROM assets a
@@ -54,16 +54,17 @@ router.get("/:assetId", async (req, res, next) => {
     // Logsheet templates assigned to this asset
     const [logsheetTemplates] = await pool.query(
       `SELECT lt.id, lt.template_name AS "templateName", lt.frequency,
-              lt.shift, lt.status, lt.columns, lt.header_fields AS "headerFields"
+              lt.shift_id AS "shiftId", lt.layout_type AS "layoutType",
+              lt.header_config AS "headerConfig", lt.asset_type AS "assetType",
+              lt.description
        FROM logsheet_templates lt
-       WHERE lt.asset_id = ? AND lt.status = 'active'
+       WHERE lt.asset_id = ? AND lt.is_active = 1
        ORDER BY lt.template_name`,
       [assetId]
     );
     const normalizedLS = logsheetTemplates.map((t) => ({
       ...t,
-      columns: safeParse(t.columns) || [],
-      headerFields: safeParse(t.headerFields) || [],
+      headerConfig: safeParse(t.headerConfig) || {},
     }));
 
     // Checklist templates for this asset's type
