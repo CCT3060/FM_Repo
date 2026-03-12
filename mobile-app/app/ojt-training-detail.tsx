@@ -264,18 +264,19 @@ export default function OjtTrainingDetailScreen() {
     const [answers, setAnswers] = useState<Record<number, string>>({});
     const [submitting, setSubmitting] = useState(false);
     const [testResult, setTestResult] = useState<{ score: number; passed: boolean; earned: number; totalMarks: number; passingPct: number; attemptNumber?: number; attemptsRemaining?: number; maxAttempts?: number } | null>(null);
+    const [errorState, setErrorState] = useState<string | null>(null);
     const scrollRef = useRef<ScrollView>(null);
 
     const loadTraining = async () => {
         setLoading(true);
+        setErrorState(null);
         try {
             const data = await getOjtTrainingDetail(id!);
             setTraining(data);
             // expand first incomplete module
             if (data.modules?.length) setExpandedModule(data.modules[0].id);
-        } catch (e) {
-            Alert.alert('Error', 'Failed to load training details');
-            router.back();
+        } catch (e: any) {
+            setErrorState(e.message || 'Failed to load training details');
         } finally {
             setLoading(false);
         }
@@ -283,7 +284,7 @@ export default function OjtTrainingDetailScreen() {
 
     useEffect(() => { if (id) loadTraining(); }, [id]);
 
-    if (loading || !training) {
+    if (loading) {
         return (
             <SafeAreaView style={styles.container}>
                 <View style={styles.center}>
@@ -294,9 +295,26 @@ export default function OjtTrainingDetailScreen() {
         );
     }
 
+    if (errorState || !training) {
+        return (
+            <SafeAreaView style={styles.container}>
+                <View style={styles.center}>
+                    <MaterialCommunityIcons name="alert-circle-outline" size={48} color="#DC2626" />
+                    <Text style={[styles.loadingText, { color: '#DC2626', marginTop: 12, textAlign: 'center', paddingHorizontal: 24 }]}>
+                        {errorState || 'Training not found'}
+                    </Text>
+                    <TouchableOpacity onPress={() => router.back()} style={{ marginTop: 20, backgroundColor: '#2563EB', paddingVertical: 12, paddingHorizontal: 28, borderRadius: 10 }}>
+                        <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 15 }}>Go Back</Text>
+                    </TouchableOpacity>
+                </View>
+            </SafeAreaView>
+        );
+    }
+
     const progress = training.myProgress;
     const completedModuleIds: number[] = Array.isArray(progress?.completedModules) ? progress!.completedModules : [];
-    const totalModules = training.modules.length;
+    const modules = training.modules || [];
+    const totalModules = modules.length;
     const completedCount = completedModuleIds.length;
     const allModulesDone = completedCount >= totalModules;
     const progressPct = totalModules > 0 ? Math.round((completedCount / totalModules) * 100) : 0;
@@ -662,10 +680,10 @@ export default function OjtTrainingDetailScreen() {
 
                 {/* Modules */}
                 <Text style={styles.sectionTitle}>📚 Training Modules</Text>
-                {training.modules.map((m, idx) => {
+                {modules.map((m, idx) => {
                     const isDone = completedModuleIds.includes(m.id);
                     const isExpanded = expandedModule === m.id;
-                    const prevDone = idx === 0 || completedModuleIds.includes(training.modules[idx - 1].id);
+                    const prevDone = idx === 0 || completedModuleIds.includes(modules[idx - 1].id);
                     const isLocked = (isSequential && !prevDone && !isDone) || (!progress && idx > 0);
 
                     return (

@@ -853,8 +853,21 @@ export async function getMyOjtTrainings(): Promise<any[]> {
  * and the logged-in user's progress.
  */
 export async function getOjtTrainingDetail(id: string | number): Promise<any> {
+  const token = await getAuthToken();
+  if (!token) {
+    throw new Error('Please log in to view training details');
+  }
   const response = await authenticatedFetch(`/api/company-portal/ojt/mobile/trainings/${id}`);
-  if (!response.ok) throw new Error('Training not found');
+  if (response.status === 401 || response.status === 403) {
+    throw new Error('Session expired. Please log in again.');
+  }
+  if (response.status === 404) {
+    throw new Error('Training not found or not yet published. Please contact your admin.');
+  }
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error((err as any).message || 'Failed to load training');
+  }
   return response.json();
 }
 

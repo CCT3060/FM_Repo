@@ -10,6 +10,7 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import { getAuthToken } from '../utils/api';
 
 export default function QRScannerScreen() {
     const [permission, requestPermission] = useCameraPermissions();
@@ -29,7 +30,23 @@ export default function QRScannerScreen() {
         // Match /ojt-training/:id path pattern (OJT training QR codes)
         const ojtMatch = data.match(/\/ojt-training\/(\d+)/);
         if (ojtMatch) {
-            router.replace({ pathname: '/ojt-training-detail', params: { id: ojtMatch[1] } } as any);
+            getAuthToken().then(token => {
+                if (token) {
+                    router.replace({ pathname: '/ojt-training-detail', params: { id: ojtMatch[1] } } as any);
+                } else {
+                    Alert.alert(
+                        'Login Required',
+                        'Please log in to view OJT training details.',
+                        [
+                            { text: 'Log In', onPress: () => router.replace('/employee-login' as any) },
+                            { text: 'Cancel', onPress: () => setScanned(false) },
+                        ]
+                    );
+                }
+            }).catch(() => {
+                setScanned(false);
+                Alert.alert('Error', 'Failed to verify session. Please try again.');
+            });
             return;
         }
 

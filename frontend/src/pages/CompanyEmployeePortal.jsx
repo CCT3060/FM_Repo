@@ -2351,6 +2351,7 @@ export default function CompanyEmployeePortal() {
       load("fleet_history", () => getFleetSubmissions(token)).then((d) => d && setFleetHistory(d));
       if (!checklists.length) getCompanyPortalChecklists(token).then((d) => d && setChecklists(d)).catch(() => {});
       if (!logsheetTemplatesList.length) getCompanyPortalLogsheetTemplates(token).then((d) => d && setLogsheetTemplatesList(d)).catch(() => {});
+      if (!employees.length) getCompanyPortalEmployees(token).then((d) => d && setEmployees(d)).catch(() => {});
     }
   }, [nav, token, load, assets.length]);
 
