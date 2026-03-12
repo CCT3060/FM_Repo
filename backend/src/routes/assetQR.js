@@ -80,13 +80,13 @@ router.get("/:assetId", async (req, res, next) => {
       questions: safeParse(t.questions) || [],
     }));
 
-    // OJT Trainings linked to this asset (published only)
+    // OJT Trainings linked to this asset (published only, same company as asset)
     const [ojtTrainings] = await pool.query(
       `SELECT id, title, description, passing_percentage AS "passingPercentage"
        FROM ojt_trainings
-       WHERE asset_id = ? AND status = 'published'
+       WHERE asset_id = ? AND company_id = ? AND status = 'published'
        ORDER BY created_at DESC`,
-      [assetId]
+      [assetId, asset.companyId]
     );
 
     res.json({

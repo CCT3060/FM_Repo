@@ -273,9 +273,10 @@ export default function OjtTrainingDetailScreen() {
             setTraining(data);
             // expand first incomplete module
             if (data.modules?.length) setExpandedModule(data.modules[0].id);
-        } catch (e) {
-            Alert.alert('Error', 'Failed to load training details');
-            router.back();
+        } catch (e: any) {
+            Alert.alert('Error', e.message || 'Failed to load training details', [
+                { text: 'OK', onPress: () => router.back() },
+            ]);
         } finally {
             setLoading(false);
         }

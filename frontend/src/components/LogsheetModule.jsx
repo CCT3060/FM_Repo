@@ -1200,7 +1200,7 @@ const tdStyle = { padding: "4px 4px", border: "1px solid #e2e8f0", textAlign: "c
 /* ─────────────────────────────────────────────────────────────────
    Assign Modal  (assign a logsheet template to a user)
 ───────────────────────────────────────────────────────────────── */
-function AssignModal({ token, companyId, template, templateType, onClose }) {
+function AssignModal({ token, companyId, template, templateType, onClose, companyPortalMode = false }) {
   const [users, setUsers] = useState([]);
   const [loadingUsers, setLoadingUsers] = useState(true);
   const [selectedUser, setSelectedUser] = useState("");
@@ -1209,13 +1209,16 @@ function AssignModal({ token, companyId, template, templateType, onClose }) {
   const [err, setErr] = useState(null);
 
   useEffect(() => {
-    if (!companyId) { setLoadingUsers(false); return; }
-    fetch(`${API_BASE}/api/company-users?companyId=${companyId}`, { headers: { Authorization: `Bearer ${token}` } })
+    if (!companyPortalMode && !companyId) { setLoadingUsers(false); return; }
+    const usersUrl = companyPortalMode
+      ? `${API_BASE}/api/company-portal/employees`
+      : `${API_BASE}/api/company-users?companyId=${companyId}`;
+    fetch(usersUrl, { headers: { Authorization: `Bearer ${token}` } })
       .then((r) => r.json())
       .then((d) => setUsers(Array.isArray(d) ? d : []))
       .catch(() => setUsers([]))
       .finally(() => setLoadingUsers(false));
-  }, [token, companyId]);
+  }, [token, companyId, companyPortalMode]);
 
   const handleSubmit = async () => {
     if (!selectedUser) { setErr("Please select a user."); return; }
@@ -1276,7 +1279,7 @@ function AssignModal({ token, companyId, template, templateType, onClose }) {
 /* ─────────────────────────────────────────────────────────────────
    Template List (main view)
 ───────────────────────────────────────────────────────────────── */
-function TemplateList({ token, companies, assets, onBuild, onImport, onFill, fetchTemplates, onEdit, onDelete, canBuild, fetchGrid }) {
+function TemplateList({ token, companies, assets, onBuild, onImport, onFill, fetchTemplates, onEdit, onDelete, canBuild, fetchGrid, companyPortalMode = false }) {
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -1335,7 +1338,7 @@ function TemplateList({ token, companies, assets, onBuild, onImport, onFill, fet
   return (
     <div>
       {viewTemplate && <LogsheetGridViewModal template={viewTemplate} token={token} onClose={() => setViewTemplate(null)} fetchGrid={fetchGrid} />}
-      {assignTarget && <AssignModal token={token} companyId={assignTarget?.companyId || filterCompanyId || companies?.[0]?.id} template={assignTarget} templateType="logsheet" onClose={() => setAssignTarget(null)} />}
+      {assignTarget && <AssignModal token={token} companyId={assignTarget?.companyId || filterCompanyId || companies?.[0]?.id} template={assignTarget} templateType="logsheet" onClose={() => setAssignTarget(null)} companyPortalMode={companyPortalMode} />}
       {/* Header */}
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "22px" }}>
         <div>
@@ -1677,6 +1680,7 @@ export default function LogsheetModule({ token, assets, companies, shifts = [], 
         onDelete={canBuild && deleteTemplate ? handleDelete : null}
         canBuild={canBuild}
         fetchGrid={fetchGrid}
+        companyPortalMode={companyPortalMode}
       />
     </>
   );
