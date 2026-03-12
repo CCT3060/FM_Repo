@@ -164,8 +164,10 @@ const CompanyPortal = () => {
   const [companyLoading, setCompanyLoading] = useState(false);
   const [nav, setNav] = useState(() => localStorage.getItem("portal_nav") || "dashboard");
   const [checklistSubNav, setChecklistSubNav] = useState("templates");
+  const [checklistSelectedCompanyId, setChecklistSelectedCompanyId] = useState(null);
   const [assetSubNav, setAssetSubNav] = useState("dashboard");
   const [logsheetSubNav, setLogsheetSubNav] = useState("templates");
+  const [logsheetSelectedCompanyId, setLogsheetSelectedCompanyId] = useState(null);
   const [showAddForm, setShowAddForm] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -317,7 +319,8 @@ const CompanyPortal = () => {
         ? a.assetName?.toLowerCase().includes(term) ||
           a.assetUniqueId?.toLowerCase().includes(term) ||
           a.building?.toLowerCase().includes(term) ||
-          a.room?.toLowerCase().includes(term)
+          a.room?.toLowerCase().includes(term) ||
+          a.companyName?.toLowerCase().includes(term)
         : true;
       return matchesType && matchesTerm;
     });
@@ -474,11 +477,10 @@ const CompanyPortal = () => {
 
   useEffect(() => {
     if (token && nav === "assets") {
-      const companyId = selectedCompanyId || companies[0]?.id;
-      if (companyId) {
-        loadAssets(token, companyId).catch(() => {});
-        setAssetForm((prev) => ({ ...prev, companyId }));
-      }
+      // Load assets for ALL companies (no companyId filter)
+      loadAssets(token, null).catch(() => {});
+      const defaultCompanyId = selectedCompanyId || companies[0]?.id;
+      if (defaultCompanyId) setAssetForm((prev) => ({ ...prev, companyId: defaultCompanyId }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, nav, selectedCompanyId]);
@@ -1469,20 +1471,6 @@ const CompanyPortal = () => {
           <button className={nav === "assets" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("assets"); setShowAddForm(false); }}>Assets</button>
           <button className={nav === "checklists" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("checklists"); setShowAddForm(false); }}>Checklists</button>
           <button className={nav === "logsheets" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("logsheets"); setShowAddForm(false); }}>Logsheets</button>
-          <button
-            className={nav === "warnings" ? "client-side-item active" : "client-side-item"}
-            onClick={() => { setNav("warnings"); setShowAddForm(false); }}
-            style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "6px" }}
-          >
-            <span>Warnings</span>
-            {warnOpenCount > 0 && (
-              <span style={{ background: nav === "warnings" ? "#fff" : "#dc2626", color: nav === "warnings" ? "#dc2626" : "#fff", borderRadius: "20px", fontSize: "10px", fontWeight: 800, padding: "1px 7px", minWidth: "18px", textAlign: "center" }}>
-                {warnOpenCount}
-              </span>
-            )}
-          </button>
-          <button className="client-side-item" disabled>Contacts</button>
-          <button className="client-side-item" disabled>Documents</button>
         </nav>
         <div className="client-side-footer">
           <button className="client-side-item" disabled>Settings</button>
@@ -2264,151 +2252,121 @@ const CompanyPortal = () => {
               {assetSubNav === "dashboard" && (
                 <AssetDashboard
                   token={token}
-                  companyId={selectedCompanyId || companies[0]?.id}
+                  companyId={null}
                   assetList={assets}
                 />
               )}
 
-              {/* ── Manage sub-tab (original content below) ── */}
+              {/* ── Manage sub-tab ── */}
               {assetSubNav === "manage" && (<>
               {/* Header */}
-              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "22px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "22px" }}>
                 <div>
-                  <h1 style={{ fontSize: "26px", fontWeight: "800", color: "#0f172a", marginBottom: "4px", letterSpacing: "-0.5px" }}>Asset Management</h1>
-                  <p style={{ color: "#64748b", fontSize: "14px" }}>Manage assets across Soft, Technical, and Fleet categories.</p>
+                  <h1 style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px", marginBottom: "4px" }}>Asset Management</h1>
+                  <p style={{ color: "#64748b", fontSize: "13.5px" }}>Manage assets across Soft, Technical, and Fleet categories.</p>
                 </div>
                 <button type="button"
                   onClick={() => { const defaultCompany = selectedCompanyId || companies[0]?.id || ""; setAssetForm({ ...emptyAsset, companyId: defaultCompany }); setEditingAssetId(null); setShowAssetModal(true); }}
                   disabled={!companies.length}
-                  style={{ display: "flex", alignItems: "center", gap: "8px", background: companies.length ? "#2563eb" : "#94a3b8", color: "#fff", border: "none", borderRadius: "8px", padding: "10px 20px", fontWeight: "600", fontSize: "14px", cursor: companies.length ? "pointer" : "not-allowed", boxShadow: "0 1px 3px rgba(37,99,235,0.4)" }}>
-                  + Add Asset
+                  style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 16px", borderRadius: "8px", fontSize: "13.5px", fontWeight: 600, cursor: companies.length ? "pointer" : "not-allowed", border: "none", background: companies.length ? "#2563eb" : "#94a3b8", color: "#fff", opacity: companies.length ? 1 : 0.6 }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                  Add Asset
                 </button>
               </div>
 
-              {/* Stat Cards */}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px", marginBottom: "24px" }}>
-                {[
-                  { label: "Total Assets", value: assetTotalCount, sub: "All registered assets", subColor: "#64748b", iconBg: "#dbeafe", iconColor: "#2563eb", icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg> },
-                  { label: "Active Assets", value: assetActiveCount, sub: "✓ Active", subColor: "#22c55e", iconBg: "#f0fdf4", iconColor: "#22c55e", icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> },
-                  { label: "Inactive Assets", value: assetInactiveCount, sub: "⏸ Inactive", subColor: "#f59e0b", iconBg: "#fffbeb", iconColor: "#f59e0b", icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg> },
-                  { label: "Asset Types", value: assetTypesCount, sub: "Registered types", subColor: "#64748b", iconBg: "#f3e8ff", iconColor: "#7c3aed", icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg> },
-                ].map((s) => (
-                  <div key={s.label} style={{ background: "#fff", borderRadius: "12px", padding: "20px 24px", border: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                    <div>
-                      <p style={{ color: "#64748b", fontSize: "14px", marginBottom: "10px", fontWeight: "500" }}>{s.label}</p>
-                      <p style={{ fontSize: "34px", fontWeight: "800", color: "#0f172a", lineHeight: 1, letterSpacing: "-1px" }}>{s.value}</p>
-                      <p style={{ color: s.subColor, fontSize: "13px", marginTop: "10px", fontWeight: "500" }}>{s.sub}</p>
-                    </div>
-                    <div style={{ width: "50px", height: "50px", background: s.iconBg, borderRadius: "10px", display: "flex", alignItems: "center", justifyContent: "center", color: s.iconColor, flexShrink: 0 }}>{s.icon}</div>
-                  </div>
-                ))}
-              </div>
-
               {/* Asset Type Master */}
-              <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden", marginBottom: "20px" }}>
-                <div style={{ padding: "14px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", marginBottom: "16px" }}>
+                <div style={{ padding: "16px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px" }}>
                   <div>
-                    <h2 style={{ fontSize: "16px", fontWeight: "700", color: "#0f172a", marginBottom: "2px" }}>Asset Type Master</h2>
-                    <p style={{ color: "#64748b", fontSize: "13px", margin: 0 }}>Create reusable asset types for consistent data.</p>
+                    <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", lineHeight: 1.3 }}>Asset Type Master</p>
+                    <p style={{ fontSize: "12.5px", color: "#64748b", marginTop: "2px" }}>Create reusable asset types for consistent data.</p>
                   </div>
-                  <span style={{ background: "#eff6ff", color: "#2563eb", padding: "4px 12px", borderRadius: "20px", fontSize: "12px", fontWeight: "600" }}>Total: {assetTypes.length || 3}</span>
+                  <span style={{ background: "#eff6ff", color: "#2563eb", padding: "4px 12px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, flexShrink: 0 }}>{assetTypes.length} types</span>
                 </div>
                 <div style={{ padding: "16px 20px" }}>
                   <form onSubmit={handleCreateAssetType} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px", alignItems: "end" }}>
-                    <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                      <label style={{ fontSize: "12.5px", fontWeight: 600, color: "#475569" }}>Type Code</label>
+                    <div>
+                      <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Type Code</label>
                       <input className="form-input" value={assetTypeDraft.code} onChange={(e) => setAssetTypeDraft({ ...assetTypeDraft, code: e.target.value })} placeholder="e.g. kitchen" required />
                     </div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                      <label style={{ fontSize: "12.5px", fontWeight: 600, color: "#475569" }}>Type Label</label>
+                    <div>
+                      <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Type Label</label>
                       <input className="form-input" value={assetTypeDraft.label} onChange={(e) => setAssetTypeDraft({ ...assetTypeDraft, label: e.target.value })} placeholder="Kitchen Equipment" required />
                     </div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                      <label style={{ fontSize: "12.5px", fontWeight: 600, color: "#475569" }}>Category (optional)</label>
+                    <div>
+                      <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Category (optional)</label>
                       <input className="form-input" value={assetTypeDraft.category} onChange={(e) => setAssetTypeDraft({ ...assetTypeDraft, category: e.target.value })} placeholder="Grouping or module" />
                     </div>
-                    <button type="submit" style={{ height: "40px", background: assetLoading ? "#93c5fd" : "#2563eb", color: "#fff", border: "none", borderRadius: "8px", fontWeight: 600, fontSize: "14px", cursor: "pointer" }} disabled={assetLoading}>
+                    <button type="submit" disabled={assetLoading}
+                      style={{ height: "40px", background: assetLoading ? "#93c5fd" : "#2563eb", color: "#fff", border: "none", borderRadius: "8px", fontWeight: 600, fontSize: "14px", cursor: "pointer" }}>
                       {assetLoading ? "Saving…" : "Add Type"}
                     </button>
                   </form>
                 </div>
               </div>
 
-              {/* Assets List DataTable */}
-              <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
-                <div style={{ padding: "16px 20px", borderBottom: "1px solid #e2e8f0" }}>
-                  <h2 style={{ fontSize: "17px", fontWeight: "700", color: "#0f172a" }}>Assets List</h2>
-                </div>
-                {/* Toolbar */}
-                <div style={{ padding: "12px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "16px", flexWrap: "wrap" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                    <span style={{ color: "#64748b", fontSize: "14px" }}>Show</span>
-                    <select value={assetTableEntries} onChange={(e) => { setAssetTableEntries(Number(e.target.value)); setAssetTablePage(0); }}
-                      style={{ padding: "5px 8px", border: "1px solid #e2e8f0", borderRadius: "6px", fontSize: "14px", background: "#fff" }}>
-                      {[10, 25, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}
-                    </select>
-                    <span style={{ color: "#64748b", fontSize: "14px" }}>entries</span>
-                    <div style={{ display: "flex", gap: "4px", marginLeft: "8px", flexWrap: "wrap" }}>
-                      {[{ code: "all", label: "All" }, ...(assetTypes.length ? assetTypes : [{ code: "soft", label: "Soft Services" }, { code: "technical", label: "Technical" }, { code: "fleet", label: "Fleet" }])].map((t) => (
-                        <button key={t.code} type="button" onClick={() => { setAssetTypeFilter(t.code); setAssetTablePage(0); }}
-                          style={{ padding: "4px 12px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "1px solid", borderColor: assetTypeFilter === t.code ? "#2563eb" : "#e2e8f0", background: assetTypeFilter === t.code ? "#eff6ff" : "#fff", color: assetTypeFilter === t.code ? "#2563eb" : "#64748b" }}>{t.label}</button>
+              {/* Assets List */}
+              <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0" }}>
+                <div style={{ padding: "16px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px" }}>
+                  <div>
+                    <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", lineHeight: 1.3 }}>Asset List</p>
+                    <p style={{ fontSize: "12.5px", color: "#64748b", marginTop: "2px" }}>{filteredAssets.length} assets</p>
+                  </div>
+                  <div style={{ display: "flex", gap: "8px" }}>
+                    <select value={assetTypeFilter} onChange={(e) => setAssetTypeFilter(e.target.value)}
+                      style={{ padding: "7px 10px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13px", background: "#fff", outline: "none" }}>
+                      <option value="all">All Types</option>
+                      {(assetTypes.length ? assetTypes : [{ code: "soft", label: "Soft" }, { code: "technical", label: "Technical" }, { code: "fleet", label: "Fleet" }]).map((t) => (
+                        <option key={t.code} value={t.code}>{t.label}</option>
                       ))}
-                    </div>
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                    <span style={{ color: "#64748b", fontSize: "14px" }}>Search:</span>
-                    <input value={assetSearch} onChange={(e) => { setAssetSearch(e.target.value); setAssetTablePage(0); }}
-                      style={{ padding: "6px 10px", border: "1px solid #e2e8f0", borderRadius: "6px", fontSize: "14px", width: "200px", outline: "none" }} />
+                    </select>
+                    <input value={assetSearch} onChange={(e) => setAssetSearch(e.target.value)} placeholder="Search…"
+                      style={{ padding: "7px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13px", outline: "none", width: "160px" }} />
                   </div>
                 </div>
-                <div style={{ overflowX: "auto" }}>
+                {assetLoading ? (
+                  <p style={{ padding: "24px", color: "#94a3b8", textAlign: "center" }}>Loading…</p>
+                ) : (
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
                     <thead>
                       <tr>
-                        <ATH field="sno" sortable={false}>S.No</ATH>
-                        <ATH field="assetName">Asset Name</ATH>
-                        <ATH field="assetType">Type</ATH>
-                        <ATH field="companyName">Company</ATH>
-                        <ATH field="departmentName">Department</ATH>
-                        <ATH field="building">Location</ATH>
-                        <ATH field="status">Status</ATH>
-                        <ATH field="createdAt">Created</ATH>
-                        <ATH field="actions" sortable={false}>Actions</ATH>
+                        {["#", "Asset Name", "ID", "Type", "Company", "Department", "Location", "Status", "Actions"].map((h) => (
+                          <th key={h} style={{ padding: "12px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>{h}</th>
+                        ))}
                       </tr>
                     </thead>
                     <tbody>
-                      {pagedAssets.length === 0 ? (
-                        <tr><td colSpan="9" style={{ padding: "40px", textAlign: "center", color: "#94a3b8", fontSize: "14px" }}>{assetLoading ? "Loading…" : "No assets yet. Click \"+ Add Asset\" to get started."}</td></tr>
-                      ) : pagedAssets.map((a, idx) => {
-                        const statusLower = (a.status || "Active").toLowerCase();
+                      {filteredAssets.length === 0 ? (
+                        <tr><td colSpan={9} style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>{assetLoading ? "Loading…" : "No assets found."}</td></tr>
+                      ) : filteredAssets.map((a, i) => {
                         const typeLabel = assetTypeLabelMap[a.assetType] || assetTypeLabels[a.assetType] || a.assetType;
-                        const typeBg = a.assetType === "soft" ? { bg: "#f0fdf4", col: "#16a34a" } : a.assetType === "technical" ? { bg: "#eff6ff", col: "#2563eb" } : { bg: "#fdf4ff", col: "#7c3aed" };
                         return (
                           <tr key={a.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                            <td style={{ padding: "14px 16px", color: "#64748b", fontWeight: "600" }}>{assetStartIndex + idx + 1}</td>
+                            <td style={{ padding: "14px 16px", color: "#64748b" }}>{i + 1}</td>
+                            <td style={{ padding: "14px 16px", fontWeight: 600, color: "#0f172a" }}>{a.assetName}</td>
+                            <td style={{ padding: "14px 16px", color: "#64748b", fontFamily: "monospace", fontSize: "12px" }}>{a.assetUniqueId || "—"}</td>
                             <td style={{ padding: "14px 16px" }}>
-                              <div style={{ fontWeight: "600", color: "#0f172a", fontSize: "14px" }}>{a.assetName}</div>
-                              {a.assetUniqueId && <div style={{ color: "#94a3b8", fontSize: "12px" }}>{a.assetUniqueId}</div>}
+                              <span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: a.assetType === "technical" ? "#eff6ff" : a.assetType === "fleet" ? "#f3e8ff" : "#f0fdf4", color: a.assetType === "technical" ? "#2563eb" : a.assetType === "fleet" ? "#7c3aed" : "#16a34a" }}>
+                                {typeLabel}
+                              </span>
                             </td>
+                            <td style={{ padding: "14px 16px", color: "#64748b", fontSize: "13px" }}>{a.companyName || "—"}</td>
+                            <td style={{ padding: "14px 16px", color: "#64748b", fontSize: "13px" }}>{a.departmentName || "—"}</td>
+                            <td style={{ padding: "14px 16px", color: "#64748b", fontSize: "12.5px" }}>{[a.building, a.floor, a.room].filter(Boolean).join(" / ") || "—"}</td>
                             <td style={{ padding: "14px 16px" }}>
-                              <span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: typeBg.bg, color: typeBg.col }}>{typeLabel}</span>
+                              <span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: (a.status || "Active").toLowerCase() === "active" ? "#f0fdf4" : "#f8fafc", color: (a.status || "Active").toLowerCase() === "active" ? "#16a34a" : "#94a3b8" }}>
+                                {a.status || "Active"}
+                              </span>
                             </td>
-                            <td style={{ padding: "14px 16px", color: "#475569", fontSize: "13px" }}>{a.companyName || "—"}</td>
-                            <td style={{ padding: "14px 16px", color: "#475569", fontSize: "13px" }}>{a.departmentName || "—"}</td>
-                            <td style={{ padding: "14px 16px", color: "#475569", fontSize: "13px" }}>{[a.building, a.floor, a.room].filter(Boolean).join(", ") || "—"}</td>
-                            <td style={{ padding: "14px 16px" }}>
-                              <span style={{ padding: "4px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: "600", background: statusLower === "active" ? "#f0fdf4" : "#fffbeb", color: statusLower === "active" ? "#16a34a" : "#d97706" }}>{a.status || "Active"}</span>
-                            </td>
-                            <td style={{ padding: "14px 16px", color: "#64748b", fontSize: "13px" }}>{a.createdAt ? new Date(a.createdAt).toLocaleDateString() : "—"}</td>
-                            <td style={{ padding: "14px 16px" }}>
-                              <div style={{ display: "flex", gap: "5px" }}>
+                            <td style={{ padding: "12px 16px" }}>
+                              <div style={{ display: "flex", gap: "6px" }}>
                                 <button title="Edit" type="button" onClick={() => handleEditAsset(a)}
-                                  style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#fef9c3", color: "#ca8a04", border: "none", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                                  style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#eff6ff", color: "#2563eb", border: "none", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                                 </button>
                                 <button title="Delete" type="button" onClick={() => handleDeleteAsset(a.id)}
-                                  style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#fee2e2", color: "#dc2626", border: "none", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                                  style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#fef2f2", color: "#dc2626", border: "none", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
                                 </button>
                               </div>
                             </td>
@@ -2417,20 +2375,7 @@ const CompanyPortal = () => {
                       })}
                     </tbody>
                   </table>
-                </div>
-                {/* Pagination */}
-                <div style={{ padding: "12px 20px", borderTop: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px" }}>
-                  <span style={{ color: "#64748b", fontSize: "13px" }}>
-                    {sortedAssets.length === 0 ? "No entries" : `Showing ${assetStartIndex + 1} to ${Math.min(assetStartIndex + assetTableEntries, sortedAssets.length)} of ${sortedAssets.length} entries`}
-                  </span>
-                  <div style={{ display: "flex", gap: "4px" }}>
-                    <button onClick={() => setAssetTablePage((p) => Math.max(0, p - 1))} disabled={assetTablePage === 0}
-                      style={{ padding: "6px 12px", border: "1px solid #e2e8f0", borderRadius: "6px", background: "#fff", cursor: assetTablePage === 0 ? "not-allowed" : "pointer", color: assetTablePage === 0 ? "#cbd5e1" : "#475569", fontSize: "13px", fontWeight: "500" }}>Previous</button>
-                    <span style={{ padding: "6px 12px", background: "#2563eb", color: "#fff", borderRadius: "6px", fontSize: "13px", fontWeight: "600", minWidth: "34px", textAlign: "center" }}>{assetTablePage + 1}</span>
-                    <button onClick={() => setAssetTablePage((p) => Math.min(assetTotalPages - 1, p + 1))} disabled={assetTablePage >= assetTotalPages - 1}
-                      style={{ padding: "6px 12px", border: "1px solid #e2e8f0", borderRadius: "6px", background: "#fff", cursor: assetTablePage >= assetTotalPages - 1 ? "not-allowed" : "pointer", color: assetTablePage >= assetTotalPages - 1 ? "#cbd5e1" : "#475569", fontSize: "13px", fontWeight: "500" }}>Next</button>
-                  </div>
-                </div>
+                )}
               </div>
 
             {showAssetModal && (
@@ -2594,162 +2539,185 @@ const CompanyPortal = () => {
         })()}
 
         {nav === "departments" && (
-          <>
-            <div className="page-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "22px" }}>
               <div>
-                <h1>Departments</h1>
-                <p>Create and manage company departments.</p>
+                <h1 style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px", marginBottom: "4px" }}>Departments</h1>
+                <p style={{ color: "#64748b", fontSize: "13.5px" }}>Create and manage departments across your companies.</p>
               </div>
             </div>
 
             {departmentError && (
-              <div style={{ background: "#3b0e0e", color: "#f87171", padding: "10px 14px", borderRadius: "6px", marginBottom: "12px", fontSize: "14px" }}>
-                ⚠️ {departmentError}
+              <div style={{ background: "#fef2f2", color: "#dc2626", padding: "10px 14px", borderRadius: "8px", fontSize: "13px", border: "1px solid #fecaca", marginBottom: "14px" }}>
+                {departmentError}
               </div>
             )}
 
-            <div className="card" style={{ padding: "16px", marginBottom: "16px" }}>
-              <form onSubmit={handleCreateDepartment}>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-                  <div className="form-group">
-                    <label>Company</label>
-                    <select
-                      name="companyId"
-                      value={departmentForm.companyId || selectedCompanyId || companies[0]?.id || ""}
-                      onChange={handleDepartmentChange}
-                      className="form-select"
-                      required
-                    >
-                      <option value="" disabled>Select company</option>
-                      {companies.map((c) => (
-                        <option key={c.id} value={c.id}>{c.companyName}</option>
-                      ))}
-                    </select>
+            <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", marginBottom: "16px" }}>
+              <div style={{ padding: "16px 20px", borderBottom: "1px solid #e2e8f0" }}>
+                <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a" }}>Add Department</p>
+              </div>
+              <div style={{ padding: "16px 20px" }}>
+                <form onSubmit={handleCreateDepartment}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "12px" }}>
+                    <div>
+                      <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Company <span style={{ color: "#ef4444" }}>*</span></label>
+                      <select name="companyId" value={departmentForm.companyId || selectedCompanyId || companies[0]?.id || ""} onChange={handleDepartmentChange}
+                        style={{ width: "100%", boxSizing: "border-box", padding: "8px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13.5px", outline: "none", background: "#fff" }} required>
+                        <option value="" disabled>Select company</option>
+                        {companies.map((c) => <option key={c.id} value={c.id}>{c.companyName}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Department Name <span style={{ color: "#ef4444" }}>*</span></label>
+                      <input name="name" value={departmentForm.name} onChange={handleDepartmentChange} placeholder="Housekeeping, HVAC, Pantry"
+                        style={{ width: "100%", boxSizing: "border-box", padding: "8px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13.5px", outline: "none" }} required />
+                    </div>
                   </div>
-                  <div className="form-group">
-                    <label>Department Name</label>
-                    <input
-                      name="name"
-                      value={departmentForm.name}
-                      onChange={handleDepartmentChange}
-                      className="form-input"
-                      placeholder="Housekeeping, HVAC, Pantry"
-                      required
-                    />
+                  <div style={{ marginBottom: "12px" }}>
+                    <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Description</label>
+                    <input name="description" value={departmentForm.description} onChange={handleDepartmentChange} placeholder="Optional notes"
+                      style={{ width: "100%", boxSizing: "border-box", padding: "8px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13.5px", outline: "none" }} />
                   </div>
-                </div>
-                <div className="form-group">
-                  <label>Description</label>
-                  <input
-                    name="description"
-                    value={departmentForm.description}
-                    onChange={handleDepartmentChange}
-                    className="form-input"
-                    placeholder="Optional notes"
-                  />
-                </div>
-                <div className="modal-actions" style={{ justifyContent: "flex-start" }}>
-                  <button type="submit" className="btn-submit" disabled={departmentLoading}>
+                  <button type="submit" disabled={departmentLoading}
+                    style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 18px", borderRadius: "8px", fontSize: "13.5px", fontWeight: 600, cursor: departmentLoading ? "not-allowed" : "pointer", border: "none", background: departmentLoading ? "#93c5fd" : "#2563eb", color: "#fff" }}>
                     {departmentLoading ? "Saving…" : "Add Department"}
                   </button>
-                </div>
-              </form>
+                </form>
+              </div>
             </div>
 
-            <div className="card" style={{ padding: "16px" }}>
-              <div className="company-list-toolbar" style={{ marginBottom: "12px" }}>
-                <div className="search-container" style={{ width: "100%" }}>
-                  <input
-                    className="search-input"
-                    placeholder="Search departments..."
-                    value={departmentSearch}
-                    onChange={(e) => setDepartmentSearch(e.target.value)}
-                    style={{ paddingLeft: "12px" }}
-                  />
+            <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0" }}>
+              <div style={{ padding: "16px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px" }}>
+                <div>
+                  <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", lineHeight: 1.3 }}>All Departments</p>
+                  <p style={{ fontSize: "12.5px", color: "#64748b", marginTop: "2px" }}>{filteredDepartments.length} departments</p>
                 </div>
+                <input value={departmentSearch} onChange={(e) => setDepartmentSearch(e.target.value)} placeholder="Search…"
+                  style={{ padding: "7px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13px", outline: "none", width: "180px" }} />
               </div>
-
-              <div style={{ overflowX: "auto" }}>
-                <table className="asset-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
-                  <thead>
-                    <tr style={{ textAlign: "left", color: "#475569" }}>
-                      <th style={{ padding: "10px" }}>Department</th>
-                      <th style={{ padding: "10px" }}>Company</th>
-                      <th style={{ padding: "10px" }}>Description</th>
-                      <th style={{ padding: "10px" }}>Actions</th>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
+                <thead>
+                  <tr>
+                    {["#", "Department Name", "Company", "Description", "Actions"].map((h) => (
+                      <th key={h} style={{ padding: "12px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredDepartments.length === 0 ? (
+                    <tr><td colSpan={5} style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>{departmentLoading ? "Loading…" : "No departments found"}</td></tr>
+                  ) : filteredDepartments.map((d, i) => (
+                    <tr key={d.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                      <td style={{ padding: "14px 16px", color: "#64748b", fontWeight: 600 }}>{i + 1}</td>
+                      <td style={{ padding: "14px 16px", fontWeight: 600, color: "#0f172a" }}>{d.name}</td>
+                      <td style={{ padding: "14px 16px", color: "#64748b", fontSize: "13px" }}>{d.companyName || companies.find((c) => String(c.id) === String(d.companyId))?.companyName || "—"}</td>
+                      <td style={{ padding: "14px 16px", color: "#64748b", fontSize: "13px" }}>{d.description || "—"}</td>
+                      <td style={{ padding: "12px 16px" }}>
+                        <button title="Delete" type="button" onClick={() => handleDeleteDepartment(d.id)}
+                          style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#fef2f2", color: "#dc2626", border: "none", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                        </button>
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {filteredDepartments.length === 0 ? (
-                      <tr><td colSpan="4" style={{ padding: "12px", color: "#94a3b8" }}>{departmentLoading ? "Loading…" : "No departments yet."}</td></tr>
-                    ) : (
-                      filteredDepartments.map((d) => (
-                        <tr key={d.id} style={{ borderTop: "1px solid #e2e8f0" }}>
-                          <td style={{ padding: "10px" }}>{d.name}</td>
-                          <td style={{ padding: "10px" }}>{d.companyName || companies.find((c) => String(c.id) === String(d.companyId))?.companyName || ""}</td>
-                          <td style={{ padding: "10px" }}>{d.description || "—"}</td>
-                          <td style={{ padding: "10px", display: "flex", gap: "8px" }}>
-                            <button className="btn-cancel" type="button" onClick={() => handleDeleteDepartment(d.id)} style={{ padding: "6px 10px" }}>Delete</button>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          </>
+          </div>
         )}
 
-        {nav === "checklists" && (
+        {nav === "checklists" && (() => {
+          const clCompanyId = checklistSelectedCompanyId || companies[0]?.id || null;
+          return (
           <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
             {/* Sub-navigation tabs */}
             <div style={{ display: "flex", gap: "4px", marginBottom: "24px", borderBottom: "2px solid #e2e8f0" }}>
               {[{ k: "templates", label: "Templates" }, { k: "submissions", label: "Submissions & Reports" }].map(({ k, label }) => (
                 <button key={k} type="button" onClick={() => setChecklistSubNav(k)}
-                  style={{ padding: "10px 20px", background: "none", border: "none", borderBottom: checklistSubNav === k ? "3px solid #2563eb" : "3px solid transparent", marginBottom: "-2px", fontSize: "14px", fontWeight: 600, color: checklistSubNav === k ? "#2563eb" : "#64748b", cursor: "pointer" }}>
+                  style={{ padding: "10px 20px", background: "none", border: "none",
+                    borderBottom: checklistSubNav === k ? "3px solid #2563eb" : "3px solid transparent",
+                    marginBottom: "-2px", fontSize: "14px", fontWeight: 700,
+                    color: checklistSubNav === k ? "#2563eb" : "#64748b", cursor: "pointer" }}>
                   {label}
                 </button>
               ))}
             </div>
 
-            {checklistSubNav === "templates" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: "32px" }}>
-                {/* Per-asset checklist builder (existing functionality) */}
-                <ChecklistBuilder token={token} assets={assets} users={portalUsers} />
-
-                {/* Checklist Templates CRUD (admin-level) */}
-                <ChecklistTemplateModule
-                  token={token}
-                  companies={companies}
-                  assets={assets}
-                  companyId={selectedCompanyId || companies[0]?.id}
-                  fetchTemplates={getChecklistTemplates}
-                  createTemplate={createChecklistTemplate}
-                  fetchTemplate={getChecklistTemplate}
-                  updateTemplate={updateChecklistTemplate}
-                  deleteTemplate={deleteChecklistTemplate}
-                  canBuild={true}
-                />
+            {/* Company selector */}
+            <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", padding: "14px 20px", marginBottom: "22px", display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap" }}>
+              <span style={{ fontSize: "13.5px", fontWeight: 700, color: "#374151", whiteSpace: "nowrap" }}>Company:</span>
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                <button type="button"
+                  onClick={() => setChecklistSelectedCompanyId(null)}
+                  style={{ padding: "6px 14px", borderRadius: "8px", fontSize: "13px", fontWeight: 600, cursor: "pointer", border: clCompanyId === (companies[0]?.id || null) && !checklistSelectedCompanyId ? "none" : (checklistSelectedCompanyId === null ? "none" : "1px solid #e2e8f0"), background: checklistSelectedCompanyId === null ? "#2563eb" : "#f8fafc", color: checklistSelectedCompanyId === null ? "#fff" : "#475569" }}>
+                  All Companies
+                </button>
+                {companies.map((c) => (
+                  <button key={c.id} type="button"
+                    onClick={() => setChecklistSelectedCompanyId(c.id)}
+                    style={{ padding: "6px 14px", borderRadius: "8px", fontSize: "13px", fontWeight: 600, cursor: "pointer", border: checklistSelectedCompanyId === c.id ? "none" : "1px solid #e2e8f0", background: checklistSelectedCompanyId === c.id ? "#2563eb" : "#f8fafc", color: checklistSelectedCompanyId === c.id ? "#fff" : "#475569" }}>
+                    {c.companyName || c.name}
+                  </button>
+                ))}
               </div>
+            </div>
+
+            {checklistSubNav === "templates" && (
+              <ChecklistTemplateModule
+                token={token}
+                companies={companies}
+                assets={assets}
+                companyId={checklistSelectedCompanyId || null}
+                fetchTemplates={getChecklistTemplates}
+                createTemplate={createChecklistTemplate}
+                fetchTemplate={getChecklistTemplate}
+                updateTemplate={updateChecklistTemplate}
+                deleteTemplate={deleteChecklistTemplate}
+                canBuild={true}
+              />
             )}
 
             {checklistSubNav === "submissions" && (
-              <SubmissionsPanel token={token} type="checklists" companyId={selectedCompanyId || companies[0]?.id} />
+              <SubmissionsPanel token={token} type="checklists" companyId={checklistSelectedCompanyId || null} />
             )}
           </div>
-        )}
+          );
+        })()}
 
-        {nav === "logsheets" && (
+        {nav === "logsheets" && (() => {
+          return (
           <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
             {/* Sub-navigation tabs */}
             <div style={{ display: "flex", gap: "4px", marginBottom: "24px", borderBottom: "2px solid #e2e8f0" }}>
               {[{ k: "templates", label: "Templates" }, { k: "submissions", label: "Submissions & Reports" }].map(({ k, label }) => (
                 <button key={k} type="button" onClick={() => setLogsheetSubNav(k)}
-                  style={{ padding: "10px 20px", background: "none", border: "none", borderBottom: logsheetSubNav === k ? "3px solid #2563eb" : "3px solid transparent", marginBottom: "-2px", fontSize: "14px", fontWeight: 600, color: logsheetSubNav === k ? "#2563eb" : "#64748b", cursor: "pointer" }}>
+                  style={{ padding: "10px 20px", background: "none", border: "none",
+                    borderBottom: logsheetSubNav === k ? "3px solid #2563eb" : "3px solid transparent",
+                    marginBottom: "-2px", fontSize: "14px", fontWeight: 700,
+                    color: logsheetSubNav === k ? "#2563eb" : "#64748b", cursor: "pointer" }}>
                   {label}
                 </button>
               ))}
+            </div>
+
+            {/* Company selector */}
+            <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", padding: "14px 20px", marginBottom: "22px", display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap" }}>
+              <span style={{ fontSize: "13.5px", fontWeight: 700, color: "#374151", whiteSpace: "nowrap" }}>Company:</span>
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                <button type="button"
+                  onClick={() => setLogsheetSelectedCompanyId(null)}
+                  style={{ padding: "6px 14px", borderRadius: "8px", fontSize: "13px", fontWeight: 600, cursor: "pointer", border: logsheetSelectedCompanyId === null ? "none" : "1px solid #e2e8f0", background: logsheetSelectedCompanyId === null ? "#2563eb" : "#f8fafc", color: logsheetSelectedCompanyId === null ? "#fff" : "#475569" }}>
+                  All Companies
+                </button>
+                {companies.map((c) => (
+                  <button key={c.id} type="button"
+                    onClick={() => setLogsheetSelectedCompanyId(c.id)}
+                    style={{ padding: "6px 14px", borderRadius: "8px", fontSize: "13px", fontWeight: 600, cursor: "pointer", border: logsheetSelectedCompanyId === c.id ? "none" : "1px solid #e2e8f0", background: logsheetSelectedCompanyId === c.id ? "#2563eb" : "#f8fafc", color: logsheetSelectedCompanyId === c.id ? "#fff" : "#475569" }}>
+                    {c.companyName || c.name}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {logsheetSubNav === "templates" && (
@@ -2757,6 +2725,7 @@ const CompanyPortal = () => {
                 token={token}
                 assets={assets}
                 companies={companies}
+                companyId={logsheetSelectedCompanyId || null}
                 fetchTemplates={(tok, params) => getLogsheetTemplates(tok, params)}
                 fetchTemplate={(tok, id) => getLogsheetTemplate(tok, id)}
                 createTemplate={(tok, data) => createLogsheetTemplate(tok, data)}
@@ -2770,10 +2739,11 @@ const CompanyPortal = () => {
             )}
 
             {logsheetSubNav === "submissions" && (
-              <SubmissionsPanel token={token} type="logsheets" companyId={selectedCompanyId || companies[0]?.id} />
+              <SubmissionsPanel token={token} type="logsheets" companyId={logsheetSelectedCompanyId || null} />
             )}
           </div>
-        )}
+          );
+        })()}
 
         {nav === "warnings" && (
           <WarningsPanel

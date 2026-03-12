@@ -14,7 +14,7 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
-import { getMyAssets, getTemplateDetails, submitChecklist, submitLogsheet, submitTabularLogsheet, type TemplateDetails, type TabularColumnGroup } from '../utils/api';
+import { getMyAssets, getTemplateDetails, submitChecklist, submitLogsheet, submitTabularLogsheet, checkShiftAccess, type TemplateDetails, type TabularColumnGroup } from '../utils/api';
 
 export default function AssignmentFormScreen() {
     const params = useLocalSearchParams();
@@ -33,6 +33,7 @@ export default function AssignmentFormScreen() {
     const [assetId, setAssetId] = useState<string>('');
     const [assets, setAssets] = useState<Array<{id: number; assetName: string; assetType: string}>>([]);
     const [showAssetPicker, setShowAssetPicker] = useState(false);
+    const [shiftLocked, setShiftLocked] = useState<{ message: string; shiftName?: string } | null>(null);
 
     // --- Tabular logsheet state ---
     const _now = new Date();
@@ -46,6 +47,19 @@ export default function AssignmentFormScreen() {
         loadTemplate();
         loadAssets();
     }, []);
+
+    // Re-check shift access every 60 seconds while the form is open.
+    // This ensures the form locks if the shift ends while the user is filling it.
+    useEffect(() => {
+        if (!template?.shiftId) return;
+        const interval = setInterval(async () => {
+            const access = await checkShiftAccess(template.shiftId).catch(() => ({ allowed: true }));
+            if (!access.allowed) {
+                setShiftLocked({ message: access.message || 'Your shift has ended.', shiftName: access.shiftName });
+            }
+        }, 60_000);
+        return () => clearInterval(interval);
+    }, [template?.shiftId]);
 
     const loadAssets = async () => {
         try {
@@ -64,6 +78,17 @@ export default function AssignmentFormScreen() {
         try {
             const data = await getTemplateDetails(templateType, templateId);
             setTemplate(data);
+
+            // Shift-based access control: check if user is allowed at this time
+            if (data.shiftId) {
+                const access = await checkShiftAccess(data.shiftId).catch(() => ({ allowed: true }));
+                if (!access.allowed) {
+                    setShiftLocked({ message: access.message || 'Access denied for this shift.', shiftName: access.shiftName });
+                    setIsLoading(false);
+                    return;
+                }
+            }
+
             // Auto-fill asset: prefer template's directly linked asset, then fall back to
             // the asset associated with the assignment (passed via route params).
             if (data.assetId) {
@@ -115,13 +140,16 @@ export default function AssignmentFormScreen() {
                 );
                 Alert.alert('Success', 'Logsheet submitted successfully!', [{ text: 'OK', onPress: () => router.back() }]);
             } catch (error: any) {
-                Alert.alert('Error', error.message || 'Failed to submit. Please try again.');
+                if (error.shiftLocked) {
+                    setShiftLocked({ message: error.message, shiftName: error.shiftName });
+                } else {
+                    Alert.alert('Error', error.message || 'Failed to submit. Please try again.');
+                }
             } finally {
                 setIsSubmitting(false);
             }
             return;
         }
-
         const missingRequired = template.questions
             .filter(q => q.isRequired && !answers[q.id])
             .map(q => q.questionText);
@@ -174,7 +202,11 @@ export default function AssignmentFormScreen() {
             );
         } catch (error: any) {
             console.error('Failed to submit:', error);
-            Alert.alert('Error', error.message || 'Failed to submit. Please try again.');
+            if (error.shiftLocked) {
+                setShiftLocked({ message: error.message, shiftName: error.shiftName });
+            } else {
+                Alert.alert('Error', error.message || 'Failed to submit. Please try again.');
+            }
         } finally {
             setIsSubmitting(false);
         }
@@ -293,6 +325,26 @@ export default function AssignmentFormScreen() {
                 <View style={styles.loadingContainer}>
                     <ActivityIndicator size="large" color="#1E3A8A" />
                     <Text style={styles.loadingText}>Loading form...</Text>
+                </View>
+            </SafeAreaView>
+        );
+    }
+
+    // Shift access denied — show locked screen
+    if (shiftLocked) {
+        return (
+            <SafeAreaView style={styles.container}>
+                <View style={styles.loadingContainer}>
+                    <MaterialCommunityIcons name="lock-clock" size={64} color="#7C3AED" />
+                    <Text style={[styles.errorText, { color: '#7C3AED', marginTop: 16 }]}>
+                        {shiftLocked.shiftName ? `Shift: ${shiftLocked.shiftName}` : 'Shift Restricted'}
+                    </Text>
+                    <Text style={{ fontSize: 14, color: '#64748B', textAlign: 'center', marginTop: 8, paddingHorizontal: 32, lineHeight: 20 }}>
+                        {shiftLocked.message}
+                    </Text>
+                    <TouchableOpacity style={[styles.backButton2, { marginTop: 24 }]} onPress={() => router.back()}>
+                        <Text style={styles.backButtonText}>Go Back</Text>
+                    </TouchableOpacity>
                 </View>
             </SafeAreaView>
         );

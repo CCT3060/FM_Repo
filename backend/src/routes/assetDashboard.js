@@ -309,14 +309,16 @@ router.get("/work-orders", validate(cqParam), async (req, res, next) => {
     if (building) { where += " AND a.building = ?"; p.push(building); }
 
     // Monthly WO trend
+    const woCutoff = new Date();
+    woCutoff.setMonth(woCutoff.getMonth() - Number(months));
     const [trend] = await pool.query(
-      `SELECT DATE_FORMAT(wo.created_at,'%Y-%m') AS month, COUNT(*) AS count
+      `SELECT TO_CHAR(wo.created_at, 'YYYY-MM') AS month, COUNT(*) AS count
        FROM work_orders wo
        JOIN assets a ON wo.asset_id = a.id
        JOIN companies c ON a.company_id = c.id
-       ${where} AND wo.created_at >= DATE_SUB(NOW(), INTERVAL ? MONTH)
+       ${where} AND wo.created_at >= ?
        GROUP BY month ORDER BY month`,
-      [...p, Number(months)]
+      [...p, woCutoff]
     );
 
     // By priority
@@ -357,7 +359,7 @@ router.get("/work-orders", validate(cqParam), async (req, res, next) => {
        FROM work_orders wo JOIN assets a ON wo.asset_id = a.id
        JOIN companies c ON a.company_id = c.id
        ${where} AND wo.status IN ('completed','closed') AND wo.issue_source = 'logsheet'
-       GROUP BY a.id HAVING total_failures > 1 ORDER BY total_failures DESC LIMIT 10`,
+       GROUP BY a.id HAVING COUNT(wo.id) > 1 ORDER BY COUNT(wo.id) DESC LIMIT 10`,
       p
     );
 
@@ -405,15 +407,17 @@ router.get("/maintenance-cost", validate(cqParam), async (req, res, next) => {
       p
     );
 
+    const mcCutoff = new Date();
+    mcCutoff.setMonth(mcCutoff.getMonth() - Number(months));
     const [monthlyTrend] = await pool.query(
-      `SELECT DATE_FORMAT(wo.created_at,'%Y-%m') AS month,
+      `SELECT TO_CHAR(wo.created_at, 'YYYY-MM') AS month,
               COUNT(wo.id) AS count
        FROM work_orders wo
        JOIN assets a ON wo.asset_id = a.id
        JOIN companies c ON a.company_id = c.id
-       ${where} AND wo.created_at >= DATE_SUB(NOW(), INTERVAL ? MONTH)
+       ${where} AND wo.created_at >= ?
        GROUP BY month ORDER BY month`,
-      [...p, Number(months)]
+      [...p, mcCutoff]
     );
 
     const [perBuilding] = await pool.query(
@@ -677,12 +681,13 @@ router.get("/alerts", validate(cqParam), async (req, res, next) => {
     // Open work orders stale > 7 days
     const [staleWO] = await pool.query(
       `SELECT a.id, a.asset_name AS assetName, wo.work_order_number AS woNumber,
-              wo.priority, DATEDIFF(NOW(), wo.created_at) AS ageDays
+              wo.priority,
+              EXTRACT(EPOCH FROM (NOW() - wo.created_at))::int / 86400 AS "ageDays"
        FROM work_orders wo
        JOIN assets a ON wo.asset_id = a.id
        JOIN companies c ON a.company_id = c.id
-       ${where} AND wo.status IN ('open','in_progress') AND wo.created_at < DATE_SUB(NOW(), INTERVAL 7 DAY)
-       ORDER BY ageDays DESC LIMIT 20`,
+       ${where} AND wo.status IN ('open','in_progress') AND wo.created_at < NOW() - INTERVAL '7 days'
+       ORDER BY "ageDays" DESC LIMIT 20`,
       p
     );
     staleWO.forEach((r) => {

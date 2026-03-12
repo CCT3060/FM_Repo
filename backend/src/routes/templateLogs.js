@@ -414,55 +414,6 @@ router.get("/entries/recent", async (req, res, next) => {
   }
 });
 
-/* ── Single logsheet entry detail (admin) ──────────────────────────────────── */
-router.get("/entries/:id", async (req, res, next) => {
-  const entryId = Number(req.params.id);
-  try {
-    const [[entry]] = await pool.query(
-      `SELECT le.id, le.month, le.year, le.shift, le.status, le.data,
-              COALESCE(le.submitted_at, le.entry_date) AS "submittedAt",
-              lt.template_name AS "templateName", lt.frequency, lt.id AS "templateId",
-              lt.layout_type AS "layoutType", lt.header_config AS "headerConfig",
-              a.asset_name AS "assetName", a.id AS "assetId",
-              c.company_name AS "companyName",
-              cu.full_name AS "submittedBy"
-       FROM logsheet_entries le
-       LEFT JOIN logsheet_templates lt ON lt.id = le.template_id
-       LEFT JOIN assets a ON a.id = le.asset_id
-       LEFT JOIN company_users cu ON cu.id = COALESCE(le.company_user_id, le.submitted_by)
-       LEFT JOIN companies c ON c.id = lt.company_id
-       WHERE le.id = ? AND c.user_id = ?`,
-      [entryId, req.user.id]
-    );
-    if (!entry) return res.status(404).json({ message: "Entry not found" });
-
-    const [answers] = await pool.query(
-      `SELECT la.id, la.question_id AS "questionId", la.date_column AS "dateColumn",
-              la.answer_value AS "answerValue", la.is_issue AS "isIssue",
-              la.issue_reason AS "issueReason",
-              lq.question_text AS "questionText", lq.answer_type AS "answerType",
-              lq.specification,
-              ls.name AS "sectionName"
-       FROM logsheet_answers la
-       LEFT JOIN logsheet_questions lq ON lq.id = la.question_id
-       LEFT JOIN logsheet_sections ls ON ls.id = lq.section_id
-       WHERE la.entry_id = ?
-       ORDER BY ls.order_index ASC, lq.order_index ASC, la.date_column ASC`,
-      [entryId]
-    );
-
-    const safeParse = (v) => {
-      if (v == null) return null;
-      if (typeof v === "string") { try { return JSON.parse(v); } catch { return v; } }
-      return v;
-    };
-
-    res.json({ ...entry, data: safeParse(entry.data), answers });
-  } catch (err) {
-    next(err);
-  }
-});
-
 // ── Issues / flagged readings report ──────────────────────────────────────────
 router.get("/entries/issues", async (req, res, next) => {
   const { from, to, assetId, templateId: filterTemplateId, limit = 200, offset = 0 } = req.query;
@@ -518,6 +469,55 @@ router.get("/entries/issues", async (req, res, next) => {
     );
 
     res.json({ issues: rows, summary: stats[0] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ── Single logsheet entry detail (admin) ──────────────────────────────────── */
+router.get("/entries/:id", async (req, res, next) => {
+  const entryId = Number(req.params.id);
+  try {
+    const [[entry]] = await pool.query(
+      `SELECT le.id, le.month, le.year, le.shift, le.status, le.data,
+              COALESCE(le.submitted_at, le.entry_date) AS "submittedAt",
+              lt.template_name AS "templateName", lt.frequency, lt.id AS "templateId",
+              lt.layout_type AS "layoutType", lt.header_config AS "headerConfig",
+              a.asset_name AS "assetName", a.id AS "assetId",
+              c.company_name AS "companyName",
+              cu.full_name AS "submittedBy"
+       FROM logsheet_entries le
+       LEFT JOIN logsheet_templates lt ON lt.id = le.template_id
+       LEFT JOIN assets a ON a.id = le.asset_id
+       LEFT JOIN company_users cu ON cu.id = COALESCE(le.company_user_id, le.submitted_by)
+       LEFT JOIN companies c ON c.id = lt.company_id
+       WHERE le.id = ? AND c.user_id = ?`,
+      [entryId, req.user.id]
+    );
+    if (!entry) return res.status(404).json({ message: "Entry not found" });
+
+    const [answers] = await pool.query(
+      `SELECT la.id, la.question_id AS "questionId", la.date_column AS "dateColumn",
+              la.answer_value AS "answerValue", la.is_issue AS "isIssue",
+              la.issue_reason AS "issueReason",
+              lq.question_text AS "questionText", lq.answer_type AS "answerType",
+              lq.specification,
+              ls.name AS "sectionName"
+       FROM logsheet_answers la
+       LEFT JOIN logsheet_questions lq ON lq.id = la.question_id
+       LEFT JOIN logsheet_sections ls ON ls.id = lq.section_id
+       WHERE la.entry_id = ?
+       ORDER BY ls.order_index ASC, lq.order_index ASC, la.date_column ASC`,
+      [entryId]
+    );
+
+    const safeParse = (v) => {
+      if (v == null) return null;
+      if (typeof v === "string") { try { return JSON.parse(v); } catch { return v; } }
+      return v;
+    };
+
+    res.json({ ...entry, data: safeParse(entry.data), answers });
   } catch (err) {
     next(err);
   }

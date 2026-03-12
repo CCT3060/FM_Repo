@@ -33,6 +33,34 @@ router.use(requireCompanyAuth);
 
 const cid = (req) => req.companyUser.companyId;
 
+/* ── Helper: compute cutoff status from expectedCompletionAt ─────────────────
+   Returns 'overdue' | 'at_risk' | 'on_time' | null                           */
+const getCutoffStatus = (expectedCompletionAt, status) => {
+  if (!expectedCompletionAt) return null;
+  if (status === 'completed' || status === 'closed') return null;
+  const deadline = new Date(expectedCompletionAt);
+  const now = new Date();
+  const msLeft = deadline - now;
+  if (msLeft < 0) return 'overdue';
+  if (msLeft < 2 * 60 * 60 * 1000) return 'at_risk'; // within 2 hours
+  return 'on_time';
+};
+const isShiftActive = (startTime, endTime) => {
+  const now = new Date();
+  const toMin = (t) => {
+    const [h, m] = String(t).split(":").map(Number);
+    return h * 60 + m;
+  };
+  const nowMin   = now.getHours() * 60 + now.getMinutes();
+  const startMin = toMin(startTime);
+  const endMin   = toMin(endTime);
+  if (startMin <= endMin) {
+    return nowMin >= startMin && nowMin < endMin;
+  } else {
+    return nowMin >= startMin || nowMin < endMin;
+  }
+};
+
 // pg returns JSONB columns as already-parsed JS objects; guard against that
 const safeParse = (v) => {
   if (v == null) return null;
@@ -130,6 +158,34 @@ pool.query(`
     created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(training_id, company_user_id)
+  )
+`).catch(() => {});
+
+// ── OJT Industry-Standard Column Migrations ─────────────────────────────────
+pool.query(`ALTER TABLE ojt_trainings ADD COLUMN IF NOT EXISTS category VARCHAR(60) NOT NULL DEFAULT 'general'`).catch(() => {});
+pool.query(`ALTER TABLE ojt_trainings ADD COLUMN IF NOT EXISTS estimated_duration_minutes INTEGER NOT NULL DEFAULT 60`).catch(() => {});
+pool.query(`ALTER TABLE ojt_trainings ADD COLUMN IF NOT EXISTS is_sequential BOOLEAN NOT NULL DEFAULT false`).catch(() => {});
+pool.query(`ALTER TABLE ojt_trainings ADD COLUMN IF NOT EXISTS max_attempts INTEGER NOT NULL DEFAULT 3`).catch(() => {});
+pool.query(`ALTER TABLE ojt_trainings ADD COLUMN IF NOT EXISTS trainer_id INTEGER REFERENCES company_users(id) ON DELETE SET NULL`).catch(() => {});
+pool.query(`ALTER TABLE ojt_user_progress ADD COLUMN IF NOT EXISTS attempt_number INTEGER NOT NULL DEFAULT 1`).catch(() => {});
+pool.query(`ALTER TABLE ojt_user_progress ADD COLUMN IF NOT EXISTS due_date DATE`).catch(() => {});
+pool.query(`ALTER TABLE ojt_user_progress ADD COLUMN IF NOT EXISTS assigned_by INTEGER REFERENCES company_users(id) ON DELETE SET NULL`).catch(() => {});
+pool.query(`ALTER TABLE ojt_user_progress ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMPTZ`).catch(() => {});
+pool.query(`ALTER TABLE ojt_user_progress ADD COLUMN IF NOT EXISTS trainer_id INTEGER REFERENCES company_users(id) ON DELETE SET NULL`).catch(() => {});
+pool.query(`ALTER TABLE ojt_user_progress ADD COLUMN IF NOT EXISTS trainer_sign_off_at TIMESTAMPTZ`).catch(() => {});
+pool.query(`ALTER TABLE ojt_user_progress ADD COLUMN IF NOT EXISTS trainer_sign_off_notes TEXT`).catch(() => {});
+pool.query(`
+  CREATE TABLE IF NOT EXISTS ojt_test_attempts (
+    id               SERIAL       PRIMARY KEY,
+    progress_id      INTEGER      NOT NULL REFERENCES ojt_user_progress(id) ON DELETE CASCADE,
+    training_id      INTEGER      NOT NULL REFERENCES ojt_trainings(id)     ON DELETE CASCADE,
+    company_user_id  INTEGER      NOT NULL,
+    attempt_number   INTEGER      NOT NULL DEFAULT 1,
+    score            INTEGER,
+    earned_marks     INTEGER,
+    total_marks      INTEGER,
+    passed           BOOLEAN,
+    submitted_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
   )
 `).catch(() => {});
 
@@ -836,6 +892,39 @@ router.post("/logsheet-templates/:templateId/entries", async (req, res, next) =>
     if (!tmplRow) return res.status(404).json({ message: "Template not found" });
 
     const isTabular = tmplRow.layoutType === "tabular" || !!tabularData;
+
+    // ── Shift Enforcement ─────────────────────────────────────────────────
+    // Tech users can only submit during their assigned shift window.
+    if (req.companyUser.role !== 'admin' && req.companyUser.role !== 'supervisor') {
+      const [[shiftInfo]] = await pool.query(
+        `SELECT s.id, s.name AS "shiftName", s.start_time AS "startTime",
+                s.end_time AS "endTime", s.status AS "shiftStatus",
+                es.id AS "employeeShiftId"
+         FROM logsheet_templates lt
+         JOIN shifts s ON s.id = lt.shift_id
+         LEFT JOIN employee_shifts es
+           ON es.shift_id = s.id AND es.company_user_id = ?
+         WHERE lt.id = ? AND lt.company_id = ?`,
+        [req.companyUser.id, templateId, cid(req)]
+      ).catch(() => [[null]]);
+
+      if (shiftInfo) {
+        if (!shiftInfo.employeeShiftId) {
+          return res.status(403).json({
+            message: `You are not assigned to the "${shiftInfo.shiftName}" shift.`,
+            shiftLocked: true,
+            shiftName: shiftInfo.shiftName,
+          });
+        }
+        if (shiftInfo.shiftStatus !== 'active' || !isShiftActive(shiftInfo.startTime, shiftInfo.endTime)) {
+          return res.status(403).json({
+            message: `The "${shiftInfo.shiftName}" shift is not currently active (${shiftInfo.startTime}–${shiftInfo.endTime}).`,
+            shiftLocked: true,
+            shiftName: shiftInfo.shiftName,
+          });
+        }
+      }
+    }
 
     if (!isTabular && !answers?.length) {
       return res.status(400).json({ message: "answers are required for standard logsheet entries" });
@@ -1745,6 +1834,37 @@ router.get("/work-orders/users", async (req, res, next) => {
   }
 });
 
+/* GET /work-orders/:id/escalation-history  – escalation audit log for a work order */
+router.get("/work-orders/:id/escalation-history", async (req, res, next) => {
+  try {
+    const companyId = cid(req);
+    const woId = Number(req.params.id);
+
+    // Verify the WO belongs to this company
+    const [[wo]] = await pool.query(
+      "SELECT id FROM work_orders WHERE id = ? AND company_id = ?",
+      [woId, companyId]
+    );
+    if (!wo) return res.status(404).json({ message: "Work order not found" });
+
+    const [rows] = await pool.query(
+      `SELECT id, escalation_level AS "escalationLevel",
+              escalated_at AS "escalatedAt",
+              previous_assignee_id AS "previousAssigneeId",
+              previous_assignee_name AS "previousAssigneeName",
+              new_assignee_id AS "newAssigneeId",
+              new_assignee_name AS "newAssigneeName",
+              reason
+       FROM work_order_escalation_history
+       WHERE work_order_id = ?
+       ORDER BY escalated_at ASC`,
+      [woId]
+    ).catch(() => [[]]);
+
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
 /* GET /work-orders/:id  – single work order with history */
 router.get("/work-orders/:id", async (req, res, next) => {
   try {
@@ -1766,6 +1886,10 @@ router.get("/work-orders/:id", async (req, res, next) => {
               cb.full_name AS "createdByName",
               wo.created_at AS "createdAt",
               wo.closed_at AS "closedAt",
+              wo.expected_completion_at AS "expectedCompletionAt",
+              wo.escalation_interval_minutes AS "escalationIntervalMinutes",
+              wo.escalation_level AS "escalationLevel",
+              wo.escalation_note AS "escalationNote",
               f.severity AS "flagSeverity", f.source AS "flagSource"
        FROM work_orders wo
        LEFT JOIN company_users cu ON cu.id = wo.cp_assigned_to
@@ -1786,7 +1910,20 @@ router.get("/work-orders/:id", async (req, res, next) => {
       [woId]
     );
 
-    res.json({ ...wo, history });
+    // Escalation history (graceful – table may not exist pre-migration)
+    const [escalationHistory] = await pool.query(
+      `SELECT id, escalation_level AS "escalationLevel",
+              escalated_at AS "escalatedAt",
+              previous_assignee_name AS "previousAssigneeName",
+              new_assignee_name AS "newAssigneeName",
+              reason
+       FROM work_order_escalation_history
+       WHERE work_order_id = ?
+       ORDER BY escalated_at ASC`,
+      [woId]
+    ).catch(() => [[]]);
+
+    res.json({ ...wo, cutoffStatus: getCutoffStatus(wo.expectedCompletionAt, wo.status), history, escalationHistory });
   } catch (err) { next(err); }
 });
 
@@ -1816,6 +1953,8 @@ router.get("/work-orders", async (req, res, next) => {
               wo.cp_created_by AS "createdBy",
               cb.full_name AS "createdByName",
               wo.created_at AS "createdAt",
+              wo.expected_completion_at AS "expectedCompletionAt",
+              wo.escalation_level AS "escalationLevel",
               f.severity AS "flagSeverity", f.source AS "flagSource"
        FROM work_orders wo
        LEFT JOIN company_users cu ON cu.id = wo.cp_assigned_to
@@ -1832,7 +1971,13 @@ router.get("/work-orders", async (req, res, next) => {
       params
     );
 
-    res.json({ total: Number(countRow?.total ?? 0), data: rows });
+    res.json({
+      total: Number(countRow?.total ?? 0),
+      data: rows.map(wo => ({
+        ...wo,
+        cutoffStatus: getCutoffStatus(wo.expectedCompletionAt, wo.status),
+      })),
+    });
   } catch (err) {
     next(err);
   }
@@ -1854,10 +1999,23 @@ router.post("/work-orders", async (req, res, next) => {
       flagId,
       assignedTo,
       assignedNote,
+      expectedCompletionAt,
+      escalationIntervalMinutes,
     } = req.body;
 
     if (!issueDescription) {
       return res.status(400).json({ message: "issueDescription is required" });
+    }
+
+    // Validate escalation fields
+    const resolvedInterval = escalationIntervalMinutes
+      ? Math.max(1, Math.min(10080, Number(escalationIntervalMinutes))) // 1 min – 7 days
+      : 120; // default 2 hours
+    let resolvedDeadline = null;
+    if (expectedCompletionAt) {
+      const d = new Date(expectedCompletionAt);
+      if (isNaN(d.getTime())) return res.status(400).json({ message: "expectedCompletionAt is not a valid date" });
+      resolvedDeadline = d;
     }
 
     // Resolve asset
@@ -1880,13 +2038,15 @@ router.post("/work-orders", async (req, res, next) => {
       `INSERT INTO work_orders
          (work_order_number, company_id, asset_id, asset_name, location,
           issue_source, issue_description, priority, status,
-          flag_id, cp_assigned_to, assigned_note, cp_created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)
+          flag_id, cp_assigned_to, assigned_note, cp_created_by,
+          expected_completion_at, escalation_interval_minutes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)
        RETURNING id`,
       [
         workOrderNumber, companyId, assetId || null, assetName, location,
         issueSource, issueDescription, priority,
         flagId || null, assignedTo || null, assignedNote || null, userId,
+        resolvedDeadline, resolvedInterval,
       ]
     );
     const woId = result.insertId ?? result[0]?.id;
@@ -2013,9 +2173,47 @@ router.put("/work-orders/:id/status", async (req, res, next) => {
   }
 });
 
-// Delete an assignment (admin: any; supervisor: only ones they created)
-router.delete("/template-user-assignments/:id", async (req, res, next) => {
+/* PATCH /work-orders/:id/cutoff  – admin/supervisor can set or update the cutoff deadline */
+router.patch("/work-orders/:id/cutoff", async (req, res, next) => {
   try {
+    const companyId = cid(req);
+    const { role } = req.companyUser;
+    if (role !== "admin" && role !== "supervisor") {
+      return res.status(403).json({ message: "Not authorised" });
+    }
+
+    const woId = Number(req.params.id);
+    const { expectedCompletionAt } = req.body;
+
+    // Allow null to clear the deadline
+    let resolvedDeadline = null;
+    if (expectedCompletionAt != null) {
+      const d = new Date(expectedCompletionAt);
+      if (isNaN(d.getTime())) {
+        return res.status(400).json({ message: "expectedCompletionAt is not a valid ISO date string" });
+      }
+      resolvedDeadline = d;
+    }
+
+    const [[wo]] = await pool.query(
+      "SELECT id, status FROM work_orders WHERE id = ? AND company_id = ?",
+      [woId, companyId]
+    );
+    if (!wo) return res.status(404).json({ message: "Work order not found" });
+
+    await pool.execute(
+      "UPDATE work_orders SET expected_completion_at = ? WHERE id = ?",
+      [resolvedDeadline, woId]
+    );
+
+    res.json({ success: true, expectedCompletionAt: resolvedDeadline });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Delete an assignment (admin: any; supervisor: only ones they created)
+router.delete("/template-user-assignments/:id", async (req, res, next) => {  try {
     const { id } = req.params;
     const role = req.companyUser.role;
     if (role !== "admin" && role !== "supervisor") {
@@ -2048,14 +2246,22 @@ router.get("/ojt/trainings", async (req, res, next) => {
   try {
     const companyId = cid(req);
     const [rows] = await pool.query(
-      `SELECT ot.id, ot.title, ot.description, ot.status, ot.passing_percentage AS "passingPercentage",
+      `SELECT ot.id, ot.title, ot.description, ot.status,
+              ot.passing_percentage AS "passingPercentage",
+              ot.category, ot.estimated_duration_minutes AS "estimatedDurationMinutes",
+              ot.is_sequential AS "isSequential", ot.max_attempts AS "maxAttempts",
               ot.asset_id AS "assetId", a.asset_name AS "assetName",
+              ot.trainer_id AS "trainerId",
+              tr.full_name AS "trainerName",
               ot.created_by AS "createdBy", ot.created_at AS "createdAt", ot.updated_at AS "updatedAt",
               (SELECT COUNT(*) FROM ojt_modules WHERE training_id = ot.id) AS "moduleCount",
               (SELECT COUNT(*) FROM ojt_tests WHERE training_id = ot.id) AS "hasTest",
-              (SELECT COUNT(*) FROM ojt_user_progress WHERE training_id = ot.id) AS "enrolledCount"
+              (SELECT COUNT(*) FROM ojt_user_progress WHERE training_id = ot.id) AS "enrolledCount",
+              (SELECT COUNT(*) FROM ojt_user_progress WHERE training_id = ot.id AND status = 'completed') AS "completedCount",
+              (SELECT ROUND(AVG(score)) FROM ojt_user_progress WHERE training_id = ot.id AND score IS NOT NULL) AS "avgScore"
        FROM ojt_trainings ot
        LEFT JOIN assets a ON a.id = ot.asset_id
+       LEFT JOIN company_users tr ON tr.id = ot.trainer_id
        WHERE ot.company_id = ?
        ORDER BY ot.created_at DESC`,
       [companyId]
@@ -2070,11 +2276,16 @@ router.get("/ojt/trainings/:id", async (req, res, next) => {
     const companyId = cid(req);
     const { id } = req.params;
     const [[training]] = await pool.query(
-      `SELECT ot.id, ot.title, ot.description, ot.status, ot.passing_percentage AS "passingPercentage",
+      `SELECT ot.id, ot.title, ot.description, ot.status,
+              ot.passing_percentage AS "passingPercentage",
+              ot.category, ot.estimated_duration_minutes AS "estimatedDurationMinutes",
+              ot.is_sequential AS "isSequential", ot.max_attempts AS "maxAttempts",
               ot.asset_id AS "assetId", a.asset_name AS "assetName",
+              ot.trainer_id AS "trainerId", tr.full_name AS "trainerName",
               ot.created_by AS "createdBy", ot.created_at AS "createdAt", ot.updated_at AS "updatedAt"
        FROM ojt_trainings ot
        LEFT JOIN assets a ON a.id = ot.asset_id
+       LEFT JOIN company_users tr ON tr.id = ot.trainer_id
        WHERE ot.id = ? AND ot.company_id = ?`,
       [id, companyId]
     );
@@ -2121,14 +2332,21 @@ router.post("/ojt/trainings", async (req, res, next) => {
   try {
     if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
     const companyId = cid(req);
-    const { title, description, assetId, passingPercentage = 70 } = req.body;
+    const { title, description, assetId, passingPercentage = 70,
+            category = "general", estimatedDurationMinutes = 60,
+            isSequential = false, maxAttempts = 3, trainerId } = req.body;
     if (!title?.trim()) return res.status(400).json({ message: "title is required" });
     const [rows] = await pool.query(
-      `INSERT INTO ojt_trainings (company_id, asset_id, title, description, passing_percentage, created_by)
-       VALUES (?, ?, ?, ?, ?, ?)
+      `INSERT INTO ojt_trainings
+         (company_id, asset_id, title, description, passing_percentage, created_by,
+          category, estimated_duration_minutes, is_sequential, max_attempts, trainer_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        RETURNING id, title, description, status, passing_percentage AS "passingPercentage",
-                 asset_id AS "assetId", created_at AS "createdAt"`,
-      [companyId, assetId || null, title.trim(), description || null, passingPercentage, req.companyUser.id]
+                 category, estimated_duration_minutes AS "estimatedDurationMinutes",
+                 is_sequential AS "isSequential", max_attempts AS "maxAttempts",
+                 asset_id AS "assetId", trainer_id AS "trainerId", created_at AS "createdAt"`,
+      [companyId, assetId || null, title.trim(), description || null, passingPercentage,
+       req.companyUser.id, category, estimatedDurationMinutes, isSequential, maxAttempts, trainerId || null]
     );
     res.status(201).json(rows[0]);
   } catch (err) { next(err); }
@@ -2140,20 +2358,33 @@ router.put("/ojt/trainings/:id", async (req, res, next) => {
     if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
     const companyId = cid(req);
     const { id } = req.params;
-    const { title, description, assetId, passingPercentage } = req.body;
     const [[check]] = await pool.query("SELECT id FROM ojt_trainings WHERE id = ? AND company_id = ?", [id, companyId]);
     if (!check) return res.status(404).json({ message: "Training not found" });
+    const { title, description, assetId, passingPercentage,
+            category, estimatedDurationMinutes, isSequential, maxAttempts, trainerId } = req.body;
     const [rows] = await pool.query(
       `UPDATE ojt_trainings SET
-         title = COALESCE(?, title),
-         description = COALESCE(?, description),
-         asset_id = COALESCE(?, asset_id),
-         passing_percentage = COALESCE(?, passing_percentage),
+         title                     = COALESCE(?, title),
+         description               = COALESCE(?, description),
+         asset_id                  = COALESCE(?, asset_id),
+         passing_percentage        = COALESCE(?, passing_percentage),
+         category                  = COALESCE(?, category),
+         estimated_duration_minutes= COALESCE(?, estimated_duration_minutes),
+         is_sequential             = COALESCE(?, is_sequential),
+         max_attempts              = COALESCE(?, max_attempts),
+         trainer_id                = COALESCE(?, trainer_id),
          updated_at = NOW()
        WHERE id = ?
-       RETURNING id, title, description, status, passing_percentage AS "passingPercentage",
-                 asset_id AS "assetId", updated_at AS "updatedAt"`,
-      [title || null, description ?? null, assetId || null, passingPercentage || null, id]
+       RETURNING id, title, description, status,
+                 passing_percentage AS "passingPercentage",
+                 category, estimated_duration_minutes AS "estimatedDurationMinutes",
+                 is_sequential AS "isSequential", max_attempts AS "maxAttempts",
+                 asset_id AS "assetId", trainer_id AS "trainerId", updated_at AS "updatedAt"`,
+      [title || null, description ?? null, assetId || null, passingPercentage || null,
+       category || null, estimatedDurationMinutes || null,
+       isSequential != null ? isSequential : null,
+       maxAttempts || null, trainerId != null ? (trainerId || null) : null,
+       id]
     );
     res.json(rows[0]);
   } catch (err) { next(err); }
@@ -2385,7 +2616,8 @@ router.get("/ojt/trainings/:id/users", async (req, res, next) => {
     const companyId = cid(req);
     const { id } = req.params;
     const [[training]] = await pool.query(
-      "SELECT id, passing_percentage AS \"passingPercentage\" FROM ojt_trainings WHERE id = ? AND company_id = ?",
+      `SELECT id, passing_percentage AS "passingPercentage", max_attempts AS "maxAttempts"
+       FROM ojt_trainings WHERE id = ? AND company_id = ?`,
       [id, companyId]
     );
     if (!training) return res.status(404).json({ message: "Training not found" });
@@ -2394,9 +2626,16 @@ router.get("/ojt/trainings/:id/users", async (req, res, next) => {
               cu.full_name AS "userName", cu.email, cu.role, cu.designation,
               cup.score, cup.status, cup.certificate_url AS "certificateUrl",
               cup.started_at AS "startedAt", cup.completed_at AS "completedAt",
-              cup.completed_modules AS "completedModules"
+              cup.completed_modules AS "completedModules",
+              cup.attempt_number AS "attemptNumber",
+              cup.due_date AS "dueDate",
+              ab.full_name AS "assignedByName",
+              cup.assigned_at AS "assignedAt",
+              cup.trainer_sign_off_at AS "trainerSignOffAt",
+              cup.trainer_sign_off_notes AS "trainerSignOffNotes"
        FROM ojt_user_progress cup
        JOIN company_users cu ON cu.id = cup.company_user_id
+       LEFT JOIN company_users ab ON ab.id = cup.assigned_by
        WHERE cup.training_id = ?
        ORDER BY cup.updated_at DESC`,
       [id]
@@ -2405,7 +2644,67 @@ router.get("/ojt/trainings/:id/users", async (req, res, next) => {
       `SELECT COUNT(*) AS totalModules FROM ojt_modules WHERE training_id = ?`,
       [id]
     );
-    res.json({ users: rows, passingPercentage: training.passingPercentage, totalModules: Number(totalModules) });
+    res.json({ users: rows, passingPercentage: training.passingPercentage, maxAttempts: Number(training.maxAttempts), totalModules: Number(totalModules) });
+  } catch (err) { next(err); }
+});
+
+/* POST /ojt/trainings/:id/assign – admin assigns training to a user with optional due date */
+router.post("/ojt/trainings/:id/assign", async (req, res, next) => {
+  try {
+    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    const companyId = cid(req);
+    const { id } = req.params;
+    const { userId, dueDate } = req.body;
+    if (!userId) return res.status(400).json({ message: "userId is required" });
+    const [[training]] = await pool.query(
+      "SELECT id FROM ojt_trainings WHERE id = ? AND company_id = ? AND status = 'published'",
+      [id, companyId]
+    );
+    if (!training) return res.status(404).json({ message: "Training not found or not published" });
+    // Upsert: if already assigned/started just update due_date and assigned_by
+    const [[existing]] = await pool.query(
+      "SELECT id FROM ojt_user_progress WHERE training_id = ? AND company_user_id = ?",
+      [id, userId]
+    );
+    if (existing) {
+      await pool.query(
+        `UPDATE ojt_user_progress SET due_date = ?, assigned_by = ?, assigned_at = NOW(), updated_at = NOW()
+         WHERE id = ?`,
+        [dueDate || null, req.companyUser.id, existing.id]
+      );
+      return res.json({ success: true, message: "Assignment updated" });
+    }
+    const [rows] = await pool.query(
+      `INSERT INTO ojt_user_progress
+         (training_id, company_user_id, status, completed_modules, due_date, assigned_by, assigned_at)
+       VALUES (?, ?, 'not_started', '[]', ?, ?, NOW())
+       RETURNING id, status, due_date AS "dueDate", assigned_at AS "assignedAt"`,
+      [id, userId, dueDate || null, req.companyUser.id]
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) { next(err); }
+});
+
+/* POST /ojt/progress/:id/trainer-signoff – trainer/supervisor signs off practical skills */
+router.post("/ojt/progress/:id/trainer-signoff", async (req, res, next) => {
+  try {
+    const companyId = cid(req);
+    const { id } = req.params;
+    const { notes } = req.body;
+    const [[progress]] = await pool.query(
+      `SELECT oup.id, oup.status FROM ojt_user_progress oup
+       JOIN ojt_trainings ot ON ot.id = oup.training_id
+       WHERE oup.id = ? AND ot.company_id = ?`,
+      [id, companyId]
+    );
+    if (!progress) return res.status(404).json({ message: "Progress record not found" });
+    await pool.query(
+      `UPDATE ojt_user_progress
+         SET trainer_sign_off_at = NOW(), trainer_sign_off_notes = ?, trainer_id = ?, updated_at = NOW()
+       WHERE id = ?`,
+      [notes || null, req.companyUser.id, id]
+    );
+    res.json({ success: true, trainerSignOffAt: new Date().toISOString() });
   } catch (err) { next(err); }
 });
 
@@ -3033,6 +3332,8 @@ router.get("/ojt/mobile/trainings", async (req, res, next) => {
     const userId = req.companyUser.id;
     const [trainings] = await pool.query(
       `SELECT ot.id, ot.title, ot.description, ot.passing_percentage AS "passingPercentage",
+              ot.category, ot.estimated_duration_minutes AS "estimatedDurationMinutes",
+              ot.is_sequential AS "isSequential", ot.max_attempts AS "maxAttempts",
               ot.asset_id AS "assetId", a.asset_name AS "assetName",
               (SELECT COUNT(*) FROM ojt_modules WHERE training_id = ot.id) AS "moduleCount",
               (SELECT COUNT(*) FROM ojt_tests WHERE training_id = ot.id) AS "hasTest"
@@ -3044,7 +3345,8 @@ router.get("/ojt/mobile/trainings", async (req, res, next) => {
     );
     const [progress] = await pool.query(
       `SELECT training_id AS "trainingId", status, score, certificate_url AS "certificateUrl",
-              completed_modules AS "completedModules", started_at AS "startedAt", completed_at AS "completedAt"
+              completed_modules AS "completedModules", started_at AS "startedAt", completed_at AS "completedAt",
+              due_date AS "dueDate", attempt_number AS "attemptNumber", assigned_by IS NOT NULL AS "isAssigned"
        FROM ojt_user_progress
        WHERE company_user_id = ? AND training_id IN (${trainings.length ? trainings.map(() => "?").join(",") : "NULL"})`,
       [userId, ...trainings.map(t => t.id)]
@@ -3062,6 +3364,8 @@ router.get("/ojt/mobile/trainings/:id", async (req, res, next) => {
     const { id } = req.params;
     const [[training]] = await pool.query(
       `SELECT ot.id, ot.title, ot.description, ot.status, ot.passing_percentage AS "passingPercentage",
+              ot.category, ot.estimated_duration_minutes AS "estimatedDurationMinutes",
+              ot.is_sequential AS "isSequential", ot.max_attempts AS "maxAttempts",
               ot.asset_id AS "assetId", a.asset_name AS "assetName"
        FROM ojt_trainings ot
        LEFT JOIN assets a ON a.id = ot.asset_id
@@ -3099,7 +3403,9 @@ router.get("/ojt/mobile/trainings/:id", async (req, res, next) => {
     const userId = req.companyUser.id;
     const [[myProgress]] = await pool.query(
       `SELECT id, status, score, certificate_url AS "certificateUrl",
-              completed_modules AS "completedModules", started_at AS "startedAt", completed_at AS "completedAt"
+              completed_modules AS "completedModules", started_at AS "startedAt", completed_at AS "completedAt",
+              due_date AS "dueDate", attempt_number AS "attemptNumber",
+              trainer_sign_off_at AS "trainerSignOffAt", trainer_sign_off_notes AS "trainerSignOffNotes"
        FROM ojt_user_progress WHERE training_id = ? AND company_user_id = ?`,
       [id, userId]
     );
@@ -3125,10 +3431,19 @@ router.post("/ojt/mobile/trainings/:id/start", async (req, res, next) => {
     );
     if (!training) return res.status(404).json({ message: "Training not found" });
     const [[existing]] = await pool.query(
-      "SELECT id FROM ojt_user_progress WHERE training_id = ? AND company_user_id = ?",
+      "SELECT id, status FROM ojt_user_progress WHERE training_id = ? AND company_user_id = ?",
       [id, userId]
     );
-    if (existing) return res.json({ id: existing.id, message: "Already started" });
+    if (existing) {
+      // Already has a record — just activate if it was a not_started assignment
+      if (existing.status === "not_started") {
+        await pool.query(
+          "UPDATE ojt_user_progress SET status = 'in_progress', started_at = NOW(), updated_at = NOW() WHERE id = ?",
+          [existing.id]
+        );
+      }
+      return res.json({ id: existing.id, message: "Already started" });
+    }
     const [rows] = await pool.query(
       `INSERT INTO ojt_user_progress (training_id, company_user_id, status, completed_modules, started_at)
        VALUES (?, ?, 'in_progress', '[]', NOW())
@@ -3170,7 +3485,7 @@ router.post("/ojt/mobile/trainings/:id/complete-module", async (req, res, next) 
   } catch (err) { next(err); }
 });
 
-/* POST /ojt/mobile/trainings/:id/submit-test – submit test answers, calculate score */
+/* POST /ojt/mobile/trainings/:id/submit-test – submit test answers, calculate score, track attempts */
 router.post("/ojt/mobile/trainings/:id/submit-test", async (req, res, next) => {
   try {
     const companyId = cid(req);
@@ -3179,10 +3494,27 @@ router.post("/ojt/mobile/trainings/:id/submit-test", async (req, res, next) => {
     const { answers = {} } = req.body;
 
     const [[training]] = await pool.query(
-      "SELECT id, passing_percentage AS pp FROM ojt_trainings WHERE id = ? AND company_id = ?",
+      `SELECT id, passing_percentage AS pp, max_attempts AS ma FROM ojt_trainings
+       WHERE id = ? AND company_id = ?`,
       [id, companyId]
     );
     if (!training) return res.status(404).json({ message: "Training not found" });
+
+    // Check attempt limit
+    const [[progressRec]] = await pool.query(
+      `SELECT id, attempt_number AS an, status FROM ojt_user_progress
+       WHERE training_id = ? AND company_user_id = ?`,
+      [id, userId]
+    );
+    if (!progressRec) return res.status(400).json({ message: "Start the training first" });
+    const maxAttempts = Number(training.ma) || 3;
+    const currentAttempt = Number(progressRec.an) || 1;
+    if (progressRec.status === "completed") {
+      return res.status(400).json({ message: "Training already completed" });
+    }
+    if (progressRec.status === "failed" && currentAttempt >= maxAttempts) {
+      return res.status(400).json({ message: `Maximum attempts (${maxAttempts}) reached`, attemptsExhausted: true });
+    }
 
     const [[test]] = await pool.query("SELECT id, total_marks AS tm FROM ojt_tests WHERE training_id = ?", [id]);
     if (!test) return res.status(400).json({ message: "No test found for this training" });
@@ -3204,14 +3536,25 @@ router.post("/ojt/mobile/trainings/:id/submit-test", async (req, res, next) => {
     const scorePct = totalMarks > 0 ? Math.round((earned / totalMarks) * 100) : 0;
     const passed = scorePct >= passingPct;
     const newStatus = passed ? "completed" : "failed";
+    const nextAttemptNumber = progressRec.status === "failed" ? currentAttempt + 1 : currentAttempt;
 
+    // Record this attempt in history
     await pool.query(
-      `UPDATE ojt_user_progress SET status = ?, score = ?, completed_at = ?, updated_at = NOW()
-       WHERE training_id = ? AND company_user_id = ?`,
-      [newStatus, scorePct, passed ? new Date().toISOString() : null, id, userId]
+      `INSERT INTO ojt_test_attempts (progress_id, training_id, company_user_id, attempt_number, score, earned_marks, total_marks, passed)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [progressRec.id, id, userId, currentAttempt, scorePct, earned, totalMarks, passed]
     );
 
-    res.json({ score: scorePct, earned, totalMarks, passed, passingPct, status: newStatus });
+    await pool.query(
+      `UPDATE ojt_user_progress
+         SET status = ?, score = ?, completed_at = ?, attempt_number = ?, updated_at = NOW()
+       WHERE id = ?`,
+      [newStatus, scorePct, passed ? new Date().toISOString() : null, nextAttemptNumber, progressRec.id]
+    );
+
+    const attemptsRemaining = passed ? 0 : Math.max(0, maxAttempts - nextAttemptNumber);
+    res.json({ score: scorePct, earned, totalMarks, passed, passingPct, status: newStatus,
+               attemptNumber: currentAttempt, attemptsRemaining, maxAttempts });
   } catch (err) { next(err); }
 });
 
@@ -3222,15 +3565,67 @@ router.get("/ojt/mobile/my-progress", async (req, res, next) => {
     const userId = req.companyUser.id;
     const [rows] = await pool.query(
       `SELECT oup.id, oup.training_id AS "trainingId", ot.title AS "trainingTitle",
+              ot.category, ot.estimated_duration_minutes AS "estimatedDurationMinutes",
               oup.status, oup.score, oup.certificate_url AS "certificateUrl",
               oup.completed_modules AS "completedModules", oup.started_at AS "startedAt",
-              oup.completed_at AS "completedAt",
+              oup.completed_at AS "completedAt", oup.due_date AS "dueDate",
+              oup.attempt_number AS "attemptNumber", ot.max_attempts AS "maxAttempts",
+              oup.trainer_sign_off_at AS "trainerSignOffAt",
               (SELECT COUNT(*) FROM ojt_modules WHERE training_id = ot.id) AS "totalModules"
        FROM ojt_user_progress oup
        JOIN ojt_trainings ot ON ot.id = oup.training_id
        WHERE oup.company_user_id = ? AND ot.company_id = ?
        ORDER BY oup.updated_at DESC`,
       [userId, companyId]
+    );
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
+/* GET /ojt/mobile/my-assignments – assigned trainings not yet started */
+router.get("/ojt/mobile/my-assignments", async (req, res, next) => {
+  try {
+    const companyId = cid(req);
+    const userId = req.companyUser.id;
+    const [rows] = await pool.query(
+      `SELECT oup.id, oup.training_id AS "trainingId", ot.title AS "trainingTitle",
+              ot.description, ot.category, ot.estimated_duration_minutes AS "estimatedDurationMinutes",
+              ot.passing_percentage AS "passingPercentage",
+              ot.asset_id AS "assetId", a.asset_name AS "assetName",
+              oup.status, oup.due_date AS "dueDate", oup.assigned_at AS "assignedAt",
+              ab.full_name AS "assignedByName",
+              (SELECT COUNT(*) FROM ojt_modules WHERE training_id = ot.id) AS "moduleCount",
+              (SELECT COUNT(*) FROM ojt_tests WHERE training_id = ot.id) AS "hasTest"
+       FROM ojt_user_progress oup
+       JOIN ojt_trainings ot ON ot.id = oup.training_id
+       LEFT JOIN assets a ON a.id = ot.asset_id
+       LEFT JOIN company_users ab ON ab.id = oup.assigned_by
+       WHERE oup.company_user_id = ? AND ot.company_id = ? AND oup.assigned_by IS NOT NULL
+       ORDER BY oup.due_date ASC NULLS LAST, oup.assigned_at DESC`,
+      [userId, companyId]
+    );
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
+/* GET /ojt/mobile/test-attempts/:trainingId – attempt history for the logged-in user */
+router.get("/ojt/mobile/test-attempts/:trainingId", async (req, res, next) => {
+  try {
+    const companyId = cid(req);
+    const userId = req.companyUser.id;
+    const { trainingId } = req.params;
+    const [[training]] = await pool.query(
+      "SELECT id FROM ojt_trainings WHERE id = ? AND company_id = ?",
+      [trainingId, companyId]
+    );
+    if (!training) return res.status(404).json({ message: "Training not found" });
+    const [rows] = await pool.query(
+      `SELECT id, attempt_number AS "attemptNumber", score, earned_marks AS "earnedMarks",
+              total_marks AS "totalMarks", passed, submitted_at AS "submittedAt"
+       FROM ojt_test_attempts
+       WHERE training_id = ? AND company_user_id = ?
+       ORDER BY attempt_number ASC`,
+      [trainingId, userId]
     );
     res.json(rows);
   } catch (err) { next(err); }

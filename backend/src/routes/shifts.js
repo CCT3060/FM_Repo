@@ -112,21 +112,90 @@ router.get("/my-shifts", async (req, res, next) => {
 });
 
 /* ─────────────────────────────────────────────────────────────────────────────
+   GET /shifts/check-access?shiftId=<id>  — Check if caller is allowed to
+   access content locked to a specific shift right now.
+   Returns: { allowed: boolean, shiftName?: string, message?: string }
+   ─────────────────────────────────────────────────────────────────────────── */
+router.get("/check-access", async (req, res, next) => {
+  try {
+    const { shiftId } = req.query;
+
+    // If no shiftId provided, there is no restriction
+    if (!shiftId) {
+      return res.json({ allowed: true });
+    }
+
+    const shiftIdNum = Number(shiftId);
+    if (!shiftIdNum || isNaN(shiftIdNum)) {
+      return res.json({ allowed: true }); // invalid id → treat as unrestricted
+    }
+
+    // Verify the shift exists and belongs to this company
+    const [[shift]] = await pool.query(
+      `SELECT s.id, s.name, s.start_time AS "startTime", s.end_time AS "endTime", s.status
+       FROM shifts s
+       WHERE s.id = ? AND s.company_id = ?`,
+      [shiftIdNum, cid(req)]
+    );
+
+    if (!shift) {
+      return res.json({ allowed: false, message: "Shift not found" });
+    }
+
+    // Admins and technical leads are always allowed regardless of shift
+    const { role } = req.companyUser;
+    if (role === "admin" || role === "technical_lead") {
+      return res.json({ allowed: true, shiftName: shift.name });
+    }
+
+    // Check that the calling user is assigned to this shift
+    const [[assignment]] = await pool.query(
+      `SELECT id FROM employee_shifts WHERE company_user_id = ? AND shift_id = ?`,
+      [req.companyUser.id, shiftIdNum]
+    );
+
+    if (!assignment) {
+      return res.json({
+        allowed: false,
+        shiftName: shift.name,
+        message: `You are not assigned to the "${shift.name}" shift.`,
+      });
+    }
+
+    // Check if the shift is currently active
+    if (shift.status !== "active" || !isShiftActive(shift.startTime, shift.endTime)) {
+      return res.json({
+        allowed: false,
+        shiftName: shift.name,
+        message: `The "${shift.name}" shift is not currently active (${shift.startTime}–${shift.endTime}).`,
+      });
+    }
+
+    return res.json({ allowed: true, shiftName: shift.name });
+  } catch (err) { next(err); }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
    POST /shifts — Create a shift (admin only)
    ─────────────────────────────────────────────────────────────────────────── */
+/* Helper: normalise a time string from browser (HH:MM or HH:MM:SS) to HH:MM */
+const toHHMM = (t) => (typeof t === "string" ? t.slice(0, 5) : t);
+
 router.post(
   "/",
   validate([
     body("name").trim().notEmpty().withMessage("name is required"),
-    body("startTime").matches(/^\d{2}:\d{2}$/).withMessage("startTime must be HH:MM"),
-    body("endTime").matches(/^\d{2}:\d{2}$/).withMessage("endTime must be HH:MM"),
+    body("startTime").matches(/^\d{2}:\d{2}(:\d{2})?$/).withMessage("startTime must be HH:MM"),
+    body("endTime").matches(/^\d{2}:\d{2}(:\d{2})?$/).withMessage("endTime must be HH:MM"),
     body("description").optional().isString(),
     body("status").optional().isIn(["active", "inactive"]),
   ]),
   async (req, res, next) => {
     try {
       if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
-      const { name, startTime, endTime, description, status = "active" } = req.body;
+      const { name, description, status = "active" } = req.body;
+      const startTime = toHHMM(req.body.startTime);
+      const endTime   = toHHMM(req.body.endTime);
       const [[shift]] = await pool.query(
         `INSERT INTO shifts (company_id, name, start_time, end_time, description, status)
          VALUES (?, ?, ?, ?, ?, ?)
@@ -147,15 +216,17 @@ router.put(
   validate([
     param("id").isInt({ min: 1 }),
     body("name").optional().trim().notEmpty(),
-    body("startTime").optional().matches(/^\d{2}:\d{2}$/),
-    body("endTime").optional().matches(/^\d{2}:\d{2}$/),
+    body("startTime").optional().matches(/^\d{2}:\d{2}(:\d{2})?$/),
+    body("endTime").optional().matches(/^\d{2}:\d{2}(:\d{2})?$/),
     body("status").optional().isIn(["active", "inactive"]),
   ]),
   async (req, res, next) => {
     try {
       if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
       const { id } = req.params;
-      const { name, startTime, endTime, description, status } = req.body;
+      const { name, description, status } = req.body;
+      const startTime = req.body.startTime ? toHHMM(req.body.startTime) : undefined;
+      const endTime   = req.body.endTime   ? toHHMM(req.body.endTime)   : undefined;
       const [[existing]] = await pool.query(
         `SELECT id FROM shifts WHERE id = ? AND company_id = ?`, [id, cid(req)]
       );

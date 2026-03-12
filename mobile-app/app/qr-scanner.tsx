@@ -26,6 +26,13 @@ export default function QRScannerScreen() {
             return;
         }
 
+        // Match /ojt-training/:id path pattern (OJT training QR codes)
+        const ojtMatch = data.match(/\/ojt-training\/(\d+)/);
+        if (ojtMatch) {
+            router.replace({ pathname: '/ojt-training-detail', params: { id: ojtMatch[1] } } as any);
+            return;
+        }
+
         // Fallback: plain numeric ID (QR code contains only a number)
         const numericMatch = data.trim().match(/^\d+$/);
         if (numericMatch) {

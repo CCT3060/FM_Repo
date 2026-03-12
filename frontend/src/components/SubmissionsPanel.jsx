@@ -929,8 +929,8 @@ export default function SubmissionsPanel({ token: tokenProp, type = "checklists"
 
   /* ── Load filter meta whenever advanced panel is opened ── */
   useEffect(() => {
-    if (!companyId || !showAdvanced) return;
-    const qs = `?companyId=${companyId}`;
+    if (!showAdvanced) return;
+    const qs = companyId ? `?companyId=${companyId}` : "";
     fetch(`${API_BASE}/api/template-assignments/submissions/filters/${type}${qs}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
@@ -1054,6 +1054,7 @@ export default function SubmissionsPanel({ token: tokenProp, type = "checklists"
         { key: "templateName", label: "Template",     sortable: true },
         { key: "submittedBy",  label: "Submitted By", sortable: true },
         { key: "assetName",    label: "Asset",        sortable: true },
+        { key: "companyName",  label: "Company",      sortable: true },
         { key: "submittedAt",  label: "Submitted At", sortable: true },
         { key: "status",       label: "Status",       sortable: true },
         { key: "action",       label: "",             sortable: false },
@@ -1064,6 +1065,7 @@ export default function SubmissionsPanel({ token: tokenProp, type = "checklists"
         { key: "layoutType",   label: "Type",         sortable: true },
         { key: "submittedBy",  label: "Submitted By", sortable: true },
         { key: "assetName",    label: "Asset",        sortable: true },
+        { key: "companyName",  label: "Company",      sortable: true },
         { key: "period",       label: "Period",       sortable: false },
         { key: "shift",        label: "Shift",        sortable: true },
         { key: "submittedAt",  label: "Date",         sortable: true },
@@ -1360,6 +1362,7 @@ export default function SubmissionsPanel({ token: tokenProp, type = "checklists"
                       ) : "—"}
                     </td>
                     <td style={{ padding: "10px 14px", color: "#475569" }}>{r.assetName || "—"}</td>
+                    <td style={{ padding: "10px 14px", color: "#475569", fontSize: "12px" }}>{r.companyName || "—"}</td>
                     {type === "logsheets" && (
                       <>
                         <td style={{ padding: "10px 14px", color: "#475569", whiteSpace: "nowrap" }}>

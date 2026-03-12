@@ -36,33 +36,38 @@ router.get(
   async (req, res, next) => {
     try {
       const companyId = flexCid(req);
-      if (!companyId || isNaN(companyId))
-        return res.status(400).json({ message: "companyId required" });
+      const userId = req.user?.id;
+      if (!companyId && !userId)
+        return res.status(400).json({ message: "Authentication required" });
 
       const { type } = req.params;
       if (!["checklists", "logsheets"].includes(type))
         return res.status(400).json({ message: "type must be checklists or logsheets" });
 
+      // Build scope condition: single company or all companies belonging to this portal user
+      const cCond  = companyId ? "= ?" : "IN (SELECT id FROM companies WHERE user_id = ?)";
+      const cParam = companyId || userId;
+
       if (type === "checklists") {
         const [templates] = await pool.query(
           `SELECT id, template_name AS "templateName"
-           FROM checklist_templates WHERE company_id = ?
+           FROM checklist_templates WHERE company_id ${cCond}
            ORDER BY template_name`,
-          [companyId]
+          [cParam]
         );
         const [employees] = await pool.query(
           `SELECT id, full_name AS "fullName"
            FROM company_users
-           WHERE company_id = ? AND full_name IS NOT NULL
+           WHERE company_id ${cCond} AND full_name IS NOT NULL
            ORDER BY full_name`,
-          [companyId]
+          [cParam]
         );
         const [assets] = await pool.query(
           `SELECT id, asset_name AS "assetName"
            FROM assets
-           WHERE company_id = ?
+           WHERE company_id ${cCond}
            ORDER BY asset_name`,
-          [companyId]
+          [cParam]
         );
         return res.json({ templates, employees, assets, shifts: [] });
       }
@@ -70,31 +75,31 @@ router.get(
       // logsheets
       const [templates] = await pool.query(
         `SELECT id, template_name AS "templateName"
-         FROM logsheet_templates WHERE company_id = ?
+         FROM logsheet_templates WHERE company_id ${cCond}
          ORDER BY template_name`,
-        [companyId]
+        [cParam]
       );
       const [employees] = await pool.query(
         `SELECT id, full_name AS "fullName"
          FROM company_users
-         WHERE company_id = ? AND full_name IS NOT NULL
+         WHERE company_id ${cCond} AND full_name IS NOT NULL
          ORDER BY full_name`,
-        [companyId]
+        [cParam]
       );
       const [assets] = await pool.query(
         `SELECT id, asset_name AS "assetName"
          FROM assets
-         WHERE company_id = ?
+         WHERE company_id ${cCond}
          ORDER BY asset_name`,
-        [companyId]
+        [cParam]
       );
       const [shiftRows] = await pool.query(
         `SELECT DISTINCT le.shift
          FROM logsheet_entries le
          INNER JOIN logsheet_templates lt ON lt.id = le.template_id
-         WHERE lt.company_id = ? AND le.shift IS NOT NULL AND le.shift <> ''
+         WHERE lt.company_id ${cCond} AND le.shift IS NOT NULL AND le.shift <> ''
          ORDER BY le.shift`,
-        [companyId]
+        [cParam]
       );
       res.json({ templates, employees, assets, shifts: shiftRows.map((r) => r.shift) });
     } catch (err) { next(err); }
@@ -110,12 +115,13 @@ router.get(
   async (req, res, next) => {
     try {
       const companyId = flexCid(req);
-      if (!companyId || isNaN(companyId))
-        return res.status(400).json({ message: "companyId required" });
+      const userId = req.user?.id;
+      if (!companyId && !userId)
+        return res.status(400).json({ message: "Authentication required" });
 
       const { dateFrom, dateTo, period, templateId, assetId, status, submittedBy, search } = req.query;
-      const conditions = ["ct.company_id = ?"];
-      const params     = [companyId];
+      const conditions = companyId ? ["ct.company_id = ?"] : ["co.user_id = ?"];
+      const params     = companyId ? [companyId] : [userId];
 
       if (period === "today") {
         conditions.push("DATE(cs.submitted_at) = CURRENT_DATE");
@@ -144,12 +150,14 @@ router.get(
            ct.template_name        AS "templateName",
            cs.asset_id             AS "assetId",
            a.asset_name            AS "assetName",
+           co.company_name         AS "companyName",
            cs.status,
            cs.submitted_at         AS "submittedAt",
            cu.full_name            AS "submittedBy",
            cu.id                   AS "submittedById"
          FROM checklist_submissions cs
          JOIN checklist_templates ct ON cs.template_id = ct.id
+         JOIN companies co           ON co.id = ct.company_id
          LEFT JOIN assets a          ON a.id = cs.asset_id
          LEFT JOIN company_users cu  ON cu.id = cs.company_user_id
          WHERE ${conditions.join(" AND ")}
@@ -171,12 +179,13 @@ router.get(
   async (req, res, next) => {
     try {
       const companyId = flexCid(req);
-      if (!companyId || isNaN(companyId))
-        return res.status(400).json({ message: "companyId required" });
+      const userId = req.user?.id;
+      if (!companyId && !userId)
+        return res.status(400).json({ message: "Authentication required" });
 
       const { dateFrom, dateTo, period, templateId, assetId, status, shift, submittedBy, search } = req.query;
-      const conditions = ["lt.company_id = ?"];
-      const params     = [companyId];
+      const conditions = companyId ? ["lt.company_id = ?"] : ["co.user_id = ?"];
+      const params     = companyId ? [companyId] : [userId];
       const dateExpr   = "COALESCE(le.submitted_at, le.entry_date)";
 
       if (period === "today") {
@@ -208,6 +217,7 @@ router.get(
            lt.layout_type               AS "layoutType",
            le.asset_id                  AS "assetId",
            a.asset_name                 AS "assetName",
+           co.company_name              AS "companyName",
            le.status,
            COALESCE(le.submitted_at, le.entry_date) AS "submittedAt",
            le.shift,
@@ -217,6 +227,7 @@ router.get(
            cu.id                        AS "submittedById"
          FROM logsheet_entries le
          JOIN logsheet_templates lt      ON lt.id = le.template_id
+         JOIN companies co               ON co.id = lt.company_id
          LEFT JOIN assets a              ON a.id = le.asset_id
          LEFT JOIN company_users cu      ON cu.id = le.company_user_id
          WHERE ${conditions.join(" AND ")}
@@ -239,10 +250,13 @@ router.get(
   async (req, res, next) => {
     try {
       const companyId = flexCid(req);
-      if (!companyId || isNaN(companyId))
-        return res.status(400).json({ message: "companyId required" });
+      const userId = req.user?.id;
+      if (!companyId && !userId)
+        return res.status(400).json({ message: "Authentication required" });
 
       const { id } = req.params;
+      const scopeCond  = companyId ? "ct.company_id = ?" : "co.user_id = ?";
+      const scopeParam = companyId || userId;
       const [[submission]] = await pool.query(
         `SELECT
            cs.id,
@@ -255,10 +269,11 @@ router.get(
            cu.full_name         AS "submittedBy"
          FROM checklist_submissions cs
          JOIN checklist_templates ct  ON ct.id = cs.template_id
+         JOIN companies co            ON co.id = ct.company_id
          LEFT JOIN assets a           ON a.id  = cs.asset_id
          LEFT JOIN company_users cu   ON cu.id = cs.company_user_id
-         WHERE cs.id = ? AND ct.company_id = ?`,
-        [id, companyId]
+         WHERE cs.id = ? AND ${scopeCond}`,
+        [id, scopeParam]
       );
       if (!submission) return res.status(404).json({ message: "Submission not found" });
 
@@ -289,10 +304,13 @@ router.get(
   async (req, res, next) => {
     try {
       const companyId = flexCid(req);
-      if (!companyId || isNaN(companyId))
-        return res.status(400).json({ message: "companyId required" });
+      const userId = req.user?.id;
+      if (!companyId && !userId)
+        return res.status(400).json({ message: "Authentication required" });
 
       const { id } = req.params;
+      const scopeCond  = companyId ? "lt.company_id = ?" : "co.user_id = ?";
+      const scopeParam = companyId || userId;
       const [[submission]] = await pool.query(
         `SELECT
            le.id,
@@ -311,10 +329,11 @@ router.get(
            cu.full_name                AS "submittedBy"
          FROM logsheet_entries le
          JOIN logsheet_templates lt     ON lt.id = le.template_id
+         JOIN companies co              ON co.id = lt.company_id
          LEFT JOIN assets a             ON a.id  = le.asset_id
          LEFT JOIN company_users cu     ON cu.id = le.company_user_id
-         WHERE le.id = ? AND lt.company_id = ?`,
-        [id, companyId]
+         WHERE le.id = ? AND ${scopeCond}`,
+        [id, scopeParam]
       );
       if (!submission) return res.status(404).json({ message: "Entry not found" });
 
