@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import TemplateImportModal from "./TemplateImportModal.jsx";
+import { getApiBaseUrl } from "../utils/runtimeConfig";
 import {
   getLogsheetTemplates,
   createLogsheetTemplate,
@@ -11,7 +12,7 @@ import {
 import TabularLogsheetBuilder from "./TabularLogsheetBuilder.jsx";
 import TabularLogsheetFill from "./TabularLogsheetFill.jsx";
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:4000";
+const API_BASE = getApiBaseUrl();
 
 /* ─────────────────────────────────────────────────────────────────
    Constants

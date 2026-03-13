@@ -1,4 +1,6 @@
-const BASE = import.meta.env.VITE_API_URL || "http://localhost:4000";
+import { buildApiUrl, getApiBaseUrl } from "./utils/runtimeConfig";
+
+const BASE = getApiBaseUrl();
 
 async function request(method, path, body, options = {}) {
     const headers = { "Content-Type": "application/json" };
@@ -243,10 +245,9 @@ export const grantOjtCertificate   = (token, pid)       => request("POST",  `${c
 export const assignOjtTraining     = (token, id, data)  => request("POST",  `${cp}/ojt/trainings/${id}/assign`,                data,      { authToken: token });
 export const trainerOjtSignOff     = (token, pid, data) => request("POST",  `${cp}/ojt/progress/${pid}/trainer-signoff`,       data,      { authToken: token });
 export const uploadOjtFile = async (token, file) => {
-  const BASE_URL = import.meta.env.VITE_API_URL || "";
   const fd = new FormData();
   fd.append("file", file);
-  const res = await fetch(`${BASE_URL}/api/company-portal/ojt/upload`, {
+  const res = await fetch(buildApiUrl("/api/company-portal/ojt/upload"), {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
     body: fd,
@@ -274,8 +275,7 @@ export const deleteFleetMaintenance        = (token, id)        => request("DELE
 export const getFleetSubmissions           = (token)            => request("GET",   `${cp}/fleet/submissions`,                         undefined, { authToken: token });
 export const getFleetSubmissionDetail      = (token, type, id)  => request("GET",   `${cp}/fleet/submissions/detail/${type}/${id}`,    undefined, { authToken: token });
 export const downloadFleetSubmissionsCSV   = (token)            => {
-  const BASE_URL = import.meta.env.VITE_API_URL || "";
-  return fetch(`${BASE_URL}/api/company-portal/fleet/submissions/export-csv`, {
+  return fetch(buildApiUrl("/api/company-portal/fleet/submissions/export-csv"), {
     headers: { Authorization: `Bearer ${token}` },
   });
 };

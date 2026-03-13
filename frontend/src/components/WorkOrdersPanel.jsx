@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
+import { getApiBaseUrl } from "../utils/runtimeConfig";
 
-const BASE = import.meta.env.VITE_API_URL || "http://localhost:4000";
+const BASE = getApiBaseUrl();
 
 async function apiFetch(method, path, body, token) {
   const headers = { "Content-Type": "application/json" };
