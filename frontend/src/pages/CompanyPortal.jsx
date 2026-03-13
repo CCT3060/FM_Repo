@@ -66,6 +66,7 @@ import WarningsPanel from "../components/WarningsPanel.jsx";
 import AssetDashboard from "../components/AssetDashboard.jsx";
 import { useAlertSound } from "../hooks/useAlertSound";
 import QRCode from "qrcode";
+import { buildApiUrl, getPublicAppUrl } from "../utils/runtimeConfig";
 
 const TOKEN_KEY = "company_portal_token";
 
@@ -774,13 +775,7 @@ const CompanyPortal = () => {
   const [detailModal, setDetailModal] = useState({ open: false, type: null, data: null, loading: false, error: null });
 
   const getQrBaseUrl = () => {
-    try {
-      const u = new URL(import.meta.env.VITE_API_URL || "");
-      if (u.hostname !== "localhost" && u.hostname !== "127.0.0.1") {
-        return `${u.protocol}//${u.hostname}:5173`;
-      }
-    } catch {}
-    return window.location.origin;
+    return getPublicAppUrl();
   };
 
   const handleShowAssetQR = async (assetId, assetName) => {
@@ -1120,10 +1115,9 @@ const CompanyPortal = () => {
       const cid = selectedCompanyId || companies[0]?.id;
       if (!cid) return;
       try {
-        const res = await fetch(
-          `${import.meta.env.VITE_API_URL || "http://localhost:4000"}/api/flags/admin/list?companyId=${cid}&status=open&limit=5`,
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
+        const res = await fetch(buildApiUrl(`/api/flags/admin/list?companyId=${cid}&status=open&limit=5`), {
+          headers: { Authorization: `Bearer ${token}` }
+        });
         if (!res.ok) return;
         const data = await res.json();
         const newCount = data?.total ?? 0;
@@ -1169,7 +1163,7 @@ const CompanyPortal = () => {
     // Pre-load open flag count for nav badge — use admin endpoint
     const cid = selectedCompanyId || companies[0]?.id;
     if (cid) {
-      fetch(`${import.meta.env.VITE_API_URL || "http://localhost:4000"}/api/flags/admin/list?companyId=${cid}&status=open&limit=1`, {
+      fetch(buildApiUrl(`/api/flags/admin/list?companyId=${cid}&status=open&limit=1`), {
         headers: { Authorization: `Bearer ${token}` }
       })
         .then((r) => r.json())

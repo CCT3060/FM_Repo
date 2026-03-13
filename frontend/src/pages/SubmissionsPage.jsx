@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
+import { getApiBaseUrl } from '../utils/runtimeConfig';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+const API_BASE = getApiBaseUrl();
 
 export default function SubmissionsPage() {
     const [checklistSubmissions, setChecklistSubmissions] = useState([]);

@@ -1,6 +1,7 @@
 ﻿import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { getApiBaseUrl } from "../utils/runtimeConfig";
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:4000";
+const API_BASE = getApiBaseUrl();
 
 /* ─── CSV export ──────────────────────────────────────────────── */
 function exportToCSV(rows, type, detail) {

@@ -7,6 +7,9 @@ import {
   assignOjtTraining, trainerOjtSignOff,
 } from "../api.js";
 import { getCompanyPortalWOUsers } from "../api.js";
+import { getApiBaseUrl } from "../utils/runtimeConfig";
+
+const apiBaseUrl = getApiBaseUrl();
 
 // Helper to get marks from questions
 const getTotalMarks = (questions) => questions.reduce((sum, q) => sum + (Number(q.marks) || 1), 0);
@@ -734,7 +737,7 @@ export default function OjtTrainingBuilder({ token, assets = [], onBack, trainin
                   {m.contents && m.contents.length > 0 && (
                     <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: "8px" }}>
                       {m.contents.map(c => {
-                        const fileUrl = c.url ? (c.url.startsWith("http") ? c.url : `${import.meta.env.VITE_API_URL || "http://localhost:4000"}${c.url}`) : null;
+                        const fileUrl = c.url ? (c.url.startsWith("http") ? c.url : `${apiBaseUrl}${c.url}`) : null;
                         return (
                           <div key={c.id} style={{ padding: "10px 12px", background: "#f1f5f9", borderRadius: "6px", fontSize: "12px", border: "1px solid #e2e8f0" }}>
                             <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: c.url ? "8px" : "0" }}>
@@ -1267,7 +1270,7 @@ export function TrainingPreviewModal({ training, onClose }) {
                           <div style={{ flex: 1 }}>
                             <p style={{ margin: 0, fontSize: "13px", color: "#334155" }}>{c.description}</p>
                             {c.type === "video" && c.url && (() => {
-                              const videoUrl = c.url.startsWith("http") ? c.url : `${import.meta.env.VITE_API_URL || "http://localhost:4000"}${c.url}`;
+                              const videoUrl = c.url.startsWith("http") ? c.url : `${apiBaseUrl}${c.url}`;
                               return (
                                 <>
                                   <video src={videoUrl} controls
@@ -1278,7 +1281,7 @@ export function TrainingPreviewModal({ training, onClose }) {
                               );
                             })()}
                             {c.type === "document" && c.url && (
-                              <a href={c.url.startsWith("http") ? c.url : `${import.meta.env.VITE_API_URL || "http://localhost:4000"}${c.url}`} target="_blank" rel="noopener noreferrer" style={{ fontSize: "11px", color: "#2563eb", display: "block", marginTop: "4px" }}>📎 Open Document →</a>
+                              <a href={c.url.startsWith("http") ? c.url : `${apiBaseUrl}${c.url}`} target="_blank" rel="noopener noreferrer" style={{ fontSize: "11px", color: "#2563eb", display: "block", marginTop: "4px" }}>📎 Open Document →</a>
                             )}
                             {c.type === "text" && !c.url && null}
                           </div>

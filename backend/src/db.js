@@ -17,6 +17,45 @@ const poolInstance = new Pool({
   idleTimeoutMillis: 30000,
 });
 
+const RETRY_ATTEMPTS = Number(process.env.DB_RETRY_ATTEMPTS || 3);
+const RETRY_BASE_DELAY_MS = Number(process.env.DB_RETRY_BASE_DELAY_MS || 300);
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const isTransientDbError = (error) => {
+  const message = String(error?.message || "").toLowerCase();
+  const code = String(error?.code || "").toLowerCase();
+
+  return (
+    message.includes("circuit breaker open") ||
+    message.includes("unable to establish connection to upstream database") ||
+    code === "etimedout" ||
+    code === "econnreset" ||
+    code === "enetunreach"
+  );
+};
+
+const withRetry = async (operation) => {
+  let lastError;
+
+  for (let attempt = 1; attempt <= RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      const shouldRetry = attempt < RETRY_ATTEMPTS && isTransientDbError(error);
+
+      if (!shouldRetry) {
+        throw error;
+      }
+
+      await wait(RETRY_BASE_DELAY_MS * attempt);
+    }
+  }
+
+  throw lastError;
+};
+
 const isBulkRows = (value) => Array.isArray(value) && value.length > 0 && Array.isArray(value[0]);
 
 const normalizeResult = (result) => {
@@ -73,7 +112,7 @@ const prepareQuery = (sql, params = []) => {
 
 const run = async (executor, sql, params = []) => {
   const { text, values } = prepareQuery(sql, params);
-  const result = await executor.query(text, values);
+  const result = await withRetry(() => executor.query(text, values));
   const normalized = normalizeResult(result);
   // Attach insertId to the rows array so `const [result] = pool.execute(...)` → result.insertId works
   if (normalized.insertId !== undefined) {
@@ -87,7 +126,7 @@ const pool = {
   query: (sql, params) => run(poolInstance, sql, params),
   execute: (sql, params) => run(poolInstance, sql, params),
   getConnection: async () => {
-    const client = await poolInstance.connect();
+    const client = await withRetry(() => poolInstance.connect());
     const runner = (sql, params) => run(client, sql, params);
     return {
       query: runner,

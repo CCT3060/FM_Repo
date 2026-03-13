@@ -9,8 +9,9 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import LogsheetModule from "../components/LogsheetModule.jsx";
+import { getApiBaseUrl } from "../utils/runtimeConfig";
 
-const BASE = import.meta.env.VITE_API_URL || "http://localhost:4000";
+const BASE = getApiBaseUrl();
 
 export default function AssetScanPage() {
   const { assetId } = useParams();

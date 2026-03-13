@@ -4,8 +4,9 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { getApiBaseUrl } from "../utils/runtimeConfig";
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:4000";
+const API_BASE = getApiBaseUrl();
 
 /* ─── tiny chart primitives (no lib needed) ─────────────────────── */
 function BarChart({ data = [], labelKey = "label", valueKey = "count", color = "#2563eb", height = 160 }) {

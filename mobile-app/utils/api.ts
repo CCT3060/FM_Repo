@@ -12,7 +12,7 @@ import { Platform } from 'react-native';
 // OPTION 2: Auto-detect platform (recommended for development)
 const getApiBase = () => {
   if (!__DEV__) {
-    return 'https://your-production-api.com'; // Production URL
+    return 'https://d3kz9zxtx6891m.cloudfront.net';
   }
   
   // Development URLs

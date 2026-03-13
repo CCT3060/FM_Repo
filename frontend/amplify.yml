@@ -1,0 +1,18 @@
+version: 1
+frontend:
+  phases:
+    preBuild:
+      commands:
+        - npm ci
+        - echo "VITE_API_URL=https://d3kz9zxtx6891m.cloudfront.net" >> .env.production
+        - if [ "$AWS_BRANCH" = "develop" ]; then echo "VITE_PUBLIC_APP_URL=https://develop.d2af0xn65nyshr.amplifyapp.com" >> .env.production; else echo "VITE_PUBLIC_APP_URL=https://main.d2af0xn65nyshr.amplifyapp.com" >> .env.production; fi
+    build:
+      commands:
+        - npm run build
+  artifacts:
+    baseDirectory: dist
+    files:
+      - '**/*'
+  cache:
+    paths:
+      - node_modules/**/*

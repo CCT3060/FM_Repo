@@ -1,3 +1,4 @@
+import { getPublicAppUrl } from "../utils/runtimeConfig";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import QRCode from "qrcode";
@@ -2591,13 +2592,7 @@ export default function CompanyEmployeePortal() {
   };
 
   const getQrBaseUrl = () => {
-    try {
-      const u = new URL(import.meta.env.VITE_API_URL || "");
-      if (u.hostname !== "localhost" && u.hostname !== "127.0.0.1") {
-        return `${u.protocol}//${u.hostname}:5173`;
-      }
-    } catch {}
-    return window.location.origin;
+    return getPublicAppUrl();
   };
 
   const handleShowAssetQR = async (assetId, assetName) => {
