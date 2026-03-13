@@ -5,7 +5,7 @@ frontend:
       commands:
         - npm ci
         - echo "VITE_API_URL=https://d3kz9zxtx6891m.cloudfront.net" >> .env.production
-        - echo "VITE_PUBLIC_APP_URL=https://main.d2o5o07rd9wndc.amplifyapp.com" >> .env.production
+        - echo "VITE_PUBLIC_APP_URL=https://main.d2af0xn65nyshr.amplifyapp.com" >> .env.production
     build:
       commands:
         - npm run build
