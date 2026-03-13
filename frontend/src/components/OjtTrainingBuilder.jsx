@@ -957,6 +957,7 @@ function EnrollmentTab({ training, token }) {
   const [signingOff, setSigningOff] = useState(null);
   const [signOffNotes, setSignOffNotes] = useState("");
   const [signOffProgressId, setSignOffProgressId] = useState(null);
+  const [certModalUser, setCertModalUser] = useState(null);
 
   const load = async () => {
     setLoading(true);
@@ -997,6 +998,7 @@ function EnrollmentTab({ training, token }) {
     : null;
 
   return (
+    <>
     <Card style={{ padding: "24px" }}>
       {/* Sign-off modal */}
       {signOffProgressId && (
@@ -1119,13 +1121,13 @@ function EnrollmentTab({ training, token }) {
                         {u.certificateUrl ? (
                           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}>
                             <span style={{ color: "#16a34a", fontWeight: 700 }}>✓</span>
-                            <a href={u.certificateUrl} target="_blank" rel="noopener noreferrer" style={{ color: "#2563eb", fontSize: "11px", textDecoration: "underline" }}>View</a>
+                            <button onClick={() => setCertModalUser(u)} style={{ color: "#2563eb", fontSize: "11px", textDecoration: "underline", background: "none", border: "none", cursor: "pointer", padding: 0 }}>View</button>
                           </div>
                         ) : isPassed && u.status === "completed" && u.trainerSignOffAt ? (
                           <button onClick={async () => {
                             try {
-                              await grantOjtCertificate(token, u.id);
-                              setUsers(prev => prev.map(x => x.id === u.id ? { ...x, certificateUrl: "/certificate-granted" } : x));
+                              const result = await grantOjtCertificate(token, u.id);
+                              setUsers(prev => prev.map(x => x.id === u.id ? { ...x, certificateUrl: result?.certificateUrl || "/ojt/certificate/granted" } : x));
                               alert("Certificate granted!");
                             } catch (e) { alert("Failed: " + e.message); }
                           }} style={{ padding: "4px 10px", borderRadius: "6px", fontSize: "11px", fontWeight: 700, background: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe", cursor: "pointer" }}>
@@ -1142,6 +1144,41 @@ function EnrollmentTab({ training, token }) {
         </>
       )}
     </Card>
+
+    {/* Certificate Modal */}
+    {certModalUser && (
+      <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }} onClick={() => setCertModalUser(null)}>
+        <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: "16px", width: "100%", maxWidth: "620px", padding: "48px 40px", textAlign: "center", boxShadow: "0 25px 60px rgba(0,0,0,0.3)", position: "relative" }}>
+          {/* Gold border accent */}
+          <div style={{ position: "absolute", inset: 0, borderRadius: "16px", border: "6px solid #d97706", pointerEvents: "none" }} />
+          <div style={{ fontSize: "32px", marginBottom: "4px" }}>🏆</div>
+          <div style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "3px", color: "#6b7280", textTransform: "uppercase", marginBottom: "8px" }}>Certificate of Completion</div>
+          <div style={{ fontSize: "13px", color: "#6b7280", marginBottom: "12px" }}>This is to certify that</div>
+          <div style={{ fontSize: "26px", fontWeight: 800, color: "#111827", fontFamily: "Georgia, serif", borderBottom: "2px solid #d97706", display: "inline-block", paddingBottom: "4px", marginBottom: "16px" }}>{certModalUser.userName || `User #${certModalUser.companyUserId}`}</div>
+          <div style={{ fontSize: "13px", color: "#6b7280", marginBottom: "8px" }}>has successfully completed the training</div>
+          <div style={{ fontSize: "20px", fontWeight: 700, color: "#1e3a8a", marginBottom: "20px" }}>{training.title}</div>
+          <div style={{ display: "flex", justifyContent: "center", gap: "32px", marginBottom: "24px", flexWrap: "wrap" }}>
+            {certModalUser.score != null && (
+              <div>
+                <div style={{ fontSize: "11px", color: "#9ca3af", fontWeight: 600, textTransform: "uppercase" }}>Score</div>
+                <div style={{ fontSize: "22px", fontWeight: 800, color: "#16a34a" }}>{certModalUser.score}%</div>
+              </div>
+            )}
+            {certModalUser.completedAt && (
+              <div>
+                <div style={{ fontSize: "11px", color: "#9ca3af", fontWeight: 600, textTransform: "uppercase" }}>Completed On</div>
+                <div style={{ fontSize: "15px", fontWeight: 700, color: "#374151" }}>{new Date(certModalUser.completedAt).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}</div>
+              </div>
+            )}
+          </div>
+          <div style={{ marginTop: "10px", borderTop: "1px solid #e5e7eb", paddingTop: "16px", display: "flex", gap: "10px", justifyContent: "center" }}>
+            <button onClick={() => window.print()} style={{ padding: "8px 20px", background: "#1e3a8a", color: "#fff", border: "none", borderRadius: "8px", cursor: "pointer", fontWeight: 600, fontSize: "13px" }}>🖨 Print</button>
+            <button onClick={() => setCertModalUser(null)} style={{ padding: "8px 20px", background: "#f3f4f6", color: "#374151", border: "1px solid #d1d5db", borderRadius: "8px", cursor: "pointer", fontWeight: 600, fontSize: "13px" }}>Close</button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
 

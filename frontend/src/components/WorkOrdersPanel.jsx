@@ -367,7 +367,7 @@ export default function WorkOrdersPanel({ token, companyId, assets = [] }) {
           || (w.assignedToName || "").toLowerCase().includes(q);
       })
     : filter === "escalated"
-      ? workOrders.filter((w) => Number(w.escalationLevel) > 0)
+      ? workOrders.filter((w) => Number(w.escalationLevel) > 0 || w.flagEscalated === true)
       : workOrders;
 
   const counts = { open: 0, in_progress: 0, completed: 0, closed: 0, escalated: 0 };

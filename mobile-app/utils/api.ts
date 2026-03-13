@@ -18,11 +18,11 @@ const getApiBase = () => {
   // Development URLs
   if (Platform.OS === 'android') {
     // For physical Android device, use your PC's IP
-    return 'http://192.168.1.55:4000';
+    return 'http://192.168.1.56:4000';
     // For Android emulator, use: return 'http://10.0.2.2:4000';
   } else if (Platform.OS === 'ios') {
     // For physical iOS device, use your PC's IP
-    return 'http://192.168.1.55:4000';
+    return 'http://192.168.1.56:4000';
     // For iOS simulator, use: return 'http://localhost:4000';
   } else {
     return 'http://localhost:4000'; // Web or other platforms
@@ -333,6 +333,7 @@ export interface Assignment {
   assetType?: string;
   assetId?: number | null;
   assetName?: string | null;
+  frequency?: string | null;
   note?: string;
   assignedAt: string;
   assignedBy?: string;
@@ -773,6 +774,72 @@ export async function getTeamAssignments(filters?: {
   const query = params.toString() ? `?${params.toString()}` : '';
   const response = await authenticatedFetch(`/api/template-assignments/team-assignments${query}`);
   if (!response.ok) throw new Error('Failed to fetch team assignments');
+  return response.json();
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Today's Progress & Submission History
+// ────────────────────────────────────────────────────────────────────────────
+
+export interface SubmissionHistoryItem {
+  id: number;
+  type: 'checklist' | 'logsheet';
+  templateName: string;
+  templateId: number;
+  assetName: string | null;
+  submittedAt: string;
+  status: string;
+}
+
+export async function getTodayProgress(): Promise<{ checklistsDone: number; logsheetsDone: number; totalDone: number }> {
+  const response = await authenticatedFetch('/api/template-assignments/my-today-progress');
+  if (!response.ok) return { checklistsDone: 0, logsheetsDone: 0, totalDone: 0 };
+  return response.json();
+}
+
+export async function getMySubmissionHistory(limit = 30): Promise<SubmissionHistoryItem[]> {
+  const response = await authenticatedFetch(`/api/template-assignments/my-submission-history?limit=${limit}`);
+  if (!response.ok) return [];
+  return response.json();
+}
+
+export interface SubmissionDetailAnswer {
+  question: string;
+  type: string;
+  answer: string | number | boolean | null;
+}
+
+export interface SubmissionDetail extends SubmissionHistoryItem {
+  type: 'checklist' | 'logsheet';
+  answers: SubmissionDetailAnswer[];
+}
+
+export async function getMySubmissionDetail(type: string, id: number): Promise<SubmissionDetail> {
+  const response = await authenticatedFetch(`/api/template-assignments/my-submission-detail/${type}/${id}`);
+  if (!response.ok) throw new Error('Failed to load submission detail');
+  return response.json();
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Warnings / Flags for current tech user
+// ────────────────────────────────────────────────────────────────────────────
+
+export interface WarningItem {
+  id: number;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  status: 'open' | 'in_progress' | 'resolved' | 'closed';
+  description: string | null;
+  source: string;
+  createdAt: string;
+  resolvedAt: string | null;
+  escalated: boolean;
+  assetName: string | null;
+  assetCode: string | null;
+}
+
+export async function getMyWarnings(limit = 50): Promise<WarningItem[]> {
+  const response = await authenticatedFetch(`/api/template-assignments/my-warnings?limit=${limit}`);
+  if (!response.ok) return [];
   return response.json();
 }
 

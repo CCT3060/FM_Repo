@@ -2,6 +2,7 @@ import { Router } from "express";
 import bcrypt from "bcryptjs";
 import path from "path";
 import { fileURLToPath } from "url";
+import fs from "fs";
 import multer from "multer";
 import pool from "../db.js";
 import { requireCompanyAuth } from "../middleware/companyAuth.js";
@@ -10,6 +11,7 @@ import { dispatchFlagNotifications } from "../utils/notificationsHelper.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const uploadsDir = path.join(__dirname, "../../uploads");
+fs.mkdirSync(uploadsDir, { recursive: true }); // ensure directory exists
 
 const ojtStorage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, uploadsDir),
@@ -1955,7 +1957,8 @@ router.get("/work-orders", async (req, res, next) => {
               wo.created_at AS "createdAt",
               wo.expected_completion_at AS "expectedCompletionAt",
               wo.escalation_level AS "escalationLevel",
-              f.severity AS "flagSeverity", f.source AS "flagSource"
+              f.severity AS "flagSeverity", f.source AS "flagSource",
+              COALESCE(f.escalated, FALSE) AS "flagEscalated"
        FROM work_orders wo
        LEFT JOIN company_users cu ON cu.id = wo.cp_assigned_to
        LEFT JOIN company_users cb ON cb.id = wo.cp_created_by
@@ -2722,7 +2725,7 @@ router.post("/ojt/progress/:id/certificate", async (req, res, next) => {
       [id, companyId]
     );
     if (!progress) return res.status(404).json({ message: "Progress not found" });
-    const certUrl = `cert-training-${progress.training_id}-user-${progress.company_user_id}-${Date.now()}`;
+    const certUrl = `/ojt/certificate/progress-${id}`;
     await pool.query("UPDATE ojt_user_progress SET certificate_url = ? WHERE id = ?", [certUrl, id]);
     res.json({ id, certificateUrl: certUrl });
   } catch (err) { next(err); }
@@ -3312,7 +3315,16 @@ router.delete("/fleet/maintenance/:id", async (req, res, next) => {
 });
 
 /* POST /ojt/upload – upload a video or document file (admin only) */
-router.post("/ojt/upload", uploadOjt.single("file"), async (req, res, next) => {
+router.post("/ojt/upload", (req, res, next) => {
+  uploadOjt.single("file")(req, res, (err) => {
+    if (err instanceof multer.MulterError) {
+      return res.status(400).json({ message: err.message || "File too large" });
+    } else if (err) {
+      return res.status(400).json({ message: err.message || "File type not allowed" });
+    }
+    next();
+  });
+}, async (req, res, next) => {
   try {
     if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
     if (!req.file) return res.status(400).json({ message: "No file provided" });

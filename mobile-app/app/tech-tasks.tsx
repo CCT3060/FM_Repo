@@ -13,19 +13,41 @@ import {
     View,
 } from 'react-native';
 import Animated, { FadeInUp } from 'react-native-reanimated';
-import { getMyAssignments, type Assignment } from '../utils/api';
+import { getMyAssignments, getMySubmissionHistory, type Assignment, type SubmissionHistoryItem } from '../utils/api';
 import { TechBottomNav } from './tech-dashboard';
 
 export default function TechTasksScreen() {
-    const [activeTab, setActiveTab] = useState<'Checklists' | 'Log Sheets'>('Checklists');
+    const [activeTab, setActiveTab] = useState<'Checklists' | 'Log Sheets' | 'History'>('Checklists');
     const [assignments, setAssignments] = useState<Assignment[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [historyItems, setHistoryItems] = useState<SubmissionHistoryItem[]>([]);
+    const [isHistoryLoading, setIsHistoryLoading] = useState(false);
+    const [historyError, setHistoryError] = useState<string | null>(null);
 
     useEffect(() => {
         loadAssignments();
     }, []);
+
+    useEffect(() => {
+        if (activeTab === 'History' && historyItems.length === 0) {
+            loadHistory();
+        }
+    }, [activeTab]);
+
+    const loadHistory = async () => {
+        setIsHistoryLoading(true);
+        setHistoryError(null);
+        try {
+            const data = await getMySubmissionHistory(50);
+            setHistoryItems(data);
+        } catch (err: any) {
+            setHistoryError(err.message || 'Failed to load history');
+        } finally {
+            setIsHistoryLoading(false);
+        }
+    };
 
     const loadAssignments = async () => {
         try {
@@ -158,10 +180,18 @@ export default function TechTasksScreen() {
                             Log Sheets ({logsheetCount})
                         </Text>
                     </TouchableOpacity>
+                    <TouchableOpacity
+                        style={[styles.tabBtn, activeTab === 'History' && styles.tabBtnActive]}
+                        onPress={() => setActiveTab('History')}
+                    >
+                        <Text style={[styles.tabText, activeTab === 'History' && styles.tabTextActive]}>
+                            History
+                        </Text>
+                    </TouchableOpacity>
                 </View>
 
-                {/* Date & Progress Area */}
-                <Animated.View entering={FadeInUp.delay(100).duration(400)} style={styles.progressHeader}>
+                {/* Date & Progress Area — hidden on History tab */}
+                {activeTab !== 'History' && <Animated.View entering={FadeInUp.delay(100).duration(400)} style={styles.progressHeader}>
                     <View>
                         <Text style={styles.todayLabel}>TODAY</Text>
                         <Text style={styles.dateText}>{today}</Text>
@@ -172,7 +202,7 @@ export default function TechTasksScreen() {
                             <Text style={styles.progressFraction}>{filteredAssignments.length} task{filteredAssignments.length !== 1 ? 's' : ''}</Text>
                         </View>
                     </View>
-                </Animated.View>
+                </Animated.View>}
 
                 {/* Content */}
                 <View style={styles.listContainer}>
@@ -189,7 +219,7 @@ export default function TechTasksScreen() {
                                 <Text style={styles.retryText}>Retry</Text>
                             </TouchableOpacity>
                         </Animated.View>
-                    ) : filteredAssignments.length === 0 ? (
+                    ) : activeTab !== 'History' && filteredAssignments.length === 0 ? (
                         <Animated.View entering={FadeInUp.duration(400)} style={styles.centeredMsg}>
                             <View style={styles.emptyIconCircle}>
                                 <MaterialCommunityIcons
@@ -201,8 +231,73 @@ export default function TechTasksScreen() {
                             <Text style={styles.emptyText}>No {activeTab.toLowerCase()} assigned yet</Text>
                             <Text style={styles.emptySubText}>Your supervisor will assign tasks here</Text>
                         </Animated.View>
-                    ) : (
+                    ) : activeTab === 'History' ? null : (
                         filteredAssignments.map((a, i) => renderTask(a, i))
+                    )}  
+                    {activeTab === 'History' && (
+                        isHistoryLoading ? (
+                            <View style={styles.centeredMsg}>
+                                <ActivityIndicator size="large" color="#2563EB" />
+                                <Text style={styles.loadingText}>Loading history...</Text>
+                            </View>
+                        ) : historyError ? (
+                            <Animated.View entering={FadeInUp.duration(400)} style={styles.centeredMsg}>
+                                <MaterialCommunityIcons name="alert-circle-outline" size={48} color="#EF4444" />
+                                <Text style={styles.errorText}>{historyError}</Text>
+                                <TouchableOpacity style={styles.retryBtn} onPress={loadHistory}>
+                                    <Text style={styles.retryText}>Retry</Text>
+                                </TouchableOpacity>
+                            </Animated.View>
+                        ) : historyItems.length === 0 ? (
+                            <Animated.View entering={FadeInUp.duration(400)} style={styles.centeredMsg}>
+                                <View style={styles.emptyIconCircle}>
+                                    <MaterialCommunityIcons name="history" size={40} color="#6366F1" />
+                                </View>
+                                <Text style={styles.emptyText}>No submissions yet</Text>
+                                <Text style={styles.emptySubText}>Your completed checklists and logsheets will appear here</Text>
+                            </Animated.View>
+                        ) : (
+                            historyItems.map((item, i) => (
+                                <Animated.View key={`${item.type}-${item.id}`} entering={FadeInUp.delay(40 * i).duration(350)}>
+                                    <TouchableOpacity
+                                        style={styles.historyCard}
+                                        activeOpacity={0.75}
+                                        onPress={() => router.push({ pathname: '/tech-history-detail', params: { type: item.type, id: item.id, name: item.templateName } })}
+                                    >
+                                        <View style={[styles.historyTypeBadge, { backgroundColor: item.type === 'checklist' ? '#EEF2FF' : '#EFF6FF' }]}>
+                                            <MaterialCommunityIcons
+                                                name={item.type === 'checklist' ? 'clipboard-check' : 'notebook'}
+                                                size={16}
+                                                color={item.type === 'checklist' ? '#6366F1' : '#2563EB'}
+                                            />
+                                            <Text style={[styles.historyTypeTxt, { color: item.type === 'checklist' ? '#6366F1' : '#2563EB' }]}>
+                                                {item.type === 'checklist' ? 'CHECKLIST' : 'LOGSHEET'}
+                                            </Text>
+                                        </View>
+                                        <Text style={styles.historyTitle} numberOfLines={2}>{item.templateName}</Text>
+                                        {item.assetName ? (
+                                            <View style={styles.historyMeta}>
+                                                <MaterialCommunityIcons name="office-building" size={13} color="#94A3B8" />
+                                                <Text style={styles.historyMetaTxt}>{item.assetName}</Text>
+                                            </View>
+                                        ) : null}
+                                        <View style={styles.historyFooter}>
+                                            <View style={[styles.historyStatusPill, { backgroundColor: item.status === 'completed' ? '#ECFDF5' : '#FFF7ED' }]}>
+                                                <Text style={[styles.historyStatusTxt, { color: item.status === 'completed' ? '#10B981' : '#F59E0B' }]}>
+                                                    {item.status === 'completed' ? 'Completed' : 'Submitted'}
+                                                </Text>
+                                            </View>
+                                            <Text style={styles.historyDate}>
+                                                {new Date(item.submittedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                                            </Text>
+                                        </View>
+                                        <View style={{ alignSelf: 'flex-end', marginTop: 4 }}>
+                                            <MaterialCommunityIcons name="chevron-right" size={16} color="#CBD5E1" />
+                                        </View>
+                                    </TouchableOpacity>
+                                </Animated.View>
+                            ))
+                        )
                     )}
                 </View>
             </ScrollView>
@@ -457,5 +552,73 @@ const styles = StyleSheet.create({
         fontSize: 14,
         color: '#94A3B8',
         textAlign: 'center',
+    },
+    historyCard: {
+        backgroundColor: '#FFFFFF',
+        borderRadius: 14,
+        padding: 16,
+        marginBottom: 12,
+        borderWidth: 1,
+        borderColor: '#F1F5F9',
+        shadowColor: '#64748B',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.04,
+        shadowRadius: 6,
+        elevation: 2,
+    },
+    historyTypeBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        alignSelf: 'flex-start',
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 6,
+        gap: 4,
+        marginBottom: 10,
+    },
+    historyTypeTxt: {
+        fontSize: 10,
+        fontWeight: '700',
+        letterSpacing: 0.5,
+    },
+    historyTitle: {
+        fontSize: 15,
+        fontWeight: '700',
+        color: '#0F172A',
+        marginBottom: 6,
+        letterSpacing: -0.2,
+    },
+    historyMeta: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        marginBottom: 12,
+    },
+    historyMetaTxt: {
+        fontSize: 12,
+        color: '#94A3B8',
+        fontWeight: '500',
+    },
+    historyFooter: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        borderTopWidth: 1,
+        borderTopColor: '#F8FAFC',
+        paddingTop: 10,
+    },
+    historyStatusPill: {
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 20,
+    },
+    historyStatusTxt: {
+        fontSize: 12,
+        fontWeight: '600',
+    },
+    historyDate: {
+        fontSize: 12,
+        color: '#94A3B8',
+        fontWeight: '500',
     },
 });

@@ -35,6 +35,7 @@ const FILTER_TABS = [
   { key: "in_progress", label: "In Progress", color: "#1d4ed8" },
   { key: "resolved",    label: "Resolved",    color: "#16a34a" },
   { key: "critical",    label: "Critical ⚡", color: "#ea580c" },
+  { key: "escalated",   label: "Escalated ⏫", color: "#7c3aed" },
 ];
 const LIMIT = 50;
 
@@ -71,6 +72,7 @@ export default function WarningsPanel({ token, companyId: initialCompanyId, comp
     try {
       const params = new URLSearchParams({ limit: LIMIT, offset: page * LIMIT, companyId });
       if (filter === "critical") params.set("severity", "critical");
+      else if (filter === "escalated") params.set("escalated", "true");
       else if (filter !== "all") params.set("status", filter);
 
       const [flagsRes, sumRes] = await Promise.all([

@@ -117,11 +117,13 @@ router.get("/my-assignments", async (req, res, next) => {
          ct.asset_type AS "assetType",
          ct.asset_id AS "checklistAssetId",
          a_ct.asset_name AS "checklistAssetName",
+         ct.frequency AS "checklistFrequency",
          ct.shift_id AS "checklistShiftId",
          s_ct.name AS "checklistShiftName",
          lt.template_name AS "logsheetName",
          lt.description AS "logsheetDescription",
          lt.asset_type AS "logsheetAssetType",
+         lt.frequency AS "logsheetFrequency",
          lta.asset_id AS "logsheetAssetId",
          a_lt.asset_name AS "logsheetAssetName",
          lt.shift_id AS "logsheetShiftId",
@@ -138,6 +140,7 @@ router.get("/my-assignments", async (req, res, next) => {
        WHERE tua.assigned_to = ?
          AND tua.company_id = ?
          AND (
+           -- Checklists: hide once submitted after the assignment date
            (tua.template_type = 'checklist' AND NOT EXISTS (
              SELECT 1 FROM checklist_submissions cs
              WHERE cs.template_id = tua.template_id
@@ -145,41 +148,23 @@ router.get("/my-assignments", async (req, res, next) => {
                AND cs.submitted_at >= tua.created_at
            ))
            OR
-           (tua.template_type = 'logsheet' AND NOT EXISTS (
-             SELECT 1 FROM logsheet_entries le
-             WHERE le.template_id = tua.template_id
-               AND le.company_user_id = tua.assigned_to
-               AND le.submitted_at >= tua.created_at
-           ))
+           -- Logsheets are recurring so they are ALWAYS shown once assigned
+           (tua.template_type = 'logsheet' AND lt.id IS NOT NULL)
          )
          AND (
            -- Template has no shift restriction → always visible (also guards against deleted templates)
            (tua.template_type = 'checklist' AND ct.id IS NOT NULL AND ct.shift_id IS NULL)
            OR
-           (tua.template_type = 'logsheet' AND lt.id IS NOT NULL AND lt.shift_id IS NULL)
+           -- Logsheets: always visible -- they are recurring and the technician must be able to fill
+           -- them even outside shift hours (daily logsheets need full-day access)
+           (tua.template_type = 'logsheet' AND lt.id IS NOT NULL)
            OR
-           -- Template belongs to a shift → only show if the user is in that shift
-           -- AND that shift is currently active by server time
+           -- Checklist belongs to a shift → show if the user is in that shift AND the shift is currently active
            (tua.template_type = 'checklist' AND ct.shift_id IS NOT NULL AND EXISTS (
              SELECT 1 FROM employee_shifts es
              JOIN shifts sh ON sh.id = es.shift_id
              WHERE es.company_user_id = tua.assigned_to
                AND es.shift_id = ct.shift_id
-               AND sh.status = 'active'
-               AND (
-                 (sh.start_time <= sh.end_time
-                   AND CURRENT_TIME BETWEEN sh.start_time AND sh.end_time)
-                 OR
-                 (sh.start_time > sh.end_time
-                   AND (CURRENT_TIME >= sh.start_time OR CURRENT_TIME <= sh.end_time))
-               )
-           ))
-           OR
-           (tua.template_type = 'logsheet' AND lt.shift_id IS NOT NULL AND EXISTS (
-             SELECT 1 FROM employee_shifts es
-             JOIN shifts sh ON sh.id = es.shift_id
-             WHERE es.company_user_id = tua.assigned_to
-               AND es.shift_id = lt.shift_id
                AND sh.status = 'active'
                AND (
                  (sh.start_time <= sh.end_time
@@ -202,6 +187,7 @@ router.get("/my-assignments", async (req, res, next) => {
       templateName: a.templateType === 'checklist' ? a.templateName : a.logsheetName,
       description: a.templateType === 'checklist' ? a.description : a.logsheetDescription,
       assetType: a.templateType === 'checklist' ? a.assetType : a.logsheetAssetType,
+      frequency: a.templateType === 'checklist' ? (a.checklistFrequency || null) : (a.logsheetFrequency || null),
       assetId: a.templateType === 'checklist' ? (a.checklistAssetId || null) : (a.logsheetAssetId || null),
       assetName: a.templateType === 'checklist' ? (a.checklistAssetName || null) : (a.logsheetAssetName || null),
       shiftId: a.templateType === 'checklist' ? (a.checklistShiftId || null) : (a.logsheetShiftId || null),
@@ -812,6 +798,161 @@ router.post(
     }
   }
 );
+
+/* ────────────────────────────────────────────────────────────────────────────
+   GET /my-today-progress  – today's submission count for current user
+   ──────────────────────────────────────────────────────────────────────────── */
+router.get("/my-today-progress", async (req, res, next) => {
+  try {
+    const userId = req.companyUser.id;
+    const [[{ checklistsDone }]] = await pool.query(
+      `SELECT COUNT(*) AS "checklistsDone"
+       FROM checklist_submissions cs
+       WHERE cs.company_user_id = ? AND cs.submitted_at >= CURRENT_DATE`,
+      [userId]
+    );
+    const [[{ logsheetsDone }]] = await pool.query(
+      `SELECT COUNT(*) AS "logsheetsDone"
+       FROM logsheet_entries le
+       WHERE le.company_user_id = ? AND le.submitted_at >= CURRENT_DATE`,
+      [userId]
+    );
+    res.json({
+      checklistsDone: Number(checklistsDone) || 0,
+      logsheetsDone: Number(logsheetsDone) || 0,
+      totalDone: (Number(checklistsDone) || 0) + (Number(logsheetsDone) || 0),
+    });
+  } catch (err) { next(err); }
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+   GET /my-submission-history  – recent submissions by current user
+   ──────────────────────────────────────────────────────────────────────────── */
+router.get("/my-submission-history", async (req, res, next) => {
+  try {
+    const userId = req.companyUser.id;
+    const companyId = cid(req);
+    const limit = Math.min(parseInt(req.query.limit) || 30, 100);
+    const [checklists] = await pool.query(
+      `SELECT cs.id, 'checklist' AS type, ct.template_name AS "templateName",
+              a.asset_name AS "assetName", cs.submitted_at AS "submittedAt",
+              cs.status, cs.template_id AS "templateId"
+       FROM checklist_submissions cs
+       JOIN checklist_templates ct ON cs.template_id = ct.id
+       LEFT JOIN assets a ON cs.asset_id = a.id
+       WHERE cs.company_user_id = ? AND ct.company_id = ?
+       ORDER BY cs.submitted_at DESC LIMIT ?`,
+      [userId, companyId, limit]
+    );
+    const [logsheets] = await pool.query(
+      `SELECT le.id, 'logsheet' AS type, lt.template_name AS "templateName",
+              a.asset_name AS "assetName", le.submitted_at AS "submittedAt",
+              'completed' AS status, le.template_id AS "templateId"
+       FROM logsheet_entries le
+       JOIN logsheet_templates lt ON le.template_id = lt.id
+       LEFT JOIN assets a ON le.asset_id = a.id
+       WHERE le.company_user_id = ? AND lt.company_id = ?
+       ORDER BY le.submitted_at DESC LIMIT ?`,
+      [userId, companyId, limit]
+    );
+    const combined = [...checklists, ...logsheets]
+      .sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt))
+      .slice(0, limit);
+    res.json(combined);
+  } catch (err) { next(err); }
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+   GET /my-warnings  – flags / warnings for the current tech user
+   Returns open flags raised by this user OR related to assets they have active
+   assignments for, newest first, capped at 50.
+   ──────────────────────────────────────────────────────────────────────────── */
+router.get("/my-warnings", async (req, res, next) => {
+  try {
+    const userId = req.companyUser.id;
+    const companyId = cid(req);
+    const limit = Math.min(parseInt(req.query.limit) || 50, 100);
+    const [rows] = await pool.query(
+      `SELECT f.id, f.severity, f.status, f.description, f.source,
+              f.created_at AS "createdAt", f.resolved_at AS "resolvedAt",
+              f.escalated,
+              a.asset_name AS "assetName", a.asset_code AS "assetCode"
+       FROM flags f
+       LEFT JOIN assets a ON f.asset_id = a.id
+       WHERE f.company_id = ?
+         AND (
+           f.raised_by = ?
+           OR f.asset_id IN (
+             SELECT DISTINCT tua.asset_id
+             FROM template_user_assignments tua
+             WHERE tua.assigned_to = ? AND tua.company_id = ? AND tua.asset_id IS NOT NULL
+           )
+         )
+       ORDER BY f.created_at DESC
+       LIMIT ?`,
+      [companyId, userId, userId, companyId, limit]
+    );
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+   GET /my-submission-detail/:type/:id  – full detail of a single submission
+   type = checklist | logsheet
+   Returns the submission meta + all answers/responses
+   ──────────────────────────────────────────────────────────────────────────── */
+router.get("/my-submission-detail/:type/:id", async (req, res, next) => {
+  try {
+    const userId = req.companyUser.id;
+    const companyId = cid(req);
+    const { type, id } = req.params;
+
+    if (type === "checklist") {
+      const [[sub]] = await pool.query(
+        `SELECT cs.id, ct.template_name AS name, a.asset_name AS "assetName",
+                cs.status, cs.completion_pct AS "completionPct",
+                COALESCE(cs.submitted_at, cs.created_at) AS "submittedAt",
+                cs.shift
+         FROM checklist_submissions cs
+         JOIN checklist_templates ct ON ct.id = cs.template_id
+         LEFT JOIN assets a ON a.id = cs.asset_id
+         WHERE cs.id = ? AND cs.company_user_id = ? AND ct.company_id = ?`,
+        [id, userId, companyId]
+      );
+      if (!sub) return res.status(404).json({ message: "Submission not found" });
+      const [answers] = await pool.query(
+        `SELECT question_text AS question, input_type AS "inputType",
+                answer_json AS "answerJson", option_selected AS answer
+         FROM checklist_submission_answers WHERE submission_id = ? ORDER BY id`,
+        [id]
+      ).catch(() => [[]]);
+      const mapped = answers.map(a => ({
+        question: a.question,
+        type: a.inputType,
+        answer: a.answer || (a.answerJson ? (typeof a.answerJson === "object" ? JSON.stringify(a.answerJson) : a.answerJson) : "—")
+      }));
+      return res.json({ ...sub, type: "checklist", answers: mapped });
+
+    } else if (type === "logsheet") {
+      const [[entry]] = await pool.query(
+        `SELECT le.id, lt.template_name AS name, a.asset_name AS "assetName",
+                le.shift, le.entry_date AS "entryDate",
+                le.submitted_at AS "submittedAt", le.data
+         FROM logsheet_entries le
+         JOIN logsheet_templates lt ON lt.id = le.template_id
+         LEFT JOIN assets a ON a.id = le.asset_id
+         WHERE le.id = ? AND le.company_user_id = ? AND lt.company_id = ?`,
+        [id, userId, companyId]
+      );
+      if (!entry) return res.status(404).json({ message: "Entry not found" });
+      const rawData = entry.data ? (typeof entry.data === "string" ? JSON.parse(entry.data) : entry.data) : {};
+      const answers = Object.entries(rawData).map(([k, v]) => ({ question: k, type: "text", answer: v != null ? String(v) : "—" }));
+      const { data: _d, ...clean } = entry;
+      return res.json({ ...clean, type: "logsheet", answers });
+    }
+    return res.status(400).json({ message: "Invalid type, use checklist or logsheet" });
+  } catch (err) { next(err); }
+});
 
 /* ────────────────────────────────────────────────────────────────────────────
    GET: Submission reports (Admin/Supervisor view)

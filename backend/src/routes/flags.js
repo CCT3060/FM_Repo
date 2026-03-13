@@ -80,12 +80,13 @@ router.get(
       // companyId from JWT (cp_token) or from query param (main platform token)
       const companyId = req.companyUser?.companyId || parseInt(req.query.companyId, 10);
       if (!companyId || isNaN(companyId)) return res.status(400).json({ message: "companyId required" });
-      const { status, severity, source, limit = 100, offset = 0 } = req.query;
+      const { status, severity, source, escalated, limit = 100, offset = 0 } = req.query;
       const conditions = ["f.company_id = ?"];
       const params     = [companyId];
       if (status)   { conditions.push("f.status = ?");   params.push(status); }
       if (severity) { conditions.push("f.severity = ?"); params.push(severity); }
       if (source)   { conditions.push("f.source = ?");   params.push(source); }
+      if (escalated === "true")  { conditions.push("f.escalated = TRUE"); }
 
       const where = conditions.join(" AND ");
       const [flags] = await pool.query(

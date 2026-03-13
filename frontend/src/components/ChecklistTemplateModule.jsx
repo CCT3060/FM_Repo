@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, memo } from "react";
 import TemplateImportModal from "./TemplateImportModal.jsx";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:4000";
@@ -12,6 +12,7 @@ const INPUT_TYPES = [
   { value: "ok_not_ok", label: "OK / Not OK" },
   { value: "number", label: "Number / Reading" },
   { value: "dropdown", label: "Dropdown" },
+  { value: "custom_options", label: "Custom Options" },
   { value: "photo", label: "Photo Upload" },
   { value: "signature", label: "Signature" },
   { value: "remark", label: "Remark Only" },
@@ -204,11 +205,19 @@ function QuestionRow({ q, idx, onChange, onRemove }) {
         </div>
       </div>
 
-      {/* Dropdown options */}
-      {q.inputType === "dropdown" && (
-        <div style={{ marginTop: "8px" }}>
-          <Label>Options (comma-separated)</Label>
-          <Inp value={q._optionsText || ""} onChange={(e) => update("_optionsText", e.target.value)} placeholder="e.g. Good, Fair, Poor" />
+      {/* Dropdown / custom options */}
+      {(q.inputType === "dropdown" || q.inputType === "custom_options") && (
+        <div style={{ marginTop: "8px", display: "grid", gridTemplateColumns: q.inputType === "custom_options" ? "1fr 1fr" : "1fr", gap: "10px" }}>
+          {q.inputType === "custom_options" && (
+            <div>
+              <Label required>Response Label (e.g. Working / Not Working)</Label>
+              <Inp value={q._customLabel || ""} onChange={(e) => update("_customLabel", e.target.value)} placeholder="e.g. Working / Not Working" />
+            </div>
+          )}
+          <div>
+            <Label>Options (comma-separated)</Label>
+            <Inp value={q._optionsText || ""} onChange={(e) => update("_optionsText", e.target.value)} placeholder={q.inputType === "custom_options" ? "e.g. Working, Not Working, Needs Service" : "e.g. Good, Fair, Poor"} />
+          </div>
         </div>
       )}
 
@@ -292,21 +301,24 @@ function QuestionRow({ q, idx, onChange, onRemove }) {
 /* ─────────────────────────────────────────────────────────────────
    Template Builder (create / edit)
 ───────────────────────────────────────────────────────────────── */
-function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [], onBack, onSaved, createTemplate, updateTemplate, editTemplate, companyPortalMode = false }) {
+function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [], onBack, onSaved, createTemplate, updateTemplate, editTemplate, cloneFrom, companyPortalMode = false }) {
   const isEdit = !!editTemplate;
+  const isClone = !isEdit && !!cloneFrom;
+  const source = isEdit ? editTemplate : isClone ? cloneFrom : null;
 
   const [form, setForm] = useState(() => {
-    if (editTemplate) {
+    if (source) {
       return {
-        companyId: editTemplate.companyId || companies[0]?.id || "",
-        templateName: editTemplate.templateName || "",
-        assetType: editTemplate.assetType || "generic",
-        assetId: editTemplate.assetId ? String(editTemplate.assetId) : "",
-        category: editTemplate.category || "",
-        description: editTemplate.description || "",
-        frequency: editTemplate.frequency || "Daily",
-        shiftId: editTemplate.shiftId ? String(editTemplate.shiftId) : "",
-        status: editTemplate.status || "active",
+        companyId: source.companyId || companies[0]?.id || "",
+        templateName: isClone ? source.templateName : (source.templateName || ""),
+        assetType: source.assetType || "generic",
+        assetId: source.assetId ? String(source.assetId) : "",
+        category: source.category || "",
+        description: source.description || "",
+        // When cloning, clear frequency so user picks a new one
+        frequency: isClone ? "" : (source.frequency || "Daily"),
+        shiftId: source.shiftId ? String(source.shiftId) : "",
+        status: source.status || "active",
       };
     }
     return {
@@ -323,7 +335,7 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
   });
 
   const [questions, setQuestions] = useState(() => {
-    const qs = Array.isArray(editTemplate?.questions) ? editTemplate.questions : [];
+    const qs = Array.isArray(source?.questions) ? source.questions : [];
     if (qs.length) {
       return qs.map((q) => ({
         _id: Math.random().toString(36).slice(2),
@@ -410,7 +422,7 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
       assetId: form.assetId ? Number(form.assetId) : undefined,
       category: form.category.trim() || undefined,
       description: form.description.trim() || undefined,
-      frequency: form.frequency,
+      frequency: form.frequency || "Custom",
       shiftId: form.shiftId ? Number(form.shiftId) : undefined,
       status: form.status,
       questions: questions.map((q, idx) => ({
@@ -418,9 +430,10 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
         inputType: q.inputType,
         isRequired: q.isRequired,
         orderIndex: idx,
-        options: q.inputType === "dropdown"
+        options: (q.inputType === "dropdown" || q.inputType === "custom_options")
           ? (q._optionsText || "").split(",").map((s) => s.trim()).filter(Boolean)
           : undefined,
+        customLabel: q.inputType === "custom_options" ? (q._customLabel || "").trim() || undefined : undefined,
         rule: q.rule?._showRule
           ? {
               flagOn: q.inputType === "yes_no" ? "No"
@@ -439,7 +452,7 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
 
     setSaving(true);
     try {
-      if (isEdit) {
+      if (isEdit && !isClone) {
         await updateTemplate(token, editTemplate.id, payload);
         onSaved(editTemplate.id);
       } else {
@@ -463,7 +476,7 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
         </button>
         <div>
           <h1 style={{ fontSize: "22px", fontWeight: 800, color: "#0f172a", marginBottom: "2px" }}>
-            {isEdit ? "Edit Checklist Template" : "Create Checklist Template"}
+            {isEdit ? "Edit Checklist Template" : isClone ? `New Frequency Variant — ${cloneFrom.templateName}` : "Create Checklist Template"}
           </h1>
           <p style={{ color: "#64748b", fontSize: "13px", margin: 0 }}>Define questions for a reusable checklist — assign to assets, departments, or users.</p>
         </div>
@@ -514,9 +527,17 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
           </div>
           <div>
             <Label>Frequency</Label>
-            <Sel value={form.frequency} onChange={(e) => setForm((p) => ({ ...p, frequency: e.target.value }))}>
+            <Sel value={FREQUENCIES.includes(form.frequency) ? form.frequency : "Custom"} onChange={(e) => setForm((p) => ({ ...p, frequency: e.target.value === "Custom" ? "" : e.target.value }))}>
               {FREQUENCIES.map((f) => <option key={f} value={f}>{f}</option>)}
             </Sel>
+            {(!FREQUENCIES.includes(form.frequency) || form.frequency === "") && (
+              <Inp
+                style={{ marginTop: "6px" }}
+                value={FREQUENCIES.includes(form.frequency) ? "" : form.frequency}
+                onChange={(e) => setForm((p) => ({ ...p, frequency: e.target.value }))}
+                placeholder="e.g. Quarterly, Half Yearly, Yearly…"
+              />
+            )}
           </div>
           <div>
             <Label>Shift (optional)</Label>
@@ -587,12 +608,23 @@ function AssignModal({ token, companyId, template, templateType, onClose, compan
     if (!selectedUser) { setErr("Please select a user."); return; }
     setSaving(true); setErr(null);
     try {
-      const res = await fetch(`${API_BASE}/api/company-portal/template-user-assignments`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ templateType, templateId: template.id, assignedTo: selectedUser, note }),
-      });
-      if (!res.ok) { const d = await res.json(); throw new Error(d.error || "Failed to assign"); }
+      let res;
+      if (companyPortalMode) {
+        // Company portal auth — uses company JWT
+        res = await fetch(`${API_BASE}/api/company-portal/template-user-assignments`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ templateType, templateId: template.id, assignedTo: selectedUser, note }),
+        });
+      } else {
+        // Admin portal (client) — uses platform JWT + companyId
+        res = await fetch(`${API_BASE}/api/company-users/template-assignments`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ companyId, templateType, templateId: template.id, assignedTo: selectedUser, note }),
+        });
+      }
+      if (!res.ok) { const d = await res.json(); throw new Error(d.error || d.message || "Failed to assign"); }
       onClose();
     } catch (e) {
       setErr(e.message);
@@ -642,7 +674,7 @@ function AssignModal({ token, companyId, template, templateType, onClose, compan
 /* ─────────────────────────────────────────────────────────────────
    Template List
 ───────────────────────────────────────────────────────────────── */
-function TemplateList({ token, companies, fetchTemplates, onBuild, onImport, onEdit, onDelete, canBuild, companyId, companyPortalMode = false }) {
+const TemplateList = memo(function TemplateList({ token, companies, fetchTemplates, onBuild, onImport, onEdit, onDelete, canBuild, companyId, companyPortalMode = false, refreshKey = 0 }) {
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -651,6 +683,8 @@ function TemplateList({ token, companies, fetchTemplates, onBuild, onImport, onE
   const [viewTemplate, setViewTemplate] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
   const [assignTarget, setAssignTarget] = useState(null);
+  const [filterFrequency, setFilterFrequency] = useState("");
+  const [filterAsset, setFilterAsset] = useState("");
 
   const loadTemplates = useCallback(async () => {
     setLoading(true);
@@ -664,18 +698,28 @@ function TemplateList({ token, companies, fetchTemplates, onBuild, onImport, onE
     } finally {
       setLoading(false);
     }
-  }, [token, fetchTemplates, companyId]);
+  }, [token, fetchTemplates, companyId]);  // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { loadTemplates(); }, [loadTemplates]);
+  useEffect(() => { loadTemplates(); }, [loadTemplates, refreshKey]);  // refreshKey triggers reload without remount
 
   const filtered = useMemo(() =>
     templates.filter((t) => {
       if (filterType && t.assetType !== filterType) return false;
+      if (filterFrequency && (t.frequency || "").toLowerCase() !== filterFrequency.toLowerCase()) return false;
+      if (filterAsset && String(t.assetId) !== String(filterAsset)) return false;
       if (search && !t.templateName?.toLowerCase().includes(search.toLowerCase())) return false;
       return true;
     }),
-    [templates, search, filterType]
+    [templates, search, filterType, filterFrequency, filterAsset]
   );
+
+  // Derive unique assets and frequencies from loaded templates for filter dropdowns
+  const uniqueFrequencies = useMemo(() => [...new Set(templates.map(t => t.frequency).filter(Boolean))], [templates]);
+  const uniqueAssets = useMemo(() => {
+    const seen = new Map();
+    templates.forEach(t => { if (t.assetId && t.assetName && !seen.has(t.assetId)) seen.set(t.assetId, t.assetName); });
+    return [...seen.entries()].map(([id, name]) => ({ id, name }));
+  }, [templates]);
 
   const handleDelete = async (id, name) => {
     if (!onDelete) return;
@@ -737,11 +781,19 @@ function TemplateList({ token, companies, fetchTemplates, onBuild, onImport, onE
       <Card>
         <CardHeader>All Templates</CardHeader>
         <div style={{ padding: "10px 16px", borderBottom: "1px solid #e2e8f0", display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
-          <Sel value={filterType} onChange={(e) => setFilterType(e.target.value)} style={{ width: "160px" }}>
+          <Sel value={filterType} onChange={(e) => setFilterType(e.target.value)} style={{ width: "150px" }}>
             <option value="">All Asset Types</option>
             {ASSET_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
           </Sel>
-          <Inp value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name…" style={{ width: "220px" }} />
+          <Sel value={filterAsset} onChange={(e) => setFilterAsset(e.target.value)} style={{ width: "150px" }}>
+            <option value="">All Assets</option>
+            {uniqueAssets.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </Sel>
+          <Sel value={filterFrequency} onChange={(e) => setFilterFrequency(e.target.value)} style={{ width: "130px" }}>
+            <option value="">All Frequencies</option>
+            {uniqueFrequencies.map((f) => <option key={f} value={f}>{f}</option>)}
+          </Sel>
+          <Inp value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name…" style={{ width: "180px" }} />
           <SBtn onClick={loadTemplates} outline color="#64748b" bg="#fff" style={{ marginLeft: "auto" }}>Refresh</SBtn>
         </div>
         <div style={{ overflowX: "auto" }}>
@@ -814,6 +866,13 @@ function TemplateList({ token, companies, fetchTemplates, onBuild, onImport, onE
                             👤 Assign
                           </button>
                         )}
+                        {/* Clone for frequency */}
+                        {canBuild && onBuild && (
+                          <button onClick={() => onBuild(t)} title="Clone for different frequency"
+                            style={{ padding: "5px 9px", background: "#f0fdf4", color: "#059669", border: "1px solid #6ee7b7", borderRadius: "6px", fontSize: "12px", cursor: "pointer", fontWeight: 600 }}>
+                            ⎘ Variant
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -825,7 +884,7 @@ function TemplateList({ token, companies, fetchTemplates, onBuild, onImport, onE
       </Card>
     </div>
   );
-}
+});  // end memo(TemplateList)
 
 /* ─────────────────────────────────────────────────────────────────
    ChecklistTemplateModule root
@@ -846,6 +905,7 @@ export default function ChecklistTemplateModule({
 }) {
   const [view, setView] = useState("list");
   const [editTarget, setEditTarget] = useState(null);
+  const [cloneTarget, setCloneTarget] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [showImport, setShowImport] = useState(false);
 
@@ -868,17 +928,18 @@ export default function ChecklistTemplateModule({
     await deleteTemplate(token, id);
   };
 
-  if (view === "builder" && canBuild) {
+  if ((view === "builder" || view === "clone") && canBuild) {
     return (
       <TemplateBuilder
         token={token}
         companies={companies}
         assets={assets}
         shifts={shifts}
-        onBack={() => setView("list")}
-        onSaved={() => { setRefreshKey((k) => k + 1); setView("list"); }}
+        onBack={() => { setCloneTarget(null); setView("list"); }}
+        onSaved={() => { setCloneTarget(null); setRefreshKey((k) => k + 1); setView("list"); }}
         createTemplate={createTemplate}
         updateTemplate={updateTemplate}
+        cloneFrom={view === "clone" ? cloneTarget : undefined}
         companyPortalMode={companyPortalMode}
       />
     );
@@ -916,12 +977,15 @@ export default function ChecklistTemplateModule({
         />
       )}
       <TemplateList
-        key={refreshKey}
         token={token}
         companies={companies}
         fetchTemplates={fetchTemplates}
         companyId={companyId}
-        onBuild={canBuild && createTemplate ? () => setView("builder") : null}
+        refreshKey={refreshKey}
+        onBuild={canBuild && createTemplate ? (t) => {
+          if (t && t.id) { setCloneTarget(t); setView("clone"); }
+          else setView("builder");
+        } : null}
         onImport={canBuild && createTemplate ? () => setShowImport(true) : null}
         onEdit={canBuild && updateTemplate ? handleEdit : null}
         onDelete={canBuild && deleteTemplate ? handleDelete : null}

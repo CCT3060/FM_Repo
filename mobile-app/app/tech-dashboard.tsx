@@ -13,7 +13,7 @@ import {
     View,
 } from 'react-native';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
-import { getMyAssignments, getMyShifts, getStoredUser, type Assignment, type Shift } from '../utils/api';
+import { getMyAssignments, getMyShifts, getMySubmissionHistory, getMyWarnings, getStoredUser, getTodayProgress, type Assignment, type Shift, type SubmissionHistoryItem } from '../utils/api';
 
 // Reusable Navigation Bar Component for Tech Flow
 export const TechBottomNav = ({ activeRoute }: { activeRoute: string }) => {
@@ -121,24 +121,43 @@ const navStyles = StyleSheet.create({
 export default function TechDashboardScreen() {
     const [assignments, setAssignments] = useState<Assignment[]>([]);
     const [shifts, setShifts] = useState<Shift[]>([]);
+    const [todayProgress, setTodayProgress] = useState({ checklistsDone: 0, logsheetsDone: 0, totalDone: 0 });
+    const [openWarningCount, setOpenWarningCount] = useState(0);
     const [isLoading, setIsLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [user, setUser] = useState<any>(null);
+    const [activeTab, setActiveTab] = useState<'Checklists' | 'Log Sheets' | 'History'>('Checklists');
+    const [historyItems, setHistoryItems] = useState<SubmissionHistoryItem[]>([]);
+    const [historyLoaded, setHistoryLoaded] = useState(false);
 
     useEffect(() => {
         loadData();
     }, []);
 
+    useEffect(() => {
+        if (activeTab === 'History' && !historyLoaded) {
+            getMySubmissionHistory(30).then(d => { setHistoryItems(d); setHistoryLoaded(true); }).catch(() => {});
+        }
+    }, [activeTab, historyLoaded]);
+
     const loadData = async () => {
         try {
-            const [data, storedUser, myShifts] = await Promise.all([
+            const [data, storedUser, myShifts, progress, warnings] = await Promise.all([
                 getMyAssignments(),
                 getStoredUser(),
                 getMyShifts().catch(() => [] as Shift[]),
+                getTodayProgress().catch(() => ({ checklistsDone: 0, logsheetsDone: 0, totalDone: 0 })),
+                getMyWarnings(20).catch(() => []),
             ]);
             setAssignments(data);
             setUser(storedUser);
             setShifts(myShifts);
+            setTodayProgress(progress);
+            setOpenWarningCount(warnings.filter(w => w.status === 'open' || w.status === 'in_progress').length);
+            // refresh history too
+            const hist = await getMySubmissionHistory(30).catch(() => [] as SubmissionHistoryItem[]);
+            setHistoryItems(hist);
+            setHistoryLoaded(true);
         } catch (error: any) {
             console.warn('Failed to load dashboard:', error instanceof Error ? error.message : error);
         } finally {
@@ -150,10 +169,9 @@ export default function TechDashboardScreen() {
     const onRefresh = () => { setRefreshing(true); loadData(); };
 
     const total = assignments.length;
-    // Treat assignments without a "completed" status as pending; use a basic heuristic
-    const completed = 0; // real completed count would come from submissions — keeping 0 as default
+    const completed = todayProgress.totalDone;
     const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
-    const progressRatio = total > 0 ? completed / total : 0;
+    const progressRatio = total > 0 ? Math.min(completed / total, 1) : 0;
 
     const getInitials = (name?: string) => {
         if (!name) return 'U';
@@ -196,9 +214,15 @@ export default function TechDashboardScreen() {
                     <Text style={styles.headerGreeting}>Good Morning,</Text>
                     <Text style={styles.headerTitle}>{userName}</Text>
                 </View>
-                <TouchableOpacity style={styles.bellBtn}>
+                <TouchableOpacity style={styles.bellBtn} onPress={() => router.push('/tech-notifications' as any)}>
                     <MaterialCommunityIcons name="bell-outline" size={24} color="#334155" />
-                    <View style={styles.notifDot} />
+                    {openWarningCount > 0 && (
+                        <View style={styles.notifDot}>
+                            {openWarningCount <= 9 && (
+                                <Text style={styles.notifDotTxt}>{openWarningCount}</Text>
+                            )}
+                        </View>
+                    )}
                 </TouchableOpacity>
             </View>
 
@@ -228,12 +252,34 @@ export default function TechDashboardScreen() {
                     <Text style={styles.motivationText}>{getMotivation()}</Text>
                 </Animated.View>
 
-                {/* Assigned Tasks header */}
+                {/* Assigned Tasks header with tabs */}
                 <Animated.View entering={FadeInUp.delay(100).duration(400)} style={styles.rowBetween}>
-                    <Text style={styles.assignedTitle}>Priority Tasks</Text>
+                    <Text style={styles.assignedTitle}>My Tasks</Text>
                     <TouchableOpacity onPress={() => router.push('/tech-tasks' as any)}>
-                        <Text style={styles.viewAll}>See All</Text>
+                        <Text style={styles.viewAll}>See All →</Text>
                     </TouchableOpacity>
+                </Animated.View>
+
+                {/* Tab bar */}
+                <Animated.View entering={FadeInUp.delay(120).duration(350)} style={styles.tabRow}>
+                    {(['Checklists', 'Log Sheets', 'History'] as const).map(tab => {
+                        const count = tab === 'Checklists'
+                            ? assignments.filter(a => a.templateType === 'checklist').length
+                            : tab === 'Log Sheets'
+                            ? assignments.filter(a => a.templateType === 'logsheet').length
+                            : historyItems.length;
+                        return (
+                            <TouchableOpacity
+                                key={tab}
+                                style={[styles.tabBtn, activeTab === tab && styles.tabBtnActive]}
+                                onPress={() => setActiveTab(tab)}
+                            >
+                                <Text style={[styles.tabBtnText, activeTab === tab && styles.tabBtnTextActive]}>
+                                    {tab} {count > 0 && `(${count})`}
+                                </Text>
+                            </TouchableOpacity>
+                        );
+                    })}
                 </Animated.View>
 
                 {/* Active shift banner */}
@@ -273,19 +319,68 @@ export default function TechDashboardScreen() {
                     );
                 })()}
 
-                {/* Task cards */}
-                {assignments.length === 0 ? (
-                    <Animated.View entering={FadeInUp.delay(200).duration(400)} style={styles.emptyBox}>
-                        <View style={styles.emptyIconCircle}>
-                            <MaterialCommunityIcons name="check-all" size={32} color="#10B981" />
-                        </View>
-                        <Text style={styles.emptyTitle}>You&apos;re all caught up!</Text>
-                        <Text style={styles.emptyText}>No pending tasks for now.</Text>
-                    </Animated.View>
-                ) : (
-                    assignments.slice(0, 10).map((a, idx) => {
-                        // Assignment might use priority, default to 'medium' if unavailable
-                        const pc = getPriorityConfig((a as any).priority || 'medium');
+                {/* Task cards or History list */}
+                {(() => {
+                    if (activeTab === 'History') {
+                        if (historyItems.length === 0) {
+                            return (
+                                <Animated.View entering={FadeInUp.delay(200).duration(400)} style={styles.emptyBox}>
+                                    <MaterialCommunityIcons name="history" size={36} color="#CBD5E1" />
+                                    <Text style={styles.emptyTitle}>No history yet</Text>
+                                    <Text style={styles.emptyText}>Completed submissions will appear here.</Text>
+                                </Animated.View>
+                            );
+                        }
+                        return historyItems.slice(0, 10).map((item, i) => (
+                            <Animated.View key={`hist-${item.type}-${item.id}`} entering={FadeInUp.delay(80 + i * 40).duration(350)}>
+                                <TouchableOpacity
+                                    style={styles.histCard}
+                                    activeOpacity={0.75}
+                                    onPress={() => router.push({ pathname: '/tech-history-detail', params: { type: item.type, id: item.id, name: item.templateName } } as any)}
+                                >
+                                    <View style={[styles.histIcon, { backgroundColor: item.type === 'checklist' ? '#EEF2FF' : '#EFF6FF' }]}>
+                                        <MaterialCommunityIcons
+                                            name={item.type === 'checklist' ? 'clipboard-check' : 'notebook'}
+                                            size={18}
+                                            color={item.type === 'checklist' ? '#6366F1' : '#2563EB'}
+                                        />
+                                    </View>
+                                    <View style={{ flex: 1 }}>
+                                        <Text style={styles.histName} numberOfLines={1}>{item.templateName}</Text>
+                                        <Text style={styles.histDate}>
+                                            {new Date(item.submittedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                                            {item.assetName ? ` · ${item.assetName}` : ''}
+                                        </Text>
+                                    </View>
+                                    <View style={[styles.histStatus, { backgroundColor: item.status === 'completed' ? '#ECFDF5' : '#FFF7ED' }]}>
+                                        <Text style={[styles.histStatusTxt, { color: item.status === 'completed' ? '#10B981' : '#F59E0B' }]}>
+                                            {item.status === 'completed' ? 'Done' : 'Submitted'}
+                                        </Text>
+                                    </View>
+                                    <MaterialCommunityIcons name="chevron-right" size={16} color="#CBD5E1" style={{ marginLeft: 4 }} />
+                                </TouchableOpacity>
+                            </Animated.View>
+                        ));
+                    }
+
+                    const filteredAssignments = assignments.filter(a =>
+                        activeTab === 'Checklists' ? a.templateType === 'checklist' : a.templateType === 'logsheet'
+                    );
+
+                    if (filteredAssignments.length === 0) {
+                        return (
+                            <Animated.View entering={FadeInUp.delay(200).duration(400)} style={styles.emptyBox}>
+                                <View style={styles.emptyIconCircle}>
+                                    <MaterialCommunityIcons name="check-all" size={32} color="#10B981" />
+                                </View>
+                                <Text style={styles.emptyTitle}>You&apos;re all caught up!</Text>
+                                <Text style={styles.emptyText}>No pending {activeTab.toLowerCase()} for now.</Text>
+                            </Animated.View>
+                        );
+                    }
+
+                    return filteredAssignments.slice(0, 10).map((a, idx) => {
+                        const pc = getPriorityConfig(a.frequency || '');
                         const isFirst = idx === 0;
                         const initials = getInitials(userName);
                         return (
@@ -329,8 +424,8 @@ export default function TechDashboardScreen() {
                                 </TouchableOpacity>
                             </Animated.View>
                         );
-                    })
-                )}
+                    });
+                })()}
 
                 <View style={{ height: 30 }} />
             </ScrollView>
@@ -358,9 +453,14 @@ const styles = StyleSheet.create({
     headerTitle: { fontSize: 22, fontWeight: '800', color: '#0F172A', letterSpacing: -0.5 },
     bellBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 2 },
     notifDot: {
-        position: 'absolute', top: 10, right: 12,
-        width: 8, height: 8, borderRadius: 4,
+        position: 'absolute', top: 8, right: 10,
+        minWidth: 16, height: 16, borderRadius: 8,
         backgroundColor: '#EF4444',
+        justifyContent: 'center', alignItems: 'center',
+        paddingHorizontal: 3,
+    },
+    notifDotTxt: {
+        color: '#fff', fontSize: 9, fontWeight: '800', lineHeight: 11,
     },
 
     scroll: { padding: 20, paddingTop: 4 },
@@ -394,9 +494,81 @@ const styles = StyleSheet.create({
     motivationText: { fontSize: 13, color: '#64748B', fontWeight: '500' },
 
     // Section row
-    rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+    rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
     assignedTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A', letterSpacing: -0.3 },
     viewAll: { fontSize: 14, fontWeight: '600', color: '#2563EB' },
+
+    // Tabs
+    tabRow: {
+        flexDirection: 'row',
+        backgroundColor: '#F1F5F9',
+        borderRadius: 12,
+        padding: 3,
+        marginBottom: 14,
+        gap: 2,
+    },
+    tabBtn: {
+        flex: 1,
+        paddingVertical: 8,
+        borderRadius: 10,
+        alignItems: 'center',
+    },
+    tabBtnActive: {
+        backgroundColor: '#FFFFFF',
+        shadowColor: '#64748B',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.06,
+        shadowRadius: 3,
+        elevation: 1,
+    },
+    tabBtnText: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#64748B',
+    },
+    tabBtnTextActive: {
+        color: '#0F172A',
+        fontWeight: '800',
+    },
+
+    // History cards (compact)
+    histCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#FFFFFF',
+        borderRadius: 12,
+        padding: 12,
+        marginBottom: 8,
+        borderWidth: 1,
+        borderColor: '#F1F5F9',
+        gap: 10,
+    },
+    histIcon: {
+        width: 38,
+        height: 38,
+        borderRadius: 10,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    histName: {
+        fontSize: 13.5,
+        fontWeight: '700',
+        color: '#0F172A',
+    },
+    histDate: {
+        fontSize: 11.5,
+        color: '#94A3B8',
+        marginTop: 2,
+    },
+    histStatus: {
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+        borderRadius: 8,
+    },
+    histStatusTxt: {
+        fontSize: 11,
+        fontWeight: '700',
+    },
 
     // Task card
     taskCard: {

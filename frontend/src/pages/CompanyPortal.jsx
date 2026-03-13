@@ -43,6 +43,20 @@ import {
   getChecklistSubmissionDetail,
   getCompanyOverview,
   getLogsheetIssuesReport,
+  getAdminOjtTrainings,
+  getAdminOjtProgress,
+  getAdminWorkOrders,
+  createAdminWorkOrder,
+  updateAdminWOStatus,
+  assignAdminWO,
+  getAdminShifts,
+  createAdminShift,
+  updateAdminShift,
+  deleteAdminShift,
+  getAdminEmployees,
+  createAdminEmployee,
+  updateAdminEmployee,
+  deleteAdminEmployee,
 } from "../api";
 import ChecklistBuilder from "../components/ChecklistBuilder";
 import LogsheetModule from "../components/LogsheetModule.jsx";
@@ -150,6 +164,544 @@ const assetTypeLabels = {
   technical: "Technical",
   fleet: "Fleet",
 };
+
+/* ─── Admin OJT Section ──────────────────────────────────────────── */
+function AdminOjtSection({ token, companies = [] }) {
+  const [selectedCo, setSelectedCo] = useState(companies[0]?.id || null);
+  const [trainings, setTrainings] = useState([]);
+  const [progress, setProgress] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [subTab, setSubTab] = useState("trainings"); // trainings | progress
+
+  useEffect(() => {
+    if (!selectedCo) return;
+    setLoading(true);
+    Promise.all([
+      getAdminOjtTrainings(token, selectedCo),
+      getAdminOjtProgress(token, selectedCo),
+    ])
+      .then(([t, p]) => { setTrainings(Array.isArray(t) ? t : []); setProgress(Array.isArray(p) ? p : []); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [selectedCo, token]);
+
+  return (
+    <div>
+      <div style={{ marginBottom: "20px" }}>
+        <h1 style={{ fontSize: "22px", fontWeight: 800, color: "#0f172a", marginBottom: "4px" }}>OJT Training</h1>
+        <p style={{ color: "#64748b", fontSize: "13.5px" }}>View On-the-Job Training programs and employee progress across companies.</p>
+      </div>
+
+      {/* Company selector */}
+      <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", padding: "14px 20px", marginBottom: "20px", display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap" }}>
+        <span style={{ fontSize: "13.5px", fontWeight: 700, color: "#374151" }}>Company:</span>
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+          {companies.map((c) => (
+            <button key={c.id} type="button" onClick={() => setSelectedCo(c.id)}
+              style={{ padding: "6px 14px", borderRadius: "8px", fontSize: "13px", fontWeight: 600, cursor: "pointer", border: selectedCo === c.id ? "none" : "1px solid #e2e8f0", background: selectedCo === c.id ? "#2563eb" : "#f8fafc", color: selectedCo === c.id ? "#fff" : "#475569" }}>
+              {c.companyName || c.name}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Sub tabs */}
+      <div style={{ display: "flex", gap: "4px", marginBottom: "20px", borderBottom: "2px solid #e2e8f0" }}>
+        {[{ k: "trainings", label: `Trainings (${trainings.length})` }, { k: "progress", label: `Employee Progress (${progress.length})` }].map(({ k, label }) => (
+          <button key={k} type="button" onClick={() => setSubTab(k)}
+            style={{ padding: "10px 20px", background: "none", border: "none", borderBottom: subTab === k ? "3px solid #2563eb" : "3px solid transparent", marginBottom: "-2px", fontSize: "14px", fontWeight: 700, color: subTab === k ? "#2563eb" : "#64748b", cursor: "pointer" }}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {loading ? (
+        <div style={{ padding: "40px", textAlign: "center", color: "#64748b", background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0" }}>Loading OJT data…</div>
+      ) : !selectedCo ? (
+        <div style={{ padding: "40px", textAlign: "center", color: "#94a3b8", background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0" }}>Select a company to view OJT trainings.</div>
+      ) : subTab === "trainings" ? (
+        <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
+          {trainings.length === 0 ? (
+            <div style={{ padding: "48px", textAlign: "center", color: "#94a3b8" }}>No OJT trainings found for this company.</div>
+          ) : (
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
+              <thead>
+                <tr style={{ background: "#f8fafc" }}>
+                  {["Training Title", "Status", "Enrolled", "Completed", "Passing %", "Created"].map((h) => (
+                    <th key={h} style={{ padding: "11px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", borderBottom: "1px solid #e2e8f0" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {trainings.map((t) => (
+                  <tr key={t.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                    <td style={{ padding: "12px 16px", fontWeight: 600, color: "#0f172a" }}>{t.title}</td>
+                    <td style={{ padding: "12px 16px" }}>
+                      <span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: t.status === "published" ? "#dcfce7" : "#f1f5f9", color: t.status === "published" ? "#166534" : "#475569" }}>
+                        {t.status === "published" ? "Published" : "Draft"}
+                      </span>
+                    </td>
+                    <td style={{ padding: "12px 16px", color: "#2563eb", fontWeight: 600 }}>{t.enrolledCount}</td>
+                    <td style={{ padding: "12px 16px", color: "#16a34a", fontWeight: 600 }}>{t.completedCount}</td>
+                    <td style={{ padding: "12px 16px", color: "#64748b" }}>{t.passingPercentage}%</td>
+                    <td style={{ padding: "12px 16px", color: "#94a3b8", fontSize: "12px" }}>{t.createdAt ? new Date(t.createdAt).toLocaleDateString() : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      ) : (
+        <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
+          {progress.length === 0 ? (
+            <div style={{ padding: "48px", textAlign: "center", color: "#94a3b8" }}>No employee progress data found.</div>
+          ) : (
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
+              <thead>
+                <tr style={{ background: "#f8fafc" }}>
+                  {["Employee", "Training", "Status", "Score", "Certificate"].map((h) => (
+                    <th key={h} style={{ padding: "11px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", borderBottom: "1px solid #e2e8f0" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {progress.map((p) => (
+                  <tr key={p.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                    <td style={{ padding: "12px 16px" }}>
+                      <div style={{ fontWeight: 600, color: "#0f172a" }}>{p.userName}</div>
+                      <div style={{ fontSize: "11px", color: "#94a3b8" }}>{p.email}</div>
+                    </td>
+                    <td style={{ padding: "12px 16px", color: "#64748b" }}>{p.trainingTitle}</td>
+                    <td style={{ padding: "12px 16px" }}>
+                      <span style={{ padding: "3px 10px", borderRadius: "12px", fontSize: "12px", fontWeight: 600,
+                        background: p.status === "completed" ? "#dcfce7" : p.status === "in_progress" ? "#fef9c3" : p.status === "failed" ? "#fee2e2" : "#f1f5f9",
+                        color: p.status === "completed" ? "#166534" : p.status === "in_progress" ? "#854d0e" : p.status === "failed" ? "#991b1b" : "#475569" }}>
+                        {(p.status || "not_started").replace("_", " ").toUpperCase()}
+                      </span>
+                    </td>
+                    <td style={{ padding: "12px 16px", fontWeight: 600, color: p.score != null ? "#0f172a" : "#94a3b8" }}>
+                      {p.score != null ? `${p.score}%` : "—"}
+                    </td>
+                    <td style={{ padding: "12px 16px" }}>
+                      {p.certificateUrl ? (
+                        <span style={{ padding: "3px 10px", borderRadius: "12px", fontSize: "12px", fontWeight: 600, background: "#dcfce7", color: "#166534" }}>🏅 Issued</span>
+                      ) : <span style={{ fontSize: "12px", color: "#94a3b8" }}>—</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Admin Work Orders Section ──────────────────────────────────────────── */
+const WO_STATUS_COLORS = { open: { bg:"#fef2f2",color:"#dc2626" }, in_progress: { bg:"#dbeafe",color:"#1d4ed8" }, completed: { bg:"#dcfce7",color:"#166534" }, closed: { bg:"#f1f5f9",color:"#475569" } };
+const WO_PRI_COLORS    = { critical: { bg:"#fee2e2",color:"#991b1b" }, high: { bg:"#ffedd5",color:"#9a3412" }, medium: { bg:"#fef9c3",color:"#854d0e" }, low: { bg:"#dcfce7",color:"#166534" } };
+
+function AdminWorkOrdersSection({ token, companies = [] }) {
+  const [selCo, setSelCo]   = useState(companies[0]?.id || null);
+  const [wos, setWos]       = useState([]);
+  const [users, setUsers]   = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [filter, setFilter] = useState("all");  // all | open | in_progress | completed | closed | escalated
+  const [search, setSearch] = useState("");
+  const [showCreate, setShowCreate] = useState(false);
+  const [form, setForm]     = useState({ issueDescription:"", priority:"medium", assignedTo:"", assetName:"" });
+  const [saving, setSaving] = useState(false);
+  const [error, setError]   = useState(null);
+
+  const load = useCallback(async (cid) => {
+    if (!cid) return; setLoading(true);
+    try {
+      const [data, usrs] = await Promise.all([
+        getAdminWorkOrders(token, cid),
+        getAdminEmployees(token, cid),
+      ]);
+      setWos(Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : []);
+      setUsers(Array.isArray(usrs) ? usrs : []);
+    } catch(e) { setError(e.message); }
+    setLoading(false);
+  }, [token]);
+
+  useEffect(() => { if (selCo) load(selCo); }, [selCo, load]);
+
+  const handleCreate = async () => {
+    if (!form.issueDescription) return;
+    setSaving(true);
+    try {
+      await createAdminWorkOrder(token, { ...form, companyId: selCo, assignedTo: form.assignedTo ? Number(form.assignedTo) : undefined });
+      await load(selCo);
+      setShowCreate(false);
+      setForm({ issueDescription:"", priority:"medium", assignedTo:"", assetName:"" });
+    } catch(e) { alert(e.message); }
+    setSaving(false);
+  };
+
+  const updateStatus = async (wo, status) => {
+    try {
+      await updateAdminWOStatus(token, wo.id, status);
+      setWos(prev => prev.map(w => w.id === wo.id ? { ...w, status } : w));
+    } catch(e) { alert(e.message); }
+  };
+
+  const counts = { all: wos.length, open:0, in_progress:0, completed:0, closed:0, escalated:0 };
+  for (const w of wos) {
+    if (counts[w.status] !== undefined) counts[w.status]++;
+    if (Number(w.escalationLevel) > 0 || w.flagEscalated) counts.escalated++;
+  }
+  const displayed = wos.filter(w => {
+    if (filter === "escalated") return Number(w.escalationLevel) > 0 || w.flagEscalated;
+    if (filter !== "all") return w.status === filter;
+    return true;
+  }).filter(w => !search || (w.workOrderNumber||"").toLowerCase().includes(search.toLowerCase()) || (w.issueDescription||"").toLowerCase().includes(search.toLowerCase()) || (w.assetName||"").toLowerCase().includes(search.toLowerCase()));
+
+  return (
+    <div style={{ padding:"24px", maxWidth:"1300px" }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:"20px", flexWrap:"wrap", gap:"10px" }}>
+        <div><h1 style={{ fontSize:"22px", fontWeight:800, color:"#0f172a", margin:0 }}>Work Orders</h1><p style={{ color:"#64748b", fontSize:"13.5px", margin:"4px 0 0" }}>Track and manage maintenance tasks across companies</p></div>
+        <button type="button" onClick={() => setShowCreate(true)} style={{ padding:"9px 18px", background:"#2563eb", color:"#fff", border:"none", borderRadius:"8px", fontSize:"13.5px", fontWeight:700, cursor:"pointer" }}>+ New Work Order</button>
+      </div>
+
+      {/* Company selector */}
+      <div style={{ background:"#fff", borderRadius:"12px", border:"1px solid #e2e8f0", padding:"12px 16px", marginBottom:"16px", display:"flex", alignItems:"center", gap:"10px", flexWrap:"wrap" }}>
+        <span style={{ fontSize:"13px", fontWeight:700, color:"#374151" }}>Company:</span>
+        {companies.map(c => (
+          <button key={c.id} type="button" onClick={() => setSelCo(c.id)} style={{ padding:"5px 12px", borderRadius:"7px", fontSize:"12.5px", fontWeight:600, cursor:"pointer", border: selCo===c.id ? "none":"1px solid #e2e8f0", background: selCo===c.id ? "#2563eb":"#f8fafc", color: selCo===c.id ? "#fff":"#475569" }}>{c.companyName||c.name}</button>
+        ))}
+      </div>
+
+      {/* Stat row */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:"12px", marginBottom:"16px" }}>
+        {[["open","Open",counts.open],["in_progress","In Progress",counts.in_progress],["completed","Completed",counts.completed],["closed","Closed",counts.closed]].map(([k,l,v]) => (
+          <div key={k} style={{ background:"#fff", borderRadius:"10px", border:`1px solid ${WO_STATUS_COLORS[k]?.color}30`, padding:"16px", cursor:"pointer" }} onClick={() => setFilter(k)}>
+            <p style={{ fontSize:"11px", fontWeight:700, color:"#64748b", textTransform:"uppercase", margin:"0 0 4px" }}>{l}</p>
+            <p style={{ fontSize:"26px", fontWeight:800, color: WO_STATUS_COLORS[k]?.color, margin:0 }}>{v}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Filter tabs + search */}
+      <div style={{ display:"flex", gap:"4px", borderBottom:"2px solid #e2e8f0", marginBottom:"16px", alignItems:"center", flexWrap:"wrap" }}>
+        {[["all","All"],["open","Open"],["in_progress","In Progress"],["completed","Completed"],["closed","Closed"],["escalated","Escalated ⏫"]].map(([k,l]) => (
+          <button key={k} type="button" onClick={() => setFilter(k)} style={{ padding:"10px 16px", background:"none", border:"none", borderBottom: filter===k ? "2.5px solid #2563eb":"2.5px solid transparent", marginBottom:"-2px", fontSize:"13px", fontWeight: filter===k ? 700:500, color: filter===k ? "#2563eb":"#64748b", cursor:"pointer" }}>{l} {counts[k] > 0 && <span style={{ background: filter===k ? "#2563eb":"#f1f5f9", color: filter===k ? "#fff":"#64748b", borderRadius:"9px", padding:"1px 6px", fontSize:"11px", marginLeft:"4px" }}>{counts[k]}</span>}</button>
+        ))}
+        <div style={{ marginLeft:"auto" }}>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search work orders…" style={{ padding:"7px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13px", outline:"none", width:"220px" }} />
+        </div>
+      </div>
+
+      {/* Create modal */}
+      {showCreate && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", zIndex:9999, display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <div style={{ background:"#fff", borderRadius:"16px", padding:"28px", width:"480px", maxWidth:"92vw" }}>
+            <h3 style={{ margin:"0 0 20px", fontSize:"17px", fontWeight:800 }}>New Work Order</h3>
+            <div style={{ display:"flex", flexDirection:"column", gap:"12px" }}>
+              <textarea value={form.issueDescription} onChange={e=>setForm({...form,issueDescription:e.target.value})} placeholder="Issue description *" rows={3} style={{ padding:"9px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13.5px", resize:"vertical" }} />
+              <input value={form.assetName} onChange={e=>setForm({...form,assetName:e.target.value})} placeholder="Asset name (optional)" style={{ padding:"9px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13.5px" }} />
+              <select value={form.priority} onChange={e=>setForm({...form,priority:e.target.value})} style={{ padding:"9px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13.5px" }}>
+                {["low","medium","high","critical"].map(p => <option key={p} value={p}>{p.charAt(0).toUpperCase()+p.slice(1)}</option>)}
+              </select>
+              <select value={form.assignedTo} onChange={e=>setForm({...form,assignedTo:e.target.value})} style={{ padding:"9px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13.5px" }}>
+                <option value="">— Assign to (optional) —</option>
+                {users.filter(u=>u.role==="admin"||u.role==="supervisor").map(u => <option key={u.id} value={u.id}>{u.fullName}</option>)}
+              </select>
+            </div>
+            <div style={{ display:"flex", gap:"10px", justifyContent:"flex-end", marginTop:"20px" }}>
+              <button type="button" onClick={() => setShowCreate(false)} style={{ padding:"9px 18px", borderRadius:"8px", border:"1px solid #e2e8f0", background:"#f8fafc", fontWeight:600, cursor:"pointer" }}>Cancel</button>
+              <button type="button" onClick={handleCreate} disabled={saving} style={{ padding:"9px 18px", borderRadius:"8px", border:"none", background:"#2563eb", color:"#fff", fontWeight:700, cursor:"pointer" }}>{saving ? "Creating…":"Create WO"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {loading ? (
+        <div style={{ padding:"40px", textAlign:"center", color:"#94a3b8" }}>Loading work orders…</div>
+      ) : displayed.length === 0 ? (
+        <div style={{ padding:"48px", textAlign:"center", color:"#94a3b8", background:"#fff", borderRadius:"12px", border:"1px solid #e2e8f0" }}>No work orders found.</div>
+      ) : (
+        <div style={{ background:"#fff", borderRadius:"12px", border:"1px solid #e2e8f0", overflow:"hidden" }}>
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:"14px" }}>
+            <thead>
+              <tr style={{ background:"#f8fafc" }}>
+                {["WO #","Asset","Description","Priority","Status","Assigned To","Actions"].map(h=>(
+                  <th key={h} style={{ padding:"11px 14px", textAlign:"left", color:"#475569", fontWeight:600, fontSize:"12px", textTransform:"uppercase", borderBottom:"1px solid #e2e8f0" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {displayed.map(w => {
+                const sc = WO_STATUS_COLORS[w.status] || { bg:"#f1f5f9", color:"#475569" };
+                const pc = WO_PRI_COLORS[w.priority] || { bg:"#f1f5f9", color:"#475569" };
+                return (
+                  <tr key={w.id} style={{ borderBottom:"1px solid #f1f5f9" }}>
+                    <td style={{ padding:"11px 14px", fontWeight:700, color:"#2563eb", fontSize:"12.5px" }}>
+                      {w.workOrderNumber || `WO-${w.id}`}
+                      {(Number(w.escalationLevel)>0||w.flagEscalated) && <span style={{ marginLeft:"6px", fontSize:"10px", background:"#faf5ff", color:"#7c3aed", padding:"1px 5px", borderRadius:"8px" }}>⏫</span>}
+                    </td>
+                    <td style={{ padding:"11px 14px", color:"#475569", fontSize:"13px" }}>{w.assetName||"—"}</td>
+                    <td style={{ padding:"11px 14px", color:"#0f172a", maxWidth:"200px" }}><div style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{w.issueDescription||"—"}</div></td>
+                    <td style={{ padding:"11px 14px" }}><span style={{ padding:"3px 9px", borderRadius:"20px", fontSize:"11.5px", fontWeight:700, background:pc.bg, color:pc.color, textTransform:"capitalize" }}>{w.priority}</span></td>
+                    <td style={{ padding:"11px 14px" }}><span style={{ padding:"3px 9px", borderRadius:"20px", fontSize:"11.5px", fontWeight:700, background:sc.bg, color:sc.color, textTransform:"capitalize" }}>{(w.status||"").replace("_"," ")}</span></td>
+                    <td style={{ padding:"11px 14px", fontSize:"13px", color:"#475569" }}>{w.assignedToName||<span style={{ color:"#94a3b8" }}>Unassigned</span>}</td>
+                    <td style={{ padding:"11px 14px" }}>
+                      <select value={w.status} onChange={e=>updateStatus(w,e.target.value)} style={{ padding:"5px 8px", borderRadius:"6px", border:"1px solid #e2e8f0", fontSize:"12px", cursor:"pointer" }}>
+                        {["open","in_progress","completed","closed"].map(s=><option key={s} value={s}>{s.replace("_"," ").replace(/\b\w/g,c=>c.toUpperCase())}</option>)}
+                      </select>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Admin Shifts Section ───────────────────────────────────────────────── */
+function AdminShiftsSection({ token, companies = [] }) {
+  const [selCo, setSelCo]   = useState(companies[0]?.id || null);
+  const [shifts, setShifts] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
+  const [editShift, setEditShift] = useState(null);
+  const emptyForm = { name:"", startTime:"", endTime:"", description:"", status:"active" };
+  const [form, setForm]     = useState(emptyForm);
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async (cid) => {
+    if (!cid) return; setLoading(true);
+    try { const d = await getAdminShifts(token, cid); setShifts(Array.isArray(d) ? d : []); }
+    catch(e) { console.error(e); }
+    setLoading(false);
+  }, [token]);
+
+  useEffect(() => { if (selCo) load(selCo); }, [selCo, load]);
+
+  const handleSave = async () => {
+    if (!form.name || !form.startTime || !form.endTime) return;
+    setSaving(true);
+    try {
+      if (editShift) {
+        await updateAdminShift(token, editShift.id, form);
+      } else {
+        await createAdminShift(token, { ...form, companyId: selCo });
+      }
+      await load(selCo);
+      setShowCreate(false); setEditShift(null); setForm(emptyForm);
+    } catch(e) { alert(e.message); }
+    setSaving(false);
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm("Delete this shift?")) return;
+    try { await deleteAdminShift(token, id); setShifts(prev => prev.filter(s => s.id !== id)); }
+    catch(e) { alert(e.message); }
+  };
+
+  const fmt12 = t => { if (!t) return ""; const [h,m] = t.split(":"); const hr=parseInt(h,10); return `${hr%12||12}:${m} ${hr<12?"AM":"PM"}`; };
+
+  return (
+    <div style={{ padding:"24px", maxWidth:"1100px" }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:"20px", gap:"10px" }}>
+        <div><h1 style={{ fontSize:"22px", fontWeight:800, color:"#0f172a", margin:0 }}>Shifts</h1><p style={{ color:"#64748b", fontSize:"13.5px", margin:"4px 0 0" }}>Manage shift schedules across companies</p></div>
+        <button type="button" onClick={() => { setForm(emptyForm); setEditShift(null); setShowCreate(true); }} style={{ padding:"9px 18px", background:"#2563eb", color:"#fff", border:"none", borderRadius:"8px", fontSize:"13.5px", fontWeight:700, cursor:"pointer" }}>+ Create Shift</button>
+      </div>
+
+      {/* Company selector */}
+      <div style={{ background:"#fff", borderRadius:"12px", border:"1px solid #e2e8f0", padding:"12px 16px", marginBottom:"20px", display:"flex", alignItems:"center", gap:"10px", flexWrap:"wrap" }}>
+        <span style={{ fontSize:"13px", fontWeight:700, color:"#374151" }}>Company:</span>
+        {companies.map(c => (
+          <button key={c.id} type="button" onClick={() => setSelCo(c.id)} style={{ padding:"5px 12px", borderRadius:"7px", fontSize:"12.5px", fontWeight:600, cursor:"pointer", border: selCo===c.id ? "none":"1px solid #e2e8f0", background: selCo===c.id ? "#2563eb":"#f8fafc", color: selCo===c.id ? "#fff":"#475569" }}>{c.companyName||c.name}</button>
+        ))}
+      </div>
+
+      {/* Create/Edit modal */}
+      {(showCreate || editShift) && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", zIndex:9999, display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <div style={{ background:"#fff", borderRadius:"16px", padding:"28px", width:"440px", maxWidth:"92vw" }}>
+            <h3 style={{ margin:"0 0 20px", fontSize:"17px", fontWeight:800 }}>{editShift ? "Edit Shift":"New Shift"}</h3>
+            <div style={{ display:"flex", flexDirection:"column", gap:"12px" }}>
+              <input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Shift name *" style={{ padding:"9px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13.5px" }} />
+              <div style={{ display:"flex", gap:"10px" }}>
+                <div style={{ flex:1 }}><label style={{ fontSize:"12px", fontWeight:600, color:"#475569" }}>Start Time</label><input type="time" value={form.startTime} onChange={e=>setForm({...form,startTime:e.target.value})} style={{ width:"100%", padding:"9px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13.5px", marginTop:"4px" }} /></div>
+                <div style={{ flex:1 }}><label style={{ fontSize:"12px", fontWeight:600, color:"#475569" }}>End Time</label><input type="time" value={form.endTime} onChange={e=>setForm({...form,endTime:e.target.value})} style={{ width:"100%", padding:"9px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13.5px", marginTop:"4px" }} /></div>
+              </div>
+              <input value={form.description} onChange={e=>setForm({...form,description:e.target.value})} placeholder="Description (optional)" style={{ padding:"9px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13.5px" }} />
+              <select value={form.status} onChange={e=>setForm({...form,status:e.target.value})} style={{ padding:"9px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13.5px" }}>
+                <option value="active">Active</option><option value="inactive">Inactive</option>
+              </select>
+            </div>
+            <div style={{ display:"flex", gap:"10px", justifyContent:"flex-end", marginTop:"20px" }}>
+              <button type="button" onClick={() => { setShowCreate(false); setEditShift(null); }} style={{ padding:"9px 18px", borderRadius:"8px", border:"1px solid #e2e8f0", background:"#f8fafc", fontWeight:600, cursor:"pointer" }}>Cancel</button>
+              <button type="button" onClick={handleSave} disabled={saving} style={{ padding:"9px 18px", borderRadius:"8px", border:"none", background:"#2563eb", color:"#fff", fontWeight:700, cursor:"pointer" }}>{saving ? "Saving…":"Save Shift"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {loading ? (
+        <div style={{ padding:"40px", textAlign:"center", color:"#94a3b8" }}>Loading shifts…</div>
+      ) : shifts.length === 0 ? (
+        <div style={{ padding:"48px", textAlign:"center", color:"#94a3b8", background:"#fff", borderRadius:"12px", border:"1px solid #e2e8f0" }}>No shifts created for this company.</div>
+      ) : (
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))", gap:"14px" }}>
+          {shifts.map(s => (
+            <div key={s.id} style={{ background:"#fff", borderRadius:"12px", border:`1px solid ${s.status==="active" ? "#bbf7d0":"#e2e8f0"}`, padding:"18px" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:"10px" }}>
+                <div>
+                  <p style={{ fontWeight:700, fontSize:"15px", color:"#0f172a", margin:0 }}>{s.name}</p>
+                  <p style={{ fontSize:"13px", color:"#64748b", margin:"3px 0 0" }}>{fmt12(s.startTime)} – {fmt12(s.endTime)}</p>
+                </div>
+                <span style={{ padding:"3px 9px", borderRadius:"20px", fontSize:"11.5px", fontWeight:700, background: s.status==="active" ? "#dcfce7":"#f1f5f9", color: s.status==="active" ? "#166534":"#475569" }}>{s.status==="active" ? "Active":"Inactive"}</span>
+              </div>
+              {s.description && <p style={{ fontSize:"12.5px", color:"#64748b", margin:"0 0 10px" }}>{s.description}</p>}
+              <p style={{ fontSize:"12px", color:"#94a3b8", margin:"0 0 12px" }}>{s.employeeCount||0} employees</p>
+              <div style={{ display:"flex", gap:"8px" }}>
+                <button type="button" onClick={() => { setForm({ name:s.name, startTime:s.startTime, endTime:s.endTime, description:s.description||"", status:s.status }); setEditShift(s); setShowCreate(false); }} style={{ flex:1, padding:"6px", borderRadius:"7px", border:"1px solid #e2e8f0", background:"#f8fafc", fontWeight:600, fontSize:"12.5px", cursor:"pointer" }}>Edit</button>
+                <button type="button" onClick={() => handleDelete(s.id)} style={{ flex:1, padding:"6px", borderRadius:"7px", border:"1px solid #fee2e2", background:"#fef2f2", color:"#dc2626", fontWeight:600, fontSize:"12.5px", cursor:"pointer" }}>Delete</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Admin Employees Section ────────────────────────────────────────────── */
+function AdminEmployeesSection({ token, companies = [] }) {
+  const [selCo, setSelCo]     = useState(companies[0]?.id || null);
+  const [employees, setEmp]   = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [search, setSearch]   = useState("");
+  const [showCreate, setShowCreate] = useState(false);
+  const [editEmp, setEditEmp] = useState(null);
+  const emptyForm = { fullName:"", email:"", phone:"", role:"technician", designation:"", password:"" };
+  const [form, setForm]       = useState(emptyForm);
+  const [saving, setSaving]   = useState(false);
+
+  const load = useCallback(async (cid) => {
+    if (!cid) return; setLoading(true);
+    try { const d = await getAdminEmployees(token, cid); setEmp(Array.isArray(d) ? d : []); }
+    catch(e) { console.error(e); }
+    setLoading(false);
+  }, [token]);
+
+  useEffect(() => { if (selCo) load(selCo); }, [selCo, load]);
+
+  const handleSave = async () => {
+    if (!form.fullName || !form.email) return;
+    setSaving(true);
+    try {
+      if (editEmp) {
+        await updateAdminEmployee(token, editEmp.id, form);
+      } else {
+        await createAdminEmployee(token, { ...form, companyId: selCo });
+      }
+      await load(selCo);
+      setShowCreate(false); setEditEmp(null); setForm(emptyForm);
+    } catch(e) { alert(e.message); }
+    setSaving(false);
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm("Delete this employee? This cannot be undone.")) return;
+    try { await deleteAdminEmployee(token, id); setEmp(prev => prev.filter(e => e.id !== id)); }
+    catch(e) { alert(e.message); }
+  };
+
+  const displayed = employees.filter(e => !search || (e.fullName||"").toLowerCase().includes(search.toLowerCase()) || (e.email||"").toLowerCase().includes(search.toLowerCase()) || (e.designation||"").toLowerCase().includes(search.toLowerCase()));
+  const ROLES = ["admin","supervisor","technician","employee"];
+  const roleColors = { admin:"#dbeafe", supervisor:"#fef9c3", technician:"#dcfce7", employee:"#f1f5f9" };
+  const roleTextColors = { admin:"#1d4ed8", supervisor:"#854d0e", technician:"#166534", employee:"#475569" };
+
+  return (
+    <div style={{ padding:"24px", maxWidth:"1300px" }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:"20px", gap:"10px", flexWrap:"wrap" }}>
+        <div><h1 style={{ fontSize:"22px", fontWeight:800, color:"#0f172a", margin:0 }}>Employees</h1><p style={{ color:"#64748b", fontSize:"13.5px", margin:"4px 0 0" }}>Manage employees across companies</p></div>
+        <div style={{ display:"flex", gap:"10px" }}>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search employees…" style={{ padding:"8px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13px", outline:"none", width:"200px" }} />
+          <button type="button" onClick={() => { setForm(emptyForm); setEditEmp(null); setShowCreate(true); }} style={{ padding:"9px 18px", background:"#2563eb", color:"#fff", border:"none", borderRadius:"8px", fontSize:"13.5px", fontWeight:700, cursor:"pointer" }}>+ Add Employee</button>
+        </div>
+      </div>
+
+      {/* Company selector */}
+      <div style={{ background:"#fff", borderRadius:"12px", border:"1px solid #e2e8f0", padding:"12px 16px", marginBottom:"20px", display:"flex", alignItems:"center", gap:"10px", flexWrap:"wrap" }}>
+        <span style={{ fontSize:"13px", fontWeight:700, color:"#374151" }}>Company:</span>
+        {companies.map(c => (
+          <button key={c.id} type="button" onClick={() => setSelCo(c.id)} style={{ padding:"5px 12px", borderRadius:"7px", fontSize:"12.5px", fontWeight:600, cursor:"pointer", border: selCo===c.id ? "none":"1px solid #e2e8f0", background: selCo===c.id ? "#2563eb":"#f8fafc", color: selCo===c.id ? "#fff":"#475569" }}>{c.companyName||c.name}</button>
+        ))}
+      </div>
+
+      {/* Create/Edit modal */}
+      {(showCreate || editEmp) && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", zIndex:9999, display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <div style={{ background:"#fff", borderRadius:"16px", padding:"28px", width:"480px", maxWidth:"92vw" }}>
+            <h3 style={{ margin:"0 0 20px", fontSize:"17px", fontWeight:800 }}>{editEmp ? "Edit Employee":"Add Employee"}</h3>
+            <div style={{ display:"flex", flexDirection:"column", gap:"12px" }}>
+              <input value={form.fullName} onChange={e=>setForm({...form,fullName:e.target.value})} placeholder="Full name *" style={{ padding:"9px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13.5px" }} />
+              <input value={form.email} onChange={e=>setForm({...form,email:e.target.value})} placeholder="Email *" type="email" style={{ padding:"9px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13.5px" }} />
+              <input value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})} placeholder="Phone" style={{ padding:"9px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13.5px" }} />
+              <div style={{ display:"flex", gap:"10px" }}>
+                <select value={form.role} onChange={e=>setForm({...form,role:e.target.value})} style={{ flex:1, padding:"9px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13.5px" }}>
+                  {ROLES.map(r => <option key={r} value={r}>{r.charAt(0).toUpperCase()+r.slice(1)}</option>)}
+                </select>
+                <input value={form.designation} onChange={e=>setForm({...form,designation:e.target.value})} placeholder="Designation" style={{ flex:1, padding:"9px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13.5px" }} />
+              </div>
+              {!editEmp && <input value={form.password} onChange={e=>setForm({...form,password:e.target.value})} placeholder="Password (leave blank for default)" type="password" style={{ padding:"9px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13.5px" }} />}
+            </div>
+            <div style={{ display:"flex", gap:"10px", justifyContent:"flex-end", marginTop:"20px" }}>
+              <button type="button" onClick={() => { setShowCreate(false); setEditEmp(null); }} style={{ padding:"9px 18px", borderRadius:"8px", border:"1px solid #e2e8f0", background:"#f8fafc", fontWeight:600, cursor:"pointer" }}>Cancel</button>
+              <button type="button" onClick={handleSave} disabled={saving} style={{ padding:"9px 18px", borderRadius:"8px", border:"none", background:"#2563eb", color:"#fff", fontWeight:700, cursor:"pointer" }}>{saving ? "Saving…":editEmp ? "Save Changes":"Add Employee"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {loading ? (
+        <div style={{ padding:"40px", textAlign:"center", color:"#94a3b8" }}>Loading employees…</div>
+      ) : displayed.length === 0 ? (
+        <div style={{ padding:"48px", textAlign:"center", color:"#94a3b8", background:"#fff", borderRadius:"12px", border:"1px solid #e2e8f0" }}>No employees found.</div>
+      ) : (
+        <div style={{ background:"#fff", borderRadius:"12px", border:"1px solid #e2e8f0", overflow:"hidden" }}>
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:"14px" }}>
+            <thead>
+              <tr style={{ background:"#f8fafc" }}>
+                {["Name","Email","Phone","Role","Designation","Status","Actions"].map(h=>(
+                  <th key={h} style={{ padding:"11px 14px", textAlign:"left", color:"#475569", fontWeight:600, fontSize:"12px", textTransform:"uppercase", borderBottom:"1px solid #e2e8f0" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {displayed.map(e => (
+                <tr key={e.id} style={{ borderBottom:"1px solid #f1f5f9" }}>
+                  <td style={{ padding:"11px 14px", fontWeight:600, color:"#0f172a" }}>{e.fullName}</td>
+                  <td style={{ padding:"11px 14px", color:"#475569" }}>{e.email}</td>
+                  <td style={{ padding:"11px 14px", color:"#64748b", fontSize:"12.5px" }}>{e.phone||"—"}</td>
+                  <td style={{ padding:"11px 14px" }}><span style={{ padding:"3px 9px", borderRadius:"20px", fontSize:"11.5px", fontWeight:700, background: roleColors[e.role]||"#f1f5f9", color: roleTextColors[e.role]||"#475569", textTransform:"capitalize" }}>{e.role||"—"}</span></td>
+                  <td style={{ padding:"11px 14px", color:"#64748b", fontSize:"12.5px" }}>{e.designation||"—"}</td>
+                  <td style={{ padding:"11px 14px" }}><span style={{ padding:"3px 9px", borderRadius:"20px", fontSize:"11.5px", fontWeight:700, background:(e.status||"active")==="active"?"#dcfce7":"#f1f5f9", color:(e.status||"active")==="active"?"#166534":"#475569" }}>{e.status||"Active"}</span></td>
+                  <td style={{ padding:"11px 14px" }}>
+                    <div style={{ display:"flex", gap:"6px" }}>
+                      <button type="button" onClick={() => { setForm({ fullName:e.fullName, email:e.email, phone:e.phone||"", role:e.role||"technician", designation:e.designation||"", password:"" }); setEditEmp(e); setShowCreate(false); }} style={{ padding:"5px 10px", borderRadius:"6px", border:"1px solid #e2e8f0", background:"#f8fafc", fontSize:"12px", cursor:"pointer", fontWeight:600 }}>Edit</button>
+                      <button type="button" onClick={() => handleDelete(e.id)} style={{ padding:"5px 10px", borderRadius:"6px", border:"1px solid #fee2e2", background:"#fef2f2", color:"#dc2626", fontSize:"12px", cursor:"pointer", fontWeight:600 }}>Delete</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
 
 const CompanyPortal = () => {
   const [token, setToken] = useState(() => {
@@ -1496,6 +2048,11 @@ const CompanyPortal = () => {
           <button className={nav === "assets" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("assets"); setShowAddForm(false); }}>Assets</button>
           <button className={nav === "checklists" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("checklists"); setShowAddForm(false); }}>Checklists</button>
           <button className={nav === "logsheets" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("logsheets"); setShowAddForm(false); }}>Logsheets</button>
+          <button className={nav === "employees" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("employees"); setShowAddForm(false); }}>Employees</button>
+          <button className={nav === "workorders" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("workorders"); setShowAddForm(false); }}>Work Orders</button>
+          <button className={nav === "warnings" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("warnings"); setShowAddForm(false); }}>Warnings</button>
+          <button className={nav === "shifts" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("shifts"); setShowAddForm(false); }}>Shifts</button>
+          <button className={nav === "ojt" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("ojt"); setShowAddForm(false); }}>OJT Training</button>
         </nav>
         <div className="client-side-footer">
           <button className="client-side-item" disabled>Settings</button>
@@ -2815,12 +3372,28 @@ const CompanyPortal = () => {
           );
         })()}
 
+        {nav === "ojt" && (() => {
+          return <AdminOjtSection token={token} companies={companies} />;
+        })()}
+
         {nav === "warnings" && (
           <WarningsPanel
             token={token}
             companyId={selectedCompanyId || companies[0]?.id || null}
             companies={companies.map((c) => ({ id: c.id, companyName: c.companyName || c.company || "(unnamed)" }))}
           />
+        )}
+
+        {nav === "workorders" && (
+          <AdminWorkOrdersSection token={token} companies={companies} />
+        )}
+
+        {nav === "shifts" && (
+          <AdminShiftsSection token={token} companies={companies} />
+        )}
+
+        {nav === "employees" && (
+          <AdminEmployeesSection token={token} companies={companies} />
         )}
 
         {/* ── Toast notifications (fixed overlay on every page) ── */}

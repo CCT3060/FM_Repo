@@ -30,6 +30,7 @@ export default function AssignmentFormScreen() {
     const [isLoading, setIsLoading] = useState(true);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [answers, setAnswers] = useState<Record<number, any>>({});
+    const [answerNotes, setAnswerNotes] = useState<Record<number, string>>({});
     const [assetId, setAssetId] = useState<string>('');
     const [assets, setAssets] = useState<Array<{id: number; assetName: string; assetType: string}>>([]);
     const [showAssetPicker, setShowAssetPicker] = useState(false);
@@ -168,11 +169,16 @@ export default function AssignmentFormScreen() {
             return;
         }
 
-        // Convert answers to API format
-        const formattedAnswers = Object.entries(answers).map(([questionId, value]) => ({
-            questionId: parseInt(questionId),
-            answer: value?.toString() || null,
-        }));
+        // Convert answers to API format, appending any notes to yes_no / ok_not_ok answers
+        const formattedAnswers = Object.entries(answers).map(([questionId, value]) => {
+            const qId = parseInt(questionId);
+            const note = answerNotes[qId];
+            const needsNote = (value === 'No' || value === 'Not OK') && note;
+            return {
+                questionId: qId,
+                answer: needsNote ? `${value}\nNote: ${note}` : (value?.toString() || null),
+            };
+        });
 
         setIsSubmitting(true);
         try {
@@ -214,33 +220,87 @@ export default function AssignmentFormScreen() {
 
     const renderQuestionInput = (question: any) => {
         const value = answers[question.id];
+        const note = answerNotes[question.id] || '';
+        const showNoteBox = (value === 'No' || value === 'Not OK');
 
         switch (question.answerType) {
             case 'yes_no':
                 return (
-                    <View style={styles.yesNoContainer}>
-                        <TouchableOpacity
-                            style={[styles.yesNoButton, value === 'Yes' && styles.yesNoButtonActive]}
-                            onPress={() => setAnswers({ ...answers, [question.id]: 'Yes' })}
-                        >
-                            <MaterialCommunityIcons
-                                name="check-circle"
-                                size={20}
-                                color={value === 'Yes' ? '#10B981' : '#A0AEC0'}
+                    <View>
+                        <View style={styles.yesNoContainer}>
+                            <TouchableOpacity
+                                style={[styles.yesNoButton, value === 'Yes' && styles.yesNoButtonActive]}
+                                onPress={() => setAnswers({ ...answers, [question.id]: 'Yes' })}
+                            >
+                                <MaterialCommunityIcons
+                                    name="check-circle"
+                                    size={20}
+                                    color={value === 'Yes' ? '#10B981' : '#A0AEC0'}
+                                />
+                                <Text style={[styles.yesNoText, value === 'Yes' && styles.yesNoTextActive]}>Yes</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[styles.yesNoButton, value === 'No' && styles.yesNoButtonActive]}
+                                onPress={() => setAnswers({ ...answers, [question.id]: 'No' })}
+                            >
+                                <MaterialCommunityIcons
+                                    name="close-circle"
+                                    size={20}
+                                    color={value === 'No' ? '#EF4444' : '#A0AEC0'}
+                                />
+                                <Text style={[styles.yesNoText, value === 'No' && styles.yesNoTextActive]}>No</Text>
+                            </TouchableOpacity>
+                        </View>
+                        {showNoteBox && (
+                            <TextInput
+                                style={[styles.textInput, { marginTop: 8 }]}
+                                value={note}
+                                onChangeText={(t) => setAnswerNotes({ ...answerNotes, [question.id]: t })}
+                                placeholder="Describe the issue..."
+                                placeholderTextColor="#A0AEC0"
+                                multiline
                             />
-                            <Text style={[styles.yesNoText, value === 'Yes' && styles.yesNoTextActive]}>Yes</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                            style={[styles.yesNoButton, value === 'No' && styles.yesNoButtonActive]}
-                            onPress={() => setAnswers({ ...answers, [question.id]: 'No' })}
-                        >
-                            <MaterialCommunityIcons
-                                name="close-circle"
-                                size={20}
-                                color={value === 'No' ? '#EF4444' : '#A0AEC0'}
+                        )}
+                    </View>
+                );
+
+            case 'ok_not_ok':
+                return (
+                    <View>
+                        <View style={styles.yesNoContainer}>
+                            <TouchableOpacity
+                                style={[styles.yesNoButton, value === 'OK' && styles.yesNoButtonActive]}
+                                onPress={() => setAnswers({ ...answers, [question.id]: 'OK' })}
+                            >
+                                <MaterialCommunityIcons
+                                    name="check-circle"
+                                    size={20}
+                                    color={value === 'OK' ? '#10B981' : '#A0AEC0'}
+                                />
+                                <Text style={[styles.yesNoText, value === 'OK' && styles.yesNoTextActive]}>OK</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[styles.yesNoButton, value === 'Not OK' && styles.yesNoButtonActive]}
+                                onPress={() => setAnswers({ ...answers, [question.id]: 'Not OK' })}
+                            >
+                                <MaterialCommunityIcons
+                                    name="close-circle"
+                                    size={20}
+                                    color={value === 'Not OK' ? '#EF4444' : '#A0AEC0'}
+                                />
+                                <Text style={[styles.yesNoText, value === 'Not OK' && styles.yesNoTextActive]}>Not OK</Text>
+                            </TouchableOpacity>
+                        </View>
+                        {showNoteBox && (
+                            <TextInput
+                                style={[styles.textInput, { marginTop: 8 }]}
+                                value={note}
+                                onChangeText={(t) => setAnswerNotes({ ...answerNotes, [question.id]: t })}
+                                placeholder="Describe the issue..."
+                                placeholderTextColor="#A0AEC0"
+                                multiline
                             />
-                            <Text style={[styles.yesNoText, value === 'No' && styles.yesNoTextActive]}>No</Text>
-                        </TouchableOpacity>
+                        )}
                     </View>
                 );
 
@@ -281,7 +341,8 @@ export default function AssignmentFormScreen() {
 
             case 'dropdown':
             case 'radio':
-                const options = question.options?.options || [];
+            case 'custom_options':
+                const options = question.options?.options || question.options || [];
                 return (
                     <View style={styles.optionsContainer}>
                         {options.map((option: string, index: number) => (

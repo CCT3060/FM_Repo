@@ -143,6 +143,27 @@ export const createTemplateUserAssignment = (token, data) => request("POST", "/a
 export const getTemplateUserAssignments = (token) => request("GET", "/api/company-portal/template-user-assignments", undefined, { authToken: token });
 export const getMyTemplateAssignments = (token) => request("GET", "/api/company-portal/template-user-assignments/mine", undefined, { authToken: token });
 export const deleteTemplateUserAssignment = (token, id) => request("DELETE", `/api/company-portal/template-user-assignments/${id}`, undefined, { authToken: token });
+export const createAdminTemplateUserAssignment = (token, data) => request("POST", "/api/company-users/template-assignments", data, { authToken: token });
+export const getAdminOjtTrainings = (token, companyId) => request("GET", `/api/company-users/ojt-trainings?companyId=${companyId}`, undefined, { authToken: token });
+export const getAdminOjtProgress  = (token, companyId) => request("GET", `/api/company-users/ojt-progress?companyId=${companyId}`,  undefined, { authToken: token });
+
+// ── Admin-level CRUD for Work Orders (client portal) ─────────────────────────
+export const getAdminWorkOrders    = (token, companyId, status) => request("GET", `/api/company-users/work-orders?companyId=${companyId}${status ? `&status=${status}` : ""}`, undefined, { authToken: token });
+export const createAdminWorkOrder  = (token, data) => request("POST", "/api/company-users/work-orders", data, { authToken: token });
+export const updateAdminWOStatus   = (token, id, status) => request("PUT", `/api/company-users/work-orders/${id}/status`, { status }, { authToken: token });
+export const assignAdminWO         = (token, id, data) => request("PUT", `/api/company-users/work-orders/${id}/assign`, data, { authToken: token });
+
+// ── Admin-level CRUD for Shifts (client portal) ───────────────────────────────
+export const getAdminShifts    = (token, companyId) => request("GET", `/api/company-users/shifts?companyId=${companyId}`, undefined, { authToken: token });
+export const createAdminShift  = (token, data)      => request("POST", "/api/company-users/shifts", data, { authToken: token });
+export const updateAdminShift  = (token, id, data)  => request("PUT", `/api/company-users/shifts/${id}`, data, { authToken: token });
+export const deleteAdminShift  = (token, id)        => request("DELETE", `/api/company-users/shifts/${id}`, undefined, { authToken: token });
+
+// ── Admin-level CRUD for Employees (client portal) ───────────────────────────
+export const getAdminEmployees   = (token, companyId) => request("GET", `/api/company-users/employees?companyId=${companyId}`, undefined, { authToken: token });
+export const createAdminEmployee = (token, data)      => request("POST", "/api/company-users/employees", data, { authToken: token });
+export const updateAdminEmployee = (token, id, data)  => request("PUT", `/api/company-users/employees/${id}`, data, { authToken: token });
+export const deleteAdminEmployee = (token, id)        => request("DELETE", `/api/company-users/employees/${id}`, undefined, { authToken: token });
 
 // ── Smart Checklist Submissions ───────────────────────────────────────────────
 export const submitChecklistExecution = (token, checklistId, data) =>

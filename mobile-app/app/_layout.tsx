@@ -41,6 +41,10 @@ export default function RootLayout() {
         <Stack.Screen name="ojt-training-detail" options={{ headerShown: false }} />
         <Stack.Screen name="qr-scanner" options={{ headerShown: false }} />
         <Stack.Screen name="asset-scan" options={{ headerShown: false }} />
+
+        {/* Notifications & History Detail */}
+        <Stack.Screen name="tech-notifications" options={{ headerShown: false }} />
+        <Stack.Screen name="tech-history-detail" options={{ headerShown: false }} />
       </Stack>
       <StatusBar style="auto" />
     </>

@@ -63,7 +63,7 @@ import {
   // OJT
   getOjtTrainings, getOjtTraining, createOjtTraining, updateOjtTraining, deleteOjtTraining, publishOjtTraining,
   createOjtModule, updateOjtModule, deleteOjtModule, addOjtModuleContent, deleteOjtContent,
-  createOjtTest, addOjtQuestion, updateOjtQuestion, deleteOjtQuestion, getOjtTrainingUsers, grantOjtCertificate, uploadOjtFile,
+  createOjtTest, addOjtQuestion, updateOjtQuestion, deleteOjtQuestion, getOjtTrainingUsers, grantOjtCertificate, uploadOjtFile, assignOjtTraining,
   // Fleet
   getFleetAssets, getFleetAssetDetails, getFleetInspections, createFleetInspection, updateFleetInspection, deleteFleetInspection,
   getFleetFuelLogs, createFleetFuelLog, updateFleetFuelLog, deleteFleetFuelLog,
@@ -130,8 +130,10 @@ const CardHeader = ({ title, subtitle, action }) => (
     {action && <div style={{ flexShrink: 0 }}>{action}</div>}
   </div>
 );
-const StatCard = ({ label, value, sub, subCol, iconBg, iconCol, icon }) => (
-  <div style={{ background: "#fff", borderRadius: "12px", padding: "20px 24px", border: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+const StatCard = ({ label, value, sub, subCol, iconBg, iconCol, icon, onClick }) => (
+  <div onClick={onClick} style={{ background: "#fff", borderRadius: "12px", padding: "20px 24px", border: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "flex-start", cursor: onClick ? "pointer" : "default", transition: "box-shadow 0.15s", ...(onClick ? { boxShadow: "0 0 0 0 transparent" } : {}) }}
+    onMouseEnter={onClick ? e => e.currentTarget.style.boxShadow = "0 4px 16px rgba(37,99,235,0.10)" : undefined}
+    onMouseLeave={onClick ? e => e.currentTarget.style.boxShadow = "none" : undefined}>
     <div>
       <p style={{ color: "#64748b", fontSize: "13.5px", marginBottom: "8px", fontWeight: 500 }}>{label}</p>
       <p style={{ fontSize: "34px", fontWeight: 800, color: "#0f172a", lineHeight: 1, letterSpacing: "-1px" }}>{value}</p>
@@ -1459,6 +1461,167 @@ function OjtTrainingDetailView({ training, token, onBack, onUpdated }) {
         )}
       </div>
     </Card>
+  );
+}
+
+/* ─── OJT Enrollment Section ──────────────────────────────────── */
+function OjtEnrollmentSection({ token, ojtTrainings = [] }) {
+  const [selectedId, setSelectedId] = useState("");
+  const [allUsers, setAllUsers] = useState([]);
+  const [enrolled, setEnrolled] = useState([]);
+  const [allEnrolled, setAllEnrolled] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [loadingAll, setLoadingAll] = useState(false);
+  const [selectedUserId, setSelectedUserId] = useState("");
+  const [dueDate, setDueDate] = useState("");
+  const [assigning, setAssigning] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  // Load all enrolled from all trainings on mount
+  useEffect(() => {
+    if (!ojtTrainings.length) return;
+    setLoadingAll(true);
+    Promise.all(ojtTrainings.map(t => getOjtTrainingUsers(token, t.id).then(d => {
+      const users = Array.isArray(d.users) ? d.users : [];
+      return users.map(u => ({ ...u, trainingTitle: t.title, trainingId: t.id }));
+    }).catch(() => []))).then(results => {
+      setAllEnrolled(results.flat());
+    }).finally(() => setLoadingAll(false));
+  }, [token, ojtTrainings]);
+
+  const loadData = async (id) => {
+    if (!id) { setEnrolled([]); setAllUsers([]); return; }
+    setLoading(true);
+    try {
+      const [users, enrollData] = await Promise.all([
+        getCompanyPortalWOUsers(token),
+        getOjtTrainingUsers(token, id),
+      ]);
+      setAllUsers(Array.isArray(users) ? users : []);
+      setEnrolled(Array.isArray(enrollData.users) ? enrollData.users : []);
+    } catch (e) { console.error(e); }
+    setLoading(false);
+  };
+
+  const handleSelect = (id) => { setSelectedId(id); setMsg(null); loadData(id); };
+
+  const handleAssign = async () => {
+    if (!selectedUserId || !selectedId) return;
+    setAssigning(true); setMsg(null);
+    try {
+      await assignOjtTraining(token, selectedId, { userId: Number(selectedUserId), dueDate: dueDate || null });
+      const fresh = await getOjtTrainingUsers(token, selectedId);
+      const freshUsers = Array.isArray(fresh.users) ? fresh.users : [];
+      setEnrolled(freshUsers);
+      // Update allEnrolled for the "all" view
+      setAllEnrolled(prev => {
+        const kept = prev.filter(u => u.trainingId !== Number(selectedId));
+        const training = ojtTrainings.find(t => String(t.id) === selectedId);
+        return [...kept, ...freshUsers.map(u => ({ ...u, trainingTitle: training?.title || "", trainingId: Number(selectedId) }))];
+      });
+      setMsg({ type: "success", text: "Assigned successfully." });
+      setSelectedUserId(""); setDueDate("");
+    } catch (e) { setMsg({ type: "error", text: e.message || "Failed to assign training" }); }
+    finally { setAssigning(false); }
+  };
+
+  const enrolledIds = new Set(enrolled.map(e => e.companyUserId));
+  const unassigned = allUsers.filter(u => !enrolledIds.has(u.id));
+  const selectedTraining = ojtTrainings.find(t => String(t.id) === selectedId);
+
+  // Data to display in table: if training selected, show that training's enrolled; else show all
+  const tableData = selectedId ? enrolled.map(u => ({ ...u, trainingTitle: selectedTraining?.title })) : allEnrolled;
+  const tableLoading = selectedId ? loading : loadingAll;
+
+  return (
+    <div>
+      <Card style={{ marginBottom: "16px", padding: "16px 20px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "16px", flexWrap: "wrap" }}>
+          <div>
+            <label style={{ fontSize: "12.5px", fontWeight: 600, color: "#475569", display: "block", marginBottom: "5px" }}>Select Training</label>
+            <select value={selectedId} onChange={e => handleSelect(e.target.value)}
+              style={{ width: "340px", padding: "9px 12px", borderRadius: "8px", border: "1px solid #e2e8f0", fontSize: "14px", outline: "none" }}>
+              <option value="">— Choose a training —</option>
+              {ojtTrainings.map(t => (
+                <option key={t.id} value={t.id}>{t.title} ({t.status})</option>
+              ))}
+            </select>
+          </div>
+          {selectedId && !loading && (
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap", flex: 1, paddingTop: "18px" }}>
+              <select value={selectedUserId} onChange={e => setSelectedUserId(e.target.value)}
+                style={{ minWidth: "220px", padding: "9px 12px", borderRadius: "8px", border: "1px solid #e2e8f0", fontSize: "13.5px", outline: "none" }}>
+                <option value="">— Choose employee —</option>
+                {unassigned.map(u => <option key={u.id} value={u.id}>{u.fullName} ({u.role || "employee"})</option>)}
+                {unassigned.length === 0 && <option disabled>All employees assigned</option>}
+              </select>
+              <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)}
+                style={{ padding: "9px 12px", borderRadius: "8px", border: "1px solid #e2e8f0", fontSize: "13.5px", outline: "none" }}
+                placeholder="Due date (optional)" />
+              <Btn onClick={handleAssign} disabled={assigning || !selectedUserId} style={{ background: "#16a34a", whiteSpace: "nowrap" }}>
+                {assigning ? "Assigning…" : "Assign Employee"}
+              </Btn>
+            </div>
+          )}
+        </div>
+        {msg && <div style={{ marginTop: "10px", padding: "8px 12px", borderRadius: "6px", fontSize: "13px", background: msg.type === "success" ? "#f0fdf4" : "#fef2f2", color: msg.type === "success" ? "#16a34a" : "#dc2626", border: `1px solid ${msg.type === "success" ? "#bbf7d0" : "#fecaca"}` }}>{msg.text}</div>}
+      </Card>
+
+      {tableLoading ? (
+        <Card style={{ padding: "40px", textAlign: "center", color: "#64748b" }}>Loading enrollment data…</Card>
+      ) : tableData.length === 0 ? (
+        <Card style={{ padding: "48px", textAlign: "center", color: "#94a3b8" }}>
+          <p style={{ margin: 0, fontSize: "14px" }}>{selectedId ? "No employees enrolled in this training yet." : "No enrollments found."}</p>
+        </Card>
+      ) : (
+        <Card style={{ padding: "0" }}>
+          <div style={{ padding: "14px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <h3 style={{ margin: 0, fontSize: "15px", fontWeight: 700, color: "#0f172a" }}>
+              {selectedId ? `${selectedTraining?.title} — Enrolled Employees (${enrolled.length})` : `All Enrollments (${allEnrolled.length})`}
+            </h3>
+          </div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13.5px" }}>
+              <thead>
+                <tr style={{ background: "#f8fafc" }}>
+                  {["Employee", "Role", ...(selectedId ? [] : ["Training"]), "Status", "Due Date", "Score"].map(h => (
+                    <th key={h} style={{ padding: "11px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", borderBottom: "1px solid #e2e8f0" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {tableData.map((u, idx) => {
+                  const isOverdue = u.dueDate && new Date(u.dueDate) < new Date() && u.status !== "completed";
+                  return (
+                    <tr key={`${u.id}-${idx}`} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                      <td style={{ padding: "12px 16px" }}>
+                        <div style={{ fontWeight: 600, color: "#0f172a" }}>{u.userName}</div>
+                        <div style={{ fontSize: "11px", color: "#94a3b8" }}>{u.email}</div>
+                      </td>
+                      <td style={{ padding: "12px 16px", fontSize: "12px", color: "#64748b" }}>{u.role || "—"}</td>
+                      {!selectedId && <td style={{ padding: "12px 16px", fontSize: "12.5px", color: "#2563eb", fontWeight: 600 }}>{u.trainingTitle || "—"}</td>}
+                      <td style={{ padding: "12px 16px" }}>
+                        <span style={{ padding: "3px 10px", borderRadius: "12px", fontSize: "12px", fontWeight: 600,
+                          background: u.status === "completed" ? "#dcfce7" : u.status === "in_progress" ? "#fef9c3" : u.status === "failed" ? "#fee2e2" : "#f1f5f9",
+                          color: u.status === "completed" ? "#166534" : u.status === "in_progress" ? "#854d0e" : u.status === "failed" ? "#991b1b" : "#475569" }}>
+                          {(u.status || "not_started").replace("_", " ").toUpperCase()}
+                        </span>
+                      </td>
+                      <td style={{ padding: "12px 16px", fontSize: "13px", color: isOverdue ? "#dc2626" : "#475569", fontWeight: isOverdue ? 700 : 400 }}>
+                        {u.dueDate ? `${isOverdue ? "⚠ Overdue — " : ""}${new Date(u.dueDate).toLocaleDateString()}` : "—"}
+                      </td>
+                      <td style={{ padding: "12px 16px", fontWeight: 600, color: u.score != null ? (u.score >= (selectedTraining?.passingPercentage || 70) ? "#16a34a" : "#dc2626") : "#94a3b8" }}>
+                        {u.score != null ? `${u.score}%` : "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+    </div>
   );
 }
 
@@ -2981,19 +3144,21 @@ export default function CompanyEmployeePortal() {
                 {dashboard && (
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px", marginBottom: "24px" }}>
                     <StatCard label="Active Assets" value={dashboard.activeAssets} sub={`${dashboard.totalAssets} total`} subCol="#22c55e"
-                      iconBg="#eff6ff" iconCol="#2563eb"
+                      iconBg="#eff6ff" iconCol="#2563eb" onClick={() => setNav("assets")}
                       icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 19.07a10 10 0 0 1 0-14.14"/></svg>} />
                     <StatCard label="Open Work Orders" value={dashboard.openIssues}
                       sub={dashboard.openIssues > 0 ? "Needs attention" : "All clear"}
                       subCol={dashboard.openIssues > 0 ? "#dc2626" : "#22c55e"}
                       iconBg={dashboard.openIssues > 0 ? "#fef2f2" : "#f0fdf4"}
                       iconCol={dashboard.openIssues > 0 ? "#dc2626" : "#22c55e"}
+                      onClick={() => setNav("workorders")}
                       icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>} />
                     <StatCard label="Total Warnings" value={dashboard.flags?.open || 0}
                       sub={`${dashboard.flags?.critical || 0} critical`}
                       subCol={(dashboard.flags?.critical || 0) > 0 ? "#dc2626" : "#64748b"}
                       iconBg={(dashboard.flags?.open || 0) > 0 ? "#fff7ed" : "#f0fdf4"}
                       iconCol={(dashboard.flags?.open || 0) > 0 ? "#ea580c" : "#22c55e"}
+                      onClick={() => setNav("warnings")}
                       icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>} />
                   </div>
                 )}
@@ -3489,7 +3654,7 @@ export default function CompanyEmployeePortal() {
                 token={token}
                 companies={[{ id: currentUser.companyId, companyName: currentUser.companyName }]}
                 shifts={shifts}
-                fetchTemplates={(tok) => getCompanyPortalChecklists(tok)}
+                fetchTemplates={getCompanyPortalChecklists}
                 createTemplate={createCompanyPortalChecklist}
                 fetchTemplate={null}
                 updateTemplate={updateCompanyPortalChecklist}
@@ -4185,6 +4350,7 @@ export default function CompanyEmployeePortal() {
                 <div style={{ display: "flex", gap: "24px", borderBottom: "1px solid #e2e8f0", marginBottom: "20px" }}>
                   {[
                     { key: "trainings", label: "Trainings" },
+                    { key: "enrollment", label: "Enrollment" },
                     { key: "tracking", label: "Progress Tracking" }
                   ].map((tab) => (
                     <button
@@ -4294,6 +4460,9 @@ export default function CompanyEmployeePortal() {
                       />
                     )}
                   </>
+                )}
+                {ojtSubNav === "enrollment" && (
+                  <OjtEnrollmentSection token={token} ojtTrainings={ojtTrainings} />
                 )}
                 {ojtSubNav === "tracking" && (
                   <TrackingSection token={token} ojtTrainings={ojtTrainings} />
