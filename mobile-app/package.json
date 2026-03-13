@@ -10,6 +10,7 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "build:android:prod": "eas build --platform android --profile production",
+    "build:android:develop": "eas build --platform android --profile develop",
     "submit:android:prod": "eas submit --platform android --profile production",
     "release:android:prod": "npm run build:android:prod && npm run submit:android:prod"
   },
