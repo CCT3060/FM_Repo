@@ -1,6 +1,7 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import * as DocumentPicker from 'expo-document-picker';
 import { router, useLocalSearchParams } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -44,10 +45,25 @@ export default function AssignmentFormScreen() {
     const [tabShift, setTabShift] = useState('');
     const MONTHS_LIST = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
+    const filteredAssets = useMemo(() => {
+        const tType = (template?.assetType || '').toLowerCase();
+        if (!tType) return assets;
+        return assets.filter((a) => String(a.assetType || '').toLowerCase() === tType);
+    }, [assets, template?.assetType]);
+
     useEffect(() => {
         loadTemplate();
         loadAssets();
     }, []);
+
+    useEffect(() => {
+        if (!template?.assetId && !routeAssetId && assetId) {
+            const stillValid = filteredAssets.some((a) => String(a.id) === String(assetId));
+            if (!stillValid) {
+                setAssetId(filteredAssets[0] ? String(filteredAssets[0].id) : '');
+            }
+        }
+    }, [filteredAssets, template?.assetId, routeAssetId, assetId]);
 
     // Re-check shift access every 60 seconds while the form is open.
     // This ensures the form locks if the shift ends while the user is filling it.
@@ -66,12 +82,33 @@ export default function AssignmentFormScreen() {
         try {
             const data = await getMyAssets();
             setAssets(data);
-            // Auto-select the first asset so users never need to tap the picker
-            if (data.length > 0) {
-                setAssetId(prev => prev || String(data[0].id));
+            // Auto-select first matching asset type only when template/route did not lock one
+            if (!template?.assetId && !routeAssetId) {
+                const tType = (template?.assetType || '').toLowerCase();
+                const typeMatched = tType ? data.filter((a) => String(a.assetType || '').toLowerCase() === tType) : data;
+                if (typeMatched.length > 0) {
+                    setAssetId(prev => prev || String(typeMatched[0].id));
+                }
             }
         } catch (_) {
             // non-critical
+        }
+    };
+
+    const questionType = (question: any) => String(question?.answerType || question?.inputType || 'text').toLowerCase();
+
+    const handlePickUpload = async (questionId: number) => {
+        try {
+            const result = await DocumentPicker.getDocumentAsync({
+                copyToCacheDirectory: true,
+                multiple: false,
+            });
+            if (result.canceled) return;
+            const file = result.assets?.[0];
+            if (!file) return;
+            setAnswers({ ...answers, [questionId]: JSON.stringify({ name: file.name, uri: file.uri, mimeType: file.mimeType || null }) });
+        } catch {
+            Alert.alert('Upload Failed', 'Could not select file. Please try again.');
         }
     };
 
@@ -152,7 +189,13 @@ export default function AssignmentFormScreen() {
             return;
         }
         const missingRequired = template.questions
-            .filter(q => q.isRequired && !answers[q.id])
+            .filter(q => {
+                if (!q.isRequired) return false;
+                const val = answers[q.id];
+                if (val === undefined || val === null) return true;
+                if (typeof val === 'string') return val.trim() === '';
+                return false;
+            })
             .map(q => q.questionText);
 
         if (templateType === 'logsheet' && !assetId) {
@@ -174,9 +217,12 @@ export default function AssignmentFormScreen() {
             const qId = parseInt(questionId);
             const note = answerNotes[qId];
             const needsNote = (value === 'No' || value === 'Not OK') && note;
+            const rawAnswer = typeof value === 'string'
+                ? value
+                : (value == null ? null : JSON.stringify(value));
             return {
                 questionId: qId,
-                answer: needsNote ? `${value}\nNote: ${note}` : (value?.toString() || null),
+                answer: needsNote ? `${rawAnswer}\nNote: ${note}` : (rawAnswer || null),
             };
         });
 
@@ -222,8 +268,9 @@ export default function AssignmentFormScreen() {
         const value = answers[question.id];
         const note = answerNotes[question.id] || '';
         const showNoteBox = (value === 'No' || value === 'Not OK');
+        const qType = questionType(question);
 
-        switch (question.answerType) {
+        switch (qType) {
             case 'yes_no':
                 return (
                     <View>
@@ -320,8 +367,12 @@ export default function AssignmentFormScreen() {
                 return (
                     <TextInput
                         style={styles.textInput}
-                        value={value}
-                        onChangeText={(text) => setAnswers({ ...answers, [question.id]: text })}
+                        value={value || ''}
+                        onChangeText={(text) => {
+                            if (text === '' || /^-?\d*\.?\d*$/.test(text)) {
+                                setAnswers({ ...answers, [question.id]: text });
+                            }
+                        }}
                         placeholder="Enter number..."
                         placeholderTextColor="#A0AEC0"
                         keyboardType="numeric"
@@ -366,6 +417,29 @@ export default function AssignmentFormScreen() {
                         ))}
                     </View>
                 );
+
+            case 'upload':
+            case 'photo':
+            case 'signature': {
+                let fileLabel = 'No file selected';
+                if (typeof value === 'string' && value) {
+                    try {
+                        const parsed = JSON.parse(value);
+                        fileLabel = parsed?.name || parsed?.uri || 'Selected file';
+                    } catch {
+                        fileLabel = value;
+                    }
+                }
+                return (
+                    <View style={styles.uploadWrap}>
+                        <TouchableOpacity style={styles.uploadBtn} onPress={() => handlePickUpload(question.id)}>
+                            <MaterialCommunityIcons name="paperclip" size={18} color="#1E3A8A" />
+                            <Text style={styles.uploadBtnText}>Choose File</Text>
+                        </TouchableOpacity>
+                        <Text style={styles.uploadFileName} numberOfLines={2}>{fileLabel}</Text>
+                    </View>
+                );
+            }
 
             default:
                 return (
@@ -491,10 +565,10 @@ export default function AssignmentFormScreen() {
                                             <Text style={styles.assetListItemText}>— No Asset —</Text>
                                         </TouchableOpacity>
                                     )}
-                                    {assets.length === 0 && (
+                                    {filteredAssets.length === 0 && (
                                         <Text style={styles.assetListEmpty}>No assets found</Text>
                                     )}
-                                    {assets.map(a => (
+                                    {filteredAssets.map(a => (
                                         <TouchableOpacity
                                             key={a.id}
                                             style={[styles.assetListItem, String(a.id) === assetId && styles.assetListItemActive]}
@@ -848,6 +922,29 @@ const styles = StyleSheet.create({
     optionTextActive: {
         color: '#1E3A8A',
         fontWeight: '600',
+    },
+    uploadWrap: {
+        gap: 10,
+    },
+    uploadBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        borderWidth: 1,
+        borderColor: '#BFDBFE',
+        backgroundColor: '#EFF6FF',
+        borderRadius: 8,
+        paddingVertical: 12,
+    },
+    uploadBtnText: {
+        color: '#1E3A8A',
+        fontSize: 14,
+        fontWeight: '700',
+    },
+    uploadFileName: {
+        fontSize: 12,
+        color: '#64748B',
     },
     submitButton: {
         flexDirection: 'row',

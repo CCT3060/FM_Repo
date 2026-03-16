@@ -370,7 +370,8 @@ export interface TemplateDetails {
   questions: Array<{
     id: number;
     questionText: string;
-    answerType: string;
+    answerType?: string;
+    inputType?: string;
     isRequired: boolean;
     options?: any;
     displayOrder: number;
@@ -495,6 +496,16 @@ export interface LogsheetEntry {
   shift: string | null;
   submittedAt: string;
   submittedByName: string | null;
+  answers?: Array<{
+    id?: number;
+    entryId?: number;
+    questionId: number;
+    dateColumn?: number;
+    answerValue?: string | null;
+    answer?: string | null;
+    isIssue?: boolean;
+    issueReason?: string | null;
+  }>;
   data: { readings?: Record<string, Record<string, string>>; summary?: Record<string, any>; footer?: Record<string, any> };
 }
 

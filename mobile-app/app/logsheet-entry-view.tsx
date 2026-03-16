@@ -1,6 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     SafeAreaView,
@@ -11,7 +11,7 @@ import {
     View,
     Platform,
 } from 'react-native';
-import { getLogsheetGridData, type LogsheetEntry, type TabularColumnGroup } from '../utils/api';
+import { getLogsheetEntries, getLogsheetGridData, type LogsheetEntry, type TabularColumnGroup } from '../utils/api';
 
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
@@ -38,9 +38,16 @@ export default function LogsheetEntryViewScreen() {
         setIsLoading(true);
         setError(null);
         try {
-            const data = await getLogsheetGridData(templateId, month, year);
+            const [data, detailedEntries] = await Promise.all([
+                getLogsheetGridData(templateId, month, year),
+                getLogsheetEntries(templateId, month, year).catch(() => []),
+            ]);
             setGridData(data);
-            const entries = (data as any).entries || (data.entry ? [data.entry] : []);
+            const gridEntries = (data as any).entries || (data.entry ? [data.entry] : []);
+            const entries = (gridEntries || []).map((e: any) => {
+                const match = (detailedEntries || []).find((de) => de.id === e.id);
+                return match ? { ...e, answers: (match as any).answers || [] } : e;
+            });
             setAllEntries(entries);
             setSelectedEntryId(entries[0]?.id ?? null);
         } catch (err: any) {
@@ -64,6 +71,33 @@ export default function LogsheetEntryViewScreen() {
 
     const tabVal = (rowId: string, col: { groupId: string; id: string }) =>
         readings[rowId]?.[`${col.groupId}__${col.id}`] || '';
+
+    const questionMap = useMemo(() => {
+        const map: Record<number, string> = {};
+        const tmpl: any = gridData?.template;
+        if (!tmpl) return map;
+        if (Array.isArray(tmpl.sections)) {
+            for (const s of tmpl.sections) {
+                for (const q of (s.questions || [])) {
+                    if (q?.id != null) map[Number(q.id)] = q.questionText || q.question_text || `Question ${q.id}`;
+                }
+            }
+        }
+        if (Array.isArray(tmpl.questions)) {
+            for (const q of tmpl.questions) {
+                if (q?.id != null && !map[Number(q.id)]) map[Number(q.id)] = q.questionText || q.question_text || `Question ${q.id}`;
+            }
+        }
+        return map;
+    }, [gridData]);
+
+    const standardAnswers = useMemo(() => {
+        const ans: any[] = Array.isArray((selectedEntry as any)?.answers) ? (selectedEntry as any).answers : [];
+        return ans.map((a) => ({
+            question: questionMap[Number(a.questionId)] || `Question ${a.questionId}`,
+            answer: a.answerValue ?? a.answer ?? '—',
+        }));
+    }, [selectedEntry, questionMap]);
 
     const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     const prevMonth = () => {
@@ -215,8 +249,20 @@ export default function LogsheetEntryViewScreen() {
                             </View>
                         </ScrollView>
                     ) : (
-                        <View style={styles.center}>
-                            <Text style={styles.emptySubtitle}>No grid data available for this template.</Text>
+                        <View style={styles.standardWrap}>
+                            <Text style={styles.standardTitle}>Question & Answer</Text>
+                            {standardAnswers.length === 0 ? (
+                                <Text style={styles.emptySubtitle}>No answers found for this submission.</Text>
+                            ) : (
+                                <View style={styles.standardCard}>
+                                    {standardAnswers.map((row, idx) => (
+                                        <View key={`${row.question}-${idx}`} style={[styles.qaRow, idx < standardAnswers.length - 1 && styles.qaRowBorder]}>
+                                            <Text style={styles.qaQuestion}>{row.question}</Text>
+                                            <Text style={styles.qaAnswer}>{String(row.answer || '—')}</Text>
+                                        </View>
+                                    ))}
+                                </View>
+                            )}
                         </View>
                     )}
                 </ScrollView>
@@ -268,6 +314,39 @@ const styles = StyleSheet.create({
         backgroundColor: '#EFF6FF', borderRadius: 8,
     },
     infoText: { fontSize: 12, color: '#1E3A8A', flex: 1 },
+    standardWrap: {
+        margin: 12,
+    },
+    standardTitle: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: '#1A202C',
+        marginBottom: 8,
+    },
+    standardCard: {
+        backgroundColor: '#FFFFFF',
+        borderWidth: 1,
+        borderColor: '#E2E8F0',
+        borderRadius: 10,
+    },
+    qaRow: {
+        paddingVertical: 10,
+        paddingHorizontal: 12,
+        gap: 5,
+    },
+    qaRowBorder: {
+        borderBottomWidth: 1,
+        borderBottomColor: '#F1F5F9',
+    },
+    qaQuestion: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: '#334155',
+    },
+    qaAnswer: {
+        fontSize: 13,
+        color: '#0F172A',
+    },
 });
 
 const gStyles = StyleSheet.create({
