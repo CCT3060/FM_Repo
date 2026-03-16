@@ -356,7 +356,10 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [assets, setAssets] = useState(assetsProp);
-  const isFirstRender = useRef(true);
+  // Track latest assets without triggering the reset effect on load
+  const assetsRef = useRef(assetsProp);
+  // Track previous company/type so reset only fires on explicit user changes
+  const prevResetKeyRef = useRef({ companyId: form.companyId, assetType: form.assetType });
 
   // Fetch assets for the selected company from the API
   useEffect(() => {
@@ -379,17 +382,23 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
     return () => { cancelled = true; };
   }, [token, form.companyId]);  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Reset assetId when company or assetType changes, but only if the current asset
-  // is no longer valid for the new filter — never reset on the very first render so
-  // that edit mode preserves the saved assetId.
+  // Keep assetsRef in sync so the reset effect always reads the latest list
+  useEffect(() => { assetsRef.current = assets; }, [assets]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reset assetId ONLY when the user explicitly changes company or assetType —
+  // never on initial mount or when the async assets list just finished loading.
   useEffect(() => {
-    if (isFirstRender.current) { isFirstRender.current = false; return; }
+    const prev = prevResetKeyRef.current;
+    const curr = { companyId: form.companyId, assetType: form.assetType };
+    prevResetKeyRef.current = curr;
+    if (prev.companyId === curr.companyId && prev.assetType === curr.assetType) return;
     setForm((p) => {
-      const filtered = assets.filter((a) => !form.assetType || form.assetType === "generic" || (a.assetType || a.asset_type) === form.assetType);
+      const cur = assetsRef.current;
+      const filtered = cur.filter((a) => !p.assetType || p.assetType === "generic" || (a.assetType || a.asset_type) === p.assetType);
       const stillValid = filtered.some((a) => String(a.id) === String(p.assetId));
       return stillValid ? p : { ...p, assetId: "" };
     });
-  }, [form.companyId, form.assetType, assets]);  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [form.companyId, form.assetType]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const filteredChecklistAssets = useMemo(
     () => assets.filter((a) => !form.assetType || form.assetType === "generic" || (a.assetType || a.asset_type) === form.assetType),
