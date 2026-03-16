@@ -15,26 +15,14 @@ applications:
         postBuild:
           commands:
             - echo "=== Deploying backend to Elastic Beanstalk (branch=${AWS_BRANCH}) ==="
-            # Resolve AWS account ID to construct the standard EB storage bucket name
             - AWS_ACCT=$(aws sts get-caller-identity --query Account --output text)
             - EB_BUCKET="elasticbeanstalk-ap-south-1-${AWS_ACCT}"
             - VERSION_LABEL="${EB_APP_NAME}-${AWS_BRANCH}-$(date +%Y%m%d%H%M%S)"
-            # Package backend (exclude node_modules, uploads, and local .env files)
-            - cd "$CODEBUILD_SRC_DIR/backend"
+            - cd ../backend
             - zip -r /tmp/backend-deploy.zip . -x "node_modules/*" -x "uploads/*" -x ".env" -x ".env.*"
-            # Upload package to S3 and create a new EB application version
             - aws s3 cp /tmp/backend-deploy.zip "s3://${EB_BUCKET}/deploys/${VERSION_LABEL}.zip" --region ap-south-1
-            - aws elasticbeanstalk create-application-version
-                --application-name "${EB_APP_NAME}"
-                --version-label "${VERSION_LABEL}"
-                --description "Auto-deploy from Amplify branch ${AWS_BRANCH} job ${AWS_JOB_ID}"
-                --source-bundle "S3Bucket=${EB_BUCKET},S3Key=deploys/${VERSION_LABEL}.zip"
-                --region ap-south-1
-            # Trigger rolling deployment to the target EB environment
-            - aws elasticbeanstalk update-environment
-                --environment-name "${EB_ENV_NAME}"
-                --version-label "${VERSION_LABEL}"
-                --region ap-south-1
+            - aws elasticbeanstalk create-application-version --application-name "${EB_APP_NAME}" --version-label "${VERSION_LABEL}" --description "Auto-deploy from Amplify branch ${AWS_BRANCH} job ${AWS_JOB_ID}" --source-bundle "S3Bucket=${EB_BUCKET},S3Key=deploys/${VERSION_LABEL}.zip" --region ap-south-1
+            - aws elasticbeanstalk update-environment --environment-name "${EB_ENV_NAME}" --version-label "${VERSION_LABEL}" --region ap-south-1
             - echo "=== Backend deployment triggered to ${EB_ENV_NAME} ==="
       artifacts:
         baseDirectory: dist
