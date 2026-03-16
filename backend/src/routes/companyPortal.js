@@ -1686,7 +1686,9 @@ router.get("/checklist-submissions/recent", async (req, res, next) => {
 router.post("/template-user-assignments", async (req, res, next) => {
   try {
     const { templateType, templateId, assignedTo, note } = req.body;
-    if (!templateType || !templateId || !assignedTo) {
+    const normalizedTemplateId = Number(templateId);
+    const normalizedAssignedTo = Number(assignedTo);
+    if (!templateType || !normalizedTemplateId || !normalizedAssignedTo) {
       return res.status(400).json({ message: "templateType, templateId and assignedTo are required" });
     }
     if (!["checklist", "logsheet"].includes(templateType)) {
@@ -1702,7 +1704,7 @@ router.post("/template-user-assignments", async (req, res, next) => {
     if (role === "supervisor") {
       const [[target]] = await pool.query(
         "SELECT supervisor_id FROM company_users WHERE id = ? AND company_id = ?",
-        [assignedTo, cid(req)]
+        [normalizedAssignedTo, cid(req)]
       );
       if (!target || String(target.supervisor_id) !== String(req.companyUser.id)) {
         return res.status(403).json({ message: "You can only assign to employees under you" });
@@ -1712,15 +1714,15 @@ router.post("/template-user-assignments", async (req, res, next) => {
     // Verify target belongs to this company
     const [[empCheck]] = await pool.query(
       "SELECT id FROM company_users WHERE id = ? AND company_id = ?",
-      [assignedTo, cid(req)]
+      [normalizedAssignedTo, cid(req)]
     );
     if (!empCheck) return res.status(404).json({ message: "Assignee not found in this company" });
 
-    // Verify the template belongs to this company
+    // Verify template belongs to this company
     const templateTable = templateType === "checklist" ? "checklist_templates" : "logsheet_templates";
     const [[templateCheck]] = await pool.query(
       `SELECT id FROM ${templateTable} WHERE id = ? AND company_id = ?`,
-      [templateId, cid(req)]
+      [normalizedTemplateId, cid(req)]
     );
     if (!templateCheck) return res.status(404).json({ message: "Template not found in this company" });
 
@@ -1731,7 +1733,7 @@ router.post("/template-user-assignments", async (req, res, next) => {
          SET note = EXCLUDED.note, assigned_by = EXCLUDED.assigned_by, created_at = NOW()
        RETURNING id, template_type AS "templateType", template_id AS "templateId",
                  assigned_to AS "assignedTo", assigned_by AS "assignedBy", note, created_at AS "createdAt"`,
-      [cid(req), templateType, templateId, assignedTo, req.companyUser.id, note || null]
+      [cid(req), templateType, normalizedTemplateId, normalizedAssignedTo, req.companyUser.id, note || null]
     );
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -1797,7 +1799,7 @@ router.get("/template-user-assignments/mine", async (req, res, next) => {
               lt.frequency, lt.asset_id AS "assetId",
               a.asset_name AS "assetName"
        FROM template_user_assignments tua
-       LEFT JOIN company_users ab    ON ab.id = tua.assigned_by
+  LEFT JOIN company_users ab    ON ab.id = tua.assigned_by
        LEFT JOIN checklist_templates ct ON ct.id = tua.template_id AND tua.template_type = 'checklist'
        LEFT JOIN logsheet_templates  lt ON lt.id = tua.template_id AND tua.template_type = 'logsheet'
        LEFT JOIN assets a             ON a.id = lt.asset_id

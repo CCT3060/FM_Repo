@@ -131,8 +131,8 @@ router.get("/my-assignments", async (req, res, next) => {
        FROM template_user_assignments tua
        LEFT JOIN company_users cu_by ON tua.assigned_by = cu_by.id
        LEFT JOIN checklist_templates ct ON tua.template_type = 'checklist' AND tua.template_id = ct.id AND ct.company_id = tua.company_id
-       LEFT JOIN assets a_ct ON ct.asset_id = a_ct.id
-       LEFT JOIN shifts s_ct ON ct.shift_id = s_ct.id
+      LEFT JOIN assets a_ct ON ct.asset_id = a_ct.id
+      LEFT JOIN shifts s_ct ON ct.shift_id = s_ct.id
        LEFT JOIN logsheet_templates lt ON tua.template_type = 'logsheet' AND tua.template_id = lt.id AND lt.company_id = tua.company_id
        LEFT JOIN logsheet_template_assignments lta ON tua.template_type = 'logsheet' AND lta.template_id = tua.template_id
        LEFT JOIN assets a_lt ON lta.asset_id = a_lt.id
