@@ -1797,7 +1797,7 @@ router.get("/template-user-assignments/mine", async (req, res, next) => {
               lt.frequency, lt.asset_id AS "assetId",
               a.asset_name AS "assetName"
        FROM template_user_assignments tua
-       JOIN company_users ab         ON ab.id = tua.assigned_by
+       LEFT JOIN company_users ab    ON ab.id = tua.assigned_by
        LEFT JOIN checklist_templates ct ON ct.id = tua.template_id AND tua.template_type = 'checklist'
        LEFT JOIN logsheet_templates  lt ON lt.id = tua.template_id AND tua.template_type = 'logsheet'
        LEFT JOIN assets a             ON a.id = lt.asset_id
