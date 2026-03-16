@@ -1,6 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
-import React, { useCallback, useState } from 'react';
+import React, { useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -15,7 +15,7 @@ import {
     View,
 } from 'react-native';
 import Animated, { FadeInUp, Layout } from 'react-native-reanimated';
-import { getMyAssignments, getMyTeam, reassignTemplate, clearAuth, getStoredUser, type Assignment } from '../utils/api';
+import { getMyAssignments, getMyTeam, getMySubmissionHistory, reassignTemplate, clearAuth, getStoredUser, type Assignment, type SubmissionHistoryItem } from '../utils/api';
 import { SupervisorBottomNav } from './supervisor-dashboard';
 
 interface TeamMember {
@@ -25,28 +25,38 @@ interface TeamMember {
 }
 
 export default function AssignmentsScreen() {
+    const [activeTab, setActiveTab] = useState<'assignments' | 'history'>('assignments');
     const [assignments, setAssignments] = useState<Assignment[]>([]);
+    const [historyItems, setHistoryItems] = useState<SubmissionHistoryItem[]>([]);
     const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
     const [userRole, setUserRole] = useState<string>('');
     const [isLoading, setIsLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
+    const [isHistoryLoading, setIsHistoryLoading] = useState(false);
+    const [historyError, setHistoryError] = useState<string | null>(null);
     const [selectedAssignment, setSelectedAssignment] = useState<Assignment | null>(null);
     const [showReassignModal, setShowReassignModal] = useState(false);
     const [isReassigning, setIsReassigning] = useState(false);
-
-    // Reload every time this screen comes into focus (e.g. after submitting a form)
-    useFocusEffect(
-        useCallback(() => {
-            loadData();
-        }, [])
-    );
 
     const loadData = async () => {
         try {
             const user = await getStoredUser();
             if (user?.role) setUserRole(user.role.toLowerCase());
         } catch { /* ignore */ }
-        await Promise.all([loadAssignments(), loadTeamMembers()]);
+        await Promise.all([loadAssignments(), loadTeamMembers(), loadHistory()]);
+    };
+
+    const loadHistory = async () => {
+        try {
+            setIsHistoryLoading(true);
+            setHistoryError(null);
+            const data = await getMySubmissionHistory(60);
+            setHistoryItems(data);
+        } catch (error: any) {
+            setHistoryError(error.message || 'Failed to load history');
+        } finally {
+            setIsHistoryLoading(false);
+        }
     };
 
     const loadAssignments = async () => {
@@ -93,6 +103,11 @@ export default function AssignmentsScreen() {
         setRefreshing(true);
         loadData();
     };
+
+    // Reload every time this screen comes into focus (e.g. after submitting a form)
+    useFocusEffect(() => {
+        loadData();
+    });
 
     const handleFillAssignment = (assignment: Assignment) => {
         // Safety check for undefined values
@@ -173,6 +188,9 @@ export default function AssignmentsScreen() {
                                 {assignment.assetType && ` • ${assignment.assetType}`}
                             </Text>
                         </View>
+                        <View style={styles.statePill}>
+                            <Text style={styles.statePillText}>ASSIGNED</Text>
+                        </View>
                     </View>
 
                     {assignment.description && (
@@ -251,6 +269,53 @@ export default function AssignmentsScreen() {
         );
     };
 
+    const renderHistoryCard = (item: SubmissionHistoryItem) => {
+        const isChecklist = item.type === 'checklist';
+        const done = (item.status || '').toLowerCase() === 'completed';
+        const badgeBg = done ? '#DCFCE7' : '#FEF3C7';
+        const badgeTextColor = done ? '#166534' : '#92400E';
+
+        return (
+            <Animated.View key={`${item.type}-${item.id}`} entering={FadeInUp.duration(350).springify()} layout={Layout.springify()}>
+                <TouchableOpacity
+                    style={styles.historyCard}
+                    onPress={() =>
+                        router.push({
+                            pathname: '/tech-history-detail',
+                            params: { type: item.type, id: String(item.id), name: item.templateName || 'Submission' },
+                        })
+                    }
+                >
+                    <View style={styles.historyHeader}>
+                        <View style={[styles.iconBox, { backgroundColor: isChecklist ? '#F3E8FF' : '#EFF6FF' }]}>
+                            <MaterialCommunityIcons
+                                name={isChecklist ? 'clipboard-check-outline' : 'notebook-outline'}
+                                size={22}
+                                color={isChecklist ? '#7C3AED' : '#2563EB'}
+                            />
+                        </View>
+                        <View style={styles.headerText}>
+                            <Text style={styles.cardTitle}>{item.templateName || 'Untitled'}</Text>
+                            <Text style={styles.cardType}>{isChecklist ? 'CHECKLIST' : 'LOGSHEET'}</Text>
+                        </View>
+                        <View style={[styles.statePill, { backgroundColor: badgeBg }] }>
+                            <Text style={[styles.statePillText, { color: badgeTextColor }]}>{done ? 'COMPLETED' : 'SUBMITTED'}</Text>
+                        </View>
+                    </View>
+
+                    {item.assetName ? (
+                        <Text style={styles.cardDescription} numberOfLines={1}>Asset: {item.assetName}</Text>
+                    ) : null}
+
+                    <View style={styles.cardMeta}>
+                        <Text style={styles.metaText}>Submitted</Text>
+                        <Text style={styles.metaText}>{new Date(item.submittedAt).toLocaleString()}</Text>
+                    </View>
+                </TouchableOpacity>
+            </Animated.View>
+        );
+    };
+
     if (isLoading) {
         return (
             <SafeAreaView style={styles.container}>
@@ -273,6 +338,25 @@ export default function AssignmentsScreen() {
                 <View style={styles.headerSpacer} />
             </View>
 
+            <View style={styles.tabRow}>
+                <TouchableOpacity
+                    style={[styles.tabButton, activeTab === 'assignments' && styles.tabButtonActive]}
+                    onPress={() => setActiveTab('assignments')}
+                >
+                    <Text style={[styles.tabButtonText, activeTab === 'assignments' && styles.tabButtonTextActive]}>
+                        Assignments ({assignments.length})
+                    </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                    style={[styles.tabButton, activeTab === 'history' && styles.tabButtonActive]}
+                    onPress={() => setActiveTab('history')}
+                >
+                    <Text style={[styles.tabButtonText, activeTab === 'history' && styles.tabButtonTextActive]}>
+                        History ({historyItems.length})
+                    </Text>
+                </TouchableOpacity>
+            </View>
+
             <ScrollView
                 style={styles.scrollContent}
                 showsVerticalScrollIndicator={false}
@@ -281,15 +365,15 @@ export default function AssignmentsScreen() {
                 }
             >
                 <View style={styles.contentPadding}>
-                    {assignments.length === 0 ? (
+                    {activeTab === 'assignments' && assignments.length === 0 ? (
                         <View style={styles.emptyState}>
                             <MaterialCommunityIcons name="clipboard-off-outline" size={64} color="#CBD5E0" />
                             <Text style={styles.emptyTitle}>No Assignments</Text>
                             <Text style={styles.emptyText}>
-                                You don't have any checklist or logsheet assignments yet.
+                                You don’t have any checklist or logsheet assignments yet.
                             </Text>
                         </View>
-                    ) : (
+                    ) : activeTab === 'assignments' ? (
                         <>
                             <View style={styles.statsRow}>
                                 <View style={styles.statCard}>
@@ -314,6 +398,27 @@ export default function AssignmentsScreen() {
                                 {assignments.map(renderAssignmentCard)}
                             </Animated.View>
                         </>
+                    ) : isHistoryLoading ? (
+                        <View style={styles.emptyState}>
+                            <ActivityIndicator size="large" color="#1E3A8A" />
+                            <Text style={styles.emptyText}>Loading history...</Text>
+                        </View>
+                    ) : historyError ? (
+                        <View style={styles.emptyState}>
+                            <MaterialCommunityIcons name="alert-circle-outline" size={64} color="#EF4444" />
+                            <Text style={styles.emptyTitle}>History Unavailable</Text>
+                            <Text style={styles.emptyText}>{historyError}</Text>
+                        </View>
+                    ) : historyItems.length === 0 ? (
+                        <View style={styles.emptyState}>
+                            <MaterialCommunityIcons name="history" size={64} color="#CBD5E0" />
+                            <Text style={styles.emptyTitle}>No History Yet</Text>
+                            <Text style={styles.emptyText}>Submitted checklist and logsheet records will appear here.</Text>
+                        </View>
+                    ) : (
+                        <Animated.View layout={Layout.springify()}>
+                            {historyItems.map(renderHistoryCard)}
+                        </Animated.View>
                     )}
                 </View>
             </ScrollView>
@@ -429,6 +534,31 @@ const styles = StyleSheet.create({
     scrollContent: {
         flex: 1,
     },
+    tabRow: {
+        flexDirection: 'row',
+        marginHorizontal: 16,
+        marginBottom: 8,
+        backgroundColor: '#F1F5F9',
+        borderRadius: 12,
+        padding: 4,
+    },
+    tabButton: {
+        flex: 1,
+        paddingVertical: 10,
+        alignItems: 'center',
+        borderRadius: 10,
+    },
+    tabButtonActive: {
+        backgroundColor: '#FFFFFF',
+    },
+    tabButtonText: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: '#64748B',
+    },
+    tabButtonTextActive: {
+        color: '#1E3A8A',
+    },
     contentPadding: {
         padding: 16,
     },
@@ -480,6 +610,11 @@ const styles = StyleSheet.create({
         alignItems: 'flex-start',
         marginBottom: 12,
     },
+    historyHeader: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        marginBottom: 8,
+    },
     iconBox: {
         width: 48,
         height: 48,
@@ -490,6 +625,19 @@ const styles = StyleSheet.create({
     },
     headerText: {
         flex: 1,
+    },
+    statePill: {
+        backgroundColor: '#E0E7FF',
+        borderRadius: 999,
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        alignSelf: 'flex-start',
+    },
+    statePillText: {
+        color: '#3730A3',
+        fontSize: 10,
+        fontWeight: '800',
+        letterSpacing: 0.4,
     },
     cardTitle: {
         fontSize: 16,
@@ -606,6 +754,19 @@ const styles = StyleSheet.create({
         color: '#718096',
         textAlign: 'center',
         maxWidth: 280,
+    },
+    historyCard: {
+        backgroundColor: '#FFFFFF',
+        borderRadius: 16,
+        padding: 16,
+        marginBottom: 14,
+        borderWidth: 1,
+        borderColor: '#F1F5F9',
+        shadowColor: '#64748B',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.04,
+        shadowRadius: 8,
+        elevation: 2,
     },
     // Modal styles
     modalOverlay: {

@@ -1225,10 +1225,20 @@ function AssignModal({ token, companyId, template, templateType, onClose, compan
     if (!selectedUser) { setErr("Please select a user."); return; }
     setSaving(true); setErr(null);
     try {
-      const res = await fetch(`${API_BASE}/api/company-portal/template-user-assignments`, {
+      const payload = {
+        ...(companyPortalMode ? {} : { companyId }),
+        templateType,
+        templateId: Number(template.id),
+        assignedTo: Number(selectedUser),
+        note,
+      };
+      const endpoint = companyPortalMode
+        ? `${API_BASE}/api/company-portal/template-user-assignments`
+        : `${API_BASE}/api/company-users/template-assignments`;
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ templateType, templateId: template.id, assignedTo: selectedUser, note }),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) { const d = await res.json(); throw new Error(d.error || "Failed to assign"); }
       onClose();
