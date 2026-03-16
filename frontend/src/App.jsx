@@ -146,7 +146,7 @@ function App() {
     <Routes>
       <Route path="/client" element={<CompanyPortal />} />
       <Route path="/company" element={<CompanyLogin />} />
-      <Route path="/company/portal" element={<CompanyEmployeePortal />} />
+      <Route path="/company/portal/*" element={<CompanyEmployeePortal />} />
       <Route path="/company/submissions" element={<SubmissionsPage />} />
       <Route path="/asset-scan/:assetId" element={<AssetScanPage />} />
       <Route path="*" element={<AdminShell />} />
