@@ -1719,7 +1719,7 @@ router.post("/template-user-assignments", async (req, res, next) => {
     // Verify the template belongs to this company
     const templateTable = templateType === "checklist" ? "checklist_templates" : "logsheet_templates";
     const [[templateCheck]] = await pool.query(
-      `SELECT id FROM ${templateTable} WHERE id = ? AND company_id = ?`,
+      `SELECT id, asset_type FROM ${templateTable} WHERE id = ? AND company_id = ?`,
       [templateId, cid(req)]
     );
     if (!templateCheck) return res.status(404).json({ message: "Template not found in this company" });
@@ -1733,6 +1733,36 @@ router.post("/template-user-assignments", async (req, res, next) => {
                  assigned_to AS "assignedTo", assigned_by AS "assignedBy", note, created_at AS "createdAt"`,
       [cid(req), templateType, templateId, assignedTo, req.companyUser.id, note || null]
     );
+
+    // For logsheet assignments: ensure logsheet_template_assignments exists
+    // This links the logsheet template to specific assets so mobile queries work correctly
+    if (templateType === "logsheet") {
+      // Check if this logsheet already has asset assignments
+      const [[existingAssignment]] = await pool.query(
+        "SELECT id FROM logsheet_template_assignments WHERE template_id = ? LIMIT 1",
+        [templateId]
+      );
+
+      if (!existingAssignment) {
+        // No existing asset assignments, so create one for each asset of matching type
+        // This ensures the /my-assignments query returns the logsheet with a valid assetId
+        const [assets] = await pool.query(
+          "SELECT id FROM assets WHERE company_id = ? AND asset_type = ? AND status = 'Active' LIMIT 1",
+          [cid(req), templateCheck.asset_type]
+        );
+
+        if (assets.length > 0) {
+          // Insert logsheet_template_assignments for the first available asset
+          await pool.query(
+            `INSERT INTO logsheet_template_assignments (template_id, asset_id, attached_by)
+             VALUES (?, ?, ?)
+             ON CONFLICT (template_id, asset_id) DO NOTHING`,
+            [templateId, assets[0].id, req.companyUser.id]
+          );
+        }
+      }
+    }
+
     res.status(201).json(rows[0]);
   } catch (err) {
     next(err);
