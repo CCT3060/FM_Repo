@@ -184,15 +184,26 @@ function SetCutoffModal({ wo, companyPortalToken, onClose, onDone }) {
 }
 
 /* ── Create Work Order Modal ────────────────────────────────────────────── */
-function CreateWOModal({ assets, users, companyPortalToken, onClose, onDone }) {
+function CreateWOModal({ assets, users, companyPortalToken, preselectedAssetId, onClose, onDone }) {
   const [form, setForm] = useState({
-    assetId: "", issueDescription: "", priority: "medium", assignedTo: "",
+    assetId: preselectedAssetId ? String(preselectedAssetId) : "", issueDescription: "", priority: "medium", assignedTo: "",
     expectedCompletionAt: "", escalationIntervalMinutes: "120",
   });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState(null);
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  useEffect(() => {
+    if (form.assetId) return;
+    if (preselectedAssetId) {
+      setForm((f) => ({ ...f, assetId: String(preselectedAssetId) }));
+      return;
+    }
+    if (Array.isArray(assets) && assets.length > 0) {
+      setForm((f) => ({ ...f, assetId: String(assets[0].id) }));
+    }
+  }, [assets, preselectedAssetId]);
 
   const save = async () => {
     if (!form.issueDescription.trim()) { setErr("Issue description is required."); return; }
@@ -305,7 +316,7 @@ function CreateWOModal({ assets, users, companyPortalToken, onClose, onDone }) {
 }
 
 /* ── Main Panel ─────────────────────────────────────────────────────────── */
-export default function WorkOrdersPanel({ token, companyId, assets = [] }) {
+export default function WorkOrdersPanel({ token, companyId, assets = [], preselectedAssetId = null }) {
   const [workOrders, setWorkOrders] = useState([]);
   const [total, setTotal]           = useState(0);
   const [users, setUsers]           = useState([]);
@@ -613,6 +624,7 @@ export default function WorkOrdersPanel({ token, companyId, assets = [] }) {
           assets={assets}
           users={users}
           companyPortalToken={token}
+          preselectedAssetId={preselectedAssetId}
           onClose={() => setShowCreate(false)}
           onDone={() => { setShowCreate(false); load(); }}
         />

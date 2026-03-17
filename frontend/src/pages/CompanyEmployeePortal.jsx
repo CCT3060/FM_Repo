@@ -3721,6 +3721,7 @@ export default function CompanyEmployeePortal() {
           <WorkOrdersPanel
             token={token}
             companyId={currentUser.companyId}
+            assets={assets}
           />
         )}
 

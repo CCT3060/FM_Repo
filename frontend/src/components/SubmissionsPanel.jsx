@@ -313,11 +313,7 @@ function DetailModal({ submission, type, onClose }) {
 
         {/* Body */}
         <div style={{ overflowY: "auto", padding: "20px 24px", flex: 1 }}>
-          {(isTabular || submission.tabularData || submission.data) ? (
-            <TabularView />
-          ) : allAnswers.length === 0 ? (
-            <p style={{ color: "#94a3b8", fontSize: "14px" }}>No recorded answers for this submission.</p>
-          ) : (
+          {allAnswers.length > 0 ? (
             <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
               {allAnswers.map((a, i) => {
                 const val = a.answerValue || a.answer || "";
@@ -329,17 +325,35 @@ function DetailModal({ submission, type, onClose }) {
                       {a.dateColumn ? `D${a.dateColumn}` : `Q${i + 1}`}
                     </div>
                     <div style={{ flex: 1 }}>
+                      {a.sectionName && (
+                        <div style={{ fontSize: "11px", fontWeight: 700, color: "#7c3aed",
+                          textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: "2px" }}>
+                          {a.sectionName}
+                        </div>
+                      )}
                       <div style={{ fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "3px" }}>
                         {a.questionText}
                       </div>
-                      <div style={{ fontSize: "14px", color: val ? "#0f172a" : "#94a3b8", fontWeight: val ? 600 : 400 }}>
+                      <div style={{ fontSize: "14px", color: val ? (a.isIssue ? "#dc2626" : "#0f172a") : "#94a3b8",
+                        fontWeight: val ? 600 : 400 }}>
                         {val || "No answer"}
+                        {a.isIssue && <span style={{ marginLeft: "6px", fontSize: "11px", background: "#fee2e2",
+                          color: "#dc2626", padding: "2px 7px", borderRadius: "9px" }}>⚠ Issue</span>}
                       </div>
+                      {a.specification && (
+                        <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "2px" }}>
+                          Expected: {a.specification}
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
               })}
             </div>
+          ) : (isTabular || submission.tabularData || submission.data) ? (
+            <TabularView />
+          ) : (
+            <p style={{ color: "#94a3b8", fontSize: "14px" }}>No recorded answers for this submission.</p>
           )}
         </div>
       </div>

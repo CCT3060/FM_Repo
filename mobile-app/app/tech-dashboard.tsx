@@ -210,8 +210,9 @@ export default function TechDashboardScreen() {
 
     const total = assignments.length;
     const completed = todayProgress.totalDone;
-    const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
-    const progressRatio = total > 0 ? Math.min(completed / total, 1) : 0;
+    const totalForProgress = Math.max(total, completed, 1);
+    const pct = Math.round((completed / totalForProgress) * 100);
+    const progressRatio = Math.min(completed / totalForProgress, 1);
 
     const getInitials = (name?: string) => {
         if (!name) return 'U';
@@ -299,7 +300,7 @@ export default function TechDashboardScreen() {
                             <Text style={styles.progressLabel}>Today&apos;s Progress</Text>
                             <Text style={styles.progressFraction}>
                                 <Text style={styles.progressDone}>{completed}</Text>
-                                <Text style={styles.progressTotal}> / {total} Tasks</Text>
+                                <Text style={styles.progressTotal}> / {totalForProgress} Tasks</Text>
                             </Text>
                         </View>
                         <View style={styles.pctBadge}>

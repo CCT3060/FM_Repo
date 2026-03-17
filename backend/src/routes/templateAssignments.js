@@ -487,25 +487,42 @@ router.post(
       // Use linked asset if none supplied
       const effectiveAssetId = assetId || tmplWithQ?.assetId || null;
 
-      // Real schema: checklist_submissions(template_id, asset_id, submitted_by, status, completion_pct, submitted_at)
-      // + company_user_id added by migration 2026-02-27-checklist-asset-submitter.sql
-      const [csResult] = await pool.query(
-        `INSERT INTO checklist_submissions
-         (template_id, asset_id, submitted_by, company_user_id, status, completion_pct, submitted_at)
-         VALUES (?, ?, NULL, ?, 'submitted', 100, NOW())
-         RETURNING id`,
-        [templateId, effectiveAssetId, req.companyUser.id]
-      ).catch(() =>
-        // Fallback if company_user_id column doesn't exist yet (migration not run)
-        pool.query(
+      // ── Upsert: if user already submitted this checklist today, update instead of insert ──
+      const _today = new Date().toISOString().slice(0, 10);
+      const [[existingChecklistSub]] = await pool.query(
+        `SELECT id FROM checklist_submissions
+         WHERE template_id = ? AND company_user_id = ? AND DATE(submitted_at) = ?
+         LIMIT 1`,
+        [templateId, req.companyUser.id, _today]
+      ).catch(() => [[null]]);
+
+      let submissionId;
+      if (existingChecklistSub) {
+        // Update existing submission and clear old answers
+        submissionId = existingChecklistSub.id;
+        await pool.query(
+          `UPDATE checklist_submissions SET asset_id = ?, status = 'submitted', completion_pct = 100, submitted_at = NOW() WHERE id = ?`,
+          [effectiveAssetId, submissionId]
+        );
+        await pool.query(`DELETE FROM checklist_submission_answers WHERE submission_id = ?`, [submissionId]);
+      } else {
+        const [csResult] = await pool.query(
           `INSERT INTO checklist_submissions
-           (template_id, asset_id, submitted_by, status, completion_pct, submitted_at)
-           VALUES (?, ?, NULL, 'submitted', 100, NOW())
+           (template_id, asset_id, submitted_by, company_user_id, status, completion_pct, submitted_at)
+           VALUES (?, ?, NULL, ?, 'submitted', 100, NOW())
            RETURNING id`,
-          [templateId, effectiveAssetId]
-        )
-      );
-      const submissionId = csResult.insertId || csResult[0]?.id;
+          [templateId, effectiveAssetId, req.companyUser.id]
+        ).catch(() =>
+          pool.query(
+            `INSERT INTO checklist_submissions
+             (template_id, asset_id, submitted_by, status, completion_pct, submitted_at)
+             VALUES (?, ?, NULL, 'submitted', 100, NOW())
+             RETURNING id`,
+            [templateId, effectiveAssetId]
+          )
+        );
+        submissionId = csResult.insertId || csResult[0]?.id;
+      }
 
       // Insert answers — question_text and input_type are NOT NULL
       if (submissionId && answers && answers.length > 0) {
@@ -705,16 +722,35 @@ router.post(
       const currentYear  = _now.getFullYear();
       const currentDay   = _now.getDate();
 
-      const [leResult] = await pool.query(
-        `INSERT INTO logsheet_entries
-         (template_id, asset_id, submitted_by, company_user_id, entry_date, month, year, status, data, submitted_at)
-         VALUES (?, ?, NULL, ?, CURRENT_DATE, ?, ?, 'submitted', ?, NOW())
-         RETURNING id`,
-        [templateId, assetId || null, req.companyUser.id, currentMonth, currentYear, JSON.stringify(answers || [])]
-      );
-      const entryId = leResult.insertId || leResult[0]?.id;
+      // ── Upsert: if user already submitted this logsheet for current month/year, update instead ──
+      const [[existingEntry]] = await pool.query(
+        `SELECT id FROM logsheet_entries
+         WHERE template_id = ? AND company_user_id = ? AND month = ? AND year = ?
+         LIMIT 1`,
+        [templateId, req.companyUser.id, currentMonth, currentYear]
+      ).catch(() => [[null]]);
 
-      // Also insert into logsheet_answers row-by-row (PostgreSQL-compatible)
+      let entryId;
+      if (existingEntry) {
+        // Update existing entry and clear old answers
+        entryId = existingEntry.id;
+        await pool.query(
+          `UPDATE logsheet_entries SET asset_id = ?, data = ?, submitted_at = NOW(), entry_date = CURRENT_DATE WHERE id = ?`,
+          [assetId || null, JSON.stringify(answers || []), entryId]
+        );
+        await pool.query(`DELETE FROM logsheet_answers WHERE entry_id = ?`, [entryId]);
+      } else {
+        const [leResult] = await pool.query(
+          `INSERT INTO logsheet_entries
+           (template_id, asset_id, submitted_by, company_user_id, entry_date, month, year, status, data, submitted_at)
+           VALUES (?, ?, NULL, ?, CURRENT_DATE, ?, ?, 'submitted', ?, NOW())
+           RETURNING id`,
+          [templateId, assetId || null, req.companyUser.id, currentMonth, currentYear, JSON.stringify(answers || [])]
+        );
+        entryId = leResult.insertId || leResult[0]?.id;
+      }
+
+      // Insert answers row-by-row (PostgreSQL-compatible)
       if (entryId && answers && answers.length > 0) {
         for (const a of answers) {
           await pool.query(
@@ -942,6 +978,19 @@ router.get("/my-submission-detail/:type/:id", async (req, res, next) => {
     const companyId = cid(req);
     const { type, id } = req.params;
 
+    const normalizeAnswerValue = (value) => {
+      if (value === null || value === undefined) return "—";
+      if (typeof value === "object") {
+        if (Array.isArray(value)) return value.length ? JSON.stringify(value) : "—";
+        if ("answer" in value && value.answer !== undefined && value.answer !== null) {
+          return typeof value.answer === "object" ? JSON.stringify(value.answer) : value.answer;
+        }
+        return Object.keys(value).length ? JSON.stringify(value) : "—";
+      }
+      if (typeof value === "string") return value.trim() ? value : "—";
+      return value;
+    };
+
     if (type === "checklist") {
       const [[sub]] = await pool.query(
         `SELECT cs.id, ct.template_name AS name, a.asset_name AS "assetName",
@@ -951,8 +1000,16 @@ router.get("/my-submission-detail/:type/:id", async (req, res, next) => {
          FROM checklist_submissions cs
          JOIN checklist_templates ct ON ct.id = cs.template_id
          LEFT JOIN assets a ON a.id = cs.asset_id
-         WHERE cs.id = ? AND cs.company_user_id = ? AND ct.company_id = ?`,
-        [id, userId, companyId]
+         WHERE cs.id = ? AND ct.company_id = ?
+           AND (
+             cs.company_user_id = ?
+             OR (cs.company_user_id IS NULL AND cs.submitted_by IN (
+               SELECT u.id FROM users u
+               JOIN company_users cu ON cu.email = u.email
+               WHERE cu.id = ?
+             ))
+           )`,
+        [id, companyId, userId, userId]
       );
       if (!sub) return res.status(404).json({ message: "Submission not found" });
       const [answers] = await pool.query(
@@ -964,7 +1021,7 @@ router.get("/my-submission-detail/:type/:id", async (req, res, next) => {
       const mapped = answers.map(a => ({
         question: a.question,
         type: a.inputType,
-        answer: a.answer || (a.answerJson ? (typeof a.answerJson === "object" ? JSON.stringify(a.answerJson) : a.answerJson) : "—")
+        answer: normalizeAnswerValue(a.answer ?? a.answerJson)
       }));
       return res.json({ ...sub, type: "checklist", answers: mapped });
 
@@ -976,12 +1033,59 @@ router.get("/my-submission-detail/:type/:id", async (req, res, next) => {
          FROM logsheet_entries le
          JOIN logsheet_templates lt ON lt.id = le.template_id
          LEFT JOIN assets a ON a.id = le.asset_id
-         WHERE le.id = ? AND le.company_user_id = ? AND lt.company_id = ?`,
-        [id, userId, companyId]
+         WHERE le.id = ? AND lt.company_id = ?
+           AND (
+             le.company_user_id = ?
+             OR (le.company_user_id IS NULL AND le.submitted_by IN (
+               SELECT u.id FROM users u
+               JOIN company_users cu ON cu.email = u.email
+               WHERE cu.id = ?
+             ))
+           )`,
+        [id, companyId, userId, userId]
       );
       if (!entry) return res.status(404).json({ message: "Entry not found" });
       const rawData = entry.data ? (typeof entry.data === "string" ? JSON.parse(entry.data) : entry.data) : {};
-      const answers = Object.entries(rawData).map(([k, v]) => ({ question: k, type: "text", answer: v != null ? String(v) : "—" }));
+
+      let answers = [];
+      if (Array.isArray(rawData)) {
+        const questionIds = rawData
+          .map((row) => Number(row?.questionId))
+          .filter((questionId) => Number.isInteger(questionId) && questionId > 0);
+
+        let questionMap = {};
+        if (questionIds.length > 0) {
+          const uniqueIds = [...new Set(questionIds)];
+          const placeholders = uniqueIds.map(() => "?").join(",");
+          const [qRows] = await pool.query(
+            `SELECT id, question_text AS "questionText"
+             FROM logsheet_questions
+             WHERE id IN (${placeholders})`,
+            uniqueIds
+          ).catch(() => [[]]);
+          questionMap = Object.fromEntries(qRows.map((row) => [Number(row.id), row.questionText]));
+        }
+
+        answers = rawData.map((row, index) => {
+          const questionId = Number(row?.questionId);
+          return {
+            question:
+              questionMap[questionId]
+              || row?.questionText
+              || row?.question
+              || `Question ${index + 1}`,
+            type: row?.type || row?.inputType || "text",
+            answer: normalizeAnswerValue(row?.answer ?? row?.value ?? row?.response),
+          };
+        });
+      } else if (rawData && typeof rawData === "object") {
+        answers = Object.entries(rawData).map(([key, value], index) => ({
+          question: key || `Question ${index + 1}`,
+          type: "text",
+          answer: normalizeAnswerValue(value),
+        }));
+      }
+
       const { data: _d, ...clean } = entry;
       return res.json({ ...clean, type: "logsheet", answers });
     }

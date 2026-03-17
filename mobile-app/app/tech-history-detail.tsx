@@ -35,13 +35,19 @@ export default function TechHistoryDetailScreen() {
 
     const renderAnswer = (answer: SubmissionDetail['answers'][number], i: number) => {
         const val = answer.answer;
+        const normalized =
+            val !== null && typeof val === 'object'
+                ? (() => {
+                    try { return JSON.stringify(val); } catch { return String(val); }
+                })()
+                : val;
         const displayVal =
-            val === null || val === undefined ? '—' :
-            typeof val === 'boolean' ? (val ? 'Yes ✓' : 'No ✗') :
-            String(val).trim() === '' ? '—' : String(val);
+            normalized === null || normalized === undefined ? '—' :
+            typeof normalized === 'boolean' ? (normalized ? 'Yes ✓' : 'No ✗') :
+            String(normalized).trim() === '' ? '—' : String(normalized);
 
-        const isBool = typeof val === 'boolean';
-        const isOk = isBool ? val : null;
+        const isBool = typeof normalized === 'boolean';
+        const isOk = isBool ? normalized : null;
 
         return (
             <Animated.View key={i} entering={FadeInUp.delay(20 * i).duration(250)}>
@@ -200,6 +206,7 @@ const styles = StyleSheet.create({
     metaText: {
         fontSize: 13,
         color: '#64748B',
+        flexShrink: 1,
     },
     answersCard: {
         backgroundColor: '#FFFFFF',
@@ -249,14 +256,15 @@ const styles = StyleSheet.create({
         borderRadius: 8,
         paddingHorizontal: 10,
         paddingVertical: 5,
-        maxWidth: '45%',
+        maxWidth: '58%',
         alignSelf: 'flex-start',
     },
     answerText: {
         fontSize: 13,
         color: '#374151',
         fontWeight: '600',
-        textAlign: 'right',
+        textAlign: 'left',
+        flexShrink: 1,
     },
     divider: {
         height: 1,

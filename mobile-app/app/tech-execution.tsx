@@ -103,6 +103,7 @@ export default function TechExecutionScreen() {
             answer: answers[q.id] !== undefined && answers[q.id] !== null
                 ? String(answers[q.id])
                 : null,
+            answerType: (q.answerType || (q as any).inputType || '').toLowerCase(),
         }));
 
         const assetIdToSubmit = (template.assetId ?? routeAssetId) || null;
@@ -499,7 +500,22 @@ function renderAnswerWidget(
     value: any,
     setAnswer: (id: number, val: any) => void,
 ) {
-    const answerType = (q.answerType || '').toLowerCase();
+    const answerType = (q.answerType || q.inputType || '').toLowerCase();
+
+    const parseOptions = (): string[] => {
+        const raw = (q as any).options;
+        if (!raw) return [];
+        if (Array.isArray(raw)) return raw.map((o) => String(o)).filter(Boolean);
+        if (typeof raw === 'string') {
+            try {
+                const parsed = JSON.parse(raw);
+                if (Array.isArray(parsed)) return parsed.map((o) => String(o)).filter(Boolean);
+            } catch {
+                return raw.split(',').map((o) => o.trim()).filter(Boolean);
+            }
+        }
+        return [];
+    };
 
     if (answerType === 'yes_no' || answerType === 'boolean') {
         return (
@@ -546,6 +562,30 @@ function renderAnswerWidget(
         );
     }
 
+    if (answerType === 'ok_not_ok') {
+        return (
+            <View style={widgetStyles.ynRow}>
+                {['OK', 'Not OK'].map(opt => (
+                    <TouchableOpacity
+                        key={opt}
+                        style={[
+                            widgetStyles.ynBtn,
+                            value === opt && (opt === 'OK' ? widgetStyles.ynBtnActiveGreen : widgetStyles.ynBtnActiveRed),
+                        ]}
+                        onPress={() => setAnswer(q.id, value === opt ? '' : opt)}
+                    >
+                        <MaterialCommunityIcons
+                            name={opt === 'OK' ? 'check' : 'close'}
+                            size={16}
+                            color={value === opt ? '#FFFFFF' : opt === 'OK' ? '#10B981' : '#EF4444'}
+                        />
+                        <Text style={[widgetStyles.ynText, value === opt && widgetStyles.ynTextActive]}>{opt}</Text>
+                    </TouchableOpacity>
+                ))}
+            </View>
+        );
+    }
+
     if (answerType === 'number' || answerType === 'numeric') {
         return (
             <TextInput
@@ -559,13 +599,8 @@ function renderAnswerWidget(
         );
     }
 
-    if ((answerType === 'select' || answerType === 'multiple_choice') && q.options) {
-        let opts: string[] = [];
-        try {
-            opts = typeof q.options === 'string' ? JSON.parse(q.options) : q.options;
-        } catch {
-            opts = [];
-        }
+    if (['select', 'multiple_choice', 'dropdown', 'custom_options'].includes(answerType)) {
+        const opts = parseOptions();
         return (
             <View style={widgetStyles.chipsContainer}>
                 {opts.map((opt: string) => (
@@ -577,6 +612,49 @@ function renderAnswerWidget(
                         <Text style={[widgetStyles.chipText, value === opt && widgetStyles.chipTextActive]}>{opt}</Text>
                     </TouchableOpacity>
                 ))}
+            </View>
+        );
+    }
+
+    if (answerType === 'remark') {
+        return (
+            <TextInput
+                style={[widgetStyles.textInput, { minHeight: 80, textAlignVertical: 'top' }]}
+                value={value ?? ''}
+                onChangeText={v => setAnswer(q.id, v)}
+                placeholder="Enter remark..."
+                placeholderTextColor="#A0AEC0"
+                multiline
+            />
+        );
+    }
+
+    if (answerType === 'photo') {
+        return (
+            <View>
+                <TextInput
+                    style={widgetStyles.textInput}
+                    value={value ?? ''}
+                    onChangeText={v => setAnswer(q.id, v)}
+                    placeholder="Paste photo URL or note"
+                    placeholderTextColor="#A0AEC0"
+                />
+                <Text style={{ marginTop: 6, fontSize: 11, color: '#94A3B8' }}>Photo upload will save as text reference in this version.</Text>
+            </View>
+        );
+    }
+
+    if (answerType === 'signature') {
+        return (
+            <View>
+                <TextInput
+                    style={widgetStyles.textInput}
+                    value={value ?? ''}
+                    onChangeText={v => setAnswer(q.id, v)}
+                    placeholder="Enter signer name"
+                    placeholderTextColor="#A0AEC0"
+                />
+                <Text style={{ marginTop: 6, fontSize: 11, color: '#94A3B8' }}>Digital signature pad is not configured; saving signer name.</Text>
             </View>
         );
     }
