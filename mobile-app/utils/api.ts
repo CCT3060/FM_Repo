@@ -761,10 +761,26 @@ export async function getChecklistSubmissions(): Promise<Array<{
   assetId: number | null;
   status: string | null;
   completionPct: number | null;
+  submittedById: number | null;
   submittedBy: string | null;
 }>> {
   const response = await authenticatedFetch('/api/company-portal/checklist-submissions/recent');
   if (!response.ok) throw new Error('Failed to fetch checklist submissions');
+  return response.json();
+}
+
+export async function getRecentLogsheetEntries(): Promise<Array<{
+  id: number;
+  submittedAt: string | null;
+  templateName: string;
+  templateId: number;
+  assetName: string | null;
+  assetId: number | null;
+  submittedById: number | null;
+  submittedBy: string | null;
+}>> {
+  const response = await authenticatedFetch('/api/company-portal/logsheet-templates/entries/recent');
+  if (!response.ok) throw new Error('Failed to fetch logsheet submissions');
   return response.json();
 }
 
@@ -812,6 +828,64 @@ export async function getMySubmissionHistory(limit = 30): Promise<SubmissionHist
   const response = await authenticatedFetch(`/api/template-assignments/my-submission-history?limit=${limit}`);
   if (!response.ok) return [];
   return response.json();
+}
+
+const normalizeHistoryText = (value?: string | null) =>
+  String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+export async function getMySubmissionHistoryWithFallback(limit = 30): Promise<SubmissionHistoryItem[]> {
+  const [directHistory, storedUser] = await Promise.all([
+    getMySubmissionHistory(limit).catch(() => [] as SubmissionHistoryItem[]),
+    getStoredUser().catch(() => null),
+  ]);
+
+  const userId = storedUser?.id ? Number(storedUser.id) : null;
+  const userName = normalizeHistoryText(storedUser?.fullName);
+
+  const [recentChecklists, recentLogsheets] = await Promise.all([
+    getChecklistSubmissions().catch(() => []),
+    getRecentLogsheetEntries().catch(() => []),
+  ]);
+
+  const matchesCurrentUser = (submittedById?: number | null, submittedBy?: string | null) => {
+    if (userId && submittedById && Number(submittedById) === userId) return true;
+    if (!userName) return false;
+    return normalizeHistoryText(submittedBy) === userName;
+  };
+
+  const fallbackHistory: SubmissionHistoryItem[] = [
+    ...recentChecklists
+      .filter((item) => matchesCurrentUser(item.submittedById, item.submittedBy))
+      .map((item) => ({
+        id: item.id,
+        type: 'checklist' as const,
+        templateName: item.templateName,
+        templateId: item.templateId,
+        assetName: item.assetName,
+        submittedAt: item.submittedAt || '',
+        status: item.status || 'submitted',
+      })),
+    ...recentLogsheets
+      .filter((item) => matchesCurrentUser(item.submittedById, item.submittedBy))
+      .map((item) => ({
+        id: item.id,
+        type: 'logsheet' as const,
+        templateName: item.templateName,
+        templateId: item.templateId,
+        assetName: item.assetName,
+        submittedAt: item.submittedAt || '',
+        status: 'submitted',
+      })),
+  ];
+
+  const deduped = new Map<string, SubmissionHistoryItem>();
+  [...directHistory, ...fallbackHistory].forEach((item) => {
+    deduped.set(`${item.type}-${item.id}`, item);
+  });
+
+  return Array.from(deduped.values())
+    .sort((a, b) => new Date(b.submittedAt || 0).getTime() - new Date(a.submittedAt || 0).getTime())
+    .slice(0, limit);
 }
 
 export interface SubmissionDetailAnswer {

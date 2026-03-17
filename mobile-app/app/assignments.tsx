@@ -15,7 +15,7 @@ import {
     View,
 } from 'react-native';
 import Animated, { FadeInUp, Layout } from 'react-native-reanimated';
-import { getMyAssignments, getMyTeam, getMySubmissionHistory, reassignTemplate, clearAuth, getStoredUser, type Assignment, type SubmissionHistoryItem } from '../utils/api';
+import { getMyAssignments, getMyTeam, getMySubmissionHistoryWithFallback, reassignTemplate, clearAuth, getStoredUser, type Assignment, type SubmissionHistoryItem } from '../utils/api';
 import { SupervisorBottomNav } from './supervisor-dashboard';
 
 interface TeamMember {
@@ -50,7 +50,7 @@ export default function AssignmentsScreen() {
         try {
             setIsHistoryLoading(true);
             setHistoryError(null);
-            const data = await getMySubmissionHistory(60);
+            const data = await getMySubmissionHistoryWithFallback(60);
             setHistoryItems(data);
         } catch (error: any) {
             setHistoryError(error.message || 'Failed to load history');

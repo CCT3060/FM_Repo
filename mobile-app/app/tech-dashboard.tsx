@@ -14,7 +14,7 @@ import {
     View,
 } from 'react-native';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
-import { getMyAssignments, getMyShifts, getMySubmissionHistory, getMyWarnings, getStoredUser, getTodayProgress, getWorkOrders, type Assignment, type Shift, type SubmissionHistoryItem } from '../utils/api';
+import { getMyAssignments, getMyShifts, getMySubmissionHistoryWithFallback, getMyWarnings, getStoredUser, getTodayProgress, getWorkOrders, type Assignment, type Shift, type SubmissionHistoryItem } from '../utils/api';
 
 type DashboardHistoryItem = {
     kind: 'checklist' | 'logsheet' | 'workorder';
@@ -164,7 +164,7 @@ export default function TechDashboardScreen() {
     useEffect(() => {
         if (activeTab === 'History' && !historyLoaded) {
             Promise.all([
-                getMySubmissionHistory(40).catch(() => [] as SubmissionHistoryItem[]),
+                getMySubmissionHistoryWithFallback(40).catch(() => [] as SubmissionHistoryItem[]),
                 getWorkOrders(40, true).catch(() => [] as any[]),
             ])
                 .then(([submissionHistory, workOrdersHistory]) => {
@@ -192,7 +192,7 @@ export default function TechDashboardScreen() {
             setOpenWarningCount(warnings.filter(w => w.status === 'open' || w.status === 'in_progress').length);
             // refresh history too
             const [submissionHistory, workOrdersHistory] = await Promise.all([
-                getMySubmissionHistory(40).catch(() => [] as SubmissionHistoryItem[]),
+                getMySubmissionHistoryWithFallback(40).catch(() => [] as SubmissionHistoryItem[]),
                 getWorkOrders(40, true).catch(() => [] as any[]),
             ]);
             setHistoryItems(submissionHistory);

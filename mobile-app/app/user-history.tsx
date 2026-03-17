@@ -12,7 +12,7 @@ import {
     View,
 } from 'react-native';
 import Animated, { FadeInUp } from 'react-native-reanimated';
-import { getMySubmissionHistory, getWorkOrders, type SubmissionHistoryItem } from '../utils/api';
+import { getMySubmissionHistoryWithFallback, getWorkOrders, type SubmissionHistoryItem } from '../utils/api';
 import { TechBottomNav } from './tech-dashboard';
 
 type HistoryFilter = 'all' | 'checklist' | 'logsheet' | 'workorder';
@@ -39,7 +39,7 @@ export default function UserHistoryScreen() {
         setError(null);
         try {
             const [mySubmissions, myWorkOrders] = await Promise.all([
-                getMySubmissionHistory(120),
+                getMySubmissionHistoryWithFallback(120),
                 getWorkOrders(120, true),
             ]);
 

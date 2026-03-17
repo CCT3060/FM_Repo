@@ -13,7 +13,7 @@ import {
     View,
 } from 'react-native';
 import Animated, { FadeInUp } from 'react-native-reanimated';
-import { getMyAssignments, getMySubmissionHistory, type Assignment, type SubmissionHistoryItem } from '../utils/api';
+import { getMyAssignments, getMySubmissionHistoryWithFallback, type Assignment, type SubmissionHistoryItem } from '../utils/api';
 import { TechBottomNav } from './tech-dashboard';
 
 export default function TechTasksScreen() {
@@ -40,7 +40,7 @@ export default function TechTasksScreen() {
         setIsHistoryLoading(true);
         setHistoryError(null);
         try {
-            const data = await getMySubmissionHistory(50);
+            const data = await getMySubmissionHistoryWithFallback(50);
             setHistoryItems(data);
         } catch (err: any) {
             setHistoryError(err.message || 'Failed to load history');

@@ -1635,10 +1635,11 @@ router.get("/logsheet-templates/entries/recent", async (req, res, next) => {
   try {
     const companyId = cid(req);
     const [rows] = await pool.query(
-      `SELECT le.id, le.month, le.year, le.shift,
+            `SELECT le.id, le.month, le.year, le.shift,
               le.submitted_at AS "submittedAt",
               lt.template_name AS "templateName", lt.frequency, lt.id AS "templateId",
               a.asset_name AS "assetName", a.id AS "assetId",
+              COALESCE(le.company_user_id, le.submitted_by) AS "submittedById",
               cu.full_name AS "submittedBy"
        FROM logsheet_entries le
        LEFT JOIN logsheet_templates lt ON lt.id = le.template_id
@@ -1660,10 +1661,11 @@ router.get("/checklist-submissions/recent", async (req, res, next) => {
   try {
     const companyId = cid(req);
     const [rows] = await pool.query(
-      `SELECT cs.id, cs.submitted_at AS "submittedAt",
+            `SELECT cs.id, cs.submitted_at AS "submittedAt",
               ct.template_name AS "templateName", ct.id AS "templateId",
               a.asset_name AS "assetName", a.id AS "assetId",
               cs.status, cs.completion_pct AS "completionPct",
+              COALESCE(cs.company_user_id, cs.submitted_by) AS "submittedById",
               cu.full_name AS "submittedBy"
        FROM checklist_submissions cs
        LEFT JOIN checklist_templates ct ON ct.id = cs.template_id
