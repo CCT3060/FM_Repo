@@ -437,9 +437,9 @@ export default function TechDashboardScreen() {
                                             {item.subtitle ? ` · ${item.subtitle}` : ''}
                                         </Text>
                                     </View>
-                                    <View style={[styles.histStatus, { backgroundColor: (item.status === 'completed' || item.status === 'closed') ? '#ECFDF5' : '#FFF7ED' }]}>
-                                        <Text style={[styles.histStatusTxt, { color: (item.status === 'completed' || item.status === 'closed') ? '#10B981' : '#F59E0B' }]}>
-                                            {(item.status === 'completed' || item.status === 'closed') ? 'Done' : 'Recent'}
+                                    <View style={[styles.histStatus, { backgroundColor: (item.status === 'completed' || item.status === 'closed' || item.status === 'submitted') ? '#ECFDF5' : '#FFF7ED' }]}>
+                                        <Text style={[styles.histStatusTxt, { color: (item.status === 'completed' || item.status === 'closed' || item.status === 'submitted') ? '#10B981' : '#F59E0B' }]}>
+                                            {(item.status === 'completed' || item.status === 'closed' || item.status === 'submitted') ? 'Done' : 'Recent'}
                                         </Text>
                                     </View>
                                     <MaterialCommunityIcons name="chevron-right" size={16} color="#CBD5E1" style={{ marginLeft: 4 }} />

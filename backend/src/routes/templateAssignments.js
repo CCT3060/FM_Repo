@@ -18,6 +18,18 @@ router.use(requireCompanyAuth);
 // Helper to get company ID
 const cid = (req) => req.companyUser.companyId;
 
+// Self-migration: ensure company_user_id columns exist on relevant tables
+// so that submission history works even if migrations were not run manually.
+(async () => {
+  const migrations = [
+    `ALTER TABLE checklist_submissions ADD COLUMN IF NOT EXISTS company_user_id BIGINT REFERENCES company_users(id) ON DELETE SET NULL`,
+    `ALTER TABLE logsheet_entries ADD COLUMN IF NOT EXISTS company_user_id BIGINT REFERENCES company_users(id) ON DELETE SET NULL`,
+  ];
+  for (const sql of migrations) {
+    try { await pool.query(sql); } catch (_) { /* ignore if already exists */ }
+  }
+})();
+
 /* ── Helper: is this shift's time window currently active? ──────────────────
    Handles overnight shifts (end_time < start_time).                          */
 const isShiftActive = (startTime, endTime) => {
@@ -808,14 +820,20 @@ router.get("/my-today-progress", async (req, res, next) => {
     const [[{ checklistsDone }]] = await pool.query(
       `SELECT COUNT(*) AS "checklistsDone"
        FROM checklist_submissions cs
-       WHERE cs.company_user_id = ? AND cs.submitted_at >= CURRENT_DATE`,
-      [userId]
+       WHERE (cs.company_user_id = ? OR (cs.company_user_id IS NULL AND cs.submitted_by IN (
+         SELECT u.id FROM users u JOIN company_users cu ON cu.email = u.email WHERE cu.id = ?
+       )))
+       AND cs.submitted_at >= CURRENT_DATE`,
+      [userId, userId]
     );
     const [[{ logsheetsDone }]] = await pool.query(
       `SELECT COUNT(*) AS "logsheetsDone"
        FROM logsheet_entries le
-       WHERE le.company_user_id = ? AND le.submitted_at >= CURRENT_DATE`,
-      [userId]
+       WHERE (le.company_user_id = ? OR (le.company_user_id IS NULL AND le.submitted_by IN (
+         SELECT u.id FROM users u JOIN company_users cu ON cu.email = u.email WHERE cu.id = ?
+       )))
+       AND le.submitted_at >= CURRENT_DATE`,
+      [userId, userId]
     );
     res.json({
       checklistsDone: Number(checklistsDone) || 0,
@@ -832,7 +850,7 @@ router.get("/my-submission-history", async (req, res, next) => {
   try {
     const userId = req.companyUser.id;
     const companyId = cid(req);
-    const limit = Math.min(parseInt(req.query.limit) || 30, 100);
+    const limit = Math.min(parseInt(req.query.limit) || 30, 200);
     const [checklists] = await pool.query(
       `SELECT cs.id, 'checklist' AS type, ct.template_name AS "templateName",
               a.asset_name AS "assetName", cs.submitted_at AS "submittedAt",
@@ -840,23 +858,40 @@ router.get("/my-submission-history", async (req, res, next) => {
        FROM checklist_submissions cs
        JOIN checklist_templates ct ON cs.template_id = ct.id
        LEFT JOIN assets a ON cs.asset_id = a.id
-       WHERE cs.company_user_id = ? AND ct.company_id = ?
+       WHERE ct.company_id = ?
+         AND (
+           cs.company_user_id = ?
+           OR (cs.company_user_id IS NULL AND cs.submitted_by IN (
+             SELECT u.id FROM users u
+             JOIN company_users cu ON cu.email = u.email
+             WHERE cu.id = ?
+           ))
+         )
        ORDER BY cs.submitted_at DESC LIMIT ?`,
-      [userId, companyId, limit]
+      [companyId, userId, userId, limit]
     );
     const [logsheets] = await pool.query(
       `SELECT le.id, 'logsheet' AS type, lt.template_name AS "templateName",
-              a.asset_name AS "assetName", le.submitted_at AS "submittedAt",
-              'completed' AS status, le.template_id AS "templateId"
+              a.asset_name AS "assetName",
+              COALESCE(le.submitted_at, le.entry_date) AS "submittedAt",
+              'submitted' AS status, le.template_id AS "templateId"
        FROM logsheet_entries le
        JOIN logsheet_templates lt ON le.template_id = lt.id
        LEFT JOIN assets a ON le.asset_id = a.id
-       WHERE le.company_user_id = ? AND lt.company_id = ?
-       ORDER BY le.submitted_at DESC LIMIT ?`,
-      [userId, companyId, limit]
+       WHERE lt.company_id = ?
+         AND (
+           le.company_user_id = ?
+           OR (le.company_user_id IS NULL AND le.submitted_by IN (
+             SELECT u.id FROM users u
+             JOIN company_users cu ON cu.email = u.email
+             WHERE cu.id = ?
+           ))
+         )
+       ORDER BY COALESCE(le.submitted_at, le.entry_date) DESC LIMIT ?`,
+      [companyId, userId, userId, limit]
     );
     const combined = [...checklists, ...logsheets]
-      .sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt))
+      .sort((a, b) => new Date(b.submittedAt || 0) - new Date(a.submittedAt || 0))
       .slice(0, limit);
     res.json(combined);
   } catch (err) { next(err); }
