@@ -3,6 +3,7 @@ import { router } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
+    Alert,
     Platform,
     RefreshControl,
     SafeAreaView,
@@ -13,7 +14,17 @@ import {
     View,
 } from 'react-native';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
-import { getMyAssignments, getMyShifts, getMySubmissionHistory, getMyWarnings, getStoredUser, getTodayProgress, type Assignment, type Shift, type SubmissionHistoryItem } from '../utils/api';
+import { getMyAssignments, getMyShifts, getMySubmissionHistory, getMyWarnings, getStoredUser, getTodayProgress, getWorkOrders, type Assignment, type Shift, type SubmissionHistoryItem } from '../utils/api';
+
+type DashboardHistoryItem = {
+    kind: 'checklist' | 'logsheet' | 'workorder';
+    id: number;
+    title: string;
+    subtitle: string;
+    status: string;
+    at: string;
+    type?: 'checklist' | 'logsheet';
+};
 
 // Reusable Navigation Bar Component for Tech Flow
 export const TechBottomNav = ({ activeRoute }: { activeRoute: string }) => {
@@ -143,6 +154,7 @@ export default function TechDashboardScreen() {
     const [user, setUser] = useState<any>(null);
     const [activeTab, setActiveTab] = useState<'Checklists' | 'Log Sheets' | 'History'>('Checklists');
     const [historyItems, setHistoryItems] = useState<SubmissionHistoryItem[]>([]);
+    const [historyWorkOrders, setHistoryWorkOrders] = useState<any[]>([]);
     const [historyLoaded, setHistoryLoaded] = useState(false);
 
     useEffect(() => {
@@ -151,7 +163,16 @@ export default function TechDashboardScreen() {
 
     useEffect(() => {
         if (activeTab === 'History' && !historyLoaded) {
-            getMySubmissionHistory(30).then(d => { setHistoryItems(d); setHistoryLoaded(true); }).catch(() => {});
+            Promise.all([
+                getMySubmissionHistory(40).catch(() => [] as SubmissionHistoryItem[]),
+                getWorkOrders(40, true).catch(() => [] as any[]),
+            ])
+                .then(([submissionHistory, workOrdersHistory]) => {
+                    setHistoryItems(submissionHistory);
+                    setHistoryWorkOrders(workOrdersHistory);
+                    setHistoryLoaded(true);
+                })
+                .catch(() => {});
         }
     }, [activeTab, historyLoaded]);
 
@@ -170,8 +191,12 @@ export default function TechDashboardScreen() {
             setTodayProgress(progress);
             setOpenWarningCount(warnings.filter(w => w.status === 'open' || w.status === 'in_progress').length);
             // refresh history too
-            const hist = await getMySubmissionHistory(30).catch(() => [] as SubmissionHistoryItem[]);
-            setHistoryItems(hist);
+            const [submissionHistory, workOrdersHistory] = await Promise.all([
+                getMySubmissionHistory(40).catch(() => [] as SubmissionHistoryItem[]),
+                getWorkOrders(40, true).catch(() => [] as any[]),
+            ]);
+            setHistoryItems(submissionHistory);
+            setHistoryWorkOrders(workOrdersHistory);
             setHistoryLoaded(true);
         } catch (error: any) {
             console.warn('Failed to load dashboard:', error instanceof Error ? error.message : error);
@@ -208,6 +233,26 @@ export default function TechDashboardScreen() {
         if (pct > 0) return "Good start! Keep up the momentum.";
         return "Let's get started on today's tasks!";
     };
+
+    const historyTimeline: DashboardHistoryItem[] = [
+        ...historyItems.map((item) => ({
+            kind: item.type,
+            id: item.id,
+            title: item.templateName,
+            subtitle: item.assetName ? `Asset: ${item.assetName}` : 'Submitted record',
+            status: item.status || 'submitted',
+            at: item.submittedAt,
+            type: item.type,
+        })),
+        ...historyWorkOrders.map((wo) => ({
+            kind: 'workorder' as const,
+            id: Number(wo.id),
+            title: wo.workOrderNumber || `WO-${wo.id}`,
+            subtitle: wo.assetName || wo.issueDescription || 'Work order',
+            status: wo.status || 'open',
+            at: wo.updatedAt || wo.createdAt || wo.created_at || '',
+        })),
+    ].sort((a, b) => new Date(b.at || 0).getTime() - new Date(a.at || 0).getTime());
 
     if (isLoading) {
         return (
@@ -282,7 +327,7 @@ export default function TechDashboardScreen() {
                             ? assignments.filter(a => a.templateType === 'checklist').length
                             : tab === 'Log Sheets'
                             ? assignments.filter(a => a.templateType === 'logsheet').length
-                            : historyItems.length;
+                            : historyTimeline.length;
                         return (
                             <TouchableOpacity
                                 key={tab}
@@ -337,39 +382,64 @@ export default function TechDashboardScreen() {
                 {/* Task cards or History list */}
                 {(() => {
                     if (activeTab === 'History') {
-                        if (historyItems.length === 0) {
+                        if (historyTimeline.length === 0) {
                             return (
                                 <Animated.View entering={FadeInUp.delay(200).duration(400)} style={styles.emptyBox}>
                                     <MaterialCommunityIcons name="history" size={36} color="#CBD5E1" />
                                     <Text style={styles.emptyTitle}>No history yet</Text>
-                                    <Text style={styles.emptyText}>Completed submissions will appear here.</Text>
+                                    <Text style={styles.emptyText}>Recent submitted checklists, logsheets, and work orders will appear here.</Text>
                                 </Animated.View>
                             );
                         }
-                        return historyItems.slice(0, 10).map((item, i) => (
-                            <Animated.View key={`hist-${item.type}-${item.id}`} entering={FadeInUp.delay(80 + i * 40).duration(350)}>
+                        return historyTimeline.slice(0, 12).map((item, i) => (
+                            <Animated.View key={`hist-${item.kind}-${item.id}`} entering={FadeInUp.delay(80 + i * 40).duration(350)}>
                                 <TouchableOpacity
                                     style={styles.histCard}
                                     activeOpacity={0.75}
-                                    onPress={() => router.push({ pathname: '/tech-history-detail', params: { type: item.type, id: item.id, name: item.templateName } } as any)}
+                                    onPress={() => {
+                                        if (item.kind === 'workorder') {
+                                            router.push({ pathname: '/work-order-details', params: { id: String(item.id) } } as any);
+                                            return;
+                                        }
+                                        if (!item.type) {
+                                            Alert.alert('History', 'Unable to open this history item.');
+                                            return;
+                                        }
+                                        router.push({ pathname: '/tech-history-detail', params: { type: item.type, id: item.id, name: item.title } } as any);
+                                    }}
                                 >
-                                    <View style={[styles.histIcon, { backgroundColor: item.type === 'checklist' ? '#EEF2FF' : '#EFF6FF' }]}>
+                                    <View style={[styles.histIcon, {
+                                        backgroundColor:
+                                            item.kind === 'checklist' ? '#EEF2FF'
+                                            : item.kind === 'logsheet' ? '#EFF6FF'
+                                            : '#ECFEFF',
+                                    }]}>
                                         <MaterialCommunityIcons
-                                            name={item.type === 'checklist' ? 'clipboard-check' : 'notebook'}
+                                            name={
+                                                item.kind === 'checklist' ? 'clipboard-check'
+                                                : item.kind === 'logsheet' ? 'notebook'
+                                                : 'wrench-clock-outline'
+                                            }
                                             size={18}
-                                            color={item.type === 'checklist' ? '#6366F1' : '#2563EB'}
+                                            color={
+                                                item.kind === 'checklist' ? '#6366F1'
+                                                : item.kind === 'logsheet' ? '#2563EB'
+                                                : '#0F766E'
+                                            }
                                         />
                                     </View>
                                     <View style={{ flex: 1 }}>
-                                        <Text style={styles.histName} numberOfLines={1}>{item.templateName}</Text>
+                                        <Text style={styles.histName} numberOfLines={1}>{item.title}</Text>
                                         <Text style={styles.histDate}>
-                                            {new Date(item.submittedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                                            {item.assetName ? ` · ${item.assetName}` : ''}
+                                            {item.at
+                                                ? new Date(item.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                                                : 'No date'}
+                                            {item.subtitle ? ` · ${item.subtitle}` : ''}
                                         </Text>
                                     </View>
-                                    <View style={[styles.histStatus, { backgroundColor: item.status === 'completed' ? '#ECFDF5' : '#FFF7ED' }]}>
-                                        <Text style={[styles.histStatusTxt, { color: item.status === 'completed' ? '#10B981' : '#F59E0B' }]}>
-                                            {item.status === 'completed' ? 'Done' : 'Submitted'}
+                                    <View style={[styles.histStatus, { backgroundColor: (item.status === 'completed' || item.status === 'closed') ? '#ECFDF5' : '#FFF7ED' }]}>
+                                        <Text style={[styles.histStatusTxt, { color: (item.status === 'completed' || item.status === 'closed') ? '#10B981' : '#F59E0B' }]}>
+                                            {(item.status === 'completed' || item.status === 'closed') ? 'Done' : 'Recent'}
                                         </Text>
                                     </View>
                                     <MaterialCommunityIcons name="chevron-right" size={16} color="#CBD5E1" style={{ marginLeft: 4 }} />
