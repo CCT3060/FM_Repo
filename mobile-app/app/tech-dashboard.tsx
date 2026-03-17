@@ -57,11 +57,26 @@ export const TechBottomNav = ({ activeRoute }: { activeRoute: string }) => {
                 <Text style={[navStyles.navText, activeRoute === 'workorders' && navStyles.navTextActive]}>W.O.</Text>
             </TouchableOpacity>
 
+            <TouchableOpacity style={navStyles.navItem} onPress={() => router.push('/user-history' as any)}>
+                <View style={[navStyles.iconWrapper, activeRoute === 'history' && navStyles.iconWrapperActive]}>
+                    <MaterialCommunityIcons
+                        name={activeRoute === 'history' ? 'history' : 'history'}
+                        size={22}
+                        color={activeRoute === 'history' ? '#2563EB' : '#64748B'}
+                    />
+                </View>
+                <Text style={[navStyles.navText, activeRoute === 'history' && navStyles.navTextActive]}>History</Text>
+            </TouchableOpacity>
+
             <TouchableOpacity style={navStyles.navItem} onPress={() => router.push('/profile' as any)}>
                 <View style={[navStyles.iconWrapper, activeRoute === 'profile' && navStyles.iconWrapperActive]}>
-                    <MaterialCommunityIcons name="account-outline" size={22} color="#64748B" />
+                    <MaterialCommunityIcons
+                        name={activeRoute === 'profile' ? 'account' : 'account-outline'}
+                        size={22}
+                        color={activeRoute === 'profile' ? '#2563EB' : '#64748B'}
+                    />
                 </View>
-                <Text style={navStyles.navText}>Profile</Text>
+                <Text style={[navStyles.navText, activeRoute === 'profile' && navStyles.navTextActive]}>Profile</Text>
             </TouchableOpacity>
         </View>
     );
