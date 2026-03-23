@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 
 const emptyUser = { fullName: "", email: "", phone: "", role: "", clientId: "", status: "Active", password: "", confirmPassword: "" };
+const PASSWORD_RULE = /^(?=.*\d).{8,}$/;
 
 const UserManagement = ({ clients, users, clientOptions, onAddUser, onEditUser, onDeleteUser }) => {
   const [form, setForm] = useState(emptyUser);
@@ -72,6 +73,9 @@ const UserManagement = ({ clients, users, clientOptions, onAddUser, onEditUser, 
     try {
       if (!editingId && (!form.password || form.password.length === 0)) {
         throw new Error("Password is required");
+      }
+      if (form.password && !PASSWORD_RULE.test(form.password)) {
+        throw new Error("Password must be at least 8 characters and include a number");
       }
       if (form.password !== form.confirmPassword) {
         throw new Error("Passwords do not match");
@@ -271,7 +275,7 @@ const UserManagement = ({ clients, users, clientOptions, onAddUser, onEditUser, 
                 <div className="form-group">
                   <label>Password</label>
                   <input name="password" type="password" placeholder="At least 8 chars & a number" value={form.password}
-                    onChange={handleChange} className="form-input" required={!editingId} />
+                    onChange={handleChange} className="form-input" minLength={8} pattern="^(?=.*\\d).{8,}$" required={!editingId} />
                 </div>
                 <div className="form-group">
                   <label>Confirm Password</label>

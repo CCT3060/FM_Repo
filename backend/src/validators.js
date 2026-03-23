@@ -10,5 +10,6 @@ export const validate = (validations) => async (req, res, next) => {
   if (errors.isEmpty()) {
     return next();
   }
-  return res.status(400).json({ message: "Validation failed", errors: errors.array() });
+  const details = errors.array();
+  return res.status(400).json({ message: details[0]?.msg || "Validation failed", errors: details });
 };

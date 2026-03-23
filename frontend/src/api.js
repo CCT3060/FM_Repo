@@ -18,7 +18,10 @@ async function request(method, path, body, options = {}) {
     }
 
     if (!res.ok) {
-        const err = new Error((data && data.message) || `HTTP ${res.status}`);
+      const validationMessage = Array.isArray(data?.errors)
+        ? data.errors.map((error) => error?.msg).filter(Boolean).join(", ")
+        : "";
+      const err = new Error(validationMessage || (data && data.message) || `HTTP ${res.status}`);
         err.status = res.status;
         err.body = data;
         throw err;
