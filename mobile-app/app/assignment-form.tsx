@@ -95,7 +95,22 @@ export default function AssignmentFormScreen() {
         }
     };
 
-    const questionType = (question: any) => String(question?.answerType || question?.inputType || 'text').toLowerCase();
+    const questionType = (question: any) => {
+        const raw = String(question?.answerType || question?.inputType || 'text')
+            .trim()
+            .toLowerCase()
+            .replace(/\s+/g, '_')
+            .replace(/-/g, '_');
+
+        if (['yes_no', 'yes/no', 'yesno', 'boolean'].includes(raw)) return 'yes_no';
+        if (['ok_not_ok', 'ok/not_ok', 'ok_notok'].includes(raw)) return 'ok_not_ok';
+        if (['photo', 'photo_upload', 'image', 'image_upload', 'file'].includes(raw)) return 'photo';
+        if (['upload', 'video', 'video_upload', 'document', 'document_upload'].includes(raw)) return 'upload';
+        if (['single_select', 'single_choice', 'radio', 'multi_select', 'multiple_select', 'checkbox'].includes(raw)) return 'dropdown';
+        if (['long_text', 'textarea', 'remark', 'remarks', 'notes'].includes(raw)) return 'text';
+        if (['datetime', 'date_time'].includes(raw)) return 'date';
+        return raw || 'text';
+    };
 
     const handlePickUpload = async (questionId: number) => {
         try {
@@ -419,7 +434,9 @@ export default function AssignmentFormScreen() {
                 );
 
             case 'upload':
+            case 'file':
             case 'photo':
+            case 'image':
             case 'signature': {
                 let fileLabel = 'No file selected';
                 if (typeof value === 'string' && value) {

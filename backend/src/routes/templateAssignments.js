@@ -18,6 +18,25 @@ router.use(requireCompanyAuth);
 // Helper to get company ID
 const cid = (req) => req.companyUser.companyId;
 
+const normalizeInputType = (value) => {
+  const raw = String(value || "text")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_")
+    .replace(/-/g, "_");
+
+  if (["yes/no", "yes_no", "yesno", "boolean"].includes(raw)) return "yes_no";
+  if (["ok_not_ok", "ok/not_ok", "ok_notok"].includes(raw)) return "ok_not_ok";
+  if (["photo", "photo_upload", "image", "image_upload", "file"].includes(raw)) return "photo";
+  if (["upload", "video", "video_upload", "document", "document_upload"].includes(raw)) return "upload";
+  if (["single_select", "single_choice", "radio"].includes(raw)) return "dropdown";
+  if (["multi_select", "multiple_select", "checkbox"].includes(raw)) return "dropdown";
+  if (["long_text", "textarea", "remark", "remarks", "notes"].includes(raw)) return "text";
+  if (["datetime", "date_time"].includes(raw)) return "date";
+  if (["signature", "number", "date", "dropdown", "text"].includes(raw)) return raw;
+  return "text";
+};
+
 // Self-migration: ensure company_user_id columns exist on relevant tables
 // so that submission history works even if migrations were not run manually.
 (async () => {
@@ -332,7 +351,7 @@ router.get(
         const questions = qs.map((q, idx) => ({
           id:           q.id ?? idx,
           questionText: q.questionText || q.text || '',
-          answerType:   q.inputType || q.answerType || 'text',
+          answerType:   normalizeInputType(q.inputType || q.answerType || 'text'),
           isRequired:   q.isRequired ?? q.is_required ?? false,
           options:      Array.isArray(q.options) ? q.options : [],
           displayOrder: q.orderIndex ?? q.order ?? idx,
@@ -386,8 +405,32 @@ router.get(
           [id]
         );
 
+        const normalizedQuestions = questions.map((q) => {
+          let parsedOptions = [];
+          if (q.options) {
+            if (Array.isArray(q.options)) {
+              parsedOptions = q.options;
+            } else if (typeof q.options === "string") {
+              try {
+                const parsed = JSON.parse(q.options);
+                parsedOptions = Array.isArray(parsed) ? parsed : parsed?.options || [];
+              } catch {
+                parsedOptions = [];
+              }
+            } else if (typeof q.options === "object") {
+              parsedOptions = Array.isArray(q.options.options) ? q.options.options : [];
+            }
+          }
+
+          return {
+            ...q,
+            answerType: normalizeInputType(q.answerType),
+            options: parsedOptions,
+          };
+        });
+
         const { headerConfig: _hc, ...templateData } = template;
-        res.json({ ...templateData, headerConfig: parsedHeaderConfig, questions });
+        res.json({ ...templateData, headerConfig: parsedHeaderConfig, questions: normalizedQuestions });
       }
     } catch (err) {
       next(err);
