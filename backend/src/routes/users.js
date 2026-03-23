@@ -15,12 +15,8 @@ const sharedUserRules = [
   body("status").isIn(["Active", "Inactive"]).withMessage("Status must be Active or Inactive"),
 ];
 
-const passwordRule = body("password")
-  .isStrongPassword({ minLength: 8, minLowercase: 1, minUppercase: 0, minNumbers: 1, minSymbols: 0 })
-  .withMessage("Password must be at least 8 chars and include a number");
-
-const createUserRules = [...sharedUserRules, passwordRule];
-const updateUserRules = [...sharedUserRules, passwordRule.optional({ nullable: true })];
+const createUserRules = [...sharedUserRules];
+const updateUserRules = [...sharedUserRules];
 
 router.get("/", async (_req, res, next) => {
   try {
@@ -40,7 +36,7 @@ router.get("/", async (_req, res, next) => {
 router.post("/", validate(createUserRules), async (req, res, next) => {
   try {
     const { fullName, email, phone, role, clientId, status, password } = req.body;
-    const passwordHash = await bcrypt.hash(password, 10);
+    const passwordHash = await bcrypt.hash(String(password ?? ""), 10);
     const [result] = await pool.execute(
       `INSERT INTO users (full_name, email, phone, role, status, client_id, password_hash)
        VALUES (?, ?, ?, ?, ?, ?, ?)
