@@ -11,12 +11,18 @@ const sharedUserRules = [
   body("email").isEmail().withMessage("Valid email is required"),
   body("phone").optional().isString().isLength({ min: 6, max: 20 }),
   body("role").optional().isString().isLength({ max: 80 }),
-  body("clientId").isInt().withMessage("clientId must reference a client"),
+  body("clientId").isInt().withMessage("clientId must be a valid number"),
   body("status").isIn(["Active", "Inactive"]).withMessage("Status must be Active or Inactive"),
 ];
 
-const createUserRules = [...sharedUserRules];
-const updateUserRules = [...sharedUserRules];
+const createUserRules = [
+  ...sharedUserRules,
+  body("password").optional({ checkFalsy: true }).isString().trim(),
+];
+const updateUserRules = [
+  ...sharedUserRules,
+  body("password").optional({ checkFalsy: true }).isString().trim(),
+];
 
 router.get("/", async (_req, res, next) => {
   try {
@@ -36,7 +42,7 @@ router.get("/", async (_req, res, next) => {
 router.post("/", validate(createUserRules), async (req, res, next) => {
   try {
     const { fullName, email, phone, role, clientId, status, password } = req.body;
-    const passwordHash = await bcrypt.hash(String(password ?? ""), 10);
+    const passwordHash = password ? await bcrypt.hash(password, 10) : await bcrypt.hash(Math.random().toString(), 10);
     const [result] = await pool.execute(
       `INSERT INTO users (full_name, email, phone, role, status, client_id, password_hash)
        VALUES (?, ?, ?, ?, ?, ?, ?)
