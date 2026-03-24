@@ -271,12 +271,12 @@ const UserManagement = ({ clients, users, clientOptions, onAddUser, onEditUser, 
                 <div className="form-group">
                   <label>Password</label>
                   <input name="password" type="password" placeholder="At least 8 chars & a number" value={form.password}
-                    onChange={handleChange} className="form-input" required={!editingId} />
+                    onChange={handleChange} className="form-input" />
                 </div>
                 <div className="form-group">
                   <label>Confirm Password</label>
-                  <input name="confirmPassword" type="password" placeholder="Re-enter password" value={form.confirmPassword}
-                    onChange={handleChange} className="form-input" required={!editingId} />
+                  <input name="confirmPassword" type="password" placeholder="Re-enter password (if setting one)" value={form.confirmPassword}
+                    onChange={handleChange} className="form-input" />
                 </div>
               </div>
               <div className="form-group">

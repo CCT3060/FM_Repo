@@ -1,0 +1,11 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "eas-android-develop-cloud",
+			"type": "shell",
+			"command": "cd mobile-app && npx eas build --platform android --profile develop",
+			"isBackground": false
+		}
+	]
+}

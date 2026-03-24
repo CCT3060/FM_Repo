@@ -440,7 +440,13 @@ export async function submitChecklist(templateId: number, assetId: number | null
   });
   
   if (!response.ok) {
-    const error = await response.json();
+    let error: any;
+    try {
+      error = await response.json();
+    } catch {
+      // If response is not valid JSON (e.g., HTML error page), provide a generic error
+      throw new Error(`Server error: ${response.status} ${response.statusText}`);
+    }
     const err: any = new Error(error.message || 'Failed to submit checklist');
     if (error.shiftLocked) { err.shiftLocked = true; err.shiftName = error.shiftName; }
     throw err;
@@ -463,7 +469,12 @@ export async function submitTabularLogsheet(
     body: JSON.stringify({ assetId, month, year, shift, tabularData }),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to submit' }));
+    let error: any;
+    try {
+      error = await response.json();
+    } catch {
+      throw new Error(`Server error: ${response.status} ${response.statusText}`);
+    }
     const err: any = new Error((error as any).message || 'Failed to submit tabular logsheet');
     if ((error as any).shiftLocked) { err.shiftLocked = true; err.shiftName = (error as any).shiftName; }
     throw err;
@@ -480,7 +491,12 @@ export async function submitLogsheet(templateId: number, assetId: number | null,
   });
   
   if (!response.ok) {
-    const error = await response.json();
+    let error: any;
+    try {
+      error = await response.json();
+    } catch {
+      throw new Error(`Server error: ${response.status} ${response.statusText}`);
+    }
     const err: any = new Error(error.message || 'Failed to submit logsheet');
     if (error.shiftLocked) { err.shiftLocked = true; err.shiftName = error.shiftName; }
     throw err;

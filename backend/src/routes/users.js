@@ -9,20 +9,14 @@ const router = Router();
 const sharedUserRules = [
   body("fullName").trim().notEmpty().withMessage("Full name is required"),
   body("email").isEmail().withMessage("Valid email is required"),
-  body("phone").optional({ checkFalsy: true }).isLength({ min: 6, max: 20 }).withMessage("Phone must be 6-20 characters"),
-  body("role").optional({ checkFalsy: true }).isLength({ max: 80 }).withMessage("Role must be at most 80 characters"),
-  body("clientId").isInt().withMessage("clientId must be a valid number"),
+  body("phone").optional().isString().isLength({ min: 6, max: 20 }),
+  body("role").optional().isString().isLength({ max: 80 }),
+  body("clientId").isInt().withMessage("clientId must reference a client"),
   body("status").isIn(["Active", "Inactive"]).withMessage("Status must be Active or Inactive"),
 ];
 
-const createUserRules = [
-  ...sharedUserRules,
-  body("password").optional({ checkFalsy: true }).isString().withMessage("Password must be text").trim(),
-];
-const updateUserRules = [
-  ...sharedUserRules,
-  body("password").optional({ checkFalsy: true }).isString().withMessage("Password must be text").trim(),
-];
+const createUserRules = [...sharedUserRules];
+const updateUserRules = [...sharedUserRules];
 
 router.get("/", async (_req, res, next) => {
   try {

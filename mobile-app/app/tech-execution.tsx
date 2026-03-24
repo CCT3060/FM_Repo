@@ -1,4 +1,5 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import * as DocumentPicker from 'expo-document-picker';
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
@@ -74,6 +75,21 @@ export default function TechExecutionScreen() {
 
     const setAnswer = (questionId: number, value: any) => {
         setAnswers(prev => ({ ...prev, [questionId]: value }));
+    };
+
+    const handlePickUpload = async (questionId: number) => {
+        try {
+            const result = await DocumentPicker.getDocumentAsync({
+                copyToCacheDirectory: true,
+                multiple: false,
+            });
+            if (result.canceled) return;
+            const file = result.assets?.[0];
+            if (!file) return;
+            setAnswers({ ...answers, [questionId]: JSON.stringify({ name: file.name, uri: file.uri, mimeType: file.mimeType || null }) });
+        } catch {
+            Alert.alert('Upload Failed', 'Could not select file. Please try again.');
+        }
     };
 
     const filledCount = template
@@ -630,16 +646,22 @@ function renderAnswerWidget(
     }
 
     if (answerType === 'photo') {
+        let fileLabel = 'No file selected';
+        if (typeof value === 'string' && value) {
+            try {
+                const parsed = JSON.parse(value);
+                fileLabel = parsed?.name || parsed?.uri || 'Selected file';
+            } catch {
+                fileLabel = value;
+            }
+        }
         return (
-            <View>
-                <TextInput
-                    style={widgetStyles.textInput}
-                    value={value ?? ''}
-                    onChangeText={v => setAnswer(q.id, v)}
-                    placeholder="Paste photo URL or note"
-                    placeholderTextColor="#A0AEC0"
-                />
-                <Text style={{ marginTop: 6, fontSize: 11, color: '#94A3B8' }}>Photo upload will save as text reference in this version.</Text>
+            <View style={widgetStyles.uploadWrap}>
+                <TouchableOpacity style={widgetStyles.uploadBtn} onPress={() => handlePickUpload(q.id)}>
+                    <MaterialCommunityIcons name="paperclip" size={18} color="#1E3A8A" />
+                    <Text style={widgetStyles.uploadBtnText}>Choose File</Text>
+                </TouchableOpacity>
+                <Text style={widgetStyles.uploadFileName} numberOfLines={2}>{fileLabel}</Text>
             </View>
         );
     }
@@ -849,6 +871,14 @@ const widgetStyles = StyleSheet.create({
     chipText: { fontSize: 14, fontWeight: '600', color: '#475569' },
     chipTextActive: { color: '#FFFFFF' },
     ratingRow: { flexDirection: 'row', gap: 6 },
+    uploadWrap: { gap: 8 },
+    uploadBtn: {
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+        paddingVertical: 12, paddingHorizontal: 16, borderRadius: 10,
+        borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#F0F4F8',
+    },
+    uploadBtnText: { fontSize: 15, fontWeight: '700', color: '#1E3A8A' },
+    uploadFileName: { fontSize: 13, color: '#64748B', fontStyle: 'italic' },
 });
 const tabStyles = StyleSheet.create({
     metaRow: { marginBottom: 14, gap: 10 },
