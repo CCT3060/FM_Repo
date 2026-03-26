@@ -13,7 +13,7 @@ import {
     View,
 } from 'react-native';
 import Animated, { FadeInUp } from 'react-native-reanimated';
-import { getMyAssignments, getMySubmissionHistoryWithFallback, type Assignment, type SubmissionHistoryItem } from '../utils/api';
+import { getMyAssignments, getMySubmissionHistoryWithFallback, prefetchAssignmentTemplates, type Assignment, type SubmissionHistoryItem } from '../utils/api';
 import { TechBottomNav } from './tech-dashboard';
 
 export default function TechTasksScreen() {
@@ -54,6 +54,8 @@ export default function TechTasksScreen() {
             setError(null);
             const data = await getMyAssignments();
             setAssignments(data);
+            // Pre-cache all template details in background so forms open offline
+            prefetchAssignmentTemplates(data).catch(() => {/* non-critical */});
         } catch (err: any) {
             setError(err.message || 'Failed to load assignments');
         } finally {

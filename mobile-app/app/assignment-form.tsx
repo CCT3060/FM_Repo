@@ -155,10 +155,23 @@ export default function AssignmentFormScreen() {
                 initialAnswers[q.id] = '';
             });
             setAnswers(initialAnswers);
-        } catch (error) {
+        } catch (error: any) {
             console.error('Failed to load template:', error);
-            Alert.alert('Error', 'Failed to load template details');
-            router.back();
+            const isOffline =
+                error instanceof TypeError ||
+                (typeof error?.message === 'string' &&
+                    (error.message.toLowerCase().includes('network') ||
+                        error.message.toLowerCase().includes('failed to fetch')));
+            if (isOffline) {
+                Alert.alert(
+                    'No Internet Connection',
+                    'Could not load form data. Please open the form while connected to the internet at least once so it can be saved for offline use.',
+                    [{ text: 'OK', onPress: () => router.back() }]
+                );
+            } else {
+                Alert.alert('Error', 'Failed to load form. Please try again.');
+                router.back();
+            }
         } finally {
             setIsLoading(false);
         }

@@ -15,7 +15,7 @@ import {
     View,
 } from 'react-native';
 import Animated, { FadeInUp, Layout } from 'react-native-reanimated';
-import { getMyAssignments, getMyTeam, getMySubmissionHistoryWithFallback, reassignTemplate, clearAuth, getStoredUser, type Assignment, type SubmissionHistoryItem } from '../utils/api';
+import { getMyAssignments, getMyTeam, getMySubmissionHistoryWithFallback, reassignTemplate, clearAuth, getStoredUser, prefetchAssignmentTemplates, type Assignment, type SubmissionHistoryItem } from '../utils/api';
 import { SupervisorBottomNav } from './supervisor-dashboard';
 
 interface TeamMember {
@@ -63,6 +63,8 @@ export default function AssignmentsScreen() {
         try {
             const data = await getMyAssignments();
             setAssignments(data);
+            // Pre-cache all template details in background so forms open offline
+            prefetchAssignmentTemplates(data).catch(() => {/* non-critical */});
         } catch (error: any) {
             console.error('Failed to load assignments:', error);
             // If authentication error, clear tokens and go back to login

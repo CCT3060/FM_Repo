@@ -324,7 +324,19 @@ export async function authenticatedFetch(
 
 /** Returns true when the error is a network-level failure (no connectivity). */
 function isNetworkError(err: unknown): boolean {
-  return err instanceof TypeError;
+  if (err instanceof TypeError) return true;
+  if (err instanceof Error) {
+    const msg = err.message.toLowerCase();
+    return (
+      msg.includes('network request failed') ||
+      msg.includes('network error') ||
+      msg.includes('failed to fetch') ||
+      msg.includes('no internet') ||
+      msg.includes('connection refused') ||
+      msg.includes('econnrefused')
+    );
+  }
+  return false;
 }
 
 /**
@@ -457,6 +469,25 @@ export async function getMyAssignments(): Promise<Assignment[]> {
  */
 export async function getTemplateDetails(type: 'checklist' | 'logsheet', id: number): Promise<TemplateDetails> {
   return cachedAuthGet<TemplateDetails>(`/api/template-assignments/template/${type}/${id}`);
+}
+
+/**
+ * Pre-fetch and cache template details for all assignments.
+ * Call this after loadAssignments() succeeds so data is available offline.
+ */
+export async function prefetchAssignmentTemplates(assignments: Assignment[]): Promise<void> {
+  // Deduplicate by type+id so we don't fetch the same template twice
+  const seen = new Set<string>();
+  const toFetch = assignments.filter((a) => {
+    const key = `${a.templateType}:${a.templateId}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  // Fire all fetches in parallel, ignore individual failures
+  await Promise.allSettled(
+    toFetch.map((a) => getTemplateDetails(a.templateType, a.templateId))
+  );
 }
 
 /**

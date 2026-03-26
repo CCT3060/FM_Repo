@@ -10,7 +10,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const CACHE_PREFIX = '@fm_cache:';
 const QUEUE_KEY = '@fm_offline_queue';
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 export interface QueuedSubmission {
   id: string;
