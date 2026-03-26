@@ -193,7 +193,9 @@ export default function AssignmentFormScreen() {
                 );
                 Alert.alert('Success', 'Logsheet submitted successfully!', [{ text: 'OK', onPress: () => router.back() }]);
             } catch (error: any) {
-                if (error.shiftLocked) {
+                if (error.queued) {
+                    Alert.alert('Saved Offline', 'No internet connection. Your logsheet has been saved and will sync automatically when you\'re back online.', [{ text: 'OK', onPress: () => router.back() }]);
+                } else if (error.shiftLocked) {
                     setShiftLocked({ message: error.message, shiftName: error.shiftName });
                 } else {
                     Alert.alert('Error', error.message || 'Failed to submit. Please try again.');
@@ -269,7 +271,13 @@ export default function AssignmentFormScreen() {
             );
         } catch (error: any) {
             console.error('Failed to submit:', error);
-            if (error.shiftLocked) {
+            if (error.queued) {
+                Alert.alert(
+                    'Saved Offline',
+                    `No internet connection. Your ${templateType === 'checklist' ? 'checklist' : 'logsheet'} has been saved and will sync automatically when you're back online.`,
+                    [{ text: 'OK', onPress: () => router.back() }]
+                );
+            } else if (error.shiftLocked) {
                 setShiftLocked({ message: error.message, shiftName: error.shiftName });
             } else {
                 Alert.alert('Error', error.message || 'Failed to submit. Please try again.');

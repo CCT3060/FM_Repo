@@ -3239,15 +3239,24 @@ export default function CompanyEmployeePortal() {
                         <DonutChart data={chartData} size={190} thickness={38} />
                       </div>
                       <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "10px" }}>
-                        {chartData.map((d) => (
-                          <div key={d.label} style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                            <div style={{ width: "12px", height: "12px", borderRadius: "3px", background: d.color, flexShrink: 0 }} />
-                            <div style={{ flex: 1 }}>
-                              <p style={{ fontSize: "12.5px", color: "#475569", margin: 0 }}>{d.label}</p>
-                            </div>
-                            <span style={{ fontWeight: 700, fontSize: "14px", color: "#0f172a" }}>{d.value}</span>
-                          </div>
-                        ))}
+                        {(() => {
+                          const chartTotal = chartData.reduce((s, d) => s + (d.value || 0), 0);
+                          return chartData.map((d) => {
+                            const pct = chartTotal > 0 ? Math.round(((d.value || 0) / chartTotal) * 100) : 0;
+                            return (
+                              <div key={d.label} style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                <div style={{ width: "12px", height: "12px", borderRadius: "3px", background: d.color, flexShrink: 0 }} />
+                                <div style={{ flex: 1 }}>
+                                  <p style={{ fontSize: "12.5px", color: "#475569", margin: 0 }}>{d.label}</p>
+                                </div>
+                                <div style={{ textAlign: "right" }}>
+                                  <span style={{ fontWeight: 700, fontSize: "14px", color: "#0f172a", display: "block" }}>{d.value}</span>
+                                  <span style={{ fontSize: "11px", color: "#94a3b8", fontWeight: 600 }}>{pct}%</span>
+                                </div>
+                              </div>
+                            );
+                          });
+                        })()}
                       </div>
                     </div>
                   </div>

@@ -1,9 +1,11 @@
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { View } from 'react-native';
+import OfflineBanner from '../components/OfflineBanner';
 
 export default function RootLayout() {
   return (
-    <>
+    <View style={{ flex: 1 }}>
       <Stack>
         <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="employee-login" options={{ headerShown: false }} />
@@ -48,6 +50,7 @@ export default function RootLayout() {
         <Stack.Screen name="tech-history-detail" options={{ headerShown: false }} />
       </Stack>
       <StatusBar style="auto" />
-    </>
+      <OfflineBanner />
+    </View>
   );
 }

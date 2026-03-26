@@ -1,5 +1,7 @@
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
+import { cacheData, getCachedData, addToOfflineQueue, getOfflineQueue, removeFromOfflineQueue } from './offlineStorage';
+import { notifyNetworkStatus } from './networkStatus';
 
 // ────────────────────────────────────────────────────────────────────────────
 // API Configuration - UPDATE THIS WITH YOUR SERVER URL
@@ -320,6 +322,66 @@ export async function authenticatedFetch(
   });
 }
 
+/** Returns true when the error is a network-level failure (no connectivity). */
+function isNetworkError(err: unknown): boolean {
+  return err instanceof TypeError;
+}
+
+/**
+ * GET wrapper that caches successful responses and returns cached data when
+ * the network is unavailable (TypeError / no connection).
+ */
+async function cachedAuthGet<T>(endpoint: string): Promise<T> {
+  try {
+    const response = await authenticatedFetch(endpoint);
+    if (response.ok) {
+      const data = (await response.json()) as T;
+      await cacheData(endpoint, data);
+      notifyNetworkStatus(true);
+      return data;
+    }
+    throw new Error(`HTTP ${response.status}`);
+  } catch (err) {
+    if (isNetworkError(err)) {
+      notifyNetworkStatus(false);
+      const cached = await getCachedData(endpoint);
+      if (cached != null) return cached as T;
+    }
+    throw err;
+  }
+}
+
+/**
+ * Replay queued offline submissions. Called automatically when coming back online
+ * or manually by the user from the OfflineBanner.
+ */
+export async function syncOfflineSubmissions(): Promise<{ synced: number; failed: number }> {
+  const queue = await getOfflineQueue();
+  let synced = 0;
+  let failed = 0;
+  for (const item of queue) {
+    try {
+      const response = await authenticatedFetch(item.endpoint, {
+        method: 'POST',
+        body: JSON.stringify(item.payload),
+      });
+      if (response.ok) {
+        await removeFromOfflineQueue(item.id);
+        synced++;
+      } else {
+        failed++;
+      }
+    } catch {
+      failed++;
+    }
+  }
+  if (synced > 0) notifyNetworkStatus(true);
+  return { synced, failed };
+}
+
+/** Re-export so components can check the queue length without importing offlineStorage. */
+export { getOfflineQueue };
+
 /* ────────────────────────────────────────────────────────────────────────────
    Template Assignments & Submissions
    ──────────────────────────────────────────────────────────────────────────── */
@@ -387,27 +449,14 @@ export interface SubmissionAnswer {
  * Get assignments for current user (supervisor or technician)
  */
 export async function getMyAssignments(): Promise<Assignment[]> {
-  const response = await authenticatedFetch('/api/template-assignments/my-assignments');
-  
-  if (!response.ok) {
-    throw new Error('Failed to fetch assignments');
-  }
-  
-  return await response.json();
+  return cachedAuthGet<Assignment[]>('/api/template-assignments/my-assignments');
 }
 
 /**
  * Get template details with questions
  */
 export async function getTemplateDetails(type: 'checklist' | 'logsheet', id: number): Promise<TemplateDetails> {
-  const response = await authenticatedFetch(`/api/template-assignments/template/${type}/${id}`);
-  
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.message || 'Failed to fetch template details');
-  }
-  
-  return await response.json();
+  return cachedAuthGet<TemplateDetails>(`/api/template-assignments/template/${type}/${id}`);
 }
 
 /**
@@ -431,30 +480,48 @@ export interface GeoLocation {
 }
 
 /**
- * Submit checklist response (with optional GPS location)
+ * Submit checklist response (with optional GPS location).
+ * When offline, queues the submission and throws an error with `error.queued = true`.
  */
 export async function submitChecklist(templateId: number, assetId: number | null, answers: SubmissionAnswer[], location?: GeoLocation | null): Promise<void> {
-  const response = await authenticatedFetch('/api/template-assignments/submit-checklist', {
-    method: 'POST',
-    body: JSON.stringify({ templateId, assetId, answers, latitude: location?.latitude ?? null, longitude: location?.longitude ?? null }),
-  });
-  
-  if (!response.ok) {
-    let error: any;
-    try {
-      error = await response.json();
-    } catch {
-      // If response is not valid JSON (e.g., HTML error page), provide a generic error
-      throw new Error(`Server error: ${response.status} ${response.statusText}`);
+  const payload = { templateId, assetId, answers, latitude: location?.latitude ?? null, longitude: location?.longitude ?? null };
+  try {
+    const response = await authenticatedFetch('/api/template-assignments/submit-checklist', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    notifyNetworkStatus(true);
+    if (!response.ok) {
+      let error: any;
+      try {
+        error = await response.json();
+      } catch {
+        throw new Error(`Server error: ${response.status} ${response.statusText}`);
+      }
+      const err: any = new Error(error.message || 'Failed to submit checklist');
+      if (error.shiftLocked) { err.shiftLocked = true; err.shiftName = error.shiftName; }
+      throw err;
     }
-    const err: any = new Error(error.message || 'Failed to submit checklist');
-    if (error.shiftLocked) { err.shiftLocked = true; err.shiftName = error.shiftName; }
+  } catch (err: unknown) {
+    if (isNetworkError(err)) {
+      notifyNetworkStatus(false);
+      await addToOfflineQueue({
+        type: 'checklist',
+        endpoint: '/api/template-assignments/submit-checklist',
+        payload: payload as Record<string, unknown>,
+        templateName: String(templateId),
+      });
+      const qErr: any = new Error('Saved offline – will sync when connected');
+      qErr.queued = true;
+      throw qErr;
+    }
     throw err;
   }
 }
 
 /**
- * Submit tabular logsheet entry via company-portal endpoint
+ * Submit tabular logsheet entry via company-portal endpoint.
+ * When offline, queues the submission and throws an error with `error.queued = true`.
  */
 export async function submitTabularLogsheet(
   templateId: number,
@@ -464,41 +531,77 @@ export async function submitTabularLogsheet(
   shift: string | null,
   tabularData: Record<string, any>
 ): Promise<void> {
-  const response = await authenticatedFetch(`/api/company-portal/logsheet-templates/${templateId}/entries`, {
-    method: 'POST',
-    body: JSON.stringify({ assetId, month, year, shift, tabularData }),
-  });
-  if (!response.ok) {
-    let error: any;
-    try {
-      error = await response.json();
-    } catch {
-      throw new Error(`Server error: ${response.status} ${response.statusText}`);
+  const payload = { assetId, month, year, shift, tabularData };
+  try {
+    const response = await authenticatedFetch(`/api/company-portal/logsheet-templates/${templateId}/entries`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    notifyNetworkStatus(true);
+    if (!response.ok) {
+      let error: any;
+      try {
+        error = await response.json();
+      } catch {
+        throw new Error(`Server error: ${response.status} ${response.statusText}`);
+      }
+      const err: any = new Error((error as any).message || 'Failed to submit tabular logsheet');
+      if ((error as any).shiftLocked) { err.shiftLocked = true; err.shiftName = (error as any).shiftName; }
+      throw err;
     }
-    const err: any = new Error((error as any).message || 'Failed to submit tabular logsheet');
-    if ((error as any).shiftLocked) { err.shiftLocked = true; err.shiftName = (error as any).shiftName; }
+  } catch (err: unknown) {
+    if (isNetworkError(err)) {
+      notifyNetworkStatus(false);
+      await addToOfflineQueue({
+        type: 'tabular_logsheet',
+        endpoint: `/api/company-portal/logsheet-templates/${templateId}/entries`,
+        payload: payload as Record<string, unknown>,
+        templateName: String(templateId),
+      });
+      const qErr: any = new Error('Saved offline – will sync when connected');
+      qErr.queued = true;
+      throw qErr;
+    }
     throw err;
   }
 }
 
 /**
- * Submit logsheet entry (with optional GPS location)
+ * Submit logsheet entry (with optional GPS location).
+ * When offline, queues the submission and throws an error with `error.queued = true`.
  */
 export async function submitLogsheet(templateId: number, assetId: number | null, answers: SubmissionAnswer[], location?: GeoLocation | null): Promise<void> {
-  const response = await authenticatedFetch('/api/template-assignments/submit-logsheet', {
-    method: 'POST',
-    body: JSON.stringify({ templateId, assetId, answers, latitude: location?.latitude ?? null, longitude: location?.longitude ?? null }),
-  });
-  
-  if (!response.ok) {
-    let error: any;
-    try {
-      error = await response.json();
-    } catch {
-      throw new Error(`Server error: ${response.status} ${response.statusText}`);
+  const payload = { templateId, assetId, answers, latitude: location?.latitude ?? null, longitude: location?.longitude ?? null };
+  try {
+    const response = await authenticatedFetch('/api/template-assignments/submit-logsheet', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    notifyNetworkStatus(true);
+    if (!response.ok) {
+      let error: any;
+      try {
+        error = await response.json();
+      } catch {
+        throw new Error(`Server error: ${response.status} ${response.statusText}`);
+      }
+      const err: any = new Error(error.message || 'Failed to submit logsheet');
+      if (error.shiftLocked) { err.shiftLocked = true; err.shiftName = error.shiftName; }
+      throw err;
     }
-    const err: any = new Error(error.message || 'Failed to submit logsheet');
-    if (error.shiftLocked) { err.shiftLocked = true; err.shiftName = error.shiftName; }
+  } catch (err: unknown) {
+    if (isNetworkError(err)) {
+      notifyNetworkStatus(false);
+      await addToOfflineQueue({
+        type: 'logsheet',
+        endpoint: '/api/template-assignments/submit-logsheet',
+        payload: payload as Record<string, unknown>,
+        templateName: String(templateId),
+      });
+      const qErr: any = new Error('Saved offline – will sync when connected');
+      qErr.queued = true;
+      throw qErr;
+    }
     throw err;
   }
 }
@@ -580,13 +683,7 @@ export async function getLogsheetGridData(templateId: number, month: number, yea
  * Get my team members (supervisor only)
  */
 export async function getMyTeam(): Promise<Array<{id: number; fullName: string; role: string}>> {
-  const response = await authenticatedFetch('/api/company-portal/my-team');
-  
-  if (!response.ok) {
-    throw new Error('Failed to fetch team');
-  }
-  
-  return await response.json();
+  return cachedAuthGet('/api/company-portal/my-team');
 }
 
 /**
@@ -604,13 +701,7 @@ export async function getMyAssets(): Promise<Array<{
   room?: string;
   location?: string;
 }>> {
-  const response = await authenticatedFetch('/api/company-portal/assets');
-  
-  if (!response.ok) {
-    throw new Error('Failed to fetch assets');
-  }
-  
-  return await response.json();
+  return cachedAuthGet('/api/company-portal/assets');
 }
 
 /**
@@ -623,13 +714,7 @@ export async function getDashboardStats(): Promise<{
   activeEmployees: number;
   openIssues: number;
 }> {
-  const response = await authenticatedFetch('/api/company-portal/dashboard');
-  
-  if (!response.ok) {
-    throw new Error('Failed to fetch dashboard stats');
-  }
-  
-  return await response.json();
+  return cachedAuthGet('/api/company-portal/dashboard');
 }
 
 /**
@@ -655,9 +740,7 @@ export async function getUnassignedTemplates(type?: 'checklist' | 'logsheet'): P
  * Templates assigned TO the supervisor but NOT yet forwarded to any team member (supervisor only)
  */
 export async function getMyUnassignedToTeam(): Promise<any[]> {
-  const response = await authenticatedFetch('/api/template-assignments/my-unassigned-to-team');
-  if (!response.ok) throw new Error('Failed to fetch supervisor pending assignments');
-  return response.json();
+  return cachedAuthGet('/api/template-assignments/my-unassigned-to-team');
 }
 
 /**
@@ -939,9 +1022,7 @@ export interface WarningItem {
 }
 
 export async function getMyWarnings(limit = 50): Promise<WarningItem[]> {
-  const response = await authenticatedFetch(`/api/template-assignments/my-warnings?limit=${limit}`);
-  if (!response.ok) return [];
-  return response.json();
+  return cachedAuthGet<WarningItem[]>(`/api/template-assignments/my-warnings?limit=${limit}`);
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1011,9 +1092,7 @@ export async function getAssetQrData(assetId: string | number): Promise<any> {
  * including the logged-in user's progress for each.
  */
 export async function getMyOjtTrainings(): Promise<any[]> {
-  const response = await authenticatedFetch('/api/company-portal/ojt/mobile/trainings');
-  if (!response.ok) throw new Error('Failed to fetch trainings');
-  return response.json();
+  return cachedAuthGet('/api/company-portal/ojt/mobile/trainings');
 }
 
 /**
