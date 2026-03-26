@@ -58,51 +58,22 @@ jobs:
         working-directory: mobile-app
         run: npx expo prebuild --platform android --clean --no-install
 
-      # ── 8. Decode & set up release keystore ──────────────────────────────────
-      - name: Set up release keystore
-        working-directory: mobile-app/android
-        env:
-          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
-        run: |
-          echo "$KEYSTORE_BASE64" | base64 --decode > app/fmapp.keystore
-          # Inject signing config into gradle.properties so app/build.gradle can read it
-          echo "MYAPP_UPLOAD_STORE_FILE=fmapp.keystore"       >> gradle.properties
-          echo "MYAPP_UPLOAD_KEY_ALIAS=$KEY_ALIAS"            >> gradle.properties
-          echo "MYAPP_UPLOAD_STORE_PASSWORD=$STORE_PASSWORD"  >> gradle.properties
-          echo "MYAPP_UPLOAD_KEY_PASSWORD=$KEY_PASSWORD"      >> gradle.properties
-
-      # ── 9. Patch app/build.gradle with release signing config ────────────────
-      - name: Patch build.gradle for release signing
-        working-directory: mobile-app/android
-        run: |
-          # Only patch if not already patched by Expo prebuild
-          if ! grep -q "MYAPP_UPLOAD_STORE_FILE" app/build.gradle; then
-            # Insert signingConfigs block before the android { block
-            sed -i 's/android {/signingConfigs {\n    release {\n        storeFile file(MYAPP_UPLOAD_STORE_FILE)\n        storePassword MYAPP_UPLOAD_STORE_PASSWORD\n        keyAlias MYAPP_UPLOAD_KEY_ALIAS\n        keyPassword MYAPP_UPLOAD_KEY_PASSWORD\n    }\n}\nandroid {/' app/build.gradle
-            # Set signingConfig in release buildType
-            sed -i 's/buildTypes {/buildTypes {\n    release { signingConfig signingConfigs.release }/' app/build.gradle
-          fi
-
-      # ── 10. Build Release APK ─────────────────────────────────────────────────
+      # ── 8. Build Debug APK (no signing needed — for internal testing) ─────────
       - name: Build APK
         working-directory: mobile-app/android
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon
+          ./gradlew assembleDebug --no-daemon
 
-      # ── 11. Rename APK with version + date ───────────────────────────────────
+      # ── 9. Rename APK with date ───────────────────────────────────────────────
       - name: Rename APK
         run: |
           DATE=$(date +'%Y%m%d-%H%M')
-          APK_SRC=$(find mobile-app/android/app/build/outputs/apk/release -name "*.apk" | head -1)
+          APK_SRC=$(find mobile-app/android/app/build/outputs/apk/debug -name "*.apk" | head -1)
           mkdir -p artifacts
           cp "$APK_SRC" "artifacts/fmapp-develop-${DATE}.apk"
-          echo "APK_PATH=artifacts/fmapp-develop-${DATE}.apk" >> $GITHUB_ENV
 
-      # ── 12. Upload APK artifact (available in GitHub Actions UI for 30 days) ──
+      # ── 10. Upload APK as downloadable artifact (kept 30 days) ───────────────
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
