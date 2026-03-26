@@ -1,0 +1,42 @@
+workflows:
+  android-apk-develop:
+    name: Android APK (develop)
+    max_build_duration: 60
+    environment:
+      node: 22.14.0
+      java: 17
+      android_signing:
+        - fmapp_keystore       # name of the keystore you upload in Codemagic UI
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: develop
+          include: true
+    scripts:
+      - name: Install dependencies
+        script: |
+          cd mobile-app
+          npm install
+
+      - name: Expo Prebuild (generate native Android project)
+        script: |
+          cd mobile-app
+          npx expo prebuild --platform android --clean --no-install
+
+      - name: Build APK (debug variant for internal distribution)
+        script: |
+          cd mobile-app/android
+          chmod +x gradlew
+          ./gradlew assembleRelease
+
+    artifacts:
+      - mobile-app/android/app/build/outputs/apk/release/*.apk
+
+    publishing:
+      email:
+        recipients:
+          - pariksheet.moghekar@cctindia.in
+        notify:
+          success: true
+          failure: true
