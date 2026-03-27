@@ -14,9 +14,11 @@ import {
 } from 'react-native';
 import Animated, { FadeInUp } from 'react-native-reanimated';
 import { getMyAssignments, getMySubmissionHistoryWithFallback, prefetchAssignmentTemplates, type Assignment, type SubmissionHistoryItem } from '../utils/api';
+import { useResponsiveMetrics } from '../utils/responsive';
 import { TechBottomNav } from './tech-dashboard';
 
 export default function TechTasksScreen() {
+    const metrics = useResponsiveMetrics();
     const [activeTab, setActiveTab] = useState<'Checklists' | 'Log Sheets' | 'History'>('Checklists');
     const [assignments, setAssignments] = useState<Assignment[]>([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -149,11 +151,11 @@ export default function TechTasksScreen() {
     return (
         <SafeAreaView style={styles.container}>
             {/* Header */}
-            <View style={styles.header}>
+            <View style={[styles.header, { paddingHorizontal: metrics.horizontalPadding, paddingTop: Platform.OS === 'android' ? (metrics.isTablet ? 40 : 48) : 20 }]}>
                 <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
                     <MaterialCommunityIcons name="arrow-left" size={24} color="#1A202C" />
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>My Assigned Tasks</Text>
+                <Text style={[styles.headerTitle, { fontSize: metrics.fluid(17, 18, 21) }]}>My Assigned Tasks</Text>
                 <View style={styles.profileCircle}>
                     <MaterialCommunityIcons name="account" size={18} color="#1E3A8A" />
                 </View>
@@ -165,7 +167,8 @@ export default function TechTasksScreen() {
                 refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#2563EB" colors={['#2563EB']} />}
             >
                 {/* Top Tabs */}
-                <View style={styles.tabContainer}>
+                <View style={[styles.maxWidthWrap, { paddingHorizontal: metrics.horizontalPadding }]}> 
+                <View style={[styles.tabContainer, { maxWidth: metrics.contentMaxWidth, borderRadius: metrics.cardRadius }]}> 
                     <TouchableOpacity
                         style={[styles.tabBtn, activeTab === 'Checklists' && styles.tabBtnActive]}
                         onPress={() => setActiveTab('Checklists')}
@@ -191,9 +194,11 @@ export default function TechTasksScreen() {
                         </Text>
                     </TouchableOpacity>
                 </View>
+                </View>
 
                 {/* Date & Progress Area — hidden on History tab */}
-                {activeTab !== 'History' && <Animated.View entering={FadeInUp.delay(100).duration(400)} style={styles.progressHeader}>
+                {activeTab !== 'History' && <View style={[styles.maxWidthWrap, { paddingHorizontal: metrics.horizontalPadding }]}>
+                <Animated.View entering={FadeInUp.delay(100).duration(400)} style={[styles.progressHeader, { maxWidth: metrics.contentMaxWidth, borderRadius: metrics.cardRadius }]}>
                     <View>
                         <Text style={styles.todayLabel}>TODAY</Text>
                         <Text style={styles.dateText}>{today}</Text>
@@ -204,10 +209,12 @@ export default function TechTasksScreen() {
                             <Text style={styles.progressFraction}>{filteredAssignments.length} task{filteredAssignments.length !== 1 ? 's' : ''}</Text>
                         </View>
                     </View>
-                </Animated.View>}
+                </Animated.View>
+                </View>}
 
                 {/* Content */}
-                <View style={styles.listContainer}>
+                <View style={[styles.maxWidthWrap, { paddingHorizontal: metrics.horizontalPadding }]}>
+                <View style={[styles.listContainer, { maxWidth: metrics.contentMaxWidth }]}> 
                     {isLoading ? (
                         <View style={styles.centeredMsg}>
                             <ActivityIndicator size="large" color="#2563EB" />
@@ -302,6 +309,7 @@ export default function TechTasksScreen() {
                         )
                     )}
                 </View>
+                </View>
             </ScrollView>
 
             {/* Bottom Nav */}
@@ -346,12 +354,14 @@ const styles = StyleSheet.create({
     scrollArea: {
         flex: 1,
     },
+    maxWidthWrap: {
+        alignItems: 'center',
+    },
     tabContainer: {
         flexDirection: 'row',
-        marginHorizontal: 16,
+        width: '100%',
         marginTop: 16,
-        backgroundColor: '#F1F5F9',
-        borderRadius: 12,
+        backgroundColor: '#E8EEF7',
         padding: 4,
     },
     tabBtn: {
@@ -378,12 +388,22 @@ const styles = StyleSheet.create({
         fontWeight: '700',
     },
     progressHeader: {
+        width: '100%',
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
         paddingHorizontal: 20,
+        paddingVertical: 16,
         marginTop: 24,
         marginBottom: 16,
+        backgroundColor: '#FFFFFF',
+        borderWidth: 1,
+        borderColor: '#E2E8F0',
+        shadowColor: '#64748B',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.05,
+        shadowRadius: 8,
+        elevation: 2,
     },
     todayLabel: {
         fontSize: 11,
@@ -417,22 +437,22 @@ const styles = StyleSheet.create({
     },
 
     listContainer: {
-        paddingHorizontal: 16,
+        width: '100%',
         paddingBottom: 40,
     },
     taskCard: {
         backgroundColor: '#FFFFFF',
-        borderRadius: 16,
+        borderRadius: 18,
         marginBottom: 14,
         flexDirection: 'column',
         overflow: 'hidden',
         shadowColor: '#64748B',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.04,
-        shadowRadius: 8,
-        elevation: 2,
+        shadowRadius: 12,
+        elevation: 4,
         borderWidth: 1,
-        borderColor: '#F1F5F9',
+        borderColor: '#E7EDF5',
         position: 'relative',
     },
     cardLeftBorder: {

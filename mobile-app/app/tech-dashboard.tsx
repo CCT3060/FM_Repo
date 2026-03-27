@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import { getMyAssignments, getMyShifts, getMySubmissionHistoryWithFallback, getMyWarnings, getStoredUser, getTodayProgress, getWorkOrders, type Assignment, type Shift, type SubmissionHistoryItem } from '../utils/api';
+import { useResponsiveMetrics } from '../utils/responsive';
 
 type DashboardHistoryItem = {
     kind: 'checklist' | 'logsheet' | 'workorder';
@@ -28,81 +29,104 @@ type DashboardHistoryItem = {
 
 // Reusable Navigation Bar Component for Tech Flow
 export const TechBottomNav = ({ activeRoute }: { activeRoute: string }) => {
+    const { isTablet, fluid } = useResponsiveMetrics();
+    const iconSize = fluid(20, 22, 24);
+    const labelSize = fluid(9, 10, 11);
+
     return (
-        <View style={navStyles.container}>
+        <View style={navStyles.shell}>
+            <View style={[navStyles.container, isTablet && navStyles.containerTablet]}>
             <TouchableOpacity style={navStyles.navItem} onPress={() => router.push('/tech-dashboard')}>
                 <View style={[navStyles.iconWrapper, activeRoute === 'home' && navStyles.iconWrapperActive]}>
                     <MaterialCommunityIcons
                         name={activeRoute === 'home' ? 'clipboard-list' : 'clipboard-list-outline'}
-                        size={22}
+                        size={iconSize}
                         color={activeRoute === 'home' ? '#2563EB' : '#64748B'}
                     />
                 </View>
-                <Text style={[navStyles.navText, activeRoute === 'home' && navStyles.navTextActive]}>Tasks</Text>
+                <Text style={[navStyles.navText, { fontSize: labelSize }, activeRoute === 'home' && navStyles.navTextActive]}>Tasks</Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={navStyles.navItem} onPress={() => router.push('/tech-training' as any)}>
                 <View style={[navStyles.iconWrapper, activeRoute === 'training' && navStyles.iconWrapperActive]}>
                     <MaterialCommunityIcons
                         name={activeRoute === 'training' ? 'school' : 'school-outline'}
-                        size={22}
+                        size={iconSize}
                         color={activeRoute === 'training' ? '#2563EB' : '#64748B'}
                     />
                 </View>
-                <Text style={[navStyles.navText, activeRoute === 'training' && navStyles.navTextActive]}>Training</Text>
+                <Text style={[navStyles.navText, { fontSize: labelSize }, activeRoute === 'training' && navStyles.navTextActive]}>Training</Text>
             </TouchableOpacity>
 
             {/* QR Scanner center FAB */}
-            <TouchableOpacity style={navStyles.qrBtn} activeOpacity={0.85} onPress={() => router.push('/qr-scanner' as any)}>
-                <MaterialCommunityIcons name="qrcode-scan" size={24} color="#FFFFFF" />
+            <TouchableOpacity style={[navStyles.qrBtn, isTablet && navStyles.qrBtnTablet]} activeOpacity={0.85} onPress={() => router.push('/qr-scanner' as any)}>
+                <MaterialCommunityIcons name="qrcode-scan" size={fluid(22, 24, 26)} color="#FFFFFF" />
             </TouchableOpacity>
 
             <TouchableOpacity style={navStyles.navItem} onPress={() => router.push('/tech-work-orders' as any)}>
                 <View style={[navStyles.iconWrapper, activeRoute === 'workorders' && navStyles.iconWrapperActive]}>
                     <MaterialCommunityIcons
                         name={activeRoute === 'workorders' ? 'wrench-clock' : 'wrench-clock-outline'}
-                        size={22}
+                        size={iconSize}
                         color={activeRoute === 'workorders' ? '#2563EB' : '#64748B'}
                     />
                 </View>
-                <Text style={[navStyles.navText, activeRoute === 'workorders' && navStyles.navTextActive]}>W.O.</Text>
+                <Text style={[navStyles.navText, { fontSize: labelSize }, activeRoute === 'workorders' && navStyles.navTextActive]}>W.O.</Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={navStyles.navItem} onPress={() => router.push('/user-history' as any)}>
                 <View style={[navStyles.iconWrapper, activeRoute === 'history' && navStyles.iconWrapperActive]}>
                     <MaterialCommunityIcons
                         name={activeRoute === 'history' ? 'history' : 'history'}
-                        size={22}
+                        size={iconSize}
                         color={activeRoute === 'history' ? '#2563EB' : '#64748B'}
                     />
                 </View>
-                <Text style={[navStyles.navText, activeRoute === 'history' && navStyles.navTextActive]}>History</Text>
+                <Text style={[navStyles.navText, { fontSize: labelSize }, activeRoute === 'history' && navStyles.navTextActive]}>History</Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={navStyles.navItem} onPress={() => router.push('/profile' as any)}>
                 <View style={[navStyles.iconWrapper, activeRoute === 'profile' && navStyles.iconWrapperActive]}>
                     <MaterialCommunityIcons
                         name={activeRoute === 'profile' ? 'account' : 'account-outline'}
-                        size={22}
+                        size={iconSize}
                         color={activeRoute === 'profile' ? '#2563EB' : '#64748B'}
                     />
                 </View>
-                <Text style={[navStyles.navText, activeRoute === 'profile' && navStyles.navTextActive]}>Profile</Text>
+                <Text style={[navStyles.navText, { fontSize: labelSize }, activeRoute === 'profile' && navStyles.navTextActive]}>Profile</Text>
             </TouchableOpacity>
+            </View>
         </View>
     );
 };
 
 const navStyles = StyleSheet.create({
+    shell: {
+        paddingHorizontal: 12,
+        paddingBottom: Platform.OS === 'ios' ? 6 : 0,
+        backgroundColor: '#F4F7FB',
+    },
     container: {
         flexDirection: 'row',
         justifyContent: 'space-around',
         alignItems: 'center',
-        backgroundColor: '#FCFBFC',
+        alignSelf: 'center',
+        width: '100%',
+        maxWidth: 820,
+        backgroundColor: '#FFFFFF',
         paddingVertical: 12,
         paddingBottom: Platform.OS === 'ios' ? 28 : 12,
         borderTopWidth: 1,
-        borderTopColor: '#EAEAEA',
+        borderTopColor: '#E2E8F0',
+        borderRadius: 24,
+        shadowColor: '#0F172A',
+        shadowOffset: { width: 0, height: -4 },
+        shadowOpacity: 0.05,
+        shadowRadius: 18,
+        elevation: 12,
+    },
+    containerTablet: {
+        paddingHorizontal: 12,
     },
     navItem: {
         alignItems: 'center',
@@ -120,11 +144,11 @@ const navStyles = StyleSheet.create({
         width: 54,
         height: 54,
         borderRadius: 27,
-        backgroundColor: '#2563EB',
+        backgroundColor: '#0F5FDB',
         justifyContent: 'center',
         alignItems: 'center',
         marginTop: -30,
-        shadowColor: '#2563EB',
+        shadowColor: '#0F5FDB',
         shadowOffset: { width: 0, height: 6 },
         shadowOpacity: 0.35,
         shadowRadius: 10,
@@ -132,8 +156,12 @@ const navStyles = StyleSheet.create({
         borderWidth: 3,
         borderColor: '#FFFFFF',
     },
+    qrBtnTablet: {
+        width: 60,
+        height: 60,
+        borderRadius: 30,
+    },
     navText: {
-        fontSize: 10,
         color: '#64748B',
         marginTop: 4,
         fontWeight: '500',

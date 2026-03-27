@@ -363,6 +363,48 @@ async function cachedAuthGet<T>(endpoint: string): Promise<T> {
   }
 }
 
+async function updateCachedWorkOrderStatusState(
+  id: number | string,
+  status: string,
+  remark?: string
+): Promise<void> {
+  const detailKey = `/api/company-portal/work-orders/${id}`;
+  const detailCached = await getCachedData(detailKey);
+  if (detailCached && typeof detailCached === 'object') {
+    const detail = detailCached as Record<string, unknown>;
+    await cacheData(detailKey, {
+      ...detail,
+      status,
+      updatedAt: new Date().toISOString(),
+      latestOfflineRemark: remark ?? null,
+    });
+  }
+
+  const listKeys = [
+    '/api/company-portal/work-orders?limit=5',
+    '/api/company-portal/work-orders?limit=5&assignedToMe=true',
+    '/api/company-portal/work-orders?limit=50',
+    '/api/company-portal/work-orders?limit=50&assignedToMe=true',
+  ];
+
+  for (const key of listKeys) {
+    const cached = await getCachedData(key);
+    if (!cached || typeof cached !== 'object') continue;
+    const parsed = cached as { data?: Array<Record<string, unknown>> };
+    if (!Array.isArray(parsed.data)) continue;
+    const next = parsed.data.map((item) =>
+      String(item.id) === String(id)
+        ? {
+            ...item,
+            status,
+            updatedAt: new Date().toISOString(),
+          }
+        : item
+    );
+    await cacheData(key, { ...parsed, data: next });
+  }
+}
+
 /**
  * Replay queued offline submissions. Called automatically when coming back online
  * or manually by the user from the OfflineBanner.
@@ -374,7 +416,7 @@ export async function syncOfflineSubmissions(): Promise<{ synced: number; failed
   for (const item of queue) {
     try {
       const response = await authenticatedFetch(item.endpoint, {
-        method: 'POST',
+        method: item.method,
         body: JSON.stringify(item.payload),
       });
       if (response.ok) {
@@ -538,7 +580,9 @@ export async function submitChecklist(templateId: number, assetId: number | null
       notifyNetworkStatus(false);
       await addToOfflineQueue({
         type: 'checklist',
+        dedupKey: `checklist:${templateId}:${assetId ?? 'none'}`,
         endpoint: '/api/template-assignments/submit-checklist',
+        method: 'POST',
         payload: payload as Record<string, unknown>,
         templateName: String(templateId),
       });
@@ -585,7 +629,9 @@ export async function submitTabularLogsheet(
       notifyNetworkStatus(false);
       await addToOfflineQueue({
         type: 'tabular_logsheet',
+        dedupKey: `tabular_logsheet:${templateId}:${assetId ?? 'none'}:${month}:${year}:${shift ?? 'none'}`,
         endpoint: `/api/company-portal/logsheet-templates/${templateId}/entries`,
+        method: 'POST',
         payload: payload as Record<string, unknown>,
         templateName: String(templateId),
       });
@@ -625,7 +671,9 @@ export async function submitLogsheet(templateId: number, assetId: number | null,
       notifyNetworkStatus(false);
       await addToOfflineQueue({
         type: 'logsheet',
+        dedupKey: `logsheet:${templateId}:${assetId ?? 'none'}`,
         endpoint: '/api/template-assignments/submit-logsheet',
+        method: 'POST',
         payload: payload as Record<string, unknown>,
         templateName: String(templateId),
       });
@@ -798,9 +846,7 @@ export async function supervisorAssignTemplate(
  */
 export async function getWorkOrders(limit = 5, assignedToMe = false): Promise<any[]> {
   const url = `/api/company-portal/work-orders?limit=${limit}${assignedToMe ? '&assignedToMe=true' : ''}`;
-  const response = await authenticatedFetch(url);
-  if (!response.ok) throw new Error('Failed to fetch work orders');
-  const json = await response.json();
+  const json = await cachedAuthGet<{ data?: any[] }>(url);
   return json.data || [];
 }
 
@@ -808,22 +854,53 @@ export async function getWorkOrders(limit = 5, assignedToMe = false): Promise<an
  * Get single work order with status history
  */
 export async function getWorkOrderById(id: number | string): Promise<any> {
-  const response = await authenticatedFetch(`/api/company-portal/work-orders/${id}`);
-  if (!response.ok) throw new Error('Failed to fetch work order');
-  return response.json();
+  return cachedAuthGet<any>(`/api/company-portal/work-orders/${id}`);
+}
+
+export async function prefetchWorkOrderDetails(workOrders: Array<{ id: number | string }>): Promise<void> {
+  const seen = new Set<string>();
+  const targets = workOrders.filter((item) => {
+    const key = String(item.id);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  await Promise.allSettled(targets.map((item) => getWorkOrderById(item.id)));
 }
 
 /**
  * Update work order status (supervisor/admin only)
  */
 export async function updateWorkOrderStatus(id: number | string, status: string, remark?: string): Promise<void> {
-  const response = await authenticatedFetch(`/api/company-portal/work-orders/${id}/status`, {
-    method: 'PUT',
-    body: JSON.stringify({ status, remark }),
-  });
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error((err as any).message || 'Failed to update status');
+  const payload = { status, remark };
+  try {
+    const response = await authenticatedFetch(`/api/company-portal/work-orders/${id}/status`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error((err as any).message || 'Failed to update status');
+    }
+    await updateCachedWorkOrderStatusState(id, status, remark);
+    notifyNetworkStatus(true);
+  } catch (err: unknown) {
+    if (isNetworkError(err)) {
+      notifyNetworkStatus(false);
+      await addToOfflineQueue({
+        type: 'work_order_status',
+        dedupKey: `work_order_status:${id}`,
+        endpoint: `/api/company-portal/work-orders/${id}/status`,
+        method: 'PUT',
+        payload: payload as Record<string, unknown>,
+        templateName: String(id),
+      });
+      await updateCachedWorkOrderStatusState(id, status, remark);
+      const qErr: any = new Error('Saved offline – work order status will sync when connected');
+      qErr.queued = true;
+      throw qErr;
+    }
+    throw err;
   }
 }
 

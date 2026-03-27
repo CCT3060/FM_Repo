@@ -1,8 +1,10 @@
 /**
  * Offline data cache and submission queue using AsyncStorage.
  *
- * Cache: stores API GET responses keyed by endpoint URL. Entries expire after 24 h.
+ * Cache: stores API GET responses keyed by endpoint URL. Entries expire after 7 days.
  * Queue: stores POST submissions that failed due to network unavailability.
+ *        Deduplication: a new submission for the same template replaces the previous
+ *        pending one (only the latest unsync'd entry per template is kept).
  *        Call syncOfflineSubmissions() (from api.ts) to replay them when back online.
  */
 
@@ -14,8 +16,11 @@ const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 export interface QueuedSubmission {
   id: string;
-  type: 'checklist' | 'logsheet' | 'tabular_logsheet';
+  type: 'checklist' | 'logsheet' | 'tabular_logsheet' | 'work_order_status';
+  /** Dedup key — same key means "same template/record". The newest entry wins. */
+  dedupKey: string;
   endpoint: string;
+  method: 'POST' | 'PUT';
   payload: Record<string, unknown>;
   templateName: string;
   queuedAt: number;
@@ -57,12 +62,26 @@ export async function getOfflineQueue(): Promise<QueuedSubmission[]> {
   }
 }
 
+/**
+ * Add or replace a queued submission.
+ * If an existing entry with the same `dedupKey` exists, it is replaced by the
+ * new one — ensuring only the latest unsync'd submission per template is kept.
+ */
 export async function addToOfflineQueue(
   sub: Omit<QueuedSubmission, 'id' | 'queuedAt'>
 ): Promise<string> {
   const queue = await getOfflineQueue();
   const id = `q_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  queue.push({ ...sub, id, queuedAt: Date.now() });
+  const newEntry: QueuedSubmission = { ...sub, id, queuedAt: Date.now() };
+
+  // Replace any existing entry with the same dedupKey (keep latest only)
+  const existing = queue.findIndex((q) => q.dedupKey === sub.dedupKey);
+  if (existing !== -1) {
+    queue[existing] = newEntry;
+  } else {
+    queue.push(newEntry);
+  }
+
   await AsyncStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
   return id;
 }
@@ -74,3 +93,4 @@ export async function removeFromOfflineQueue(id: string): Promise<void> {
     JSON.stringify(queue.filter((q) => q.id !== id))
   );
 }
+

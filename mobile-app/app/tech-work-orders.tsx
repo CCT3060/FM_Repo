@@ -13,7 +13,8 @@ import {
     View,
 } from 'react-native';
 import Animated, { FadeInUp, Layout } from 'react-native-reanimated';
-import { getWorkOrders, getStoredUser } from '../utils/api';
+import { getWorkOrders, getStoredUser, prefetchWorkOrderDetails } from '../utils/api';
+import { useResponsiveMetrics } from '../utils/responsive';
 import { TechBottomNav } from './tech-dashboard';
 
 // Status helpers
@@ -35,6 +36,7 @@ const PRIORITY_CONFIG: Record<string, { label: string; color: string }> = {
 const FILTER_TABS = ['All', 'Open', 'In Progress', 'Completed'];
 
 export default function TechWorkOrdersScreen() {
+    const metrics = useResponsiveMetrics();
     const [workOrders, setWorkOrders] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
@@ -46,6 +48,7 @@ export default function TechWorkOrdersScreen() {
             setError(null);
             const data = await getWorkOrders(50, true);
             setWorkOrders(data);
+            prefetchWorkOrderDetails(data).catch(() => {});
         } catch (err: any) {
             setError(err.message || 'Failed to load work orders');
         } finally {
@@ -83,17 +86,17 @@ export default function TechWorkOrdersScreen() {
     return (
         <SafeAreaView style={styles.container}>
             {/* Header */}
-            <View style={styles.header}>
+            <View style={[styles.header, { paddingHorizontal: metrics.horizontalPadding, paddingTop: Platform.OS === 'android' ? (metrics.isTablet ? 40 : 48) : 20 }]}>
                 <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
                     <MaterialCommunityIcons name="arrow-left" size={24} color="#1E293B" />
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>Work Orders</Text>
+                <Text style={[styles.headerTitle, { fontSize: metrics.fluid(17, 18, 21) }]}>Work Orders</Text>
                 <View style={{ width: 32 }} />
             </View>
 
             {/* Filter tabs */}
-            <View style={styles.filterRow}>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterContent}>
+            <View style={[styles.filterRow, { paddingHorizontal: metrics.horizontalPadding }]}>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={[styles.filterContent, { maxWidth: metrics.contentMaxWidth }]}>
                     {FILTER_TABS.map(tab => (
                         <TouchableOpacity
                             key={tab}
@@ -111,8 +114,9 @@ export default function TechWorkOrdersScreen() {
             <ScrollView
                 showsVerticalScrollIndicator={false}
                 refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#2563EB']} />}
-                contentContainerStyle={styles.scroll}
+                contentContainerStyle={[styles.scroll, { paddingHorizontal: metrics.horizontalPadding }]}
             >
+                <View style={[styles.maxWidthWrap, { maxWidth: metrics.contentMaxWidth }]}> 
                 {isLoading ? (
                     <View style={styles.centeredMsg}>
                         <ActivityIndicator size="large" color="#2563EB" />
@@ -215,6 +219,7 @@ export default function TechWorkOrdersScreen() {
                         })}
                     </View>
                 )}
+                </View>
                 <View style={{ height: 24 }} />
             </ScrollView>
 
@@ -241,7 +246,7 @@ const styles = StyleSheet.create({
         backgroundColor: '#FAF9F6',
         paddingVertical: 12,
     },
-    filterContent: { flexDirection: 'row', gap: 8, paddingHorizontal: 20 },
+    filterContent: { flexDirection: 'row', gap: 8 },
     filterChip: {
         paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20,
         backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#E2E8F0',
@@ -250,7 +255,8 @@ const styles = StyleSheet.create({
     filterChipText: { fontSize: 13, fontWeight: '600', color: '#64748B' },
     filterChipTextActive: { color: '#FFFFFF' },
 
-    scroll: { padding: 16 },
+    scroll: { paddingVertical: 16 },
+    maxWidthWrap: { width: '100%', alignSelf: 'center' },
     listContainer: { gap: 14 },
     countText: { fontSize: 12, color: '#94A3B8', fontWeight: '700', marginBottom: 6, letterSpacing: 0.5, textTransform: 'uppercase' },
 
@@ -275,16 +281,16 @@ const styles = StyleSheet.create({
 
     woCard: {
         backgroundColor: '#FFFFFF',
-        borderRadius: 16,
+        borderRadius: 18,
         flexDirection: 'row',
         overflow: 'hidden',
         borderWidth: 1,
-        borderColor: '#F1F5F9',
+        borderColor: '#E7EDF5',
         shadowColor: '#64748B',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.04,
-        shadowRadius: 8,
-        elevation: 2,
+        shadowRadius: 12,
+        elevation: 4,
     },
     statusStripe: { width: 4 },
     woContent: { flex: 1, padding: 16 },

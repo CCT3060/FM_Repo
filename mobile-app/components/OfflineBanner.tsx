@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Animated, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { getIsOnline, subscribeNetworkStatus } from '../utils/networkStatus';
 import { getOfflineQueue } from '../utils/offlineStorage';
 import { syncOfflineSubmissions } from '../utils/api';
+import { useResponsiveMetrics } from '../utils/responsive';
 
 /**
  * Persistent banner that floats at the top of the screen when:
@@ -12,6 +13,7 @@ import { syncOfflineSubmissions } from '../utils/api';
  * Disappears when online with an empty queue.
  */
 export default function OfflineBanner() {
+  const metrics = useResponsiveMetrics();
   const [isOnline, setIsOnline] = useState(getIsOnline());
   const [queueCount, setQueueCount] = useState(0);
   const [syncing, setSyncing] = useState(false);
@@ -62,10 +64,11 @@ export default function OfflineBanner() {
   if (!visible && !syncDone) return null;
 
   return (
-    <View style={[styles.banner, isOnline ? styles.syncBg : styles.offlineBg]}>
+    <View style={styles.shell}>
+    <View style={[styles.banner, { maxWidth: metrics.contentMaxWidth, top: PlatformOffset(metrics.isTablet) }, isOnline ? styles.syncBg : styles.offlineBg]}>
       <MaterialCommunityIcons
         name={isOnline ? 'cloud-sync-outline' : 'wifi-off'}
-        size={15}
+        size={16}
         color="#fff"
       />
       <Text style={styles.text} numberOfLines={1}>
@@ -85,21 +88,37 @@ export default function OfflineBanner() {
         </TouchableOpacity>
       )}
     </View>
+    </View>
   );
 }
 
+function PlatformOffset(isTablet: boolean) {
+  return isTablet ? 28 : 44;
+}
+
 const styles = StyleSheet.create({
+  shell: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    alignItems: 'center',
+    zIndex: 9999,
+  },
   banner: {
     position: 'absolute',
-    top: 44,
     left: 0,
     right: 0,
-    zIndex: 9999,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingVertical: 8,
+    borderRadius: 16,
+    paddingVertical: 10,
     paddingHorizontal: 16,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.14,
+    shadowRadius: 16,
+    elevation: 10,
   },
   offlineBg: { backgroundColor: '#dc2626' },
   syncBg: { backgroundColor: '#d97706' },
