@@ -25,7 +25,7 @@ const ClientManagement = ({ clients, onAddClient, onEditClient, onDeleteClient }
   }, [clients]);
 
   const getDisplayName = (client) => {
-    const name = client?.company?.trim() || client?.clientName?.trim();
+    const name = client?.clientName?.trim();
     return name || "Unnamed Client";
   };
 
@@ -36,8 +36,7 @@ const ClientManagement = ({ clients, onAddClient, onEditClient, onDeleteClient }
       const label = getDisplayName(c).toLowerCase();
       return (
         label.includes(term) ||
-        c.email?.toLowerCase().includes(term) ||
-        c.company?.toLowerCase().includes(term)
+        c.email?.toLowerCase().includes(term)
       );
     });
   }, [clients, search]);

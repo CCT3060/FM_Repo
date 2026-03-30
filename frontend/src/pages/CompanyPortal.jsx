@@ -748,6 +748,8 @@ const CompanyPortal = () => {
   const [logForm, setLogForm] = useState({ assetId: "", note: "" });
   const [logError, setLogError] = useState(null);
   const [portalUsers, setPortalUsers] = useState([]);
+  const [portalRole, setPortalRole] = useState(() => localStorage.getItem("client_portal_role") || "client_admin");
+  const isClientAdmin = portalRole === "client_admin";
 
   // Company table UI state
   const [tableSearch, setTableSearch] = useState("");
@@ -839,6 +841,10 @@ const CompanyPortal = () => {
   }, []);
 
   // Persist active tab so page refresh returns to the same section
+  useEffect(() => {
+    if (nav === "warnings") setNav("reports");
+  }, [nav]);
+
   useEffect(() => { localStorage.setItem("portal_nav", nav); }, [nav]);
 
   const [companyUsers, setCompanyUsers] = useState([]);
@@ -1183,6 +1189,8 @@ const CompanyPortal = () => {
     try {
       const res = await login(loginForm);
       localStorage.setItem(TOKEN_KEY, res.token);
+      localStorage.setItem("client_portal_role", "client_admin");
+      setPortalRole("client_admin");
       setToken(res.token);
     } catch (err) {
       setAuthError(err.message || "Login failed");
@@ -1202,6 +1210,7 @@ const CompanyPortal = () => {
 
   const handleLogout = () => {
     localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem("client_portal_role");
     setToken("");
     setCompanies([]);
     setSelectedCompanyId(null);
@@ -2044,7 +2053,7 @@ const CompanyPortal = () => {
           <button className={nav === "logsheets" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("logsheets"); setShowAddForm(false); }}>Logsheets</button>
           <button className={nav === "employees" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("employees"); setShowAddForm(false); }}>Employees</button>
           <button className={nav === "workorders" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("workorders"); setShowAddForm(false); }}>Work Orders</button>
-          <button className={nav === "warnings" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("warnings"); setShowAddForm(false); }}>Warnings</button>
+          <button className={nav === "reports" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("reports"); setShowAddForm(false); }}>Reports</button>
           <button className={nav === "shifts" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("shifts"); setShowAddForm(false); }}>Shifts</button>
           <button className={nav === "ojt" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("ojt"); setShowAddForm(false); }}>OJT Training</button>
         </nav>
@@ -3295,7 +3304,7 @@ const CompanyPortal = () => {
                 fetchTemplate={getChecklistTemplate}
                 updateTemplate={updateChecklistTemplate}
                 deleteTemplate={deleteChecklistTemplate}
-                canBuild={true}
+                canBuild={!isClientAdmin}
               />
             )}
 
@@ -3355,7 +3364,7 @@ const CompanyPortal = () => {
                 assignTemplate={(tok, templateId, assetId) => assignLogsheetTemplate(tok, templateId, assetId)}
                 fetchEntries={(tok, templateId, params) => getLogsheetEntriesByTemplate(tok, templateId, params)}
                 submitEntry={(tok, templateId, data) => submitLogsheetEntry(tok, templateId, data)}
-                canBuild={true}
+                canBuild={!isClientAdmin}
               />
             )}
 
@@ -3370,12 +3379,15 @@ const CompanyPortal = () => {
           return <AdminOjtSection token={token} companies={companies} />;
         })()}
 
-        {nav === "warnings" && (
-          <WarningsPanel
-            token={token}
-            companyId={selectedCompanyId || companies[0]?.id || null}
-            companies={companies.map((c) => ({ id: c.id, companyName: c.companyName || c.company || "(unnamed)" }))}
-          />
+        {nav === "reports" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+            <WarningsPanel
+              token={token}
+              companyId={selectedCompanyId || companies[0]?.id || null}
+              companies={companies.map((c) => ({ id: c.id, companyName: c.companyName || c.company || "(unnamed)" }))}
+            />
+            <AdminWorkOrdersSection token={token} companies={companies} />
+          </div>
         )}
 
         {nav === "workorders" && (
@@ -3404,8 +3416,8 @@ const CompanyPortal = () => {
                 <div>
                   <div style={{ fontWeight: 800, marginBottom: "2px", fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</div>
                   <div>{t.text}</div>
-                  <button onClick={() => { setNav("warnings"); setShowAddForm(false); setToasts((ts) => ts.filter((x) => x.id !== t.id)); }}
-                    style={{ marginTop: "6px", background: "none", border: "none", color: col, fontWeight: 700, fontSize: "11px", cursor: "pointer", padding: 0, textDecoration: "underline" }}>View warnings →</button>
+                  <button onClick={() => { setNav("reports"); setShowAddForm(false); setToasts((ts) => ts.filter((x) => x.id !== t.id)); }}
+                    style={{ marginTop: "6px", background: "none", border: "none", color: col, fontWeight: 700, fontSize: "11px", cursor: "pointer", padding: 0, textDecoration: "underline" }}>View warnings -&gt;</button>
                 </div>
               </div>
             );

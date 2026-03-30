@@ -174,8 +174,12 @@ function QuestionRow({ q, idx, onChange, onRemove }) {
   const rule = q.rule || {};
   const hasRule = ["yes_no", "ok_not_ok", "number", "dropdown"].includes(q.inputType);
 
-  // Auto-set flagOn for binary types
-  const flagOnLabel = q.inputType === "yes_no" ? "No" : q.inputType === "ok_not_ok" ? "Not OK" : null;
+  const isBinaryType = q.inputType === "yes_no" || q.inputType === "ok_not_ok";
+  const binaryOptions = q.inputType === "yes_no"
+    ? ["Yes", "No"]
+    : q.inputType === "ok_not_ok"
+      ? ["OK", "Not OK"]
+      : [];
 
   return (
     <div style={{ background: "#f8fafc", borderRadius: "8px", padding: "12px 14px", border: "1px solid #e2e8f0", marginBottom: "8px" }}>
@@ -243,10 +247,19 @@ function QuestionRow({ q, idx, onChange, onRemove }) {
 
           {rule._showRule && (
             <div style={{ background: "#fffbeb", border: "1px solid #fcd34d", borderRadius: "8px", padding: "12px 14px", display: "flex", flexDirection: "column", gap: "10px" }}>
-              {/* Condition description for binary types */}
-              {flagOnLabel && (
-                <div style={{ fontSize: "12.5px", color: "#92400e", background: "#fef3c7", padding: "7px 12px", borderRadius: "6px", fontWeight: 500 }}>
-                  ⚠ This question will be <strong>flagged</strong> automatically when the answer is <strong>"{flagOnLabel}"</strong>.
+              {/* Condition description / control for binary types */}
+              {isBinaryType && (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: "6px" }}>
+                  <Label>Raise warning when answer is</Label>
+                  <Sel
+                    value={q.rule?.flagOn || (q.inputType === "yes_no" ? "No" : "Not OK")}
+                    onChange={(e) => updateRule("flagOn", e.target.value)}
+                  >
+                    {binaryOptions.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+                  </Sel>
+                  <div style={{ fontSize: "12px", color: "#92400e", background: "#fef3c7", padding: "7px 12px", borderRadius: "6px", fontWeight: 500 }}>
+                    ⚠ A warning will be created when this answer equals <strong>"{q.rule?.flagOn || (q.inputType === "yes_no" ? "No" : "Not OK")}"</strong>.
+                  </div>
                 </div>
               )}
 
@@ -446,9 +459,10 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
         customLabel: q.inputType === "custom_options" ? (q._customLabel || "").trim() || undefined : undefined,
         rule: q.rule?._showRule
           ? {
-              flagOn: q.inputType === "yes_no" ? "No"
-                : q.inputType === "ok_not_ok" ? "Not OK"
-                : (q.rule.flagOn?.trim() || undefined),
+              flagOn: q.rule.flagOn?.trim()
+                || (q.inputType === "yes_no" ? "No"
+                  : q.inputType === "ok_not_ok" ? "Not OK"
+                  : undefined),
               minValue: q.inputType === "number" && q.rule.minValue !== "" ? Number(q.rule.minValue) : undefined,
               maxValue: q.inputType === "number" && q.rule.maxValue !== "" ? Number(q.rule.maxValue) : undefined,
               severity: q.rule.severity || "warning",

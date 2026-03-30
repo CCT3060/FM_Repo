@@ -15,7 +15,62 @@ import {
   getUsers, createUser, updateUser, deleteUser,
 } from "./api";
 
-const AdminShell = () => {
+const ROOT_AUTH_KEY = "root_portal_auth";
+const ROOT_CREDENTIALS = {
+  username: "rootadmin",
+  password: "Root@12345",
+};
+
+const RootLogin = ({ onLogin }) => {
+  const [form, setForm] = useState({ username: "", password: "" });
+  const [error, setError] = useState("");
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (
+      form.username.trim() === ROOT_CREDENTIALS.username &&
+      form.password === ROOT_CREDENTIALS.password
+    ) {
+      onLogin();
+      return;
+    }
+    setError("Invalid username or password");
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#f8fafc", padding: "20px" }}>
+      <form onSubmit={handleSubmit} style={{ width: "100%", maxWidth: "420px", background: "#fff", border: "1px solid #e2e8f0", borderRadius: "14px", padding: "28px" }}>
+        <div style={{ textAlign: "center", marginBottom: "18px" }}>
+          <img src={logo} alt="Catalyst" style={{ height: "44px", objectFit: "contain", marginBottom: "10px" }} />
+          <h2 style={{ margin: 0, fontSize: "22px", color: "#0f172a" }}>Root Portal Login</h2>
+        </div>
+        {error && <div style={{ background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca", borderRadius: "8px", padding: "10px 12px", marginBottom: "12px", fontSize: "13px" }}>{error}</div>}
+        <div style={{ marginBottom: "12px" }}>
+          <label style={{ display: "block", marginBottom: "6px", fontSize: "13px", color: "#475569", fontWeight: 600 }}>Username</label>
+          <input
+            value={form.username}
+            onChange={(e) => setForm((p) => ({ ...p, username: e.target.value }))}
+            className="form-input"
+            placeholder="Enter username"
+          />
+        </div>
+        <div style={{ marginBottom: "16px" }}>
+          <label style={{ display: "block", marginBottom: "6px", fontSize: "13px", color: "#475569", fontWeight: 600 }}>Password</label>
+          <input
+            type="password"
+            value={form.password}
+            onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))}
+            className="form-input"
+            placeholder="Enter password"
+          />
+        </div>
+        <button type="submit" className="btn-submit" style={{ width: "100%" }}>Login</button>
+      </form>
+    </div>
+  );
+};
+
+const AdminShell = ({ onSignOut }) => {
   const [activeTab, setActiveTab] = useState("clients");
   const [clients, setClients] = useState([]);
   const [users, setUsers] = useState([]);
@@ -37,7 +92,7 @@ const AdminShell = () => {
     () =>
       clients.map((c) => ({
         value: c.id,
-        label: c.company?.trim() || c.clientName || "Unnamed Client",
+        label: c.clientName?.trim() || "Unnamed Client",
       })),
     [clients]
   );
@@ -106,7 +161,12 @@ const AdminShell = () => {
             <p className="user-name">Root Admin</p>
             <p className="user-email">admin@root.com</p>
           </div>
-          <button className="logout-btn" onClick={() => navigate("/client")}>Client Portal</button>
+          <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginLeft: "auto" }}>
+            <button className="logout-btn" onClick={() => navigate("/client")}>Client Portal</button>
+            <button className="logout-btn" onClick={onSignOut} style={{ background: "#fee2e2", color: "#b91c1c" }}>
+              <LogOut size={14} /> Sign Out
+            </button>
+          </div>
         </div>
       </aside>
 
@@ -142,14 +202,27 @@ const AdminShell = () => {
 };
 
 function App() {
+  const [isRootAuthed, setIsRootAuthed] = useState(() => localStorage.getItem(ROOT_AUTH_KEY) === "1");
+
+  const handleRootLogin = () => {
+    localStorage.setItem(ROOT_AUTH_KEY, "1");
+    setIsRootAuthed(true);
+  };
+
+  const handleRootSignOut = () => {
+    localStorage.removeItem(ROOT_AUTH_KEY);
+    setIsRootAuthed(false);
+  };
+
   return (
     <Routes>
+      <Route path="/root-login" element={isRootAuthed ? <Navigate to="/" replace /> : <RootLogin onLogin={handleRootLogin} />} />
       <Route path="/client" element={<CompanyPortal />} />
       <Route path="/company" element={<CompanyLogin />} />
       <Route path="/company/portal/*" element={<CompanyEmployeePortal />} />
       <Route path="/company/submissions" element={<SubmissionsPage />} />
       <Route path="/asset-scan/:assetId" element={<AssetScanPage />} />
-      <Route path="*" element={<AdminShell />} />
+      <Route path="*" element={isRootAuthed ? <AdminShell onSignOut={handleRootSignOut} /> : <Navigate to="/root-login" replace />} />
     </Routes>
   );
 }
