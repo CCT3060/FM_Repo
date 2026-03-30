@@ -70,13 +70,17 @@ jobs:
             backend/ \
             ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/var/www/fmapp/backend/
 
-      # ── 7. Deploy updated Nginx config ──────────────────────────────────────────
-      - name: Deploy Nginx config
+      # ── 7. Deploy Nginx configs (full HTTPS + HTTP-only fallback) ───────────────
+      - name: Deploy Nginx configs
         run: |
           rsync -az \
             -e "ssh -i ~/.ssh/fm_ec2.pem -o StrictHostKeyChecking=no" \
             ec2/nginx.conf \
             ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/tmp/fmapp-nginx.conf
+          rsync -az \
+            -e "ssh -i ~/.ssh/fm_ec2.pem -o StrictHostKeyChecking=no" \
+            ec2/nginx-http.conf \
+            ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/tmp/fmapp-nginx-http.conf
 
       # ── 8. Remote: apply nginx config, provision SSL, install deps, restart PM2 ──
       - name: Install backend deps & restart PM2
@@ -85,32 +89,38 @@ jobs:
             ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'ENDSSH'
             set -e
 
-            # ── Apply updated Nginx config ────────────────────────────────────
-            sudo cp /tmp/fmapp-nginx.conf /etc/nginx/conf.d/fmapp.conf
             sudo mkdir -p /var/www/certbot
 
-            # ── Provision SSL certificate (skips gracefully if already valid) ──
-            if ! sudo test -f /etc/letsencrypt/live/fm.catalystsolutions.eco/fullchain.pem; then
-              echo "Certbot not found — installing and requesting certificate..."
-              sudo dnf install -y python3-certbot-nginx || sudo snap install certbot --classic
-              # Temporarily allow HTTP so ACME challenge can complete
-              sudo sed -i 's/listen 443 ssl/listen 80/' /etc/nginx/conf.d/fmapp.conf
-              sudo sed -i '/ssl_certificate/d' /etc/nginx/conf.d/fmapp.conf
-              sudo sed -i '/include.*options-ssl/d' /etc/nginx/conf.d/fmapp.conf
-              sudo sed -i '/ssl_dhparam/d' /etc/nginx/conf.d/fmapp.conf
-              sudo nginx -t && sudo systemctl reload nginx
-              sudo certbot --nginx \
-                -d fm.catalystsolutions.eco \
-                --non-interactive --agree-tos \
-                -m admin@catalystsolutions.eco
-              # Restore the full config (certbot rewrites for SSL)
+            # ── SSL certificate: configure nginx and optionally provision cert ──
+            if sudo test -f /etc/letsencrypt/live/fm.catalystsolutions.eco/fullchain.pem; then
+              # Certs exist — apply the full HTTPS config
+              echo "SSL certs found — applying HTTPS nginx config."
               sudo cp /tmp/fmapp-nginx.conf /etc/nginx/conf.d/fmapp.conf
             else
-              echo "SSL certificate already exists — skipping certbot."
+              # No certs yet — apply the HTTP-only config so nginx starts cleanly
+              echo "No SSL certs — applying HTTP-only nginx config."
+              sudo cp /tmp/fmapp-nginx-http.conf /etc/nginx/conf.d/fmapp.conf
             fi
 
-            # ── Test and reload Nginx ─────────────────────────────────────────
+            # Test and reload nginx (must succeed regardless of cert state)
             sudo nginx -t && sudo systemctl reload nginx
+
+            # ── Try to obtain SSL cert (non-fatal: DNS may not be set yet) ──────
+            if ! sudo test -f /etc/letsencrypt/live/fm.catalystsolutions.eco/fullchain.pem; then
+              echo "Attempting certbot (requires DNS A record fm → 13.203.194.93)..."
+              sudo dnf install -y python3-certbot-nginx 2>/dev/null || true
+              if sudo certbot certonly --webroot \
+                   -w /var/www/certbot \
+                   -d fm.catalystsolutions.eco \
+                   --non-interactive --agree-tos \
+                   -m admin@catalystsolutions.eco; then
+                echo "Certbot succeeded — switching to full HTTPS config."
+                sudo cp /tmp/fmapp-nginx.conf /etc/nginx/conf.d/fmapp.conf
+                sudo nginx -t && sudo systemctl reload nginx
+              else
+                echo "Certbot failed (DNS not ready?) — site stays on HTTP for now."
+              fi
+            fi
 
             # ── Install backend deps and restart PM2 ──────────────────────────
             cd /var/www/fmapp/backend
