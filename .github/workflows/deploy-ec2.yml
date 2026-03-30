@@ -39,7 +39,7 @@ jobs:
         working-directory: frontend
         run: npm run build
         env:
-          VITE_API_URL: ""
+          VITE_API_URL: "http://13.203.194.93"
 
       # ── 4. Write SSH private key ──────────────────────────────────────────────
       - name: Write SSH key
