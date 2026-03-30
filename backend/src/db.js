@@ -1,5 +1,10 @@
 import "dotenv/config";
+import dns from "dns";
 import { Pool } from "pg";
+
+// Force IPv4 DNS resolution — EC2 VPC subnets lack IPv6 routing,
+// but Supabase hostnames return IPv6 addresses (AAAA records) first.
+dns.setDefaultResultOrder("ipv4first");
 
 const connectionString = process.env.SUPABASE_DB_URL || process.env.DATABASE_URL;
 
@@ -15,6 +20,9 @@ const poolInstance = new Pool({
   ssl: sslConfig,
   max: Number(process.env.DB_POOL_SIZE || 10),
   idleTimeoutMillis: 30000,
+  // Force IPv4 — EC2 VPC subnets typically lack IPv6 routing,
+  // and Supabase DNS returns an IPv6 address that would cause ENETUNREACH.
+  family: 4,
 });
 
 const RETRY_ATTEMPTS = Number(process.env.DB_RETRY_ATTEMPTS || 3);
