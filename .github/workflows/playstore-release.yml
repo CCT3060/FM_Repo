@@ -1,12 +1,13 @@
 name: Android Play Store Release
 
 on:
-  push:
-    branches: [develop, main]
-    paths:
-      - 'mobile-app/**'
-      - '.github/workflows/playstore-release.yml'
-  workflow_dispatch:
+  workflow_dispatch:   # Manual trigger only — run from GitHub Actions UI
+  # Uncomment the block below once EXPO_TOKEN, WIF_PROVIDER, WIF_SERVICE_ACCOUNT
+  # secrets are configured, to enable automatic releases on mobile-app changes:
+  # push:
+  #   branches: [main]
+  #   paths:
+  #     - 'mobile-app/**'
 
 # Required for Workload Identity Federation OIDC token exchange (keyless)
 permissions:
@@ -27,6 +28,28 @@ jobs:
       # ── 1. Checkout ─────────────────────────────────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      # ── 1b. Guard: validate required secrets are configured ─────────────────
+      - name: Validate required secrets
+        run: |
+          missing=""
+          [ -z "$EXPO_TOKEN" ]            && missing="$missing EXPO_TOKEN"
+          [ -z "$WIF_PROVIDER" ]          && missing="$missing WIF_PROVIDER"
+          [ -z "$WIF_SERVICE_ACCOUNT" ]   && missing="$missing WIF_SERVICE_ACCOUNT"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing required GitHub Secrets:$missing"
+            echo ""
+            echo "  EXPO_TOKEN          → https://expo.dev/settings/access-tokens"
+            echo "  WIF_PROVIDER        → GCP Workload Identity pool provider resource name"
+            echo "  WIF_SERVICE_ACCOUNT → GCP service account email for Play uploads"
+            echo ""
+            echo "See PLAYSTORE_DEPLOYMENT_GUIDE.md for full setup instructions."
+            exit 1
+          fi
+        env:
+          EXPO_TOKEN:          ${{ secrets.EXPO_TOKEN }}
+          WIF_PROVIDER:        ${{ secrets.WIF_PROVIDER }}
+          WIF_SERVICE_ACCOUNT: ${{ secrets.WIF_SERVICE_ACCOUNT }}
 
       # ── 2. Node ─────────────────────────────────────────────────────────────
       - name: Set up Node.js
