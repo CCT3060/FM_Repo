@@ -40,7 +40,7 @@ jobs:
         working-directory: frontend
         run: npm run build
         env:
-          VITE_API_URL: "https://fm.catalystsolutions.eco"
+          VITE_API_URL: ""  # empty = relative URLs (/api/*) — works on HTTP and HTTPS
 
       # ── 4. Write SSH private key ──────────────────────────────────────────────
       - name: Write SSH key

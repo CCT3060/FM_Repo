@@ -1,17 +1,9 @@
 name: Android Play Store Release
 
 on:
-  workflow_dispatch:   # Manual trigger only — run from GitHub Actions UI
-  # Uncomment the block below once EXPO_TOKEN, WIF_PROVIDER, WIF_SERVICE_ACCOUNT
-  # secrets are configured, to enable automatic releases on mobile-app changes:
-  # push:
-  #   branches: [main]
-  #   paths:
-  #     - 'mobile-app/**'
+  workflow_dispatch:   # Manual trigger — run from GitHub Actions UI
 
-# Required for Workload Identity Federation OIDC token exchange (keyless)
 permissions:
-  id-token: write
   contents: read
 
 concurrency:
@@ -20,7 +12,7 @@ concurrency:
 
 jobs:
   release:
-    name: Build AAB & Upload to Play Store (Keyless WIF)
+    name: Build AAB & Submit to Play Store
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
@@ -29,29 +21,25 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── 1b. Guard: validate required secrets are configured ─────────────────
+      # ── 1b. Guard: validate required secrets ─────────────────────────────────
       - name: Validate required secrets
         run: |
           missing=""
-          [ -z "$EXPO_TOKEN" ]            && missing="$missing EXPO_TOKEN"
-          [ -z "$WIF_PROVIDER" ]          && missing="$missing WIF_PROVIDER"
-          [ -z "$WIF_SERVICE_ACCOUNT" ]   && missing="$missing WIF_SERVICE_ACCOUNT"
+          [ -z "$EXPO_TOKEN" ]                  && missing="$missing EXPO_TOKEN"
+          [ -z "$GOOGLE_SERVICE_ACCOUNT_KEY" ]  && missing="$missing GOOGLE_SERVICE_ACCOUNT_KEY"
           if [ -n "$missing" ]; then
             echo "::error::Missing required GitHub Secrets:$missing"
             echo ""
-            echo "  EXPO_TOKEN          → https://expo.dev/settings/access-tokens"
-            echo "  WIF_PROVIDER        → GCP Workload Identity pool provider resource name"
-            echo "  WIF_SERVICE_ACCOUNT → GCP service account email for Play uploads"
-            echo ""
-            echo "See PLAYSTORE_DEPLOYMENT_GUIDE.md for full setup instructions."
+            echo "  EXPO_TOKEN               → https://expo.dev/settings/access-tokens"
+            echo "  GOOGLE_SERVICE_ACCOUNT_KEY → base64-encoded Google Play service account JSON"
+            echo "    How to encode: base64 -w 0 service-account.json"
             exit 1
           fi
         env:
-          EXPO_TOKEN:          ${{ secrets.EXPO_TOKEN }}
-          WIF_PROVIDER:        ${{ secrets.WIF_PROVIDER }}
-          WIF_SERVICE_ACCOUNT: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+          EXPO_TOKEN:                ${{ secrets.EXPO_TOKEN }}
+          GOOGLE_SERVICE_ACCOUNT_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_KEY }}
 
-      # ── 2. Node ─────────────────────────────────────────────────────────────
+      # ── 2. Node ──────────────────────────────────────────────────────────────
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -63,66 +51,26 @@ jobs:
         working-directory: mobile-app
         run: npm ci
 
-      # ── 3. EAS Cloud Build → get AAB artifact URL ───────────────────────────
-      - name: Build production AAB via EAS Cloud
-        id: build
+      # ── 3. Write Google service account key ──────────────────────────────────
+      - name: Write Google service account key
+        run: |
+          echo "${{ secrets.GOOGLE_SERVICE_ACCOUNT_KEY }}" | base64 -d > /tmp/google-service-account.json
+
+      # ── 4. Build & submit via EAS ─────────────────────────────────────────────
+      #   EAS builds the AAB in the cloud, then submits it to Play Store directly.
+      #   Required secrets:
+      #     EXPO_TOKEN               → Expo access token
+      #     GOOGLE_SERVICE_ACCOUNT_KEY → base64(service-account.json) from Play Console
+      - name: Build and submit to Play Store via EAS
         working-directory: mobile-app
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
-          echo "Starting EAS production build..."
-          BUILD_OUTPUT=$(npx eas build \
-            --platform android \
-            --profile production \
-            --non-interactive 2>&1)
-          echo "$BUILD_OUTPUT"
+          npx eas build --platform android --profile production --non-interactive
+          npx eas submit --platform android --latest --non-interactive \
+            --path /tmp/google-service-account.json
 
-          AAB_URL=$(echo "$BUILD_OUTPUT" | grep -oP 'https://expo\.dev/artifacts/eas/\S+\.aab' | tail -1)
-          if [ -z "$AAB_URL" ]; then
-            echo "::error::Could not extract AAB URL from EAS output. Build may have failed."
-            exit 1
-          fi
-          echo "Extracted AAB URL: $AAB_URL"
-          echo "AAB_URL=$AAB_URL" >> "$GITHUB_ENV"
-          echo "aab_url=$AAB_URL"  >> "$GITHUB_OUTPUT"
-
-      # ── 4. Download the AAB ──────────────────────────────────────────────────
-      - name: Download AAB artifact
-        run: |
-          echo "Downloading from: $AAB_URL"
-          curl -L --fail --retry 3 "$AAB_URL" -o app-release.aab
-          ls -lh app-release.aab
-
-      # ── 5. Keyless Google auth via Workload Identity Federation ──────────────
-      #   No JSON key file is downloaded or stored.
-      #   GitHub provides a short-lived OIDC token; Google exchanges it for a
-      #   short-lived access token scoped only to this run.
-      #
-      #   Required secrets:
-      #     WIF_PROVIDER  → projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL/providers/PROVIDER
-      #     WIF_SERVICE_ACCOUNT → play-uploader@PROJECT_ID.iam.gserviceaccount.com
-      - name: Authenticate to Google Cloud (Workload Identity Federation)
-        id: auth
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
-          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
-
-      # ── 6. Python + Google Play API upload ──────────────────────────────────
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install Google Play API client
-        run: pip install google-api-python-client google-auth
-
-      - name: Upload AAB to Google Play (internal track, draft)
-        run: python3 .github/scripts/upload_play.py
-        env:
-          # ADC automatically picks up the short-lived credential file from WIF
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
-          AAB_PATH: app-release.aab
-          PACKAGE_NAME: com.cct123.mobileapp
-          PLAY_TRACK: internal
-          RELEASE_STATUS: draft
+      # ── 5. Clean up key file ──────────────────────────────────────────────────
+      - name: Clean up service account key
+        if: always()
+        run: rm -f /tmp/google-service-account.json
