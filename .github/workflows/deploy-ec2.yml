@@ -40,7 +40,7 @@ jobs:
         working-directory: frontend
         run: npm run build
         env:
-          VITE_API_URL: "https://fm.catalystsolutions.eco"
+          VITE_API_URL: "http://13.203.194.93"
 
       # ── 4. Write SSH private key ──────────────────────────────────────────────
       - name: Write SSH key
@@ -70,57 +70,24 @@ jobs:
             backend/ \
             ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/var/www/fmapp/backend/
 
-      # ── 7. Deploy Nginx configs (full HTTPS + HTTP-only fallback) ───────────────
-      - name: Deploy Nginx configs
+      # ── 7. Deploy Nginx config ─────────────────────────────────────────────────
+      - name: Deploy Nginx config
         run: |
           rsync -az \
             -e "ssh -i ~/.ssh/fm_ec2.pem -o StrictHostKeyChecking=no" \
             ec2/nginx.conf \
             ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/tmp/fmapp-nginx.conf
-          rsync -az \
-            -e "ssh -i ~/.ssh/fm_ec2.pem -o StrictHostKeyChecking=no" \
-            ec2/nginx-http.conf \
-            ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/tmp/fmapp-nginx-http.conf
 
-      # ── 8. Remote: apply nginx config, provision SSL, install deps, restart PM2 ──
+      # ── 8. Remote: apply nginx config, install deps, restart PM2 ─────────────
       - name: Install backend deps & restart PM2
         run: |
           ssh -i ~/.ssh/fm_ec2.pem -o StrictHostKeyChecking=no \
             ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'ENDSSH'
             set -e
 
-            sudo mkdir -p /var/www/certbot
-
-            # ── SSL certificate: configure nginx and optionally provision cert ──
-            if sudo test -f /etc/letsencrypt/live/fm.catalystsolutions.eco/fullchain.pem; then
-              # Certs exist — apply the full HTTPS config
-              echo "SSL certs found — applying HTTPS nginx config."
-              sudo cp /tmp/fmapp-nginx.conf /etc/nginx/conf.d/fmapp.conf
-            else
-              # No certs yet — apply the HTTP-only config so nginx starts cleanly
-              echo "No SSL certs — applying HTTP-only nginx config."
-              sudo cp /tmp/fmapp-nginx-http.conf /etc/nginx/conf.d/fmapp.conf
-            fi
-
-            # Test and reload nginx (must succeed regardless of cert state)
+            # ── Apply Nginx config and reload ─────────────────────────────────
+            sudo cp /tmp/fmapp-nginx.conf /etc/nginx/conf.d/fmapp.conf
             sudo nginx -t && sudo systemctl reload nginx
-
-            # ── Try to obtain SSL cert (non-fatal: DNS may not be set yet) ──────
-            if ! sudo test -f /etc/letsencrypt/live/fm.catalystsolutions.eco/fullchain.pem; then
-              echo "Attempting certbot (requires DNS A record fm → 13.203.194.93)..."
-              sudo dnf install -y python3-certbot-nginx 2>/dev/null || true
-              if sudo certbot certonly --webroot \
-                   -w /var/www/certbot \
-                   -d fm.catalystsolutions.eco \
-                   --non-interactive --agree-tos \
-                   -m admin@catalystsolutions.eco; then
-                echo "Certbot succeeded — switching to full HTTPS config."
-                sudo cp /tmp/fmapp-nginx.conf /etc/nginx/conf.d/fmapp.conf
-                sudo nginx -t && sudo systemctl reload nginx
-              else
-                echo "Certbot failed (DNS not ready?) — site stays on HTTP for now."
-              fi
-            fi
 
             # ── Install backend deps and restart PM2 ──────────────────────────
             cd /var/www/fmapp/backend
