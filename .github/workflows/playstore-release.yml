@@ -1,0 +1,53 @@
+name: Android Play Store Release
+
+on:
+  push:
+    branches: [develop, main]
+    paths:
+      - 'mobile-app/**'
+      - '.github/workflows/playstore-release.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: playstore-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build & Submit AAB (Play Store)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile-app/package-lock.json
+
+      - name: Install mobile app dependencies
+        working-directory: mobile-app
+        run: npm ci
+
+      - name: Write Google Play service account key
+        working-directory: mobile-app
+        run: |
+          mkdir -p keys
+          printf '%s' "${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}" > keys/google-play-service-account.json
+          test -s keys/google-play-service-account.json
+
+      - name: Build and auto-submit to Google Play (internal draft)
+        working-directory: mobile-app
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          npx eas build --platform android --profile production --non-interactive --auto-submit
+
+      - name: Cleanup service account file
+        if: always()
+        working-directory: mobile-app
+        run: rm -f keys/google-play-service-account.json
