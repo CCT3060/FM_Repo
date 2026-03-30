@@ -3122,6 +3122,14 @@ export default function CompanyEmployeePortal() {
               ? `⚠ ${chartError}`
               : cs ? `${cs.dateFrom} — ${cs.dateTo}`
               : "Loading…";
+            const totalSubmissions = cs
+              ? (cs.filledLogsheets || 0) + (cs.pendingLogsheets || 0) + (cs.filledChecklists || 0) + (cs.pendingChecklists || 0)
+              : 0;
+            const filledSubmissions = cs ? (cs.filledLogsheets || 0) + (cs.filledChecklists || 0) : 0;
+            const completionRate = totalSubmissions > 0 ? Math.round((filledSubmissions / totalSubmissions) * 100) : 0;
+            const openAlertsCount = dashboardAlerts.length;
+            const criticalAlertsCount = dashboardAlerts.filter((f) => f.severity === "critical").length;
+            const unassignedOpenWorkOrders = dashboardWorkOrders.filter((wo) => !wo.assignedTo).length;
 
             return (
               <div>
@@ -3137,7 +3145,7 @@ export default function CompanyEmployeePortal() {
 
                 {/* 3 Key stat cards */}
                 {dashboard && (
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px", marginBottom: "24px" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "16px", marginBottom: "16px" }}>
                     <StatCard label="Active Assets" value={dashboard.activeAssets} sub={`${dashboard.totalAssets} total`} subCol="#22c55e"
                       iconBg="#eff6ff" iconCol="#2563eb" onClick={() => setNav("assets")}
                       icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 19.07a10 10 0 0 1 0-14.14"/></svg>} />
@@ -3157,6 +3165,34 @@ export default function CompanyEmployeePortal() {
                       icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>} />
                   </div>
                 )}
+
+                <div style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+                  gap: "12px",
+                  marginBottom: "20px",
+                }}>
+                  <div style={{ background: "linear-gradient(135deg, #eff6ff 0%, #f8fafc 100%)", border: "1px solid #bfdbfe", borderRadius: "12px", padding: "12px 14px" }}>
+                    <p style={{ margin: 0, fontSize: "11px", fontWeight: 700, color: "#1d4ed8", letterSpacing: "0.03em", textTransform: "uppercase" }}>Period Health</p>
+                    <p style={{ margin: "6px 0 2px", fontSize: "22px", fontWeight: 800, color: "#0f172a" }}>{completionRate}%</p>
+                    <p style={{ margin: 0, fontSize: "12px", color: "#64748b" }}>Completion rate for {PERIOD_LABELS[chartFilter]?.toLowerCase() || "current period"}</p>
+                  </div>
+                  <div style={{ background: "linear-gradient(135deg, #f0fdf4 0%, #f8fafc 100%)", border: "1px solid #bbf7d0", borderRadius: "12px", padding: "12px 14px" }}>
+                    <p style={{ margin: 0, fontSize: "11px", fontWeight: 700, color: "#15803d", letterSpacing: "0.03em", textTransform: "uppercase" }}>Execution Volume</p>
+                    <p style={{ margin: "6px 0 2px", fontSize: "22px", fontWeight: 800, color: "#0f172a" }}>{totalSubmissions}</p>
+                    <p style={{ margin: 0, fontSize: "12px", color: "#64748b" }}>Total checklist/logsheet outcomes tracked</p>
+                  </div>
+                  <div style={{ background: "linear-gradient(135deg, #fff7ed 0%, #f8fafc 100%)", border: "1px solid #fed7aa", borderRadius: "12px", padding: "12px 14px" }}>
+                    <p style={{ margin: 0, fontSize: "11px", fontWeight: 700, color: "#c2410c", letterSpacing: "0.03em", textTransform: "uppercase" }}>Risk Snapshot</p>
+                    <p style={{ margin: "6px 0 2px", fontSize: "22px", fontWeight: 800, color: "#0f172a" }}>{openAlertsCount}</p>
+                    <p style={{ margin: 0, fontSize: "12px", color: "#64748b" }}>{criticalAlertsCount} critical alert{criticalAlertsCount !== 1 ? "s" : ""} open</p>
+                  </div>
+                  <div style={{ background: "linear-gradient(135deg, #fef2f2 0%, #f8fafc 100%)", border: "1px solid #fecaca", borderRadius: "12px", padding: "12px 14px" }}>
+                    <p style={{ margin: 0, fontSize: "11px", fontWeight: 700, color: "#b91c1c", letterSpacing: "0.03em", textTransform: "uppercase" }}>Work Order Coverage</p>
+                    <p style={{ margin: "6px 0 2px", fontSize: "22px", fontWeight: 800, color: "#0f172a" }}>{unassignedOpenWorkOrders}</p>
+                    <p style={{ margin: 0, fontSize: "12px", color: "#64748b" }}>Open work orders without an assignee</p>
+                  </div>
+                </div>
 
                 {/* Submission Overview */}
                 {/* ── Shift summary banner ── */}
@@ -3197,7 +3233,7 @@ export default function CompanyEmployeePortal() {
                 })()}
                 {/* ── Main 2-col grid: Submission Overview (left) | Alerts + WO (right) ── */}
                 <style>{`@keyframes blink-dot{0%,100%{opacity:1}50%{opacity:0.12}} @keyframes pulse-dot{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.55);opacity:0.65}}`}</style>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px", marginBottom: "24px", alignItems: "start" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "20px", marginBottom: "24px", alignItems: "start" }}>
 
                   {/* ── Left: Submission Overview ── */}
                   <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px" }}>

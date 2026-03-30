@@ -20,7 +20,7 @@ const clientRules = [
 router.get("/", async (_req, res, next) => {
   try {
     const [rows] = await pool.query(
-      `SELECT id, client_name AS clientName, email, phone, state_name AS state, pincode, gst_number AS gst, company_name AS company, address, status, created_at AS createdAt
+      `SELECT id, COALESCE(NULLIF(TRIM(client_name), ''), company_name, '') AS clientName, email, phone, state_name AS state, pincode, gst_number AS gst, company_name AS company, address, status, created_at AS createdAt
        FROM clients
        ORDER BY created_at DESC`
     );

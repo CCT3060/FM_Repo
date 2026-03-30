@@ -50,15 +50,16 @@ const ClientManagement = ({ clients, onAddClient, onEditClient, onDeleteClient }
   };
 
   const openEdit = (c) => {
+    const resolvedName = (c.clientName || c.client_name || c.company || c.company_name || "").trim();
     setEditingId(c.id);
     setForm({
-      clientName: c.clientName || "",
+      clientName: resolvedName,
       email: c.email || "",
       phone: c.phone || "",
-      state: c.state || "",
+      state: c.state || c.state_name || "",
       pincode: c.pincode || "",
-      gst: c.gst || "",
-      company: c.company || "",
+      gst: c.gst || c.gst_number || "",
+      company: c.company || c.company_name || "",
       address: c.address || "",
       status: c.status || "Active",
     });
@@ -124,7 +125,7 @@ const ClientManagement = ({ clients, onAddClient, onEditClient, onDeleteClient }
   };
 
   const handleDelete = async (c) => {
-    if (!window.confirm(`Delete "${c.clientName}"? This will also remove all linked users.`)) return;
+    if (!window.confirm(`Delete "${getDisplayName(c)}"? This will also remove all linked users.`)) return;
     try {
       await onDeleteClient(c.id);
     } catch (err) {

@@ -21,6 +21,25 @@ const ROOT_CREDENTIALS = {
   password: "Root@12345",
 };
 
+const normalizeClient = (client = {}) => {
+  const fallbackName = (client.clientName || client.client_name || client.company || client.company_name || "").trim();
+  return {
+    ...client,
+    clientName: fallbackName,
+    company: client.company || client.company_name || "",
+    state: client.state || client.state_name || "",
+    pincode: client.pincode || "",
+    gst: client.gst || client.gst_number || "",
+  };
+};
+
+const normalizeUser = (user = {}) => ({
+  ...user,
+  fullName: user.fullName || user.full_name || "",
+  clientId: user.clientId ?? user.client_id ?? "",
+  clientName: (user.clientName || user.client_name || "").trim(),
+});
+
 const RootLogin = ({ onLogin }) => {
   const [form, setForm] = useState({ username: "", password: "" });
   const [error, setError] = useState("");
@@ -81,8 +100,18 @@ const AdminShell = ({ onSignOut }) => {
   useEffect(() => {
     Promise.all([getClients(), getUsers()])
       .then(([c, u]) => {
-        setClients(c);
-        setUsers(u);
+        const normalizedClients = (c || []).map(normalizeClient);
+        const normalizedUsers = (u || []).map((user) => {
+          const normalizedUser = normalizeUser(user);
+          if (normalizedUser.clientName) return normalizedUser;
+          const linkedClient = normalizedClients.find((client) => String(client.id) === String(normalizedUser.clientId));
+          return {
+            ...normalizedUser,
+            clientName: linkedClient?.clientName || "",
+          };
+        });
+        setClients(normalizedClients);
+        setUsers(normalizedUsers);
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
@@ -99,12 +128,12 @@ const AdminShell = ({ onSignOut }) => {
 
   const handleAddClient = async (data) => {
     const created = await createClient(data);
-    setClients((prev) => [created, ...prev]);
+    setClients((prev) => [normalizeClient(created), ...prev]);
   };
 
   const handleEditClient = async (id, data) => {
     const updated = await updateClient(id, data);
-    setClients((prev) => prev.map((c) => (c.id === id ? updated : c)));
+    setClients((prev) => prev.map((c) => (c.id === id ? normalizeClient(updated) : c)));
   };
 
   const handleDeleteClient = async (id) => {
@@ -114,12 +143,21 @@ const AdminShell = ({ onSignOut }) => {
 
   const handleAddUser = async (data) => {
     const created = await createUser(data);
-    setUsers((prev) => [created, ...prev]);
+    setUsers((prev) => {
+      const linkedClient = clients.find((client) => String(client.id) === String(created.clientId));
+      const normalized = normalizeUser(created);
+      return [{ ...normalized, clientName: normalized.clientName || linkedClient?.clientName || "" }, ...prev];
+    });
   };
 
   const handleEditUser = async (id, data) => {
     const updated = await updateUser(id, data);
-    setUsers((prev) => prev.map((u) => (u.id === id ? updated : u)));
+    setUsers((prev) => prev.map((u) => {
+      if (u.id !== id) return u;
+      const linkedClient = clients.find((client) => String(client.id) === String(updated.clientId));
+      const normalized = normalizeUser(updated);
+      return { ...normalized, clientName: normalized.clientName || linkedClient?.clientName || "" };
+    }));
   };
 
   const handleDeleteUser = async (id) => {

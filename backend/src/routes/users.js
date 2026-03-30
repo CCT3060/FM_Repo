@@ -22,7 +22,7 @@ router.get("/", async (_req, res, next) => {
   try {
     const [rows] = await pool.query(
       `SELECT u.id, u.full_name AS "fullName", u.email, u.phone, u.role, u.status, u.client_id AS "clientId",
-              c.client_name AS "clientName", u.created_at AS "createdAt"
+              COALESCE(NULLIF(TRIM(c.client_name), ''), c.company_name, '') AS "clientName", u.created_at AS "createdAt"
        FROM users u
        LEFT JOIN clients c ON c.id = u.client_id
        ORDER BY u.created_at DESC`
