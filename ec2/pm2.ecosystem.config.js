@@ -2,7 +2,7 @@
 // Location on EC2: /var/www/fmapp/ec2/pm2.ecosystem.config.js
 // Start with: pm2 start /var/www/fmapp/ec2/pm2.ecosystem.config.js --env production
 
-export default {
+module.exports = {
   apps: [
     {
       name: "fmapp-backend",
