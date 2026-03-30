@@ -14,7 +14,8 @@ import { notifyNetworkStatus } from './networkStatus';
 // OPTION 2: Auto-detect platform (recommended for development)
 const getApiBase = () => {
   if (!__DEV__) {
-    return 'https://d3kz9zxtx6891m.cloudfront.net';
+    // Production: backend API served from the domain via Nginx → Node on port 4000
+    return 'https://fm.catalystsolutions.eco';
   }
   
   // Development URLs
