@@ -6,6 +6,7 @@ on:
     paths:
       - 'frontend/**'
       - 'backend/**'
+      - 'ec2/**'
       - '.github/workflows/deploy-ec2.yml'
   workflow_dispatch:   # manual trigger from GitHub UI
 
@@ -13,7 +14,7 @@ jobs:
   deploy:
     name: Build & Deploy to FM_Instance
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       # ── 1. Checkout ──────────────────────────────────────────────────────────
@@ -39,7 +40,7 @@ jobs:
         working-directory: frontend
         run: npm run build
         env:
-          VITE_API_URL: "http://13.203.194.93"
+          VITE_API_URL: "https://fm.catalystsolutions.eco"
 
       # ── 4. Write SSH private key ──────────────────────────────────────────────
       - name: Write SSH key
@@ -69,21 +70,57 @@ jobs:
             backend/ \
             ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/var/www/fmapp/backend/
 
-      # ── 7. Remote: install dependencies & restart backend via PM2 ─────────────
+      # ── 7. Deploy updated Nginx config ──────────────────────────────────────────
+      - name: Deploy Nginx config
+        run: |
+          rsync -az \
+            -e "ssh -i ~/.ssh/fm_ec2.pem -o StrictHostKeyChecking=no" \
+            ec2/nginx.conf \
+            ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/tmp/fmapp-nginx.conf
+
+      # ── 8. Remote: apply nginx config, provision SSL, install deps, restart PM2 ──
       - name: Install backend deps & restart PM2
         run: |
           ssh -i ~/.ssh/fm_ec2.pem -o StrictHostKeyChecking=no \
             ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'ENDSSH'
             set -e
+
+            # ── Apply updated Nginx config ────────────────────────────────────
+            sudo cp /tmp/fmapp-nginx.conf /etc/nginx/conf.d/fmapp.conf
+            sudo mkdir -p /var/www/certbot
+
+            # ── Provision SSL certificate (skips gracefully if already valid) ──
+            if ! sudo test -f /etc/letsencrypt/live/fm.catalystsolutions.eco/fullchain.pem; then
+              echo "Certbot not found — installing and requesting certificate..."
+              sudo dnf install -y python3-certbot-nginx || sudo snap install certbot --classic
+              # Temporarily allow HTTP so ACME challenge can complete
+              sudo sed -i 's/listen 443 ssl/listen 80/' /etc/nginx/conf.d/fmapp.conf
+              sudo sed -i '/ssl_certificate/d' /etc/nginx/conf.d/fmapp.conf
+              sudo sed -i '/include.*options-ssl/d' /etc/nginx/conf.d/fmapp.conf
+              sudo sed -i '/ssl_dhparam/d' /etc/nginx/conf.d/fmapp.conf
+              sudo nginx -t && sudo systemctl reload nginx
+              sudo certbot --nginx \
+                -d fm.catalystsolutions.eco \
+                --non-interactive --agree-tos \
+                -m admin@catalystsolutions.eco
+              # Restore the full config (certbot rewrites for SSL)
+              sudo cp /tmp/fmapp-nginx.conf /etc/nginx/conf.d/fmapp.conf
+            else
+              echo "SSL certificate already exists — skipping certbot."
+            fi
+
+            # ── Test and reload Nginx ─────────────────────────────────────────
+            sudo nginx -t && sudo systemctl reload nginx
+
+            # ── Install backend deps and restart PM2 ──────────────────────────
             cd /var/www/fmapp/backend
             npm ci --omit=dev
-            # Reload if already running; start fresh using absolute node path if not
             pm2 reload fmapp-backend 2>/dev/null || \
               pm2 start /var/www/fmapp/ec2/pm2.ecosystem.config.js --env production
             pm2 save --force
           ENDSSH
 
-      # ── 8. Clean up SSH key ───────────────────────────────────────────────────
+      # ── 9. Clean up SSH key ───────────────────────────────────────────────────
       - name: Clean up SSH key
         if: always()
         run: rm -f ~/.ssh/fm_ec2.pem
