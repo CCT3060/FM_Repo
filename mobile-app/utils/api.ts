@@ -14,8 +14,8 @@ import { notifyNetworkStatus } from './networkStatus';
 // OPTION 2: Auto-detect platform (recommended for development)
 const getApiBase = () => {
   if (!__DEV__) {
-    // Production: backend API on EC2
-    return 'http://13.203.194.93';
+    // Production: backend API served via domain
+    return 'https://fm.catalystsolutions.eco';
   }
   
   // Development URLs
