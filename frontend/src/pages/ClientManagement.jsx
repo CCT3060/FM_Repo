@@ -16,6 +16,7 @@ const ClientManagement = ({ clients, onAddClient, onEditClient, onDeleteClient }
   const [editingId, setEditingId] = useState(null); // null = Add mode, id = Edit mode
   const [saving, setSaving] = useState(false);
   const [apiError, setApiError] = useState(null);
+  const [fieldErrors, setFieldErrors] = useState({});
 
   const stats = useMemo(() => {
     const active = clients.filter((c) => c.status === "Active").length;
@@ -45,6 +46,7 @@ const ClientManagement = ({ clients, onAddClient, onEditClient, onDeleteClient }
     setEditingId(null);
     setForm(emptyClient);
     setApiError(null);
+    setFieldErrors({});
     setIsModalOpen(true);
   };
 
@@ -62,6 +64,7 @@ const ClientManagement = ({ clients, onAddClient, onEditClient, onDeleteClient }
       status: c.status || "Active",
     });
     setApiError(null);
+    setFieldErrors({});
     setIsModalOpen(true);
   };
 
@@ -69,15 +72,42 @@ const ClientManagement = ({ clients, onAddClient, onEditClient, onDeleteClient }
     setIsModalOpen(false);
     setEditingId(null);
     setApiError(null);
+    setFieldErrors({});
   };
 
   const handleChange = (e) => {
     const { name, value } = e.target;
     setForm((prev) => ({ ...prev, [name]: value }));
+    // Clear field error on change
+    if (fieldErrors[name]) {
+      setFieldErrors((prev) => ({ ...prev, [name]: undefined }));
+    }
+  };
+
+  const validate = () => {
+    const errors = {};
+    if (!form.clientName.trim()) errors.clientName = "Client name is required.";
+    if (!form.email.trim()) {
+      errors.email = "Email address is required.";
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
+      errors.email = "Enter a valid email address.";
+    }
+    if (form.phone && !/^\d{10,15}$/.test(form.phone.replace(/[\s\-+()]/g, ""))) {
+      errors.phone = "Enter a valid phone number (10–15 digits).";
+    }
+    if (form.pincode && !/^\d{4,10}$/.test(form.pincode)) {
+      errors.pincode = "Enter a valid pincode.";
+    }
+    return errors;
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    const errors = validate();
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
+      return;
+    }
     setSaving(true);
     setApiError(null);
     try {
@@ -227,25 +257,28 @@ const ClientManagement = ({ clients, onAddClient, onEditClient, onDeleteClient }
 
             <form onSubmit={handleSubmit}>
               <div className="form-group">
-                <label>Client Name</label>
+                <label>Client Name <span style={{ color: "#ef4444" }}>*</span></label>
                 <input name="clientName" placeholder="Acme Corporation" value={form.clientName}
-                  onChange={handleChange} required className="form-input" />
+                  onChange={handleChange} className={`form-input${fieldErrors.clientName ? " input-error" : ""}`} />
+                {fieldErrors.clientName && <span className="field-error">{fieldErrors.clientName}</span>}
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
                 <div className="form-group">
-                  <label>Email Address</label>
+                  <label>Email Address <span style={{ color: "#ef4444" }}>*</span></label>
                   <input name="email" type="email" placeholder="contact@acme.com" value={form.email}
-                    onChange={handleChange} className="form-input" />
+                    onChange={handleChange} className={`form-input${fieldErrors.email ? " input-error" : ""}`} />
+                  {fieldErrors.email && <span className="field-error">{fieldErrors.email}</span>}
                 </div>
                 <div className="form-group">
                   <label>Phone Number</label>
                   <input name="phone" placeholder="+1 (555) 123-4567" value={form.phone}
-                    onChange={handleChange} className="form-input" />
+                    onChange={handleChange} className={`form-input${fieldErrors.phone ? " input-error" : ""}`} />
+                  {fieldErrors.phone && <span className="field-error">{fieldErrors.phone}</span>}
                 </div>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
                 <div className="form-group">
-                  <label>Client Name</label>
+                  <label>Company Name</label>
                   <input name="company" placeholder="Acme Ltd." value={form.company}
                     onChange={handleChange} className="form-input" />
                 </div>
@@ -264,7 +297,8 @@ const ClientManagement = ({ clients, onAddClient, onEditClient, onDeleteClient }
                 <div className="form-group">
                   <label>Pincode</label>
                   <input name="pincode" placeholder="400001" value={form.pincode}
-                    onChange={handleChange} className="form-input" />
+                    onChange={handleChange} className={`form-input${fieldErrors.pincode ? " input-error" : ""}`} />
+                  {fieldErrors.pincode && <span className="field-error">{fieldErrors.pincode}</span>}
                 </div>
               </div>
               <div className="form-group">

@@ -548,12 +548,14 @@ export default function WorkOrdersPanel({ token, companyId, assets = [], presele
                       </td>
                       <td style={{ padding: "12px 14px" }}>
                         <div style={{ display: "flex", gap: "5px", flexWrap: "wrap" }}>
-                          {/* Assign button */}
-                          <button disabled={isUpd} onClick={() => setAssignWO(wo)}
-                            style={{ padding: "5px 9px", borderRadius: "6px", border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", fontSize: "11px", fontWeight: 700, cursor: "pointer", opacity: isUpd ? 0.5 : 1, whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: "4px" }}>
-                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
-                            Assign
-                          </button>
+                          {/* Assign button — only for open/in-progress work orders */}
+                          {(wo.status === "open" || wo.status === "in_progress") && (
+                            <button disabled={isUpd} onClick={() => setAssignWO(wo)}
+                              style={{ padding: "5px 9px", borderRadius: "6px", border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", fontSize: "11px", fontWeight: 700, cursor: "pointer", opacity: isUpd ? 0.5 : 1, whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: "4px" }}>
+                              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
+                              Assign
+                            </button>
+                          )}
                           {/* Set Cutoff */}
                           {(wo.status === "open" || wo.status === "in_progress") && (
                             <button disabled={isUpd} onClick={() => setCutoffWOState(wo)}

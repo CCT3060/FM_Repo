@@ -1,11 +1,13 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as DocumentPicker from 'expo-document-picker';
 import { router, useLocalSearchParams } from 'expo-router';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
     KeyboardAvoidingView,
+    Modal,
     Platform,
     SafeAreaView,
     ScrollView,
@@ -36,6 +38,10 @@ export default function AssignmentFormScreen() {
     const [assets, setAssets] = useState<Array<{id: number; assetName: string; assetType: string}>>([]);
     const [showAssetPicker, setShowAssetPicker] = useState(false);
     const [shiftLocked, setShiftLocked] = useState<{ message: string; shiftName?: string } | null>(null);
+    const [cameraVisible, setCameraVisible] = useState(false);
+    const [cameraQuestionId, setCameraQuestionId] = useState<number | null>(null);
+    const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+    const cameraRef = useRef<CameraView>(null);
 
     // --- Tabular logsheet state ---
     const _now = new Date();
@@ -112,18 +118,62 @@ export default function AssignmentFormScreen() {
         return raw || 'text';
     };
 
-    const handlePickUpload = async (questionId: number) => {
+    const handlePickUpload = (questionId: number) => {
+        Alert.alert(
+            'Attach File',
+            'Choose how to provide the file',
+            [
+                {
+                    text: 'Take Photo',
+                    onPress: async () => {
+                        if (!cameraPermission?.granted) {
+                            const res = await requestCameraPermission();
+                            if (!res.granted) {
+                                Alert.alert('Permission Denied', 'Camera permission is required to take photos.');
+                                return;
+                            }
+                        }
+                        setCameraQuestionId(questionId);
+                        setCameraVisible(true);
+                    },
+                },
+                {
+                    text: 'Choose File',
+                    onPress: async () => {
+                        try {
+                            const result = await DocumentPicker.getDocumentAsync({
+                                copyToCacheDirectory: true,
+                                multiple: false,
+                            });
+                            if (result.canceled) return;
+                            const file = result.assets?.[0];
+                            if (!file) return;
+                            setAnswers({ ...answers, [questionId]: JSON.stringify({ name: file.name, uri: file.uri, mimeType: file.mimeType || null }) });
+                        } catch {
+                            Alert.alert('Upload Failed', 'Could not select file. Please try again.');
+                        }
+                    },
+                },
+                { text: 'Cancel', style: 'cancel' },
+            ]
+        );
+    };
+
+    const handleTakePhoto = async () => {
+        if (!cameraRef.current) return;
         try {
-            const result = await DocumentPicker.getDocumentAsync({
-                copyToCacheDirectory: true,
-                multiple: false,
-            });
-            if (result.canceled) return;
-            const file = result.assets?.[0];
-            if (!file) return;
-            setAnswers({ ...answers, [questionId]: JSON.stringify({ name: file.name, uri: file.uri, mimeType: file.mimeType || null }) });
+            const photo = await cameraRef.current.takePictureAsync({ quality: 0.7, base64: false });
+            if (!photo) return;
+            const uri = photo.uri;
+            const name = `photo_${Date.now()}.jpg`;
+            if (cameraQuestionId !== null) {
+                setAnswers(prev => ({ ...prev, [cameraQuestionId]: JSON.stringify({ name, uri, mimeType: 'image/jpeg' }) }));
+            }
         } catch {
-            Alert.alert('Upload Failed', 'Could not select file. Please try again.');
+            Alert.alert('Camera Error', 'Could not capture photo. Please try again.');
+        } finally {
+            setCameraVisible(false);
+            setCameraQuestionId(null);
         }
     };
 
@@ -471,8 +521,8 @@ export default function AssignmentFormScreen() {
                 return (
                     <View style={styles.uploadWrap}>
                         <TouchableOpacity style={styles.uploadBtn} onPress={() => handlePickUpload(question.id)}>
-                            <MaterialCommunityIcons name="paperclip" size={18} color="#1E3A8A" />
-                            <Text style={styles.uploadBtnText}>Choose File</Text>
+                            <MaterialCommunityIcons name="camera-plus-outline" size={18} color="#1E3A8A" />
+                            <Text style={styles.uploadBtnText}>Photo / File</Text>
                         </TouchableOpacity>
                         <Text style={styles.uploadFileName} numberOfLines={2}>{fileLabel}</Text>
                     </View>
@@ -755,6 +805,31 @@ export default function AssignmentFormScreen() {
                     </View>
                 </ScrollView>
             </KeyboardAvoidingView>
+
+            {/* Camera Modal */}
+            <Modal visible={cameraVisible} animationType="slide" onRequestClose={() => setCameraVisible(false)}>
+                <SafeAreaView style={{ flex: 1, backgroundColor: '#000' }}>
+                    <CameraView ref={cameraRef} style={{ flex: 1 }} facing="back">
+                        <View style={{ flex: 1, justifyContent: 'flex-end', paddingBottom: 32, paddingHorizontal: 24 }}>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <TouchableOpacity
+                                    onPress={() => { setCameraVisible(false); setCameraQuestionId(null); }}
+                                    style={{ backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 24, padding: 12 }}
+                                >
+                                    <MaterialCommunityIcons name="close" size={28} color="#fff" />
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    onPress={handleTakePhoto}
+                                    style={{ backgroundColor: '#fff', width: 70, height: 70, borderRadius: 35, borderWidth: 4, borderColor: '#2563EB', justifyContent: 'center', alignItems: 'center' }}
+                                >
+                                    <MaterialCommunityIcons name="camera" size={32} color="#2563EB" />
+                                </TouchableOpacity>
+                                <View style={{ width: 52 }} />
+                            </View>
+                        </View>
+                    </CameraView>
+                </SafeAreaView>
+            </Modal>
         </SafeAreaView>
     );
 }
