@@ -1,291 +1,136 @@
 /**
  * AssetScanPage
  *
- * Public page loaded when a user scans an asset QR code.
- * Shows asset details + all assigned logsheet/checklist templates.
- * Allows anonymous fill of any template.
+ * When a user scans an asset QR code, this page immediately attempts to
+ * open the Klean mobile app via deep link (klean://asset-scan?assetId=X).
+ * If the app is not installed, it shows a fallback with Play Store link.
+ * The Catalyst logo is shown prominently at the top.
  */
 
 import { useState, useEffect } from "react";
-import { useParams, useNavigate } from "react-router-dom";
-import LogsheetModule from "../components/LogsheetModule.jsx";
+import { useParams } from "react-router-dom";
 import { getApiBaseUrl } from "../utils/runtimeConfig";
+import catalystLogo from "../assets/catalyst-logo.svg";
 
 const BASE = getApiBaseUrl();
+const PLAY_STORE_URL = "https://play.google.com/store/apps/details?id=com.cct123.mobileapp";
 
 export default function AssetScanPage() {
   const { assetId } = useParams();
-  const navigate = useNavigate();
 
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
   const [asset, setAsset] = useState(null);
-  const [logsheetTemplates, setLogsheetTemplates] = useState([]);
-  const [checklistTemplates, setChecklistTemplates] = useState([]);
-  const [userAuthenticated, setUserAuthenticated] = useState(false);
+  const [assetLoading, setAssetLoading] = useState(true);
+  const [showFallback, setShowFallback] = useState(false);
 
-  const [view, setView] = useState("overview"); // overview | fill-logsheet | fill-checklist
-  const [selectedTemplate, setSelectedTemplate] = useState(null);
-  const [submitterName, setSubmitterName] = useState("");
-
+  // Fetch asset info for display
   useEffect(() => {
     if (!assetId) return;
-    setLoading(true);
-    const cpToken = sessionStorage.getItem("cp_token");
-    const headers = cpToken ? { Authorization: `Bearer ${cpToken}` } : {};
-    fetch(`${BASE}/api/asset-qr/${assetId}`, { headers })
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json();
-      })
-      .then((data) => {
-        setAsset(data.asset);
-        setLogsheetTemplates(data.logsheetTemplates || []);
-        setChecklistTemplates(data.checklistTemplates || []);
-        setUserAuthenticated(!!data.userAuthenticated);
-      })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
+    fetch(`${BASE}/api/asset-qr/${assetId}`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => { if (data?.asset) setAsset(data.asset); })
+      .catch(() => {})
+      .finally(() => setAssetLoading(false));
   }, [assetId]);
 
-  /* ── OVERVIEW ──────────────────────────────────────────────────────────────── */
-  if (view === "overview") {
-    return (
-      <div style={{ minHeight: "100vh", background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)", padding: "40px 20px" }}>
-        <div style={{ maxWidth: "900px", margin: "0 auto", background: "#fff", borderRadius: "16px", boxShadow: "0 20px 60px rgba(0,0,0,0.25)", overflow: "hidden" }}>
-          {/* Header */}
-          <div style={{ background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)", padding: "28px 32px", color: "#fff" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "14px", marginBottom: "10px" }}>
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2">
-                <circle cx="12" cy="12" r="3" />
-                <path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 19.07a10 10 0 0 1 0-14.14" strokeLinecap="round" />
-              </svg>
-              <h1 style={{ fontSize: "28px", fontWeight: 800, margin: 0 }}>Asset Information</h1>
-            </div>
-            <p style={{ fontSize: "15px", opacity: 0.9, margin: 0 }}>
-              Scan successful — Select a template to fill or view asset details below.
-            </p>
+  // Immediately try to open the Klean app via deep link
+  useEffect(() => {
+    if (!assetId) return;
+    window.location.href = `klean://asset-scan?assetId=${assetId}`;
+    const timer = setTimeout(() => setShowFallback(true), 2500);
+    return () => clearTimeout(timer);
+  }, [assetId]);
+
+  const handleOpenApp = () => {
+    window.location.href = `klean://asset-scan?assetId=${assetId}`;
+    setTimeout(() => setShowFallback(true), 2000);
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", background: "linear-gradient(135deg, #f0f9ff 0%, #e8f4fd 100%)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "24px 20px" }}>
+      <div style={{ maxWidth: "420px", width: "100%", background: "#fff", borderRadius: "20px", boxShadow: "0 20px 60px rgba(0,0,0,0.12)", overflow: "hidden" }}>
+
+        {/* Header with Catalyst logo */}
+        <div style={{ background: "linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%)", padding: "28px 24px", textAlign: "center" }}>
+          <div style={{ background: "#fff", borderRadius: "10px", padding: "10px 20px", display: "inline-block", marginBottom: "16px" }}>
+            <img src={catalystLogo} alt="Catalyst" style={{ height: "40px", display: "block" }} />
           </div>
+          <h1 style={{ color: "#fff", fontSize: "20px", fontWeight: 800, margin: 0, marginBottom: "6px" }}>QR Code Scanned</h1>
+          <p style={{ color: "rgba(255,255,255,0.8)", fontSize: "14px", margin: 0 }}>Open in the Klean app to fill templates</p>
+        </div>
 
-          {loading && (
-            <div style={{ padding: "60px", textAlign: "center", color: "#94a3b8" }}>
-              <div style={{ display: "inline-block", width: "40px", height: "40px", border: "4px solid #e2e8f0", borderTop: "4px solid #667eea", borderRadius: "50%", animation: "spin 1s linear infinite" }} />
-              <p style={{ marginTop: "16px", fontSize: "15px" }}>Loading asset…</p>
-            </div>
-          )}
+        <div style={{ padding: "28px 24px" }}>
 
-          {error && (
-            <div style={{ padding: "60px", textAlign: "center" }}>
-              <div style={{ width: "64px", height: "64px", margin: "0 auto 20px", background: "#fef2f2", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="2">
-                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                  <line x1="12" y1="9" x2="12" y2="13" />
-                  <line x1="12" y1="17" x2="12.01" y2="17" />
-                </svg>
-              </div>
-              <p style={{ fontSize: "16px", fontWeight: 600, color: "#dc2626", marginBottom: "8px" }}>Asset Not Found</p>
-              <p style={{ fontSize: "14px", color: "#64748b" }}>{error}</p>
-              <button onClick={() => navigate("/company")} style={{ marginTop: "20px", padding: "10px 24px", background: "#667eea", color: "#fff", border: "none", borderRadius: "8px", fontSize: "14px", fontWeight: 600, cursor: "pointer" }}>
-                Go to Portal
-              </button>
-            </div>
-          )}
-
-          {!loading && !error && asset && (
-            <div style={{ padding: "32px" }}>
-              {/* Asset Details Card */}
-              <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "12px", padding: "24px", marginBottom: "28px" }}>
-                <h2 style={{ fontSize: "20px", fontWeight: 700, color: "#0f172a", marginBottom: "16px", display: "flex", alignItems: "center", gap: "8px" }}>
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#667eea" strokeWidth="2">
-                    <rect x="3" y="3" width="18" height="18" rx="2" />
-                    <line x1="9" y1="3" x2="9" y2="21" />
+          {/* Asset info (if loaded) */}
+          {!assetLoading && asset && (
+            <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "12px", padding: "16px", marginBottom: "24px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px" }}>
+                <div style={{ width: "36px", height: "36px", background: "#eff6ff", borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2563eb" strokeWidth="2">
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 19.07a10 10 0 0 1 0-14.14" />
                   </svg>
-                  {asset.assetName}
-                </h2>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "16px", fontSize: "14px" }}>
-                  {asset.assetUniqueId && (
-                    <div>
-                      <p style={{ color: "#64748b", fontSize: "12px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "4px" }}>Asset ID</p>
-                      <p style={{ color: "#0f172a", fontWeight: 600 }}>{asset.assetUniqueId}</p>
-                    </div>
-                  )}
-                  <div>
-                    <p style={{ color: "#64748b", fontSize: "12px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "4px" }}>Type</p>
-                    <p style={{ color: "#0f172a", fontWeight: 600 }}>{asset.assetType}</p>
-                  </div>
-                  {asset.building && (
-                    <div>
-                      <p style={{ color: "#64748b", fontSize: "12px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "4px" }}>Building</p>
-                      <p style={{ color: "#0f172a", fontWeight: 600 }}>{asset.building}</p>
-                    </div>
-                  )}
-                  {asset.floor && (
-                    <div>
-                      <p style={{ color: "#64748b", fontSize: "12px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "4px" }}>Floor</p>
-                      <p style={{ color: "#0f172a", fontWeight: 600 }}>{asset.floor}</p>
-                    </div>
-                  )}
-                  {asset.room && (
-                    <div>
-                      <p style={{ color: "#64748b", fontSize: "12px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "4px" }}>Room</p>
-                      <p style={{ color: "#0f172a", fontWeight: 600 }}>{asset.room}</p>
-                    </div>
-                  )}
-                  <div>
-                    <p style={{ color: "#64748b", fontSize: "12px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "4px" }}>Status</p>
-                    <span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 700, background: asset.status === "Active" ? "#dcfce7" : "#f1f5f9", color: asset.status === "Active" ? "#16a34a" : "#64748b" }}>
-                      {asset.status}
-                    </span>
-                  </div>
                 </div>
-              </div>
-
-              {/* Name input */}
-              <div style={{ marginBottom: "28px" }}>
-                <label style={{ display: "block", fontSize: "14px", fontWeight: 600, color: "#0f172a", marginBottom: "8px" }}>
-                  Your Name (Optional)
-                </label>
-                <input
-                  value={submitterName}
-                  onChange={(e) => setSubmitterName(e.target.value)}
-                  placeholder="Enter your name for record keeping"
-                  style={{ width: "100%", padding: "12px 14px", border: "1px solid #e2e8f0", borderRadius: "8px", fontSize: "14px", outline: "none" }}
-                />
-              </div>
-
-              {/* Logsheet Templates */}
-              {logsheetTemplates.length > 0 && (
-                <div style={{ marginBottom: "28px" }}>
-                  <h3 style={{ fontSize: "16px", fontWeight: 700, color: "#0f172a", marginBottom: "14px", display: "flex", alignItems: "center", gap: "8px" }}>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#667eea" strokeWidth="2">
-                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                      <polyline points="14 2 14 8 20 8" />
-                    </svg>
-                    Logsheet Templates ({logsheetTemplates.length})
-                  </h3>
-                  <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                    {logsheetTemplates.map((t) => (
-                      <div key={t.id} style={{ background: "#fff", border: "2px solid #e2e8f0", borderRadius: "10px", padding: "16px 18px" }}>
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "10px" }}>
-                          <div>
-                            <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", marginBottom: "4px" }}>{t.templateName}</p>
-                            <p style={{ fontSize: "13px", color: "#64748b" }}>Frequency: {t.frequency || "N/A"}</p>
-                          </div>
-                          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                            <button
-                              onClick={() => { window.location.href = `klean://fill?type=logsheet&id=${t.id}&assetId=${assetId}`; }}
-                              style={{ padding: "8px 16px", background: "linear-gradient(135deg, #667eea, #764ba2)", color: "#fff", border: "none", borderRadius: "8px", fontSize: "13px", fontWeight: 700, cursor: "pointer" }}>
-                              Fill Now (App)
-                            </button>
-                            <button
-                              onClick={() => { setSelectedTemplate(t); setView("fill-logsheet"); }}
-                              style={{ padding: "8px 16px", background: "#f1f5f9", color: "#475569", border: "1px solid #e2e8f0", borderRadius: "8px", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>
-                              Fill in Browser
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Checklist Templates */}
-              {checklistTemplates.length > 0 && (
                 <div>
-                  <h3 style={{ fontSize: "16px", fontWeight: 700, color: "#0f172a", marginBottom: "14px", display: "flex", alignItems: "center", gap: "8px" }}>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#667eea" strokeWidth="2">
-                      <polyline points="9 11 12 14 22 4" />
-                      <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
-                    </svg>
-                    Checklist Templates ({checklistTemplates.length})
-                  </h3>
-                  <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                    {checklistTemplates.map((t) => (
-                      <div key={t.id} style={{ background: "#fff", border: "2px solid #e2e8f0", borderRadius: "10px", padding: "16px 18px" }}>
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "10px" }}>
-                          <div>
-                            <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", marginBottom: "4px" }}>{t.templateName}</p>
-                            {t.description && <p style={{ fontSize: "13px", color: "#64748b" }}>{t.description}</p>}
-                          </div>
-                          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                            <button
-                              onClick={() => { window.location.href = `klean://fill?type=checklist&id=${t.id}&assetId=${assetId}`; }}
-                              style={{ padding: "8px 16px", background: "linear-gradient(135deg, #667eea, #764ba2)", color: "#fff", border: "none", borderRadius: "8px", fontSize: "13px", fontWeight: 700, cursor: "pointer" }}>
-                              Fill Now (App)
-                            </button>
-                            <button
-                              onClick={() => { setSelectedTemplate(t); setView("fill-checklist"); }}
-                              style={{ padding: "8px 16px", background: "#f1f5f9", color: "#475569", border: "1px solid #e2e8f0", borderRadius: "8px", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>
-                              Fill in Browser
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                  <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", margin: 0 }}>{asset.assetName}</p>
+                  <p style={{ fontSize: "12px", color: "#64748b", margin: 0 }}>{asset.assetType}{asset.assetUniqueId ? ` · ${asset.assetUniqueId}` : ""}</p>
                 </div>
-              )}
-
-              {logsheetTemplates.length === 0 && checklistTemplates.length === 0 && (
-                <div style={{ textAlign: "center", padding: "40px 20px" }}>
-                  {!userAuthenticated ? (
-                    <>
-                      <p style={{ fontSize: "15px", color: "#475569", marginBottom: "8px", fontWeight: 600 }}>Login to see your assigned templates</p>
-                      <p style={{ fontSize: "13px", color: "#94a3b8", marginBottom: "16px" }}>Templates are shown based on your assignments. Please log in to your company portal first.</p>
-                      <a href="/company" style={{ display: "inline-block", padding: "10px 24px", background: "#667eea", color: "#fff", borderRadius: "8px", fontSize: "14px", fontWeight: 600, textDecoration: "none" }}>
-                        Go to Portal Login
-                      </a>
-                    </>
-                  ) : (
-                    <p style={{ fontSize: "14px", color: "#94a3b8" }}>No templates assigned to this asset for your account.</p>
-                  )}
-                </div>
+              </div>
+              {(asset.building || asset.floor) && (
+                <p style={{ fontSize: "12px", color: "#94a3b8", margin: 0, paddingTop: "8px", borderTop: "1px solid #e2e8f0" }}>
+                  📍 {[asset.building, asset.floor, asset.room].filter(Boolean).join(" · ")}
+                </p>
               )}
             </div>
           )}
-        </div>
 
-        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-      </div>
-    );
-  }
+          {/* Launching indicator */}
+          {!showFallback && (
+            <div style={{ textAlign: "center", padding: "12px 0 24px" }}>
+              <div style={{ display: "inline-block", width: "36px", height: "36px", border: "3px solid #e2e8f0", borderTop: "3px solid #2563eb", borderRadius: "50%", animation: "spin 0.9s linear infinite", marginBottom: "14px" }} />
+              <p style={{ fontSize: "15px", fontWeight: 600, color: "#0f172a", marginBottom: "4px" }}>Opening Klean App…</p>
+              <p style={{ fontSize: "13px", color: "#94a3b8" }}>If the app doesn't open, it may not be installed.</p>
+            </div>
+          )}
 
-  /* ── FILL LOGSHEET ─────────────────────────────────────────────────────────── */
-  if (view === "fill-logsheet" && selectedTemplate) {
-    return (
-      <LogsheetModule
-        token={null}
-        assets={[asset]}
-        isQRMode
-        qrAssetId={asset.id}
-        qrTemplateId={selectedTemplate.id}
-        qrSubmitterName={submitterName}
-        onBackToAsset={() => { setView("overview"); setSelectedTemplate(null); }}
-      />
-    );
-  }
-
-  /* ── FILL CHECKLIST ────────────────────────────────────────────────────────── */
-  if (view === "fill-checklist" && selectedTemplate) {
-    return (
-      <div style={{ minHeight: "100vh", background: "#f8fafc", padding: "40px 20px" }}>
-        <div style={{ maxWidth: "900px", margin: "0 auto", background: "#fff", borderRadius: "16px", boxShadow: "0 10px 40px rgba(0,0,0,0.1)", padding: "32px" }}>
-          <button onClick={() => { setView("overview"); setSelectedTemplate(null); }} style={{ marginBottom: "20px", padding: "8px 16px", background: "#f1f5f9", color: "#64748b", border: "none", borderRadius: "8px", fontSize: "14px", fontWeight: 600, cursor: "pointer" }}>
-            ← Back to Asset
+          {/* Open in app button */}
+          <button
+            onClick={handleOpenApp}
+            style={{ width: "100%", padding: "14px", background: "linear-gradient(135deg, #1e3a8a, #2563eb)", color: "#fff", border: "none", borderRadius: "10px", fontSize: "16px", fontWeight: 700, cursor: "pointer", marginBottom: "12px", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="5" y="2" width="14" height="20" rx="2" />
+              <line x1="12" y1="18" x2="12.01" y2="18" />
+            </svg>
+            Open in Klean App
           </button>
-          <h1 style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a", marginBottom: "8px" }}>{selectedTemplate.templateName}</h1>
-          <p style={{ fontSize: "14px", color: "#64748b", marginBottom: "24px" }}>{asset.assetName} — Checklist Fill</p>
 
-          {/* TODO: Implement checklist fill form with selectedTemplate.questions */}
-          <div style={{ padding: "40px", textAlign: "center", background: "#f8fafc", borderRadius: "12px", border: "2px dashed #e2e8f0" }}>
-            <p style={{ fontSize: "15px", color: "#64748b", marginBottom: "12px" }}>Checklist fill UI coming soon.</p>
-            <p style={{ fontSize: "14px", color: "#94a3b8" }}>Template ID: {selectedTemplate.id} | Questions: {selectedTemplate.questions?.length || 0}</p>
-          </div>
+          {/* Play Store fallback */}
+          {showFallback && (
+            <div style={{ marginTop: "4px" }}>
+              <div style={{ background: "#fefce8", border: "1px solid #fde68a", borderRadius: "8px", padding: "12px 14px", marginBottom: "16px" }}>
+                <p style={{ fontSize: "13px", color: "#92400e", margin: 0, fontWeight: 500 }}>
+                  ⚠️ App didn't open — Klean may not be installed on this device.
+                </p>
+              </div>
+              <a
+                href={PLAY_STORE_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "10px", width: "100%", padding: "13px", background: "#fff", border: "2px solid #16a34a", borderRadius: "10px", textDecoration: "none", color: "#16a34a", fontSize: "15px", fontWeight: 700 }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+                </svg>
+                Download from Google Play Store
+              </a>
+            </div>
+          )}
         </div>
       </div>
-    );
-  }
 
-  return null;
+      <p style={{ marginTop: "20px", fontSize: "12px", color: "#94a3b8", textAlign: "center" }}>
+        Powered by <strong style={{ color: "#2563eb" }}>Catalyst</strong> — Partnering for Sustainability
+      </p>
+
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+    </div>
+  );
 }
