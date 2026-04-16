@@ -42,6 +42,8 @@ import {
   getLogsheetEntryDetail,
   getChecklistSubmissionDetail,
   getCompanyOverview,
+  getRolePermissions,
+  saveRolePermissions,
   getLogsheetIssuesReport,
   getAdminOjtTrainings,
   getAdminOjtProgress,
@@ -67,6 +69,7 @@ import AssetDashboard from "../components/AssetDashboard.jsx";
 import { useAlertSound } from "../hooks/useAlertSound";
 import QRCode from "qrcode";
 import { buildApiUrl, getPublicAppUrl } from "../utils/runtimeConfig";
+import catalystLogo from "../assets/catalyst-logo.svg";
 
 const TOKEN_KEY = "company_portal_token";
 
@@ -762,6 +765,16 @@ const CompanyPortal = () => {
   const [editCompanyForm, setEditCompanyForm] = useState(emptyCompany);
   const [editCompanyLoading, setEditCompanyLoading] = useState(false);
   const [editCompanyError, setEditCompanyError] = useState(null);
+
+  // Modules modal state
+  const [modulesModalId, setModulesModalId] = useState(null);
+  const [modulesForm, setModulesForm] = useState([]);
+  const [modulesSaving, setModulesSaving] = useState(false);
+
+  // Role permissions modal state
+  const [rolePermsModalId, setRolePermsModalId] = useState(null);
+  const [rolePermsData, setRolePermsData] = useState({});
+  const [rolePermsSaving, setRolePermsSaving] = useState(false);
 
   // Company Users (Admin) state
   const [adminCompanyId, setAdminCompanyId] = useState(null);
@@ -1647,6 +1660,75 @@ const CompanyPortal = () => {
       .finally(() => setOverviewLoading(false));
   };
 
+  const ALL_MODULES = [
+    { key: "assets", label: "Asset Management" },
+    { key: "checklists", label: "FM e Checklist" },
+    { key: "logsheets", label: "Logsheets" },
+    { key: "workorders", label: "Work Orders" },
+    { key: "ojt", label: "OJT Training" },
+    { key: "fleet", label: "Fleet Management" },
+    { key: "warnings", label: "Warnings" },
+    { key: "shifts", label: "Shifts" },
+    { key: "departments", label: "Departments" },
+  ];
+
+  const ALL_ROLES = ["admin", "technical_lead", "assistant_manager", "technical_executive", "supervisor", "technician", "cleaner", "security", "driver", "fleet_operator", "employee"];
+
+  const openModulesModal = (company) => {
+    setModulesModalId(company.id);
+    const enabled = Array.isArray(company.enabledModules) ? company.enabledModules : ALL_MODULES.map((m) => m.key);
+    setModulesForm(enabled);
+  };
+
+  const handleSaveModules = async () => {
+    if (!modulesModalId) return;
+    setModulesSaving(true);
+    try {
+      const company = companies.find((c) => c.id === modulesModalId);
+      const updated = await updateCompany(token, modulesModalId, { ...company, enabledModules: modulesForm });
+      setCompanies((prev) => prev.map((c) => (c.id === modulesModalId ? { ...c, enabledModules: modulesForm, ...updated } : c)));
+      setModulesModalId(null);
+    } catch (err) {
+      alert(err.message || "Could not save module access");
+    } finally {
+      setModulesSaving(false);
+    }
+  };
+
+  const openRolePermsModal = async (company) => {
+    setRolePermsModalId(company.id);
+    setRolePermsData({});
+    try {
+      const data = await getRolePermissions(token, company.id);
+      setRolePermsData(data || {});
+    } catch {
+      setRolePermsData({});
+    }
+  };
+
+  const handleRolePermChange = (role, module, op) => {
+    setRolePermsData((prev) => {
+      const rolePerms = prev[role] || {};
+      const modPerms = rolePerms[module] || {};
+      return { ...prev, [role]: { ...rolePerms, [module]: { ...modPerms, [op]: !modPerms[op] } } };
+    });
+  };
+
+  const handleSaveRolePerms = async () => {
+    if (!rolePermsModalId) return;
+    setRolePermsSaving(true);
+    try {
+      await saveRolePermissions(token, rolePermsModalId, rolePermsData);
+      setRolePermsModalId(null);
+    } catch (err) {
+      alert(err.message || "Could not save permissions");
+    } finally {
+      setRolePermsSaving(false);
+    }
+  };
+
+
+
   const handleUserFormChange = (e) => {
     const { name, value } = e.target;
     setUserForm((prev) => ({ ...prev, [name]: value }));
@@ -1706,47 +1788,70 @@ const CompanyPortal = () => {
 
   if (!token) {
     return (
-      <div className="page" style={{ maxWidth: "480px" }}>
-        <div className="page-header">
-          <h1>Client Portal Login</h1>
-          <p>Sign in with the user credentials created in the client portal.</p>
+      <div style={{ minHeight: "100vh", background: "linear-gradient(135deg, #f0f7ff 0%, #e8f4fd 100%)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}>
+        <div style={{ width: "100%", maxWidth: "440px" }}>
+          {/* Logo */}
+          <div style={{ textAlign: "center", marginBottom: "36px" }}>
+            <img src={catalystLogo} alt="Catalyst" style={{ height: "52px", objectFit: "contain", marginBottom: "16px" }} />
+            <h1 style={{ fontSize: "26px", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px", marginBottom: "6px" }}>Client Portal</h1>
+            <p style={{ color: "#64748b", fontSize: "14.5px" }}>Sign in with the user credentials created in the client portal.</p>
+          </div>
+
+          {/* Card */}
+          <div style={{ background: "#fff", borderRadius: "16px", padding: "36px 40px", boxShadow: "0 4px 24px rgba(0,0,0,0.08)", border: "1px solid #e2e8f0" }}>
+            {authError && (
+              <div style={{ background: "#fef2f2", border: "1px solid #fecaca", color: "#dc2626", padding: "11px 14px", borderRadius: "8px", fontSize: "13.5px", marginBottom: "20px", display: "flex", gap: "8px", alignItems: "flex-start" }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ flexShrink: 0, marginTop: "1px" }}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                {authError}
+              </div>
+            )}
+
+            <form onSubmit={handleLogin}>
+              <div style={{ marginBottom: "18px" }}>
+                <label style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#374151", marginBottom: "7px" }}>Email Address</label>
+                <div style={{ position: "relative" }}>
+                  <span style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: "#94a3b8" }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+                  </span>
+                  <input
+                    name="email"
+                    type="email"
+                    value={loginForm.email}
+                    onChange={(e) => setLoginForm({ ...loginForm, email: e.target.value })}
+                    required
+                    placeholder="you@company.com"
+                    style={{ width: "100%", padding: "11px 12px 11px 40px", border: "1.5px solid #e2e8f0", borderRadius: "9px", fontSize: "14px", outline: "none", boxSizing: "border-box", transition: "border-color 0.2s" }}
+                    onFocus={(e) => (e.target.style.borderColor = "#2563eb")}
+                    onBlur={(e) => (e.target.style.borderColor = "#e2e8f0")}
+                  />
+                </div>
+              </div>
+              <div style={{ marginBottom: "24px" }}>
+                <label style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#374151", marginBottom: "7px" }}>Password</label>
+                <div style={{ position: "relative" }}>
+                  <span style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: "#94a3b8" }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                  </span>
+                  <input
+                    name="password"
+                    type="password"
+                    value={loginForm.password}
+                    onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
+                    required
+                    placeholder="Enter your password"
+                    style={{ width: "100%", padding: "11px 12px 11px 40px", border: "1.5px solid #e2e8f0", borderRadius: "9px", fontSize: "14px", outline: "none", boxSizing: "border-box", transition: "border-color 0.2s" }}
+                    onFocus={(e) => (e.target.style.borderColor = "#2563eb")}
+                    onBlur={(e) => (e.target.style.borderColor = "#e2e8f0")}
+                  />
+                </div>
+              </div>
+              <button type="submit" disabled={loading}
+                style={{ width: "100%", padding: "13px", background: loading ? "#93c5fd" : "#2563eb", color: "#fff", border: "none", borderRadius: "9px", fontSize: "15px", fontWeight: 700, cursor: loading ? "not-allowed" : "pointer", transition: "background 0.2s" }}>
+                {loading ? "Signing in…" : "Sign In"}
+              </button>
+            </form>
+          </div>
         </div>
-
-        {authError && (
-          <div style={{ background: "#3b0e0e", color: "#f87171", padding: "10px 14px", borderRadius: "6px", marginBottom: "12px", fontSize: "14px" }}>
-            ⚠️ {authError}
-          </div>
-        )}
-
-        <form onSubmit={handleLogin} className="card" style={{ padding: "20px" }}>
-          <div className="form-group">
-            <label>Email</label>
-            <input
-              name="email"
-              type="email"
-              value={loginForm.email}
-              onChange={(e) => setLoginForm({ ...loginForm, email: e.target.value })}
-              required
-              className="form-input"
-            />
-          </div>
-          <div className="form-group">
-            <label>Password</label>
-            <input
-              name="password"
-              type="password"
-              value={loginForm.password}
-              onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
-              required
-              className="form-input"
-            />
-          </div>
-          <div className="modal-actions" style={{ justifyContent: "flex-start" }}>
-            <button type="submit" className="btn-submit" disabled={loading}>
-              {loading ? "Signing in…" : "Sign In"}
-            </button>
-          </div>
-        </form>
       </div>
     );
   }
@@ -2628,6 +2733,12 @@ const CompanyPortal = () => {
                                   <ABtns bg="#f3e8ff" col="#7c3aed" title="Admin Users" onClick={() => openAdminView(c.id)}>
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
                                   </ABtns>
+                                  <ABtns bg="#e0f2fe" col="#0284c7" title="Module Access" onClick={() => openModulesModal(c)}>
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+                                  </ABtns>
+                                  <ABtns bg="#fdf4ff" col="#9333ea" title="Role Permissions" onClick={() => openRolePermsModal(c)}>
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                                  </ABtns>
                                   <ABtns bg="#fef9c3" col="#ca8a04" title="Edit" onClick={() => openEditCompany(c)}>
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                                   </ABtns>
@@ -2775,6 +2886,87 @@ const CompanyPortal = () => {
                         <button type="submit" className="btn-submit" disabled={editCompanyLoading}>{editCompanyLoading ? "Saving…" : "Save Changes"}</button>
                       </div>
                     </form>
+                  </div>
+                </div>
+              )}
+
+              {/* ── Module Access Modal ── */}
+              {modulesModalId && (
+                <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }} onClick={() => setModulesModalId(null)}>
+                  <div style={{ background: "#fff", borderRadius: "16px", padding: "28px", maxWidth: "480px", width: "100%", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }} onClick={(e) => e.stopPropagation()}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+                      <h2 style={{ fontSize: "18px", fontWeight: "700", color: "#0f172a" }}>Module Access</h2>
+                      <button onClick={() => setModulesModalId(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: "22px", lineHeight: 1 }}>✕</button>
+                    </div>
+                    <p style={{ color: "#64748b", fontSize: "13px", marginBottom: "16px" }}>Select which modules are visible in the company portal dashboard.</p>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginBottom: "24px" }}>
+                      {ALL_MODULES.map((m) => (
+                        <label key={m.key} style={{ display: "flex", alignItems: "center", gap: "12px", cursor: "pointer", padding: "10px 14px", border: "1px solid #e2e8f0", borderRadius: "8px", background: modulesForm.includes(m.key) ? "#eff6ff" : "#fff", transition: "background 0.15s" }}>
+                          <input type="checkbox" checked={modulesForm.includes(m.key)} onChange={() => setModulesForm((prev) => prev.includes(m.key) ? prev.filter((k) => k !== m.key) : [...prev, m.key])} style={{ width: "16px", height: "16px", accentColor: "#2563eb" }} />
+                          <span style={{ fontSize: "14px", fontWeight: "500", color: "#334155" }}>{m.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
+                      <button type="button" onClick={() => setModulesModalId(null)} className="btn-cancel">Cancel</button>
+                      <button type="button" onClick={handleSaveModules} className="btn-submit" disabled={modulesSaving}>{modulesSaving ? "Saving…" : "Save Access"}</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ── Role Permissions Modal ── */}
+              {rolePermsModalId && (
+                <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }} onClick={() => setRolePermsModalId(null)}>
+                  <div style={{ background: "#fff", borderRadius: "16px", padding: "28px", maxWidth: "900px", width: "100%", maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }} onClick={(e) => e.stopPropagation()}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+                      <h2 style={{ fontSize: "18px", fontWeight: "700", color: "#0f172a" }}>Role Permissions</h2>
+                      <button onClick={() => setRolePermsModalId(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: "22px", lineHeight: 1 }}>✕</button>
+                    </div>
+                    <p style={{ color: "#64748b", fontSize: "13px", marginBottom: "16px" }}>Configure Create / Read / Update / Delete permissions per role and module.</p>
+                    <div style={{ overflowX: "auto" }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
+                        <thead>
+                          <tr style={{ background: "#f8fafc" }}>
+                            <th style={{ padding: "10px 12px", textAlign: "left", borderBottom: "2px solid #e2e8f0", color: "#475569", fontWeight: "700", minWidth: "130px" }}>Role</th>
+                            {ALL_MODULES.map((m) => (
+                              <th key={m.key} style={{ padding: "10px 8px", textAlign: "center", borderBottom: "2px solid #e2e8f0", color: "#475569", fontWeight: "700", minWidth: "90px" }}>
+                                {m.label}
+                                <div style={{ display: "flex", justifyContent: "center", gap: "2px", marginTop: "4px" }}>
+                                  {["C","R","U","D"].map((op) => <span key={op} style={{ fontSize: "10px", color: "#94a3b8", width: "16px", textAlign: "center" }}>{op}</span>)}
+                                </div>
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {ALL_ROLES.map((role, ri) => (
+                            <tr key={role} style={{ background: ri % 2 === 0 ? "#fff" : "#f8fafc" }}>
+                              <td style={{ padding: "8px 12px", borderBottom: "1px solid #e2e8f0", color: "#334155", fontWeight: "600", textTransform: "capitalize" }}>
+                                {role.replace(/_/g, " ")}
+                              </td>
+                              {ALL_MODULES.map((m) => {
+                                const perms = (rolePermsData[role] || {})[m.key] || {};
+                                return (
+                                  <td key={m.key} style={{ padding: "8px", borderBottom: "1px solid #e2e8f0", textAlign: "center" }}>
+                                    <div style={{ display: "flex", justifyContent: "center", gap: "2px" }}>
+                                      {[["c","create"],["r","read"],["u","update"],["d","delete"]].map(([op, label]) => (
+                                        <input key={op} type="checkbox" title={label} checked={!!perms[op]} onChange={() => handleRolePermChange(role, m.key, op)}
+                                          style={{ width: "14px", height: "14px", cursor: "pointer", accentColor: "#2563eb" }} />
+                                      ))}
+                                    </div>
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end", marginTop: "24px" }}>
+                      <button type="button" onClick={() => setRolePermsModalId(null)} className="btn-cancel">Cancel</button>
+                      <button type="button" onClick={handleSaveRolePerms} className="btn-submit" disabled={rolePermsSaving}>{rolePermsSaving ? "Saving…" : "Save Permissions"}</button>
+                    </div>
                   </div>
                 </div>
               )}

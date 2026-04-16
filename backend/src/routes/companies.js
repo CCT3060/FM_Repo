@@ -8,6 +8,23 @@ const router = Router();
 
 router.use(requireAuth);
 
+// Auto-migrations
+(async () => {
+  try {
+    await pool.query(`ALTER TABLE companies ADD COLUMN IF NOT EXISTS enabled_modules TEXT DEFAULT NULL`);
+  } catch (err) { /* ignore */ }
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS role_permissions (
+        id            SERIAL PRIMARY KEY,
+        company_id    INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        role          VARCHAR(60) NOT NULL,
+        permissions   TEXT NOT NULL DEFAULT '{}',
+        UNIQUE(company_id, role)
+      )`);
+  } catch (err) { /* ignore */ }
+})();
+
 const companyRules = [];
 
 const toNullableInt = (value) => {
@@ -41,6 +58,7 @@ router.get("/", async (req, res, next) => {
               c.premeal_module      AS "premealModule",
               c.delivery_module     AS "deliveryModule",
               c.allow_guest_booking AS "allowGuestBooking",
+              c.enabled_modules     AS "enabledModules",
               c.status,
               c.created_at          AS "createdAt",
               COALESCE(cu.employee_count, 0) AS "employeeCount"
@@ -54,7 +72,11 @@ router.get("/", async (req, res, next) => {
        ORDER BY c.created_at DESC`,
       [req.user.id]
     );
-    res.json(rows);
+    const parsed = rows.map((r) => ({
+      ...r,
+      enabledModules: r.enabledModules ? (typeof r.enabledModules === "string" ? JSON.parse(r.enabledModules) : r.enabledModules) : null,
+    }));
+    res.json(parsed);
   } catch (err) {
     next(err);
   }
@@ -88,6 +110,7 @@ router.post(
         deliveryModule = true,
         allowGuestBooking = false,
         status = "Active",
+        enabledModules,
       } = req.body;
 
       const safeCompanyName = companyName?.trim() || "Untitled Company";
@@ -98,6 +121,8 @@ router.post(
       const safeContractStart = contractStartDate || null;
       const safeContractEnd = contractEndDate || null;
 
+      const safeEnabledModules = enabledModules ? JSON.stringify(enabledModules) : null;
+
       const [result] = await pool.execute(
         `INSERT INTO companies (
             company_name, company_code, description,
@@ -106,8 +131,8 @@ router.post(
             contract_start_date, contract_end_date, billing_cycle,
             payment_terms_days, max_employees,
             qsr_module, premeal_module, delivery_module, allow_guest_booking,
-          status, user_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            enabled_modules, status, user_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         RETURNING id` ,
         [
           safeCompanyName, safeCompanyCode, description,
@@ -116,7 +141,7 @@ router.post(
           safeContractStart, safeContractEnd, safeBillingCycle,
           safePaymentTerms, safeMaxEmployees,
           qsrModule ? 1 : 0, premealModule ? 1 : 0, deliveryModule ? 1 : 0, allowGuestBooking ? 1 : 0,
-          status, req.user.id,
+          safeEnabledModules, status, req.user.id,
         ]
       );
 
@@ -125,24 +150,12 @@ router.post(
         companyName: safeCompanyName,
         companyCode: safeCompanyCode,
         description,
-        addressLine1,
-        addressLine2,
-        city,
-        state,
-        country,
-        pincode,
-        gstNumber,
-        panNumber,
-        cinNumber,
-        contractStartDate,
-        contractEndDate,
-        billingCycle,
-        paymentTermsDays,
-        maxEmployees,
-        qsrModule: !!qsrModule,
-        premealModule: !!premealModule,
-        deliveryModule: !!deliveryModule,
-        allowGuestBooking: !!allowGuestBooking,
+        addressLine1, addressLine2, city, state, country, pincode,
+        gstNumber, panNumber, cinNumber,
+        contractStartDate, contractEndDate, billingCycle, paymentTermsDays, maxEmployees,
+        qsrModule: !!qsrModule, premealModule: !!premealModule,
+        deliveryModule: !!deliveryModule, allowGuestBooking: !!allowGuestBooking,
+        enabledModules: enabledModules || null,
         status,
       });
     } catch (err) {
@@ -167,11 +180,12 @@ router.put(
         contractStartDate, contractEndDate, billingCycle,
         paymentTermsDays, maxEmployees,
         qsrModule, premealModule, deliveryModule, allowGuestBooking,
-        status,
+        status, enabledModules,
       } = req.body;
 
       const safeCompanyName = companyName?.trim() || "Untitled Company";
       const safeCompanyCode = (companyCode?.trim() || "").toUpperCase();
+      const safeEnabledModules = enabledModules !== undefined ? JSON.stringify(enabledModules) : undefined;
 
       const [result] = await pool.execute(
         `UPDATE companies SET
@@ -181,6 +195,7 @@ router.put(
             contract_start_date = ?, contract_end_date = ?, billing_cycle = ?,
             payment_terms_days = ?, max_employees = ?,
             qsr_module = ?, premeal_module = ?, delivery_module = ?, allow_guest_booking = ?,
+            enabled_modules = ?,
             status = ?
          WHERE id = ? AND user_id = ?`,
         [
@@ -190,6 +205,7 @@ router.put(
           contractStartDate || null, contractEndDate || null, billingCycle || null,
           toNullableInt(paymentTermsDays), toNullableInt(maxEmployees),
           qsrModule ? 1 : 0, premealModule ? 1 : 0, deliveryModule ? 1 : 0, allowGuestBooking ? 1 : 0,
+          safeEnabledModules !== undefined ? safeEnabledModules : null,
           status || "Active",
           id, req.user.id,
         ]
@@ -206,6 +222,7 @@ router.put(
         paymentTermsDays, maxEmployees,
         qsrModule: !!qsrModule, premealModule: !!premealModule,
         deliveryModule: !!deliveryModule, allowGuestBooking: !!allowGuestBooking,
+        enabledModules: enabledModules || null,
         status: status || "Active",
       });
     } catch (err) {
@@ -300,6 +317,47 @@ router.get(
     } catch (err) {
       next(err);
     }
+  }
+);
+
+/* ── Role Permissions ──────────────────────────────────────────────────────── */
+router.get(
+  "/:id/role-permissions",
+  validate([param("id").isInt().withMessage("id must be numeric")]),
+  async (req, res, next) => {
+    try {
+      const companyId = Number(req.params.id);
+      const [[co]] = await pool.query(`SELECT 1 FROM companies WHERE id = ? AND user_id = ?`, [companyId, req.user.id]);
+      if (!co) return res.status(404).json({ message: "Company not found" });
+      const [rows] = await pool.query(`SELECT role, permissions FROM role_permissions WHERE company_id = ?`, [companyId]);
+      const result = {};
+      rows.forEach((r) => {
+        result[r.role] = typeof r.permissions === "string" ? JSON.parse(r.permissions) : r.permissions;
+      });
+      res.json(result);
+    } catch (err) { next(err); }
+  }
+);
+
+router.put(
+  "/:id/role-permissions",
+  validate([param("id").isInt().withMessage("id must be numeric")]),
+  async (req, res, next) => {
+    try {
+      const companyId = Number(req.params.id);
+      const [[co]] = await pool.query(`SELECT 1 FROM companies WHERE id = ? AND user_id = ?`, [companyId, req.user.id]);
+      if (!co) return res.status(404).json({ message: "Company not found" });
+      // req.body: { admin: { assets: {c,r,u,d}, ... }, supervisor: {...}, ... }
+      for (const [role, perms] of Object.entries(req.body)) {
+        const permJson = JSON.stringify(perms);
+        await pool.query(
+          `INSERT INTO role_permissions (company_id, role, permissions) VALUES (?, ?, ?)
+           ON CONFLICT (company_id, role) DO UPDATE SET permissions = EXCLUDED.permissions`,
+          [companyId, role, permJson]
+        );
+      }
+      res.json({ ok: true });
+    } catch (err) { next(err); }
   }
 );
 

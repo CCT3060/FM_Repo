@@ -1617,13 +1617,17 @@ router.get("/me", async (req, res, next) => {
   try {
     const [[row]] = await pool.query(
       `SELECT cu.id, cu.full_name AS "fullName", cu.email, cu.phone, cu.designation, cu.role,
-              cu.status, cu.company_id AS "companyId", c.company_name AS "companyName"
+              cu.status, cu.company_id AS "companyId", c.company_name AS "companyName",
+              c.enabled_modules AS "enabledModules"
        FROM company_users cu
        JOIN companies c ON c.id = cu.company_id
        WHERE cu.id = ?`,
       [req.companyUser.id]
     );
     if (!row) return res.status(404).json({ message: "User not found" });
+    row.enabledModules = row.enabledModules
+      ? (typeof row.enabledModules === "string" ? JSON.parse(row.enabledModules) : row.enabledModules)
+      : null;
     res.json(row);
   } catch (err) {
     next(err);

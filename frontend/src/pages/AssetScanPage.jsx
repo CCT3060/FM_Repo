@@ -22,7 +22,8 @@ export default function AssetScanPage() {
   const [asset, setAsset] = useState(null);
   const [logsheetTemplates, setLogsheetTemplates] = useState([]);
   const [checklistTemplates, setChecklistTemplates] = useState([]);
-  
+  const [userAuthenticated, setUserAuthenticated] = useState(false);
+
   const [view, setView] = useState("overview"); // overview | fill-logsheet | fill-checklist
   const [selectedTemplate, setSelectedTemplate] = useState(null);
   const [submitterName, setSubmitterName] = useState("");
@@ -30,7 +31,9 @@ export default function AssetScanPage() {
   useEffect(() => {
     if (!assetId) return;
     setLoading(true);
-    fetch(`${BASE}/api/asset-qr/${assetId}`)
+    const cpToken = sessionStorage.getItem("cp_token");
+    const headers = cpToken ? { Authorization: `Bearer ${cpToken}` } : {};
+    fetch(`${BASE}/api/asset-qr/${assetId}`, { headers })
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
@@ -39,6 +42,7 @@ export default function AssetScanPage() {
         setAsset(data.asset);
         setLogsheetTemplates(data.logsheetTemplates || []);
         setChecklistTemplates(data.checklistTemplates || []);
+        setUserAuthenticated(!!data.userAuthenticated);
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
@@ -161,23 +165,26 @@ export default function AssetScanPage() {
                   </h3>
                   <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                     {logsheetTemplates.map((t) => (
-                      <button
-                        key={t.id}
-                        onClick={() => { setSelectedTemplate(t); setView("fill-logsheet"); }}
-                        style={{ background: "#fff", border: "2px solid #e2e8f0", borderRadius: "10px", padding: "16px 18px", cursor: "pointer", textAlign: "left", transition: "all 0.2s" }}
-                        onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#667eea"; e.currentTarget.style.boxShadow = "0 4px 16px rgba(102,126,234,0.15)"; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.borderColor = "#e2e8f0"; e.currentTarget.style.boxShadow = "none"; }}
-                      >
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <div key={t.id} style={{ background: "#fff", border: "2px solid #e2e8f0", borderRadius: "10px", padding: "16px 18px" }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "10px" }}>
                           <div>
                             <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", marginBottom: "4px" }}>{t.templateName}</p>
                             <p style={{ fontSize: "13px", color: "#64748b" }}>Frequency: {t.frequency || "N/A"}</p>
                           </div>
-                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#667eea" strokeWidth="2">
-                            <polyline points="9 18 15 12 9 6" />
-                          </svg>
+                          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                            <button
+                              onClick={() => { window.location.href = `klean://fill?type=logsheet&id=${t.id}&assetId=${assetId}`; }}
+                              style={{ padding: "8px 16px", background: "linear-gradient(135deg, #667eea, #764ba2)", color: "#fff", border: "none", borderRadius: "8px", fontSize: "13px", fontWeight: 700, cursor: "pointer" }}>
+                              Fill Now (App)
+                            </button>
+                            <button
+                              onClick={() => { setSelectedTemplate(t); setView("fill-logsheet"); }}
+                              style={{ padding: "8px 16px", background: "#f1f5f9", color: "#475569", border: "1px solid #e2e8f0", borderRadius: "8px", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>
+                              Fill in Browser
+                            </button>
+                          </div>
                         </div>
-                      </button>
+                      </div>
                     ))}
                   </div>
                 </div>
@@ -195,23 +202,26 @@ export default function AssetScanPage() {
                   </h3>
                   <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                     {checklistTemplates.map((t) => (
-                      <button
-                        key={t.id}
-                        onClick={() => { setSelectedTemplate(t); setView("fill-checklist"); }}
-                        style={{ background: "#fff", border: "2px solid #e2e8f0", borderRadius: "10px", padding: "16px 18px", cursor: "pointer", textAlign: "left", transition: "all 0.2s" }}
-                        onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#667eea"; e.currentTarget.style.boxShadow = "0 4px 16px rgba(102,126,234,0.15)"; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.borderColor = "#e2e8f0"; e.currentTarget.style.boxShadow = "none"; }}
-                      >
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <div key={t.id} style={{ background: "#fff", border: "2px solid #e2e8f0", borderRadius: "10px", padding: "16px 18px" }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "10px" }}>
                           <div>
                             <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", marginBottom: "4px" }}>{t.templateName}</p>
                             {t.description && <p style={{ fontSize: "13px", color: "#64748b" }}>{t.description}</p>}
                           </div>
-                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#667eea" strokeWidth="2">
-                            <polyline points="9 18 15 12 9 6" />
-                          </svg>
+                          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                            <button
+                              onClick={() => { window.location.href = `klean://fill?type=checklist&id=${t.id}&assetId=${assetId}`; }}
+                              style={{ padding: "8px 16px", background: "linear-gradient(135deg, #667eea, #764ba2)", color: "#fff", border: "none", borderRadius: "8px", fontSize: "13px", fontWeight: 700, cursor: "pointer" }}>
+                              Fill Now (App)
+                            </button>
+                            <button
+                              onClick={() => { setSelectedTemplate(t); setView("fill-checklist"); }}
+                              style={{ padding: "8px 16px", background: "#f1f5f9", color: "#475569", border: "1px solid #e2e8f0", borderRadius: "8px", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>
+                              Fill in Browser
+                            </button>
+                          </div>
                         </div>
-                      </button>
+                      </div>
                     ))}
                   </div>
                 </div>
@@ -219,7 +229,17 @@ export default function AssetScanPage() {
 
               {logsheetTemplates.length === 0 && checklistTemplates.length === 0 && (
                 <div style={{ textAlign: "center", padding: "40px 20px" }}>
-                  <p style={{ fontSize: "14px", color: "#94a3b8" }}>No templates assigned to this asset yet.</p>
+                  {!userAuthenticated ? (
+                    <>
+                      <p style={{ fontSize: "15px", color: "#475569", marginBottom: "8px", fontWeight: 600 }}>Login to see your assigned templates</p>
+                      <p style={{ fontSize: "13px", color: "#94a3b8", marginBottom: "16px" }}>Templates are shown based on your assignments. Please log in to your company portal first.</p>
+                      <a href="/company" style={{ display: "inline-block", padding: "10px 24px", background: "#667eea", color: "#fff", borderRadius: "8px", fontSize: "14px", fontWeight: 600, textDecoration: "none" }}>
+                        Go to Portal Login
+                      </a>
+                    </>
+                  ) : (
+                    <p style={{ fontSize: "14px", color: "#94a3b8" }}>No templates assigned to this asset for your account.</p>
+                  )}
                 </div>
               )}
             </div>

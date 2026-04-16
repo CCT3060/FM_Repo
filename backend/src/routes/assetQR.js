@@ -14,6 +14,7 @@
 
 import { Router } from "express";
 import pool from "../db.js";
+import jwt from "jsonwebtoken";
 
 const router = Router();
 
@@ -23,12 +24,23 @@ const safeParse = (v) => {
   return v;
 };
 
+// Optionally decode company user token from Authorization header or ?token= param
+const tryGetCompanyUser = (req) => {
+  try {
+    const raw = req.headers.authorization?.replace("Bearer ", "") || req.query.token;
+    if (!raw) return null;
+    const decoded = jwt.verify(raw, process.env.JWT_SECRET);
+    return decoded; // { sub: userId, companyId, role, ... }
+  } catch { return null; }
+};
+
 /* ── GET asset details + templates ──────────────────────────────────────────── */
 router.get("/:assetId", async (req, res, next) => {
   try {
     const { assetId } = req.params;
+    const companyUser = tryGetCompanyUser(req); // null if anonymous
 
-    // Asset info (no company auth required — QR is physical proof of access)
+    // Asset info
     const [[asset]] = await pool.query(
       `SELECT a.id, a.asset_name AS "assetName", a.asset_unique_id AS "assetUniqueId",
               a.asset_type AS "assetType", a.status, a.building, a.floor, a.room,
@@ -51,37 +63,65 @@ router.get("/:assetId", async (req, res, next) => {
     asset.metadata = meta;
     delete asset.documents;
 
-    // Logsheet templates assigned to this asset
-    const [logsheetTemplates] = await pool.query(
-      `SELECT lt.id, lt.template_name AS "templateName", lt.frequency,
-              lt.shift_id AS "shiftId", lt.layout_type AS "layoutType",
-              lt.header_config AS "headerConfig", lt.asset_type AS "assetType",
-              lt.description
-       FROM logsheet_templates lt
-       WHERE lt.asset_id = ? AND lt.is_active = 1
-       ORDER BY lt.template_name`,
-      [assetId]
-    );
+    // Logsheet templates: if user logged in, only show assigned ones
+    let logsheetTemplates;
+    if (companyUser) {
+      [logsheetTemplates] = await pool.query(
+        `SELECT lt.id, lt.template_name AS "templateName", lt.frequency,
+                lt.shift_id AS "shiftId", lt.layout_type AS "layoutType",
+                lt.header_config AS "headerConfig", lt.asset_type AS "assetType",
+                lt.description
+         FROM logsheet_templates lt
+         JOIN template_user_assignments tua ON tua.template_id = lt.id AND tua.template_type = 'logsheet'
+         WHERE lt.asset_id = ? AND lt.is_active = 1 AND tua.company_user_id = ?
+         ORDER BY lt.template_name`,
+        [assetId, companyUser.sub]
+      );
+    } else {
+      [logsheetTemplates] = await pool.query(
+        `SELECT lt.id, lt.template_name AS "templateName", lt.frequency,
+                lt.shift_id AS "shiftId", lt.layout_type AS "layoutType",
+                lt.header_config AS "headerConfig", lt.asset_type AS "assetType",
+                lt.description
+         FROM logsheet_templates lt
+         WHERE lt.asset_id = ? AND lt.is_active = 1
+         ORDER BY lt.template_name`,
+        [assetId]
+      );
+    }
     const normalizedLS = logsheetTemplates.map((t) => ({
       ...t,
       headerConfig: safeParse(t.headerConfig) || {},
     }));
 
-    // Checklist templates for this asset's type
-    const [checklistTemplates] = await pool.query(
-      `SELECT ct.id, ct.template_name AS "templateName", ct.asset_type AS "assetType",
-              ct.category, ct.description, ct.frequency, ct.shift, ct.status, ct.questions
-       FROM checklist_templates ct
-       WHERE ct.company_id = ? AND ct.asset_type = ? AND ct.is_active = 1
-       ORDER BY ct.template_name`,
-      [asset.companyId, asset.assetType]
-    );
+    // Checklist templates: if user logged in, only show assigned ones
+    let checklistTemplates;
+    if (companyUser) {
+      [checklistTemplates] = await pool.query(
+        `SELECT ct.id, ct.template_name AS "templateName", ct.asset_type AS "assetType",
+                ct.category, ct.description, ct.frequency, ct.shift, ct.status, ct.questions
+         FROM checklist_templates ct
+         JOIN template_user_assignments tua ON tua.template_id = ct.id AND tua.template_type = 'checklist'
+         WHERE ct.company_id = ? AND ct.asset_type = ? AND ct.is_active = 1 AND tua.company_user_id = ?
+         ORDER BY ct.template_name`,
+        [asset.companyId, asset.assetType, companyUser.sub]
+      );
+    } else {
+      [checklistTemplates] = await pool.query(
+        `SELECT ct.id, ct.template_name AS "templateName", ct.asset_type AS "assetType",
+                ct.category, ct.description, ct.frequency, ct.shift, ct.status, ct.questions
+         FROM checklist_templates ct
+         WHERE ct.company_id = ? AND ct.asset_type = ? AND ct.is_active = 1
+         ORDER BY ct.template_name`,
+        [asset.companyId, asset.assetType]
+      );
+    }
     const normalizedCL = checklistTemplates.map((t) => ({
       ...t,
       questions: safeParse(t.questions) || [],
     }));
 
-    // OJT Trainings linked to this asset (published only, same company as asset)
+    // OJT Trainings linked to this asset
     const [ojtTrainings] = await pool.query(
       `SELECT id, title, description, passing_percentage AS "passingPercentage"
        FROM ojt_trainings
@@ -95,6 +135,7 @@ router.get("/:assetId", async (req, res, next) => {
       ojtTrainings,
       logsheetTemplates: normalizedLS,
       checklistTemplates: normalizedCL,
+      userAuthenticated: !!companyUser,
     });
   } catch (err) {
     next(err);

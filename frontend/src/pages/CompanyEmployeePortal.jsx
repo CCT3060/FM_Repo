@@ -2122,6 +2122,13 @@ export default function CompanyEmployeePortal() {
   }, []);
 
   const [nav, setNav] = useState(() => sessionStorage.getItem("cp_nav") || "dashboard");
+  const [enabledModules, setEnabledModules] = useState(null);
+  const visibleNav = useMemo(() => {
+    const base = getNav(currentUser?.role || "employee");
+    if (!enabledModules) return base;
+    const ALWAYS_VISIBLE = new Set(["dashboard", "mytasks", "employees"]);
+    return base.filter((n) => ALWAYS_VISIBLE.has(n.key) || enabledModules.includes(n.key));
+  }, [enabledModules, currentUser?.role]);
   const [dashboard, setDashboard] = useState(null);
 
   // ── Alert sound / toast / bell notification state ───────────────
@@ -2289,6 +2296,7 @@ export default function CompanyEmployeePortal() {
   useEffect(() => {
     if (!token) return;
     load("dashboard", () => getCompanyPortalDashboard(token)).then((d) => d && setDashboard(d));
+    getCompanyPortalMe(token).then((me) => { if (me?.enabledModules) setEnabledModules(me.enabledModules); }).catch(() => {});
     setRecentEntriesLoading(true);
     getCompanyPortalRecentLogsheetEntries(token)
       .then((d) => d && setRecentEntries(d))
@@ -2678,7 +2686,7 @@ export default function CompanyEmployeePortal() {
 
         {/* Nav items */}
         <nav style={{ flex: 1, padding: "10px 10px", overflowY: "auto" }}>
-          {getNav(currentUser.role).map((item) => (
+          {visibleNav.map((item) => (
             <button key={item.key} onClick={() => setNav(item.key)}
               style={{ width: "100%", display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px", borderRadius: "8px", border: "none", cursor: "pointer", background: nav === item.key ? "#eff6ff" : "transparent", color: nav === item.key ? "#2563eb" : "#475569", fontWeight: nav === item.key ? 700 : 500, fontSize: "14px", textAlign: "left", marginBottom: "2px", transition: "background 0.15s" }}>
               {item.icon}
@@ -3049,7 +3057,7 @@ export default function CompanyEmployeePortal() {
 
                 {/* Quick nav */}
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px" }}>
-                  {getNav(currentUser.role).filter((n) => n.key !== "dashboard").map((item) => (
+                  {visibleNav.filter((n) => n.key !== "dashboard").map((item) => (
                     <button key={item.key + item.label} onClick={() => setNav(item.key)}
                       style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: "12px", padding: "20px", cursor: "pointer", textAlign: "left", transition: "box-shadow 0.15s", display: "flex", alignItems: "center", gap: "14px" }}
                       onMouseEnter={(e) => (e.currentTarget.style.boxShadow = "0 4px 16px rgba(0,0,0,0.08)")}

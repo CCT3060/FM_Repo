@@ -50,6 +50,8 @@ export const createCompany = (token, data) => request("POST", "/api/companies", 
 export const updateCompany = (token, id, data) => request("PUT", `/api/companies/${id}`, data, { authToken: token });
 export const deleteCompany = (token, id) => request("DELETE", `/api/companies/${id}`, undefined, { authToken: token });
 export const getCompanyOverview = (token, id) => request("GET", `/api/companies/${id}/overview`, undefined, { authToken: token });
+export const getRolePermissions = (token, companyId) => request("GET", `/api/companies/${companyId}/role-permissions`, undefined, { authToken: token });
+export const saveRolePermissions = (token, companyId, data) => request("PUT", `/api/companies/${companyId}/role-permissions`, data, { authToken: token });
 
 // Assets (placeholder endpoints to be implemented server-side)
 export const getAssets = (token, params = "") => request("GET", `/api/assets${params ? `?${params}` : ""}`, undefined, { authToken: token });
