@@ -4,6 +4,7 @@ import helmet from "helmet";
 import morgan from "morgan";
 import path from "path";
 import { fileURLToPath } from "url";
+import pool from "./db.js";
 import clientsRouter from "./routes/clients.js";
 import usersRouter from "./routes/users.js";
 import authRouter from "./routes/auth.js";
@@ -45,7 +46,17 @@ app.use(
 app.use(express.json());
 app.use(morgan("tiny"));
 
-app.get("/health", (_req, res) => res.json({ status: "ok" }));
+app.get("/health", async (_req, res) => {
+  try {
+    await pool.query("SELECT 1");
+    res.json({ status: "ok", db: "connected" });
+  } catch (err) {
+    // Server is up but DB is unreachable – do NOT crash, just report degraded
+    // eslint-disable-next-line no-console
+    console.error("[health] DB check failed:", err.message);
+    res.status(503).json({ status: "degraded", db: "error", detail: err.message });
+  }
+});
 app.use("/api/auth", authRouter);
 app.use("/api/clients", clientsRouter);
 app.use("/api/users", usersRouter);

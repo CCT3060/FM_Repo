@@ -70,9 +70,15 @@ jobs:
             backend/ \
             ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/var/www/fmapp/backend/
 
-      # ── 7. Deploy Nginx configs (full HTTPS + HTTP-only fallback) ───────────────
-      - name: Deploy Nginx configs
+      # ── 7. Deploy EC2 config files (PM2 ecosystem + Nginx) ───────────────────
+      - name: Deploy EC2 configs
         run: |
+          ssh -i ~/.ssh/fm_ec2.pem -o StrictHostKeyChecking=no \
+            ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "sudo mkdir -p /var/www/fmapp/ec2"
+          rsync -az \
+            -e "ssh -i ~/.ssh/fm_ec2.pem -o StrictHostKeyChecking=no" \
+            ec2/ \
+            ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/var/www/fmapp/ec2/
           rsync -az \
             -e "ssh -i ~/.ssh/fm_ec2.pem -o StrictHostKeyChecking=no" \
             ec2/nginx.conf \
@@ -122,7 +128,9 @@ jobs:
             # ── Install backend deps and restart PM2 ──────────────────────────
             cd /var/www/fmapp/backend
             sudo npm ci --omit=dev
-            pm2 reload fmapp-backend 2>/dev/null || \
+            # Use restart (not reload) to guarantee a clean process after npm ci.
+            # Falls back to pm2 start if the named process doesn't exist yet.
+            pm2 restart fmapp-backend 2>/dev/null || \
               pm2 start /var/www/fmapp/ec2/pm2.ecosystem.config.js --env production
             pm2 save --force
           ENDSSH
