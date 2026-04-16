@@ -14,6 +14,7 @@ import {
     View,
 } from 'react-native';
 import { verifyToken, verifyCompanyCode } from '../utils/api';
+import CatalystLogo from '../components/CatalystLogo';
 
 export default function LoginScreen() {
     const [companyCode, setCompanyCode] = useState('');
@@ -56,10 +57,7 @@ export default function LoginScreen() {
         return (
             <SafeAreaView style={styles.container}>
                 <View style={[styles.formContainer, styles.centerContent]}>
-                    <View style={styles.logoContainer}>
-                        <Text style={styles.logoTextMain}>C A T A L Y S T</Text>
-                        <Text style={styles.logoTextSub}>PARTNERING FOR SUSTAINABILITY</Text>
-                    </View>
+                    <CatalystLogo size="large" />
                     <ActivityIndicator size="large" color="#1E3A8A" style={styles.loader} />
                     <Text style={styles.loadingText}>Loading...</Text>
                 </View>
@@ -101,13 +99,12 @@ export default function LoginScreen() {
                     <Text style={styles.header}>Welcome</Text>
                     <Text style={styles.subtitle}>Enter your company code to continue</Text>
 
-                    {/* Logo Placeholder */}
-                    <View style={styles.logoContainer}>
-                        <Text style={styles.logoTextMain}>C A T A L Y S T</Text>
-                        <Text style={styles.logoTextSub}>PARTNERING FOR SUSTAINABILITY</Text>
+                    {/* Catalyst Logo */}
+                    <View style={styles.logoWrapper}>
+                        <CatalystLogo size="large" />
                     </View>
 
-                    {/* Input section */}
+                    {/* Input section */}}
                     <View style={styles.inputSection}>
                         <Text style={styles.label}>Company Code</Text>
                         <View style={styles.inputContainer}>
@@ -177,31 +174,9 @@ const styles = StyleSheet.create({
         textAlign: 'center',
         marginBottom: 40,
     },
-    logoContainer: {
-        alignItems: 'center',
-        marginBottom: 48,
-        backgroundColor: '#FFFFFF',
-        paddingVertical: 12,
-        paddingHorizontal: 20,
-        borderRadius: 8,
+    logoWrapper: {
+        marginBottom: 40,
         alignSelf: 'center',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.05,
-        shadowRadius: 2,
-        elevation: 2,
-    },
-    logoTextMain: {
-        fontSize: 28,
-        fontWeight: '700',
-        letterSpacing: 4,
-        color: '#2B6CB0',
-    },
-    logoTextSub: {
-        fontSize: 10,
-        color: '#718096',
-        letterSpacing: 1,
-        marginTop: 4,
     },
     loader: {
         marginTop: 24,

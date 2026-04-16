@@ -15,6 +15,7 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import CatalystLogo from '../components/CatalystLogo';
 import {
     getMyAssignments,
     getMyUnassignedToTeam,
@@ -333,6 +334,11 @@ export default function ChecklistManagementScreen() {
                 </TouchableOpacity>
             </View>
 
+            {/* Catalyst Logo */}
+            <View style={styles.logoBar}>
+                <CatalystLogo size="small" />
+            </View>
+
             {/* Search bar */}
             <View style={styles.searchWrap}>
                 <MaterialCommunityIcons name="magnify" size={18} color="#94A3B8" />
@@ -538,6 +544,15 @@ const styles = StyleSheet.create({
     bellBtn: {
         width: 36, height: 36, borderRadius: 10,
         backgroundColor: '#F1F5F9', justifyContent: 'center', alignItems: 'center',
+    },
+
+    // Logo bar
+    logoBar: {
+        alignItems: 'center',
+        paddingVertical: 8,
+        paddingHorizontal: 16,
+        borderBottomWidth: 1,
+        borderBottomColor: '#F1F5F9',
     },
 
     // Search

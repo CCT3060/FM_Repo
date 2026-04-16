@@ -14,6 +14,7 @@ import {
     View,
 } from 'react-native';
 import { loginEmployee, getStoredCompany } from '../utils/api';
+import CatalystLogo from '../components/CatalystLogo';
 
 export default function EmployeeLoginScreen() {
     const [employeeId, setEmployeeId] = useState('');
@@ -121,10 +122,9 @@ export default function EmployeeLoginScreen() {
                     <Text style={styles.header}>Welcome Back</Text>
                     <Text style={styles.subtitle}>{companyName || 'Please enter your employee details.'}</Text>
 
-                    {/* Logo Placeholder */}
-                    <View style={styles.logoContainer}>
-                        <Text style={styles.logoTextMain}>C A T A L Y S T</Text>
-                        <Text style={styles.logoTextSub}>PARTNERING FOR SUSTAINABILITY</Text>
+                    {/* Catalyst Logo */}
+                    <View style={styles.logoWrapper}>
+                        <CatalystLogo size="large" />
                     </View>
 
                     {/* Input section */}
@@ -235,31 +235,9 @@ const styles = StyleSheet.create({
         textAlign: 'center',
         marginBottom: 40,
     },
-    logoContainer: {
-        alignItems: 'center',
-        marginBottom: 48,
-        backgroundColor: '#FFFFFF',
-        paddingVertical: 12,
-        paddingHorizontal: 20,
-        borderRadius: 8,
+    logoWrapper: {
+        marginBottom: 40,
         alignSelf: 'center',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.05,
-        shadowRadius: 2,
-        elevation: 2,
-    },
-    logoTextMain: {
-        fontSize: 28,
-        fontWeight: '700',
-        letterSpacing: 4,
-        color: '#2B6CB0',
-    },
-    logoTextSub: {
-        fontSize: 10,
-        color: '#718096',
-        letterSpacing: 1,
-        marginTop: 4,
     },
     inputSection: {
         marginBottom: 20,
