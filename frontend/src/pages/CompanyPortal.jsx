@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, useRef, useCallback } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   login,
   getCompanies,
@@ -708,6 +709,7 @@ function AdminEmployeesSection({ token, companies = [] }) {
 }
 
 const CompanyPortal = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [token, setToken] = useState(() => {
     const stored = localStorage.getItem(TOKEN_KEY);
     if (!stored || stored === "undefined" || stored === "null") return "";
@@ -720,7 +722,12 @@ const CompanyPortal = () => {
   const [companyForm, setCompanyForm] = useState(emptyCompany);
   const [companyError, setCompanyError] = useState(null);
   const [companyLoading, setCompanyLoading] = useState(false);
-  const [nav, setNav] = useState(() => localStorage.getItem("portal_nav") || "dashboard");
+  // URL-driven navigation: /client?tab=dashboard — enables browser back/forward
+  const nav = searchParams.get("tab") || localStorage.getItem("portal_nav") || "dashboard";
+  const setNav = useCallback((tab) => {
+    localStorage.setItem("portal_nav", tab);
+    setSearchParams({ tab }, { replace: false });
+  }, [setSearchParams]);
   const [checklistSubNav, setChecklistSubNav] = useState("templates");
   const [checklistSelectedCompanyId, setChecklistSelectedCompanyId] = useState(null);
   const [assetSubNav, setAssetSubNav] = useState("dashboard");
@@ -3207,18 +3214,35 @@ const CompanyPortal = () => {
                     )}
                   </div>
 
-                  {/* ── Soft Services: only Location fields ── */}
+                  {/* ── Soft Services: Asset Name, Company, then Location fields ── */}
                   {assetForm.assetType === "soft" && (
-                    <div className="form-section" style={{ marginBottom: "12px" }}>
-                      <h3 style={{ marginBottom: "8px", fontSize: "13px", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.05em" }}>Location</h3>
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px" }}>
-                        <div className="form-group"><label>Building</label><input name="building" value={assetForm.building} onChange={handleAssetChange} className="form-input" placeholder="e.g. Block A" /></div>
-                        <div className="form-group"><label>Floor</label><input name="floor" value={assetForm.floor} onChange={handleAssetChange} className="form-input" placeholder="e.g. 3rd Floor" /></div>
-                        <div className="form-group"><label>Room / Area</label><input name="room" value={assetForm.room} onChange={handleAssetChange} className="form-input" placeholder="e.g. Server Room" /></div>
+                    <div style={{ marginBottom: "12px" }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px", marginBottom: "12px" }}>
+                        <div className="form-group">
+                          <label>Asset Name <span style={{ color: "#ef4444" }}>*</span></label>
+                          <input name="assetName" value={assetForm.assetName} onChange={handleAssetChange} className="form-input" required placeholder="e.g. Housekeeping Area A" />
+                        </div>
+                        <div className="form-group">
+                          <label>Company <span style={{ color: "#ef4444" }}>*</span></label>
+                          <select name="companyId" value={assetForm.companyId || ""} onChange={handleAssetChange} className="form-select" required>
+                            <option value="" disabled>Select company</option>
+                            {companies.map((c) => (
+                              <option key={c.id} value={c.id}>{c.companyName}</option>
+                            ))}
+                          </select>
+                        </div>
                       </div>
-                      <div className="form-group" style={{ marginTop: "8px" }}>
-                        <label>Description</label>
-                        <textarea name="description" value={assetForm.description} onChange={handleAssetChange} className="form-input" rows="2" placeholder="Notes, instructions, etc." />
+                      <div className="form-section">
+                        <h3 style={{ marginBottom: "8px", fontSize: "13px", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.05em" }}>Location</h3>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px" }}>
+                          <div className="form-group"><label>Building</label><input name="building" value={assetForm.building} onChange={handleAssetChange} className="form-input" placeholder="e.g. Block A" /></div>
+                          <div className="form-group"><label>Floor</label><input name="floor" value={assetForm.floor} onChange={handleAssetChange} className="form-input" placeholder="e.g. 3rd Floor" /></div>
+                          <div className="form-group"><label>Room / Area</label><input name="room" value={assetForm.room} onChange={handleAssetChange} className="form-input" placeholder="e.g. Server Room" /></div>
+                        </div>
+                        <div className="form-group" style={{ marginTop: "8px" }}>
+                          <label>Description</label>
+                          <textarea name="description" value={assetForm.description} onChange={handleAssetChange} className="form-input" rows="2" placeholder="Notes, instructions, etc." />
+                        </div>
                       </div>
                     </div>
                   )}

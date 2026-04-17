@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
+    Image,
     KeyboardAvoidingView,
     Platform,
     SafeAreaView,
@@ -13,7 +14,6 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
-import { Image } from 'react-native';
 import { verifyToken, verifyCompanyCode } from '../utils/api';
 
 export default function LoginScreen() {
@@ -57,7 +57,7 @@ export default function LoginScreen() {
         return (
             <SafeAreaView style={styles.container}>
                 <View style={[styles.formContainer, styles.centerContent]}>
-                    <Image source={require('../assets/images/catalyst-logo.png')} style={{ width: 220, height: 70, resizeMode: 'contain' }} />
+                    <Image source={require('../assets/logo.png')} style={{ width: 200, height: 66, resizeMode: 'contain' }} />
                     <ActivityIndicator size="large" color="#1E3A8A" style={styles.loader} />
                     <Text style={styles.loadingText}>Loading...</Text>
                 </View>
@@ -101,7 +101,7 @@ export default function LoginScreen() {
 
                     {/* Catalyst Logo */}
                     <View style={styles.logoWrapper}>
-                        <Image source={require('../assets/images/catalyst-logo.png')} style={{ width: 220, height: 70, resizeMode: 'contain' }} />
+                        <Image source={require('../assets/logo.png')} style={{ width: 200, height: 66, resizeMode: 'contain' }} />
                     </View>
 
                     {/* Input section */}}

@@ -1,6 +1,6 @@
 import { getPublicAppUrl } from "../utils/runtimeConfig";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import QRCode from "qrcode";
 import logo from "../images/image.png";
 import LogsheetModule from "../components/LogsheetModule.jsx";
@@ -2116,12 +2116,26 @@ function FleetMaintModal({ token, fleetAssets, onClose, onSaved }) {
 /* ─── Main Portal ────────────────────────────────────────────────── */
 export default function CompanyEmployeePortal() {
   const navigate = useNavigate();
+  const params = useParams();
   const token = sessionStorage.getItem("cp_token");
   const currentUser = useMemo(() => {
     try { return JSON.parse(sessionStorage.getItem("cp_user") || "null"); } catch { return null; }
   }, []);
 
-  const [nav, setNav] = useState(() => sessionStorage.getItem("cp_nav") || "dashboard");
+  // URL-driven navigation: /company/portal/dashboard — enables browser back/forward
+  const [nav, setNavState] = useState(() => {
+    const urlNav = params["*"]?.split("/")[0];
+    return urlNav || sessionStorage.getItem("cp_nav") || "dashboard";
+  });
+  const setNav = useCallback((key) => {
+    setNavState(key);
+    navigate(`/company/portal/${key}`, { replace: false });
+  }, [navigate]);
+  // Sync nav state with URL when user presses browser back/forward
+  useEffect(() => {
+    const urlNav = params["*"]?.split("/")[0];
+    if (urlNav && urlNav !== nav) setNavState(urlNav);
+  }, [params]); // eslint-disable-line react-hooks/exhaustive-deps
   const [enabledModules, setEnabledModules] = useState(null);
   const visibleNav = useMemo(() => {
     const base = getNav(currentUser?.role || "employee");
@@ -3590,6 +3604,9 @@ export default function CompanyEmployeePortal() {
                 token={token}
                 companyId={currentUser.companyId}
                 assetList={assets}
+                onAddAsset={isAdmin ? () => { setEditAsset(null); setShowAssetModal(true); setAssetSubNav("manage"); } : undefined}
+                onEditAsset={isAdmin ? (a) => { setEditAsset(a); setShowAssetModal(true); } : undefined}
+                onDeleteAsset={isAdmin ? handleDeleteAsset : undefined}
               />
             )}
 

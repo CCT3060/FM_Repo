@@ -124,7 +124,7 @@ export default function EmployeeLoginScreen() {
 
                     {/* Catalyst Logo */}
                     <View style={styles.logoWrapper}>
-                        <Image source={require('../assets/images/catalyst-logo.png')} style={{ width: 220, height: 70, resizeMode: 'contain' }} />
+                        <Image source={require('../assets/logo.png')} style={{ width: 200, height: 66, resizeMode: 'contain' }} />
                     </View>
 
                     {/* Input section */}

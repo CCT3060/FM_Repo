@@ -447,19 +447,20 @@ export default function AssetDashboard({ token, companyId, assetList = [], onVie
     <div className="ad-root" style={{ fontFamily: "inherit", display: "flex", flexDirection: "column", gap: "0" }}>
       {/* Responsive CSS */}
       <style>{`
-        .ad-root .ad-grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
-        .ad-root .ad-grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-        .ad-root .ad-grid-2-1{display:grid;grid-template-columns:2fr 1fr;gap:16px}
-        .ad-root .ad-grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
-        .ad-root .ad-panel{background:#fff;border-radius:14px;border:1px solid #e2e8f0;padding:22px 24px;box-shadow:0 1px 3px rgba(0,0,0,0.04);transition:box-shadow 0.2s}
-        .ad-root .ad-panel:hover{box-shadow:0 4px 12px rgba(0,0,0,0.06)}
-        .ad-root .ad-header-bar{background:linear-gradient(135deg,#f8fafc 0%,#eff6ff 100%);border:1px solid #e2e8f0;border-radius:14px;padding:24px 28px;margin-bottom:22px;display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:14px}
-        .ad-root .ad-tab-bar{display:flex;gap:2px;border-bottom:2px solid #e2e8f0;margin-bottom:22px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+        .ad-root .ad-grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px}
+        .ad-root .ad-grid-2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+        .ad-root .ad-grid-2-1{display:grid;grid-template-columns:2fr 1fr;gap:18px}
+        .ad-root .ad-grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+        .ad-root .ad-panel{background:#fff;border-radius:16px;border:1px solid #e2e8f0;padding:24px;box-shadow:0 1px 4px rgba(0,0,0,0.04);transition:box-shadow 0.2s}
+        .ad-root .ad-panel:hover{box-shadow:0 4px 16px rgba(0,0,0,0.07)}
+        .ad-root .ad-header-bar{background:linear-gradient(135deg,#1e3a8a 0%,#1d4ed8 60%,#2563eb 100%);border-radius:16px;padding:28px 32px;margin-bottom:22px;display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:16px;box-shadow:0 4px 24px rgba(37,99,235,0.25)}
+        .ad-root .ad-tab-bar{display:flex;gap:2px;border-bottom:2px solid #e2e8f0;margin-bottom:24px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;background:#fff;border-radius:12px 12px 0 0;padding:4px 8px 0;border:1px solid #e2e8f0;border-bottom:none}
         .ad-root .ad-tab-bar::-webkit-scrollbar{display:none}
-        .ad-root .ad-filter-bar{background:#fff;border-radius:12px;border:1px solid #e2e8f0;padding:14px 18px;margin-bottom:20px;display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+        .ad-root .ad-filter-bar{background:#fff;border-radius:12px;border:1px solid #e2e8f0;padding:12px 18px;margin-bottom:20px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;box-shadow:0 1px 3px rgba(0,0,0,0.03)}
         .ad-root .ad-kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:14px}
-        .ad-root .ad-summary-card{background:#fff;border-radius:14px;padding:20px 22px;border:1px solid #e2e8f0;display:flex;flex-direction:column;gap:8px;position:relative;overflow:hidden;transition:transform 0.15s,box-shadow 0.15s}
-        .ad-root .ad-summary-card:hover{transform:translateY(-2px);box-shadow:0 6px 20px rgba(0,0,0,0.06)}
+        .ad-root .ad-summary-card{background:#fff;border-radius:16px;padding:22px;border:1px solid #e2e8f0;display:flex;flex-direction:column;gap:10px;position:relative;overflow:hidden;transition:transform 0.15s,box-shadow 0.15s;box-shadow:0 1px 4px rgba(0,0,0,0.04)}
+        .ad-root .ad-summary-card:hover{transform:translateY(-2px);box-shadow:0 6px 20px rgba(0,0,0,0.08)}
+        .ad-root .ad-tab-content{background:#fff;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 16px 16px;padding:24px;margin-bottom:24px;box-shadow:0 1px 4px rgba(0,0,0,0.04)}
         @media(max-width:1024px){
           .ad-root .ad-grid-3{grid-template-columns:1fr 1fr}
           .ad-root .ad-grid-2-1{grid-template-columns:1fr}
@@ -469,38 +470,44 @@ export default function AssetDashboard({ token, companyId, assetList = [], onVie
           .ad-root .ad-grid-3,.ad-root .ad-grid-2,.ad-root .ad-grid-2-1{grid-template-columns:1fr}
           .ad-root .ad-grid-4{grid-template-columns:1fr 1fr}
           .ad-root .ad-kpi-grid{grid-template-columns:1fr 1fr}
-          .ad-root .ad-header-bar{padding:18px 16px}
-          .ad-root .ad-header-bar h1{font-size:20px!important}
+          .ad-root .ad-header-bar{padding:20px 18px}
+          .ad-root .ad-header-bar h1{font-size:18px!important}
           .ad-root .ad-panel{padding:16px}
           .ad-root .ad-filter-bar{padding:10px 12px;gap:8px}
           .ad-root .ad-filter-bar select,.ad-root .ad-filter-bar input{width:100%!important;min-width:0!important}
+          .ad-root .ad-summary-card{padding:16px}
         }
       `}</style>
 
       {/* ── Page Header ── */}
       <div className="ad-header-bar">
         <div>
-          <h1 style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a", marginBottom: "4px", letterSpacing: "-0.5px" }}>
-            Asset Management Dashboard
-          </h1>
-          <p style={{ color: "#64748b", fontSize: "13.5px", margin: 0 }}>
-            Enterprise-grade visibility into asset health, cost, maintenance, and lifecycle performance.
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}>
+            <div style={{ width: "36px", height: "36px", background: "rgba(255,255,255,0.15)", borderRadius: "10px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
+            </div>
+            <h1 style={{ fontSize: "22px", fontWeight: 800, color: "#fff", letterSpacing: "-0.5px", margin: 0 }}>
+              Asset Management Dashboard
+            </h1>
+          </div>
+          <p style={{ color: "rgba(255,255,255,0.72)", fontSize: "13px", margin: 0 }}>
+            Enterprise visibility into asset health, cost, maintenance &amp; lifecycle performance.
           </p>
         </div>
         <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
           {onAddAsset && (
             <button onClick={onAddAsset}
-              style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "9px 18px", background: "linear-gradient(135deg,#1e3a8a,#2563eb)", color: "#fff", border: "none", borderRadius: "8px", fontWeight: 700, fontSize: "13px", cursor: "pointer", boxShadow: "0 2px 8px rgba(37,99,235,0.3)" }}>
+              style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "9px 18px", background: "#fff", color: "#1d4ed8", border: "none", borderRadius: "9px", fontWeight: 700, fontSize: "13px", cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,0.15)" }}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
               Add Asset
             </button>
           )}
           <button onClick={() => exportCSV(performance, "asset-performance.csv")}
-            style={{ padding: "8px 18px", background: "#f0fdf4", color: "#16a34a", border: "1px solid #bbf7d0", borderRadius: "8px", fontWeight: 700, fontSize: "13px", cursor: "pointer" }}>
-            ⬇ Export Report
+            style={{ padding: "8px 16px", background: "rgba(255,255,255,0.15)", color: "#fff", border: "1px solid rgba(255,255,255,0.25)", borderRadius: "9px", fontWeight: 600, fontSize: "13px", cursor: "pointer" }}>
+            ⬇ Export
           </button>
           <button onClick={() => window.print()}
-            style={{ padding: "8px 18px", background: "#f1f5f9", color: "#475569", border: "1px solid #e2e8f0", borderRadius: "8px", fontWeight: 700, fontSize: "13px", cursor: "pointer" }}>
+            style={{ padding: "8px 16px", background: "rgba(255,255,255,0.1)", color: "#fff", border: "1px solid rgba(255,255,255,0.2)", borderRadius: "9px", fontWeight: 600, fontSize: "13px", cursor: "pointer" }}>
             🖨 Print
           </button>
         </div>
