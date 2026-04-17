@@ -3358,7 +3358,6 @@ const CompanyPortal = () => {
                 </div>
               </div>
             )}
-            </>)} {/* end assetSubNav === "manage" */}
             </>
           );
         })()}
