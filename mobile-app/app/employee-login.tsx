@@ -13,8 +13,8 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import { Image } from 'react-native';
 import { loginEmployee, getStoredCompany } from '../utils/api';
-import CatalystLogo from '../components/CatalystLogo';
 
 export default function EmployeeLoginScreen() {
     const [employeeId, setEmployeeId] = useState('');
@@ -124,7 +124,7 @@ export default function EmployeeLoginScreen() {
 
                     {/* Catalyst Logo */}
                     <View style={styles.logoWrapper}>
-                        <CatalystLogo size="large" />
+                        <Image source={require('../assets/images/catalyst-logo.png')} style={{ width: 220, height: 70, resizeMode: 'contain' }} />
                     </View>
 
                     {/* Input section */}

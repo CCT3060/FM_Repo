@@ -10,7 +10,7 @@
 import { useState, useEffect } from "react";
 import { useParams } from "react-router-dom";
 import { getApiBaseUrl } from "../utils/runtimeConfig";
-import catalystLogo from "../assets/catalyst-logo.svg";
+import catalystLogo from "../images/image.png";
 
 const BASE = getApiBaseUrl();
 const PLAY_STORE_URL = "https://play.google.com/store/apps/details?id=com.cct123.mobileapp";

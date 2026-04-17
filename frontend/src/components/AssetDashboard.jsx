@@ -116,7 +116,7 @@ const CHART_COLORS = ["#2563eb","#22c55e","#f59e0b","#ef4444","#7c3aed","#ec4899
 /* ─── SummaryCard ───────────────────────────────────────────────── */
 function SummaryCard({ label, value, sub, icon, iconBg, iconColor, subColor = "#64748b", trend }) {
   return (
-    <div style={{ background: "#fff", borderRadius: "12px", padding: "20px 22px", border: "1px solid #e2e8f0", display: "flex", flexDirection: "column", gap: "8px", position: "relative", overflow: "hidden" }}>
+    <div className="ad-summary-card">
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
         <div style={{ fontSize: "13px", color: "#64748b", fontWeight: 600 }}>{label}</div>
         <div style={{ width: "42px", height: "42px", borderRadius: "10px", background: iconBg, color: iconColor, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{icon}</div>
@@ -163,7 +163,7 @@ function SectionHeader({ title, subtitle, action }) {
 /* ─── Panel wrapper ──────────────────────────────────────────────── */
 function Panel({ children, style = {} }) {
   return (
-    <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", padding: "20px 22px", ...style }}>
+    <div className="ad-panel" style={style}>
       {children}
     </div>
   );
@@ -444,9 +444,41 @@ export default function AssetDashboard({ token, companyId, assetList = [], onVie
   );
 
   return (
-    <div style={{ fontFamily: "inherit", display: "flex", flexDirection: "column", gap: "0" }}>
+    <div className="ad-root" style={{ fontFamily: "inherit", display: "flex", flexDirection: "column", gap: "0" }}>
+      {/* Responsive CSS */}
+      <style>{`
+        .ad-root .ad-grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
+        .ad-root .ad-grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+        .ad-root .ad-grid-2-1{display:grid;grid-template-columns:2fr 1fr;gap:16px}
+        .ad-root .ad-grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+        .ad-root .ad-panel{background:#fff;border-radius:14px;border:1px solid #e2e8f0;padding:22px 24px;box-shadow:0 1px 3px rgba(0,0,0,0.04);transition:box-shadow 0.2s}
+        .ad-root .ad-panel:hover{box-shadow:0 4px 12px rgba(0,0,0,0.06)}
+        .ad-root .ad-header-bar{background:linear-gradient(135deg,#f8fafc 0%,#eff6ff 100%);border:1px solid #e2e8f0;border-radius:14px;padding:24px 28px;margin-bottom:22px;display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:14px}
+        .ad-root .ad-tab-bar{display:flex;gap:2px;border-bottom:2px solid #e2e8f0;margin-bottom:22px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+        .ad-root .ad-tab-bar::-webkit-scrollbar{display:none}
+        .ad-root .ad-filter-bar{background:#fff;border-radius:12px;border:1px solid #e2e8f0;padding:14px 18px;margin-bottom:20px;display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+        .ad-root .ad-kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:14px}
+        .ad-root .ad-summary-card{background:#fff;border-radius:14px;padding:20px 22px;border:1px solid #e2e8f0;display:flex;flex-direction:column;gap:8px;position:relative;overflow:hidden;transition:transform 0.15s,box-shadow 0.15s}
+        .ad-root .ad-summary-card:hover{transform:translateY(-2px);box-shadow:0 6px 20px rgba(0,0,0,0.06)}
+        @media(max-width:1024px){
+          .ad-root .ad-grid-3{grid-template-columns:1fr 1fr}
+          .ad-root .ad-grid-2-1{grid-template-columns:1fr}
+          .ad-root .ad-grid-4{grid-template-columns:repeat(2,1fr)}
+        }
+        @media(max-width:640px){
+          .ad-root .ad-grid-3,.ad-root .ad-grid-2,.ad-root .ad-grid-2-1{grid-template-columns:1fr}
+          .ad-root .ad-grid-4{grid-template-columns:1fr 1fr}
+          .ad-root .ad-kpi-grid{grid-template-columns:1fr 1fr}
+          .ad-root .ad-header-bar{padding:18px 16px}
+          .ad-root .ad-header-bar h1{font-size:20px!important}
+          .ad-root .ad-panel{padding:16px}
+          .ad-root .ad-filter-bar{padding:10px 12px;gap:8px}
+          .ad-root .ad-filter-bar select,.ad-root .ad-filter-bar input{width:100%!important;min-width:0!important}
+        }
+      `}</style>
+
       {/* ── Page Header ── */}
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "22px", flexWrap: "wrap", gap: "12px" }}>
+      <div className="ad-header-bar">
         <div>
           <h1 style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a", marginBottom: "4px", letterSpacing: "-0.5px" }}>
             Asset Management Dashboard
@@ -458,7 +490,7 @@ export default function AssetDashboard({ token, companyId, assetList = [], onVie
         <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
           {onAddAsset && (
             <button onClick={onAddAsset}
-              style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "9px 18px", background: "#2563eb", color: "#fff", border: "none", borderRadius: "8px", fontWeight: 700, fontSize: "13px", cursor: "pointer", boxShadow: "0 2px 8px rgba(37,99,235,0.25)" }}>
+              style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "9px 18px", background: "linear-gradient(135deg,#1e3a8a,#2563eb)", color: "#fff", border: "none", borderRadius: "8px", fontWeight: 700, fontSize: "13px", cursor: "pointer", boxShadow: "0 2px 8px rgba(37,99,235,0.3)" }}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
               Add Asset
             </button>
@@ -475,7 +507,7 @@ export default function AssetDashboard({ token, companyId, assetList = [], onVie
       </div>
 
       {/* ── Global Filters ── */}
-      <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", padding: "14px 18px", marginBottom: "20px", display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "center" }}>
+      <div className="ad-filter-bar">
         <span style={{ fontSize: "13px", fontWeight: 700, color: "#475569" }}>Filters:</span>
         <select value={filterType} onChange={(e) => { setFilterType(e.target.value); setPerfPage(0); }}
           style={{ padding: "6px 10px", border: "1px solid #e2e8f0", borderRadius: "8px", fontSize: "13px", background: "#f8fafc" }}>
@@ -505,7 +537,7 @@ export default function AssetDashboard({ token, companyId, assetList = [], onVie
       {error && <div style={{ background: "#fef2f2", color: "#dc2626", padding: "10px 14px", borderRadius: "8px", marginBottom: "16px", fontSize: "13px", border: "1px solid #fecaca" }}>⚠️ {error}</div>}
 
       {/* ── Tab Bar ── */}
-      <div style={{ display: "flex", gap: "2px", borderBottom: "2px solid #e2e8f0", marginBottom: "22px", overflowX: "auto" }}>
+      <div className="ad-tab-bar">
         {tabs.map((t) => (
           <button key={t.key} onClick={() => setActiveTab(t.key)}
             style={{ padding: "9px 16px", background: "none", border: "none",
@@ -521,7 +553,7 @@ export default function AssetDashboard({ token, companyId, assetList = [], onVie
       {activeTab === "overview" && (
         <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
           {/* KPI Cards */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(175px, 1fr))", gap: "14px" }}>
+          <div className="ad-kpi-grid">
             {[
               {
                 label: "Total Assets", value: summary?.total ?? "…",
@@ -569,7 +601,7 @@ export default function AssetDashboard({ token, companyId, assetList = [], onVie
           </div>
 
           {/* Distribution charts row */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "16px" }}>
+          <div className="ad-grid-3">
             {/* By type */}
             <Panel>
               <SectionHeader title="By Asset Type" subtitle="Distribution of assets" />
@@ -614,7 +646,7 @@ export default function AssetDashboard({ token, companyId, assetList = [], onVie
           </div>
 
           {/* Financial row */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+          <div className="ad-grid-2">
             <Panel>
               <SectionHeader title="Financial Overview"
                 subtitle="Purchase value vs current (depreciated) value" />
@@ -651,7 +683,7 @@ export default function AssetDashboard({ token, companyId, assetList = [], onVie
       {activeTab === "health" && (
         <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
           {/* Health score band cards */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "14px" }}>
+          <div className="ad-grid-4">
             {[
               { label: "Excellent (90-100)", count: healthDist[0]?.value, color: "#16a34a", bg: "#f0fdf4", icon: "🟢" },
               { label: "Good (70-89)",       count: healthDist[1]?.value, color: "#22c55e", bg: "#f0fdf4", icon: "🟡" },
@@ -780,7 +812,7 @@ export default function AssetDashboard({ token, companyId, assetList = [], onVie
                 ))}
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "16px" }}>
+              <div className="ad-grid-2-1">
                 {/* Monthly trend */}
                 <Panel>
                   <SectionHeader title="Work Order Trend" subtitle="Monthly work orders created" />
@@ -896,7 +928,7 @@ export default function AssetDashboard({ token, companyId, assetList = [], onVie
             <div style={{ padding: "60px", textAlign: "center", color: "#64748b" }}>⏳ Loading cost data…</div>
           ) : !maintenanceCost ? null : (
             <>
-              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "16px" }}>
+              <div className="ad-grid-2-1">
                 {/* Monthly trend */}
                 <Panel>
                   <SectionHeader title="Maintenance Frequency Trend" subtitle="Monthly work order count (proxy for cost)" />
@@ -910,7 +942,7 @@ export default function AssetDashboard({ token, companyId, assetList = [], onVie
                 </Panel>
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+              <div className="ad-grid-2">
                 {/* Per asset */}
                 <Panel>
                   <SectionHeader title="Top Asset Maintenance Events"
@@ -965,7 +997,7 @@ export default function AssetDashboard({ token, companyId, assetList = [], onVie
           ) : (
             <>
               {/* Summary */}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: "12px" }}>
+              <div className="ad-grid-3">
                 {[
                   { label: "Total Purchase Value",  val: INR(depreciation.reduce((s,d) => s + d.purchaseValue, 0)), color: "#2563eb" },
                   { label: "Total Depreciation",    val: INR(depreciation.reduce((s,d) => s + d.accumulated, 0)),   color: "#f59e0b" },
@@ -1062,7 +1094,7 @@ export default function AssetDashboard({ token, companyId, assetList = [], onVie
       {/* ═══════════════════ TAB: Alerts ════════════════════════════ */}
       {activeTab === "alerts" && (
         <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: "12px" }}>
+          <div className="ad-grid-4">
             {["critical","high","medium","low"].map((s) => {
               const cnt = alerts.filter((a) => a.severity === s).length;
               return (
@@ -1214,7 +1246,7 @@ export default function AssetDashboard({ token, companyId, assetList = [], onVie
       {activeTab === "predictive" && (
         <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
           {/* Risk summary cards */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "14px" }}>
+          <div className="ad-grid-3">
             {[
               { label: "High Risk", risk: "high",   color: "#ef4444", bg: "#fef2f2", icon: "🔴" },
               { label: "Medium Risk", risk: "medium", color: "#f59e0b", bg: "#fffbeb", icon: "🟠" },

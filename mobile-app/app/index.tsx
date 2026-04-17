@@ -13,8 +13,8 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import { Image } from 'react-native';
 import { verifyToken, verifyCompanyCode } from '../utils/api';
-import CatalystLogo from '../components/CatalystLogo';
 
 export default function LoginScreen() {
     const [companyCode, setCompanyCode] = useState('');
@@ -57,7 +57,7 @@ export default function LoginScreen() {
         return (
             <SafeAreaView style={styles.container}>
                 <View style={[styles.formContainer, styles.centerContent]}>
-                    <CatalystLogo size="large" />
+                    <Image source={require('../assets/images/catalyst-logo.png')} style={{ width: 220, height: 70, resizeMode: 'contain' }} />
                     <ActivityIndicator size="large" color="#1E3A8A" style={styles.loader} />
                     <Text style={styles.loadingText}>Loading...</Text>
                 </View>
@@ -101,7 +101,7 @@ export default function LoginScreen() {
 
                     {/* Catalyst Logo */}
                     <View style={styles.logoWrapper}>
-                        <CatalystLogo size="large" />
+                        <Image source={require('../assets/images/catalyst-logo.png')} style={{ width: 220, height: 70, resizeMode: 'contain' }} />
                     </View>
 
                     {/* Input section */}}

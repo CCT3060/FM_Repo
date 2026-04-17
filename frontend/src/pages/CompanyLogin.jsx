@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { companyLogin } from "../api.js";
-import logo from "../assets/catalyst-logo.svg";
+import logo from "../images/image.png";
 
 export default function CompanyLogin() {
   const navigate = useNavigate();
@@ -31,7 +31,7 @@ export default function CompanyLogin() {
       <div style={{ width: "100%", maxWidth: "440px" }}>
         {/* Logo */}
         <div style={{ textAlign: "center", marginBottom: "36px" }}>
-          <img src={logo} alt="Catalyst" style={{ height: "60px", objectFit: "contain", marginBottom: "16px" }} />
+          <img src={logo} alt="Catalyst" style={{ height: "52px", objectFit: "contain", marginBottom: "16px" }} />
           <h1 style={{ fontSize: "26px", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px", marginBottom: "6px" }}>
             Company Portal
           </h1>
