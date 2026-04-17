@@ -653,7 +653,7 @@ function AssetModal({ existing, token, departments, employees = [], onClose, onS
     return {
       assetName:    src?.assetName    || "",
       assetUniqueId: src?.assetUniqueId || "",
-      assetType:    src?.assetType    || "",
+      assetType:    src?.assetType    || "soft",
       departmentId: src?.departmentId != null ? String(src.departmentId) : "",
       building:     src?.building     || "",
       floor:        src?.floor        || "",
@@ -733,18 +733,11 @@ function AssetModal({ existing, token, departments, employees = [], onClose, onS
   };
 
   const handleSave = async () => {
-    if (!form.assetType) return setError("Please select an asset type");
-    let assetNameToUse = form.assetName.trim();
-    if (form.assetType === "soft") {
-      const parts = [form.building, form.floor, form.room].map(s => (s || "").trim()).filter(Boolean);
-      assetNameToUse = parts.join(" · ") || "Soft Services Area";
-    } else if (!assetNameToUse) {
-      return setError("Asset name is required");
-    }
+    if (!form.assetName.trim()) return setError("Asset name is required");
     setSaving(true); setError(null);
     try {
       const payload = {
-        assetName:     assetNameToUse,
+        assetName:     form.assetName.trim(),
         assetUniqueId: form.assetUniqueId || null,
         assetType:     form.assetType,
         departmentId:  form.departmentId || null,
@@ -787,67 +780,65 @@ function AssetModal({ existing, token, departments, employees = [], onClose, onS
         <div style={{ padding: "18px 22px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
           {error && <div style={{ gridColumn: "span 2" }}><Alert>{error}</Alert></div>}
 
-          {/* ── Asset Type FIRST — drives which fields appear ── */}
+          {/* ── Core ── */}
           <div style={{ gridColumn: "span 2" }}>
-            <FSelect label="Asset Type" required name="assetType" value={form.assetType} onChange={handleTypeChange}>
-              <option value="" disabled>Select type</option>
-              <option value="soft">Soft Services</option>
-              <option value="technical">Technical</option>
-              <option value="fleet">Fleet</option>
-            </FSelect>
+            <FInput label="Asset Name" required name="assetName" value={form.assetName} onChange={handleChange} placeholder="e.g. HVAC Unit 1" />
           </div>
+          <FInput label="Asset Unique ID" name="assetUniqueId" value={form.assetUniqueId} onChange={handleChange} placeholder="Auto or manual" />
+          <FSelect label="Asset Type" required name="assetType" value={form.assetType} onChange={handleTypeChange}>
+            <option value="soft">Soft Services</option>
+            <option value="technical">Technical</option>
+            <option value="fleet">Fleet</option>
+          </FSelect>
+          <FSelect label="Department" name="departmentId" value={form.departmentId} onChange={handleChange}>
+            <option value="">— None —</option>
+            {departments.map(d => <option key={d.id} value={d.id}>{d.departmentName}</option>)}
+          </FSelect>
+          <FSelect label="Status" name="status" value={form.status} onChange={handleChange}>
+            <option value="Active">Active</option>
+            <option value="Inactive">Inactive</option>
+          </FSelect>
+          <FSelect label="Assign To (Employee)" name="assignedToId" value={form.assignedToId} onChange={handleChange}>
+            <option value="">— None —</option>
+            {employees.map(e => <option key={e.id} value={e.id}>{e.fullName}{e.designation ? ` · ${e.designation}` : ""}</option>)}
+          </FSelect>
 
-          {/* ── Soft Services: Location fields only ── */}
-          {form.assetType === "soft" && <>
-            <FSec title="Location" />
-            <FInput label="Building" name="building" value={form.building} onChange={handleChange} placeholder="e.g. Block A" />
-            <FInput label="Floor" name="floor" value={form.floor} onChange={handleChange} placeholder="e.g. 3rd Floor" />
-            <div style={{ gridColumn: "span 2" }}>
-              <FInput label="Room / Area" name="room" value={form.room} onChange={handleChange} placeholder="e.g. Server Room" />
-            </div>
-            <div style={{ gridColumn: "span 2" }}>
-              <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Description</label>
-              <textarea name="description" value={form.description} onChange={handleChange} rows={2} placeholder="Notes, instructions, etc."
-                style={{ width: "100%", boxSizing: "border-box", padding: "8px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13.5px", resize: "vertical", fontFamily: "inherit", outline: "none" }} />
-            </div>
+          {/* ── Asset Valuation (feeds dashboard depreciation) ── */}
+          <FSec title="Asset Valuation" />
+          <FInput label="Purchase Value (₹)" name="purchaseValue" type="number" value={form.purchaseValue} onChange={handleChange} placeholder="e.g. 250000" />
+          <FInput label="Useful Life (Years)" name="usefulLifeYears" type="number" value={form.usefulLifeYears} onChange={handleChange} placeholder="e.g. 10" />
+
+          {/* ── Location ── */}
+          {form.assetType !== "fleet" && <>
+          <FSec title="Location" />
+          <FInput label="Building" name="building" value={form.building} onChange={handleChange} placeholder="e.g. Block A" />
+          <FInput label="Floor" name="floor" value={form.floor} onChange={handleChange} placeholder="e.g. 3rd Floor" />
+          <div style={{ gridColumn: "span 2" }}>
+            <FInput label="Room / Area" name="room" value={form.room} onChange={handleChange} placeholder="e.g. Server Room" />
+          </div>
           </>}
 
-          {/* ── Non-soft: Core + Valuation + Location + Description ── */}
-          {form.assetType && form.assetType !== "soft" && <>
+          {/* ── Description ── */}
+          <div style={{ gridColumn: "span 2" }}>
+            <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Description</label>
+            <textarea name="description" value={form.description} onChange={handleChange} rows={2} placeholder="Notes, instructions, etc."
+              style={{ width: "100%", boxSizing: "border-box", padding: "8px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13.5px", resize: "vertical", fontFamily: "inherit", outline: "none" }} />
+          </div>
+
+          {/* ── Soft Services ── */}
+          {form.assetType === "soft" && <>
+            <FSec title="Soft Services" />
+            <FInput label="Service Area / Location" name="serviceArea" value={form.serviceArea} onChange={handleChange} placeholder="Lobby, Pantry, etc." />
+            <FSelect label="Frequency" name="frequency" value={form.frequency} onChange={handleChange}>
+              <option>Daily</option><option>Weekly</option><option>Monthly</option>
+            </FSelect>
+            <FSelect label="Shift" name="shift" value={form.shift} onChange={handleChange}>
+              <option>Morning</option><option>Evening</option><option>Night</option>
+            </FSelect>
+            <FInput label="Supervisor Assigned" name="supervisor" value={form.supervisor} onChange={handleChange} />
+            <FInput label="No. of Staff Required" name="staffRequired" value={form.staffRequired} onChange={handleChange} placeholder="e.g. 3" />
             <div style={{ gridColumn: "span 2" }}>
-              <FInput label="Asset Name" required name="assetName" value={form.assetName} onChange={handleChange} placeholder="e.g. HVAC Unit 1" />
-            </div>
-            <FInput label="Asset Unique ID" name="assetUniqueId" value={form.assetUniqueId} onChange={handleChange} placeholder="Auto or manual" />
-            <FSelect label="Department" name="departmentId" value={form.departmentId} onChange={handleChange}>
-              <option value="">— None —</option>
-              {departments.map(d => <option key={d.id} value={d.id}>{d.departmentName}</option>)}
-            </FSelect>
-            <FSelect label="Status" name="status" value={form.status} onChange={handleChange}>
-              <option value="Active">Active</option>
-              <option value="Inactive">Inactive</option>
-            </FSelect>
-            <FSelect label="Assign To (Employee)" name="assignedToId" value={form.assignedToId} onChange={handleChange}>
-              <option value="">— None —</option>
-              {employees.map(e => <option key={e.id} value={e.id}>{e.fullName}{e.designation ? ` · ${e.designation}` : ""}</option>)}
-            </FSelect>
-
-            <FSec title="Asset Valuation" />
-            <FInput label="Purchase Value (₹)" name="purchaseValue" type="number" value={form.purchaseValue} onChange={handleChange} placeholder="e.g. 250000" />
-            <FInput label="Useful Life (Years)" name="usefulLifeYears" type="number" value={form.usefulLifeYears} onChange={handleChange} placeholder="e.g. 10" />
-
-            {form.assetType !== "fleet" && <>
-              <FSec title="Location" />
-              <FInput label="Building" name="building" value={form.building} onChange={handleChange} placeholder="e.g. Block A" />
-              <FInput label="Floor" name="floor" value={form.floor} onChange={handleChange} placeholder="e.g. 3rd Floor" />
-              <div style={{ gridColumn: "span 2" }}>
-                <FInput label="Room / Area" name="room" value={form.room} onChange={handleChange} placeholder="e.g. Server Room" />
-              </div>
-            </>}
-
-            <div style={{ gridColumn: "span 2" }}>
-              <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Description</label>
-              <textarea name="description" value={form.description} onChange={handleChange} rows={2} placeholder="Notes, instructions, etc."
-                style={{ width: "100%", boxSizing: "border-box", padding: "8px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13.5px", resize: "vertical", fontFamily: "inherit", outline: "none" }} />
+              <FInput label="Special Instructions" name="specialInstructions" value={form.specialInstructions} onChange={handleChange} />
             </div>
           </>}
 
