@@ -90,7 +90,7 @@ Replace `PROJECT_NUMBER` with your actual 12-digit project number.
 ---
 
 ## Part 2: Add GitHub Secrets (3 secrets total)
-
+ 
 Go to: **https://github.com/CCT3060/FM_Repo/settings/secrets/actions**
 Click **"New repository secret"** for each:
 

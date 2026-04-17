@@ -69,7 +69,7 @@ import AssetDashboard from "../components/AssetDashboard.jsx";
 import { useAlertSound } from "../hooks/useAlertSound";
 import QRCode from "qrcode";
 import { buildApiUrl, getPublicAppUrl } from "../utils/runtimeConfig";
-import catalystLogo from "../assets/catalyst-logo.svg";
+import catalystLogo from "../images/image.png";
 
 const TOKEN_KEY = "company_portal_token";
 
@@ -3174,7 +3174,7 @@ const CompanyPortal = () => {
                 </div>
                 <form onSubmit={handleSubmitAsset}>
                   {/* ── Asset Type FIRST — drives which fields appear ── */}
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px", marginBottom: "4px" }}>
+                  <div style={{ marginBottom: "16px" }}>
                     <div className="form-group">
                       <label>Asset Type <span style={{ color: "#ef4444" }}>*</span></label>
                       <select name="assetType" value={assetForm.assetType} onChange={handleAssetChange} className="form-select" required>
@@ -3188,24 +3188,26 @@ const CompanyPortal = () => {
                         ))}
                       </select>
                     </div>
-                    <div className="form-group">
-                      <label>Asset Name <span style={{ color: "#ef4444" }}>*</span></label>
-                      <input name="assetName" value={assetForm.assetName} onChange={handleAssetChange} className="form-input" required placeholder={assetForm.assetType === "soft" ? "e.g. Lobby Cleaning Area" : "e.g. HVAC Unit 1"} />
-                    </div>
                     {assetForm.assetType !== "soft" && (
-                      <div className="form-group">
-                        <label>Company <span style={{ color: "#ef4444" }}>*</span></label>
-                        <select name="companyId" value={assetForm.companyId || ""} onChange={handleAssetChange} className="form-select" required>
-                          <option value="" disabled>Select company</option>
-                          {companies.map((c) => (
-                            <option key={c.id} value={c.id}>{c.companyName}</option>
-                          ))}
-                        </select>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px", marginTop: "12px" }}>
+                        <div className="form-group">
+                          <label>Asset Name <span style={{ color: "#ef4444" }}>*</span></label>
+                          <input name="assetName" value={assetForm.assetName} onChange={handleAssetChange} className="form-input" required placeholder="e.g. HVAC Unit 1" />
+                        </div>
+                        <div className="form-group">
+                          <label>Company <span style={{ color: "#ef4444" }}>*</span></label>
+                          <select name="companyId" value={assetForm.companyId || ""} onChange={handleAssetChange} className="form-select" required>
+                            <option value="" disabled>Select company</option>
+                            {companies.map((c) => (
+                              <option key={c.id} value={c.id}>{c.companyName}</option>
+                            ))}
+                          </select>
+                        </div>
                       </div>
                     )}
                   </div>
 
-                  {/* ── Soft Services: only Location ── */}
+                  {/* ── Soft Services: only Location fields ── */}
                   {assetForm.assetType === "soft" && (
                     <div className="form-section" style={{ marginBottom: "12px" }}>
                       <h3 style={{ marginBottom: "8px", fontSize: "13px", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.05em" }}>Location</h3>
