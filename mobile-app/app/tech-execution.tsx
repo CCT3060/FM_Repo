@@ -519,7 +519,7 @@ export default function TechExecutionScreen() {
                                             )}
                                         </View>
                                         <View style={styles.answerArea}>
-                                            {renderAnswerWidget(q, answers[q.id], setAnswer)}
+                                            {renderAnswerWidget(q, answers[q.id], setAnswer, handlePickUpload)}
                                         </View>
                                     </Animated.View>
                                 );
@@ -590,6 +590,7 @@ function renderAnswerWidget(
     q: TemplateDetails['questions'][0],
     value: any,
     setAnswer: (id: number, val: any) => void,
+    handlePickUpload: (questionId: number) => void,
 ) {
     const answerType = (q.answerType || q.inputType || '').toLowerCase();
 
