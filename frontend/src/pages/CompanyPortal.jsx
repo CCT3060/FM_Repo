@@ -66,7 +66,6 @@ import LogsheetModule from "../components/LogsheetModule.jsx";
 import ChecklistTemplateModule from "../components/ChecklistTemplateModule.jsx";
 import SubmissionsPanel from "../components/SubmissionsPanel.jsx";
 import WarningsPanel from "../components/WarningsPanel.jsx";
-import AssetDashboard from "../components/AssetDashboard.jsx";
 import { useAlertSound } from "../hooks/useAlertSound";
 import QRCode from "qrcode";
 import { buildApiUrl, getPublicAppUrl } from "../utils/runtimeConfig";
@@ -116,7 +115,7 @@ const emptyAsset = {
   departmentId: "",
   assetName: "",
   assetUniqueId: "",
-  assetType: "soft",
+  assetType: "",
   building: "",
   floor: "",
   room: "",
@@ -1464,6 +1463,10 @@ const CompanyPortal = () => {
   const handleSubmitAsset = async (e) => {
     e.preventDefault();
     if (!token) return;
+    if (!assetForm.assetType) {
+      setAssetError("Please select an asset type");
+      return;
+    }
     const companyId = assetForm.companyId || selectedCompanyId || companies[0]?.id;
     if (!companyId) {
       setAssetError("Please create a company first");
@@ -3030,18 +3033,6 @@ const CompanyPortal = () => {
           );
           return (
             <>
-              {/* ── Asset Management Dashboard (always shown) ── */}
-              <AssetDashboard
-                token={token}
-                companyId={null}
-                assetList={assets}
-                onEditAsset={handleEditAsset}
-                onDeleteAsset={handleDeleteAsset}
-                onShowQR={handleShowAssetQR}
-              />
-
-              {/* ── Keep the asset table for the manage section too ── */}
-              {false && (<>
               {/* Header */}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "22px" }}>
                 <div>
@@ -3164,8 +3155,6 @@ const CompanyPortal = () => {
                   </table>
                 )}
               </div>
-              </>)}
-              {/* ── End hidden manage section ── */}
 
             {showAssetModal && (
               <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.5)", zIndex: 200, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "40px 16px", overflowY: "auto" }} onClick={() => { setShowAssetModal(false); setEditingAssetId(null); }}>
@@ -3193,7 +3182,7 @@ const CompanyPortal = () => {
                         ))}
                       </select>
                     </div>
-                    {assetForm.assetType !== "soft" && (
+                    {assetForm.assetType && assetForm.assetType !== "soft" && (
                       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px", marginTop: "12px" }}>
                         <div className="form-group">
                           <label>Asset Name <span style={{ color: "#ef4444" }}>*</span></label>
@@ -3229,7 +3218,7 @@ const CompanyPortal = () => {
                   )}
 
                   {/* ── Non-soft fields ── */}
-                  {assetForm.assetType !== "soft" && (<>
+                  {assetForm.assetType && assetForm.assetType !== "soft" && (<>
                   <div className="form-group">
                     <label>Department</label>
                     <select name="departmentId" value={assetForm.departmentId || ""} onChange={handleAssetChange} className="form-select">
