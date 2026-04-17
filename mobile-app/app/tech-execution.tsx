@@ -677,6 +677,30 @@ function renderAnswerWidget(
         );
     }
 
+    if (answerType === 'cleaned_not_cleaned') {
+        return (
+            <View style={widgetStyles.ynRow}>
+                {['Cleaned', 'Not Cleaned'].map(opt => (
+                    <TouchableOpacity
+                        key={opt}
+                        style={[
+                            widgetStyles.ynBtn,
+                            value === opt && (opt === 'Cleaned' ? widgetStyles.ynBtnActiveGreen : widgetStyles.ynBtnActiveRed),
+                        ]}
+                        onPress={() => setAnswer(q.id, value === opt ? '' : opt)}
+                    >
+                        <MaterialCommunityIcons
+                            name={opt === 'Cleaned' ? 'check' : 'close'}
+                            size={16}
+                            color={value === opt ? '#FFFFFF' : opt === 'Cleaned' ? '#10B981' : '#EF4444'}
+                        />
+                        <Text style={[widgetStyles.ynText, value === opt && widgetStyles.ynTextActive]}>{opt}</Text>
+                    </TouchableOpacity>
+                ))}
+            </View>
+        );
+    }
+
     if (answerType === 'number' || answerType === 'numeric') {
         return (
             <TextInput

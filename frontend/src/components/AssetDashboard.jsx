@@ -242,7 +242,7 @@ function DepreciationTable({ asset }) {
 }
 
 /* ─── Main Component ─────────────────────────────────────────────── */
-export default function AssetDashboard({ token, companyId, assetList = [], onViewAsset, endpointPrefix = "/api/asset-dashboard" }) {
+export default function AssetDashboard({ token, companyId, assetList = [], onViewAsset, onAddAsset, onEditAsset, onDeleteAsset, onShowQR, endpointPrefix = "/api/asset-dashboard" }) {
   const [activeTab, setActiveTab]         = useState("overview");
   const [summary, setSummary]             = useState(null);
   const [distribution, setDistribution]   = useState(null);
@@ -455,7 +455,14 @@ export default function AssetDashboard({ token, companyId, assetList = [], onVie
             Enterprise-grade visibility into asset health, cost, maintenance, and lifecycle performance.
           </p>
         </div>
-        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
+          {onAddAsset && (
+            <button onClick={onAddAsset}
+              style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "9px 18px", background: "#2563eb", color: "#fff", border: "none", borderRadius: "8px", fontWeight: 700, fontSize: "13px", cursor: "pointer", boxShadow: "0 2px 8px rgba(37,99,235,0.25)" }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Add Asset
+            </button>
+          )}
           <button onClick={() => exportCSV(performance, "asset-performance.csv")}
             style={{ padding: "8px 18px", background: "#f0fdf4", color: "#16a34a", border: "1px solid #bbf7d0", borderRadius: "8px", fontWeight: 700, fontSize: "13px", cursor: "pointer" }}>
             ⬇ Export Report

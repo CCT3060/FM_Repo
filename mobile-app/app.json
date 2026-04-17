@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "mobile-app",
-    "slug": "fmapp",
+    "slug": "fmapp-mahesh9911",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -49,9 +49,9 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "9e8abc03-dfbb-40ef-a286-98d44b5fa503"
+        "projectId": "f5d10940-b371-498c-874e-768243da8506"
       }
     },
-    "owner": "moghekarparikshit"
+    "owner": "mahesh9911"
   }
 }

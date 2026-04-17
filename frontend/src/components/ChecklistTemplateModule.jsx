@@ -11,6 +11,7 @@ const INPUT_TYPES = [
   { value: "text", label: "Text / Remark" },
   { value: "yes_no", label: "Yes / No" },
   { value: "ok_not_ok", label: "OK / Not OK" },
+  { value: "cleaned_not_cleaned", label: "Cleaned / Not Cleaned" },
   { value: "number", label: "Number / Reading" },
   { value: "dropdown", label: "Dropdown" },
   { value: "custom_options", label: "Custom Options" },
@@ -132,6 +133,7 @@ function ViewModal({ template, onClose }) {
                   let ruleSummary = "—";
                   if (q.inputType === "yes_no") ruleSummary = r.action ? `Flag if No → ${r.action}` : (r.severity ? `Flag if No (${r.severity})` : "—");
                   else if (q.inputType === "ok_not_ok") ruleSummary = r.action ? `Flag if Not OK → ${r.action}` : (r.severity ? `Flag if Not OK (${r.severity})` : "—");
+                  else if (q.inputType === "cleaned_not_cleaned") ruleSummary = r.action ? `Flag if Not Cleaned → ${r.action}` : (r.severity ? `Flag if Not Cleaned (${r.severity})` : "—");
                   else if (q.inputType === "number") ruleSummary = (r.minValue !== "" || r.maxValue !== "") ? `Range: ${r.minValue || "•"} – ${r.maxValue || "•"}` : "—";
                   else if (q.inputType === "dropdown") ruleSummary = r.flagOn ? `Flag if: ${r.flagOn}` : "—";
                   return (
@@ -172,14 +174,16 @@ function QuestionRow({ q, idx, onChange, onRemove }) {
   const update = (field, val) => onChange(idx, { ...q, [field]: val });
   const updateRule = (field, val) => update("rule", { ...(q.rule || {}), [field]: val });
   const rule = q.rule || {};
-  const hasRule = ["yes_no", "ok_not_ok", "number", "dropdown"].includes(q.inputType);
+  const hasRule = ["yes_no", "ok_not_ok", "cleaned_not_cleaned", "number", "dropdown"].includes(q.inputType);
 
-  const isBinaryType = q.inputType === "yes_no" || q.inputType === "ok_not_ok";
+  const isBinaryType = q.inputType === "yes_no" || q.inputType === "ok_not_ok" || q.inputType === "cleaned_not_cleaned";
   const binaryOptions = q.inputType === "yes_no"
     ? ["Yes", "No"]
     : q.inputType === "ok_not_ok"
       ? ["OK", "Not OK"]
-      : [];
+      : q.inputType === "cleaned_not_cleaned"
+        ? ["Cleaned", "Not Cleaned"]
+        : [];
 
   return (
     <div style={{ background: "#f8fafc", borderRadius: "8px", padding: "12px 14px", border: "1px solid #e2e8f0", marginBottom: "8px" }}>

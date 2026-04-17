@@ -27,11 +27,14 @@ const normalizeInputType = (value) => {
 
   if (["yes/no", "yes_no", "yesno", "boolean"].includes(raw)) return "yes_no";
   if (["ok_not_ok", "ok/not_ok", "ok_notok"].includes(raw)) return "ok_not_ok";
+  if (["cleaned_not_cleaned", "cleaned/not_cleaned", "cleaned_notcleaned"].includes(raw)) return "cleaned_not_cleaned";
   if (["photo", "photo_upload", "image", "image_upload", "file"].includes(raw)) return "photo";
   if (["upload", "video", "video_upload", "document", "document_upload"].includes(raw)) return "upload";
   if (["single_select", "single_choice", "radio"].includes(raw)) return "dropdown";
   if (["multi_select", "multiple_select", "checkbox"].includes(raw)) return "dropdown";
-  if (["long_text", "textarea", "remark", "remarks", "notes"].includes(raw)) return "text";
+  if (["custom_options", "custom"].includes(raw)) return "custom_options";
+  if (["long_text", "textarea"].includes(raw)) return "text";
+  if (["remark", "remarks", "remark_only", "notes"].includes(raw)) return "remark";
   if (["datetime", "date_time"].includes(raw)) return "date";
   if (["signature", "number", "date", "dropdown", "text"].includes(raw)) return raw;
   return "text";

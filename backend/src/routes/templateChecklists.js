@@ -24,6 +24,8 @@ const templateInputTypes = [
   "signature",
   "ok_not_ok",
   "remark",
+  "custom_options",
+  "cleaned_not_cleaned",
 ];
 const assetTypes = ["soft", "technical", "fleet", "building", "room", "generic"];
 const frequencies = ["Daily", "Weekly", "Monthly", "Custom"];

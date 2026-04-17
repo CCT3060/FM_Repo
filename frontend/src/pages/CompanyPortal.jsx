@@ -775,6 +775,7 @@ const CompanyPortal = () => {
   const [rolePermsModalId, setRolePermsModalId] = useState(null);
   const [rolePermsData, setRolePermsData] = useState({});
   const [rolePermsSaving, setRolePermsSaving] = useState(false);
+  const [rolePermsActiveRoles, setRolePermsActiveRoles] = useState([]);
 
   // Company Users (Admin) state
   const [adminCompanyId, setAdminCompanyId] = useState(null);
@@ -1698,11 +1699,19 @@ const CompanyPortal = () => {
   const openRolePermsModal = async (company) => {
     setRolePermsModalId(company.id);
     setRolePermsData({});
+    setRolePermsActiveRoles([]);
     try {
-      const data = await getRolePermissions(token, company.id);
-      setRolePermsData(data || {});
+      const [permsData, usersData] = await Promise.all([
+        getRolePermissions(token, company.id),
+        getCompanyUsers(token, company.id),
+      ]);
+      setRolePermsData(permsData || {});
+      // Derive the unique roles that actually exist for this company's users
+      const usedRoles = [...new Set((Array.isArray(usersData) ? usersData : []).map((u) => u.role).filter(Boolean))];
+      setRolePermsActiveRoles(usedRoles.length ? usedRoles : ALL_ROLES);
     } catch {
       setRolePermsData({});
+      setRolePermsActiveRoles(ALL_ROLES);
     }
   };
 
@@ -2940,7 +2949,7 @@ const CompanyPortal = () => {
                           </tr>
                         </thead>
                         <tbody>
-                          {ALL_ROLES.map((role, ri) => (
+                          {ALL_ROLES.filter((r) => rolePermsActiveRoles.includes(r)).map((role, ri) => (
                             <tr key={role} style={{ background: ri % 2 === 0 ? "#fff" : "#f8fafc" }}>
                               <td style={{ padding: "8px 12px", borderBottom: "1px solid #e2e8f0", color: "#334155", fontWeight: "600", textTransform: "capitalize" }}>
                                 {role.replace(/_/g, " ")}
@@ -3015,33 +3024,19 @@ const CompanyPortal = () => {
           );
           return (
             <>
-              {/* ── Sub-tab navigation ── */}
-              <div style={{ display: "flex", gap: "4px", marginBottom: "24px", borderBottom: "2px solid #e2e8f0" }}>
-                {[
-                  { k: "dashboard", label: "📊 Analytics Dashboard" },
-                  { k: "manage",    label: "🗂 Manage Assets" },
-                ].map(({ k, label }) => (
-                  <button key={k} type="button" onClick={() => setAssetSubNav(k)}
-                    style={{ padding: "10px 22px", background: "none", border: "none",
-                      borderBottom: assetSubNav === k ? "3px solid #2563eb" : "3px solid transparent",
-                      marginBottom: "-2px", fontSize: "14px", fontWeight: 700,
-                      color: assetSubNav === k ? "#2563eb" : "#64748b", cursor: "pointer" }}>
-                    {label}
-                  </button>
-                ))}
-              </div>
+              {/* ── Asset Management Dashboard (always shown) ── */}
+              <AssetDashboard
+                token={token}
+                companyId={null}
+                assetList={assets}
+                onAddAsset={() => { const defaultCompany = selectedCompanyId || companies[0]?.id || ""; setAssetForm({ ...emptyAsset, companyId: defaultCompany }); setEditingAssetId(null); setShowAssetModal(true); }}
+                onEditAsset={handleEditAsset}
+                onDeleteAsset={handleDeleteAsset}
+                onShowQR={handleShowAssetQR}
+              />
 
-              {/* ── Dashboard sub-tab ── */}
-              {assetSubNav === "dashboard" && (
-                <AssetDashboard
-                  token={token}
-                  companyId={null}
-                  assetList={assets}
-                />
-              )}
-
-              {/* ── Manage sub-tab ── */}
-              {assetSubNav === "manage" && (<>
+              {/* ── Keep the asset table for the manage section too ── */}
+              {false && (<>
               {/* Header */}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "22px" }}>
                 <div>
@@ -3164,6 +3159,8 @@ const CompanyPortal = () => {
                   </table>
                 )}
               </div>
+              </>)}
+              {/* ── End hidden manage section ── */}
 
             {showAssetModal && (
               <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.5)", zIndex: 200, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "40px 16px", overflowY: "auto" }} onClick={() => { setShowAssetModal(false); setEditingAssetId(null); }}>
@@ -3176,34 +3173,10 @@ const CompanyPortal = () => {
                   <button onClick={() => { setShowAssetModal(false); setEditingAssetId(null); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: "22px", lineHeight: 1 }}>✕</button>
                 </div>
                 <form onSubmit={handleSubmitAsset}>
-                  <div className="form-group">
-                    <label>Company</label>
-                    <select name="companyId" value={assetForm.companyId || ""} onChange={handleAssetChange} className="form-select" required>
-                      <option value="" disabled>Select company</option>
-                      {companies.map((c) => (
-                        <option key={c.id} value={c.id}>{c.companyName}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="form-group">
-                    <label>Department</label>
-                    <select name="departmentId" value={assetForm.departmentId || ""} onChange={handleAssetChange} className="form-select" required>
-                      <option value="" disabled>Select department</option>
-                      {companyDepartmentOptions.map((d) => (
-                        <option key={d.id} value={d.id}>{d.name}</option>
-                      ))}
-                    </select>
-                    {!companyDepartmentOptions.length && (
-                      <div style={{ color: "#ef4444", fontSize: "12px", marginTop: "4px" }}>
-                        Add a department for this company first.
-                      </div>
-                    )}
-                  </div>
-
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px" }}>
+                  {/* ── Asset Type FIRST — drives which fields appear ── */}
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px", marginBottom: "4px" }}>
                     <div className="form-group">
-                      <label>Asset Type</label>
+                      <label>Asset Type <span style={{ color: "#ef4444" }}>*</span></label>
                       <select name="assetType" value={assetForm.assetType} onChange={handleAssetChange} className="form-select" required>
                         <option value="" disabled>Select type</option>
                         {(assetTypes.length ? assetTypes : [
@@ -3216,9 +3189,51 @@ const CompanyPortal = () => {
                       </select>
                     </div>
                     <div className="form-group">
-                      <label>Asset Name</label>
-                      <input name="assetName" value={assetForm.assetName} onChange={handleAssetChange} className="form-input" required placeholder="e.g. Floor Cleaning - 3rd Floor" />
+                      <label>Asset Name <span style={{ color: "#ef4444" }}>*</span></label>
+                      <input name="assetName" value={assetForm.assetName} onChange={handleAssetChange} className="form-input" required placeholder={assetForm.assetType === "soft" ? "e.g. Lobby Cleaning Area" : "e.g. HVAC Unit 1"} />
                     </div>
+                    {assetForm.assetType !== "soft" && (
+                      <div className="form-group">
+                        <label>Company <span style={{ color: "#ef4444" }}>*</span></label>
+                        <select name="companyId" value={assetForm.companyId || ""} onChange={handleAssetChange} className="form-select" required>
+                          <option value="" disabled>Select company</option>
+                          {companies.map((c) => (
+                            <option key={c.id} value={c.id}>{c.companyName}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* ── Soft Services: only Location ── */}
+                  {assetForm.assetType === "soft" && (
+                    <div className="form-section" style={{ marginBottom: "12px" }}>
+                      <h3 style={{ marginBottom: "8px", fontSize: "13px", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.05em" }}>Location</h3>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px" }}>
+                        <div className="form-group"><label>Building</label><input name="building" value={assetForm.building} onChange={handleAssetChange} className="form-input" placeholder="e.g. Block A" /></div>
+                        <div className="form-group"><label>Floor</label><input name="floor" value={assetForm.floor} onChange={handleAssetChange} className="form-input" placeholder="e.g. 3rd Floor" /></div>
+                        <div className="form-group"><label>Room / Area</label><input name="room" value={assetForm.room} onChange={handleAssetChange} className="form-input" placeholder="e.g. Server Room" /></div>
+                      </div>
+                      <div className="form-group" style={{ marginTop: "8px" }}>
+                        <label>Description</label>
+                        <textarea name="description" value={assetForm.description} onChange={handleAssetChange} className="form-input" rows="2" placeholder="Notes, instructions, etc." />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ── Non-soft fields ── */}
+                  {assetForm.assetType !== "soft" && (<>
+                  <div className="form-group">
+                    <label>Department</label>
+                    <select name="departmentId" value={assetForm.departmentId || ""} onChange={handleAssetChange} className="form-select">
+                      <option value="">— None —</option>
+                      {companyDepartmentOptions.map((d) => (
+                        <option key={d.id} value={d.id}>{d.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "12px" }}>
                     <div className="form-group">
                       <label>Asset Unique ID</label>
                       <input name="assetUniqueId" value={assetForm.assetUniqueId} onChange={handleAssetChange} className="form-input" placeholder="Auto or manual" />
@@ -3247,20 +3262,6 @@ const CompanyPortal = () => {
                     <label>Asset Description</label>
                     <textarea name="description" value={assetForm.description} onChange={handleAssetChange} className="form-input" rows="2" placeholder="Notes, instructions, etc." />
                   </div>
-
-                  {assetForm.assetType === "soft" && (
-                    <div className="form-section" style={{ marginBottom: "12px" }}>
-                      <h3 style={{ marginBottom: "8px" }}>Soft Services</h3>
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px" }}>
-                        <div className="form-group"><label>Service Area/Location</label><input name="serviceArea" value={assetForm.serviceArea} onChange={handleAssetChange} className="form-input" placeholder="Lobby, Pantry, etc." /></div>
-                        <div className="form-group"><label>Frequency</label><select name="frequency" value={assetForm.frequency} onChange={handleAssetChange} className="form-select"><option>Daily</option><option>Weekly</option><option>Monthly</option></select></div>
-                        <div className="form-group"><label>Shift</label><select name="shift" value={assetForm.shift} onChange={handleAssetChange} className="form-select"><option>Morning</option><option>Evening</option><option>Night</option></select></div>
-                        <div className="form-group"><label>Supervisor Assigned</label><input name="supervisor" value={assetForm.supervisor} onChange={handleAssetChange} className="form-input" /></div>
-                        <div className="form-group"><label>No. of Staff Required</label><input type="number" name="staffRequired" value={assetForm.staffRequired} onChange={handleAssetChange} className="form-input" min="0" /></div>
-                        <div className="form-group"><label>Special Instructions</label><input name="specialInstructions" value={assetForm.specialInstructions} onChange={handleAssetChange} className="form-input" /></div>
-                      </div>
-                    </div>
-                  )}
 
                   {assetForm.assetType === "technical" && (
                     <div className="form-section" style={{ marginBottom: "12px" }}>
@@ -3311,6 +3312,8 @@ const CompanyPortal = () => {
                       <div className="form-group"><label>Document Links (one per line)</label><textarea name="documentLinks" value={assetForm.documentLinks} onChange={handleAssetChange} className="form-input" rows="2" placeholder="Paste URLs or notes" /></div>
                     </div>
                   </div>
+                  </>)}
+                  {/* ── End non-soft fields ── */}
 
                   <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end", marginTop: "8px" }}>
                     <button type="button" onClick={() => { setShowAssetModal(false); setEditingAssetId(null); }} style={{ padding: "9px 20px", border: "1px solid #e2e8f0", borderRadius: "8px", background: "#fff", color: "#475569", fontWeight: 600, cursor: "pointer", fontSize: "14px" }}>Cancel</button>
