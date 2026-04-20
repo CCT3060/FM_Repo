@@ -336,7 +336,7 @@ export default function ChecklistManagementScreen() {
 
             {/* Catalyst Logo */}
             <View style={styles.logoBar}>
-                <Image source={require('../assets/images/catalyst-logo.png')} style={{ width: 120, height: 36, resizeMode: 'contain' }} />
+                <Image source={require('../assets/images/catalyst-logo.webp')} style={{ width: 120, height: 36, resizeMode: 'contain' }} />
             </View>
 
             {/* Search bar */}
