@@ -1,0 +1,45 @@
+# Root-level .easignore — applied when EAS archives the git repo
+# and uses this file to exclude files outside mobile-app/.
+# Project-local mobile-app/.easignore handles mobile-app-scoped rules.
+
+# Sibling project directories not needed for the mobile build
+FM_Repo/
+backend/
+frontend/
+ec2/
+
+# Recovery artifacts
+.recovered-mobile/
+*.tar
+
+# Dependencies and caches anywhere in the tree
+node_modules/
+**/node_modules/
+.expo/
+**/.expo/
+dist/
+web-build/
+
+# Native build artifacts
+android/
+ios/
+.kotlin/
+
+# IDE / OS / debug
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# Secrets — never upload
+keys/*.json
+**/keys/*.json
+.env
+.env.*
+!.env.example
+
+# Git metadata
+.git/
