@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Expo cache
+.expo/
+**/.expo/
+
+# Build outputs
+dist/
+web-build/
+
+# Native build artifacts
+android/
+ios/
+.kotlin/
+
+# IDE
+.vscode/
+.idea/
+
+# Debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Google Play service account keys
+keys/*.json
