@@ -3,6 +3,17 @@ import { getApiBaseUrl } from "../utils/runtimeConfig";
 
 const API_BASE = getApiBaseUrl();
 
+function formatAssetLocation(row) {
+  if (!row) return "—";
+  const parts = [
+    row.assetDepartment,
+    row.assetBuilding,
+    row.assetFloor,
+    row.assetRoom,
+  ].filter((p) => p && String(p).trim());
+  return parts.length ? parts.join(" • ") : "—";
+}
+
 /* ─── CSV export ──────────────────────────────────────────────── */
 function exportToCSV(rows, type, detail) {
   if (detail) {
@@ -280,6 +291,7 @@ function DetailModal({ submission, type, onClose }) {
           {[
             { label: "Submitted By", value: submission.submittedBy || "—" },
             { label: "Asset",        value: submission.assetName  || "—" },
+            { label: "Location",     value: formatAssetLocation(submission) },
             { label: "Date / Time",  value: fmt(submission.submittedAt) },
             { label: "Status",       value: <StatusBadge status={submission.status} /> },
             ...(type === "logsheets" ? [
@@ -812,7 +824,7 @@ function UserDrilldown({ userName, companyId, type, token, onBack }) {
                 <tr>
                   {["#", "Template",
                     ...(type === "logsheets" ? ["Type"] : []),
-                    "Asset",
+                    "Asset", "Location",
                     ...(type === "logsheets" ? ["Period", "Shift"] : []),
                     "Date & Time", "Status", ""].map((h, hi) => (
                     <th key={hi} style={{ padding: "11px 14px", textAlign: "left", background: "#f8fafc",
@@ -841,6 +853,7 @@ function UserDrilldown({ userName, companyId, type, token, onBack }) {
                       </td>
                     )}
                     <td style={{ padding: "10px 14px", color: "#475569" }}>{r.assetName || "—"}</td>
+                    <td style={{ padding: "10px 14px", color: "#64748b", fontSize: "12px" }}>{formatAssetLocation(r)}</td>
                     {type === "logsheets" && (
                       <>
                         <td style={{ padding: "10px 14px", color: "#475569", whiteSpace: "nowrap" }}>
@@ -1069,6 +1082,7 @@ export default function SubmissionsPanel({ token: tokenProp, type = "checklists"
         { key: "templateName", label: "Template",     sortable: true },
         { key: "submittedBy",  label: "Submitted By", sortable: true },
         { key: "assetName",    label: "Asset",        sortable: true },
+        { key: "assetLocation", label: "Location",    sortable: false },
         { key: "companyName",  label: "Company",      sortable: true },
         { key: "submittedAt",  label: "Submitted At", sortable: true },
         { key: "status",       label: "Status",       sortable: true },
@@ -1080,6 +1094,7 @@ export default function SubmissionsPanel({ token: tokenProp, type = "checklists"
         { key: "layoutType",   label: "Type",         sortable: true },
         { key: "submittedBy",  label: "Submitted By", sortable: true },
         { key: "assetName",    label: "Asset",        sortable: true },
+        { key: "assetLocation", label: "Location",    sortable: false },
         { key: "companyName",  label: "Company",      sortable: true },
         { key: "period",       label: "Period",       sortable: false },
         { key: "shift",        label: "Shift",        sortable: true },
@@ -1377,6 +1392,7 @@ export default function SubmissionsPanel({ token: tokenProp, type = "checklists"
                       ) : "—"}
                     </td>
                     <td style={{ padding: "10px 14px", color: "#475569" }}>{r.assetName || "—"}</td>
+                    <td style={{ padding: "10px 14px", color: "#64748b", fontSize: "12px" }}>{formatAssetLocation(r)}</td>
                     <td style={{ padding: "10px 14px", color: "#475569", fontSize: "12px" }}>{r.companyName || "—"}</td>
                     {type === "logsheets" && (
                       <>

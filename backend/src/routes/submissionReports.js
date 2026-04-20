@@ -150,6 +150,10 @@ router.get(
            ct.template_name        AS "templateName",
            cs.asset_id             AS "assetId",
            a.asset_name            AS "assetName",
+           a.building              AS "assetBuilding",
+           a.floor                 AS "assetFloor",
+           a.room                  AS "assetRoom",
+           d.department_name       AS "assetDepartment",
            co.company_name         AS "companyName",
            cs.status,
            cs.submitted_at         AS "submittedAt",
@@ -159,6 +163,7 @@ router.get(
          JOIN checklist_templates ct ON cs.template_id = ct.id
          JOIN companies co           ON co.id = ct.company_id
          LEFT JOIN assets a          ON a.id = cs.asset_id
+         LEFT JOIN departments d     ON d.id = a.department_id
          LEFT JOIN company_users cu  ON cu.id = cs.company_user_id
          WHERE ${conditions.join(" AND ")}
          ORDER BY cs.submitted_at DESC NULLS LAST
@@ -217,6 +222,10 @@ router.get(
            lt.layout_type               AS "layoutType",
            le.asset_id                  AS "assetId",
            a.asset_name                 AS "assetName",
+           a.building                   AS "assetBuilding",
+           a.floor                      AS "assetFloor",
+           a.room                       AS "assetRoom",
+           d.department_name            AS "assetDepartment",
            co.company_name              AS "companyName",
            le.status,
            COALESCE(le.submitted_at, le.entry_date) AS "submittedAt",
@@ -229,6 +238,7 @@ router.get(
          JOIN logsheet_templates lt      ON lt.id = le.template_id
          JOIN companies co               ON co.id = lt.company_id
          LEFT JOIN assets a              ON a.id = le.asset_id
+         LEFT JOIN departments d         ON d.id = a.department_id
          LEFT JOIN company_users cu      ON cu.id = le.company_user_id
          WHERE ${conditions.join(" AND ")}
          ORDER BY COALESCE(le.submitted_at, le.entry_date) DESC NULLS LAST
@@ -264,6 +274,10 @@ router.get(
            ct.template_name     AS "templateName",
            cs.asset_id          AS "assetId",
            a.asset_name         AS "assetName",
+           a.building           AS "assetBuilding",
+           a.floor              AS "assetFloor",
+           a.room               AS "assetRoom",
+           d.department_name    AS "assetDepartment",
            cs.status,
            cs.submitted_at      AS "submittedAt",
            cu.full_name         AS "submittedBy"
@@ -271,6 +285,7 @@ router.get(
          JOIN checklist_templates ct  ON ct.id = cs.template_id
          JOIN companies co            ON co.id = ct.company_id
          LEFT JOIN assets a           ON a.id  = cs.asset_id
+         LEFT JOIN departments d      ON d.id  = a.department_id
          LEFT JOIN company_users cu   ON cu.id = cs.company_user_id
          WHERE cs.id = ? AND ${scopeCond}`,
         [id, scopeParam]
@@ -319,6 +334,10 @@ router.get(
            lt.layout_type              AS "layoutType",
            le.asset_id                 AS "assetId",
            a.asset_name                AS "assetName",
+           a.building                  AS "assetBuilding",
+           a.floor                     AS "assetFloor",
+           a.room                      AS "assetRoom",
+           d.department_name           AS "assetDepartment",
            le.status,
            le.shift,
            le.month,
@@ -331,6 +350,7 @@ router.get(
          JOIN logsheet_templates lt     ON lt.id = le.template_id
          JOIN companies co              ON co.id = lt.company_id
          LEFT JOIN assets a             ON a.id  = le.asset_id
+         LEFT JOIN departments d        ON d.id  = a.department_id
          LEFT JOIN company_users cu     ON cu.id = le.company_user_id
          WHERE le.id = ? AND ${scopeCond}`,
         [id, scopeParam]
