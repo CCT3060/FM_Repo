@@ -26,6 +26,8 @@ const router = Router();
     // Patch existing tables that were created before the role column was added
     await pool.query(`ALTER TABLE company_users ADD COLUMN IF NOT EXISTS role VARCHAR(60) NOT NULL DEFAULT 'employee'`);
     await pool.query(`ALTER TABLE company_users ADD COLUMN IF NOT EXISTS username VARCHAR(100) NULL`);
+    await pool.query(`ALTER TABLE company_users ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '{}'::jsonb`);
+    await pool.query(`ALTER TABLE company_users ADD COLUMN IF NOT EXISTS module_access JSONB NOT NULL DEFAULT '[]'::jsonb`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_company_users_email ON company_users(email)`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_company_users_username ON company_users(LOWER(username)) WHERE username IS NOT NULL`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_company_users_company ON company_users(company_id)`);
@@ -66,6 +68,8 @@ router.get("/", async (req, res, next) => {
               role,
               status,
               username,
+              permissions,
+              module_access AS "moduleAccess",
               created_at   AS "createdAt"
        FROM company_users
        WHERE company_id = ?
@@ -81,7 +85,7 @@ router.get("/", async (req, res, next) => {
 // ── POST /api/company-users ───────────────────────────────────────────────────
 router.post("/", async (req, res, next) => {
   try {
-    const { companyId, fullName, email, phone, designation, role = "employee", status = "Active", password, username } = req.body;
+    const { companyId, fullName, email, phone, designation, role = "employee", status = "Active", password, username, permissions, moduleAccess } = req.body;
 
     if (!companyId || !fullName || !email) {
       return res.status(400).json({ message: "companyId, fullName and email are required" });
@@ -94,21 +98,25 @@ router.post("/", async (req, res, next) => {
     if (password) {
       passwordHash = await bcrypt.hash(password, 10);
     }
+    const permJson = JSON.stringify(permissions && typeof permissions === "object" ? permissions : {});
+    const modJson  = JSON.stringify(Array.isArray(moduleAccess) ? moduleAccess : []);
 
     const [rows] = await pool.query(
-      `INSERT INTO company_users (company_id, full_name, email, phone, designation, role, status, password_hash, username)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO company_users (company_id, full_name, email, phone, designation, role, status, password_hash, username, permissions, module_access)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb)
        RETURNING id,
-                 company_id   AS "companyId",
-                 full_name    AS "fullName",
+                 company_id    AS "companyId",
+                 full_name     AS "fullName",
                  email,
                  phone,
                  designation,
                  role,
                  status,
                  username,
-                 created_at   AS "createdAt"`,
-      [Number(companyId), fullName, email, phone || null, designation || null, role, status, passwordHash, username || null]
+                 permissions,
+                 module_access AS "moduleAccess",
+                 created_at    AS "createdAt"`,
+      [Number(companyId), fullName, email, phone || null, designation || null, role, status, passwordHash, username || null, permJson, modJson]
     );
 
     res.status(201).json(rows[0]);
@@ -125,7 +133,7 @@ router.post("/", async (req, res, next) => {
 router.put("/:id", async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { fullName, email, phone, designation, role, status, password, username } = req.body;
+    const { fullName, email, phone, designation, role, status, password, username, permissions, moduleAccess } = req.body;
 
     if (!fullName || !email) {
       return res.status(400).json({ message: "fullName and email are required" });
@@ -141,28 +149,39 @@ router.put("/:id", async (req, res, next) => {
     );
     if (!check.length) return res.status(403).json({ message: "Access denied" });
 
-    let passwordClause = "";
+    const setClauses = ["full_name = ?", "email = ?", "phone = ?", "designation = ?", "role = ?", "status = ?", "username = ?"];
     const params = [fullName, email, phone || null, designation || null, role || "employee", status || "Active", username || null];
     if (password) {
       const passwordHash = await bcrypt.hash(password, 10);
-      passwordClause = ", password_hash = ?";
+      setClauses.push("password_hash = ?");
       params.push(passwordHash);
     }
+    if (permissions !== undefined) {
+      setClauses.push("permissions = ?::jsonb");
+      params.push(JSON.stringify(permissions || {}));
+    }
+    if (moduleAccess !== undefined) {
+      setClauses.push("module_access = ?::jsonb");
+      params.push(JSON.stringify(Array.isArray(moduleAccess) ? moduleAccess : []));
+    }
+    setClauses.push("updated_at = NOW()");
     params.push(id);
 
     const [rows] = await pool.query(
       `UPDATE company_users
-       SET full_name = ?, email = ?, phone = ?, designation = ?, role = ?, status = ?, username = ?${passwordClause}, updated_at = NOW()
+       SET ${setClauses.join(", ")}
        WHERE id = ?
        RETURNING id,
-                 company_id   AS "companyId",
-                 full_name    AS "fullName",
+                 company_id    AS "companyId",
+                 full_name     AS "fullName",
                  email,
                  phone,
                  designation,
                  role,
                  status,
-                 username`,
+                 username,
+                 permissions,
+                 module_access AS "moduleAccess"`,
       params
     );
 
@@ -425,7 +444,8 @@ router.get("/employees", requireAuth, async (req, res, next) => {
     if (!companyId) return res.status(400).json({ message: "companyId is required" });
     const [rows] = await pool.query(
       `SELECT id, full_name AS "fullName", email, phone, role, designation,
-              department_id AS "departmentId", status, created_at AS "createdAt"
+              department_id AS "departmentId", status, permissions,
+              module_access AS "moduleAccess", created_at AS "createdAt"
        FROM company_users WHERE company_id = ? ORDER BY full_name`,
       [companyId]
     );
@@ -436,23 +456,25 @@ router.get("/employees", requireAuth, async (req, res, next) => {
 // POST /api/company-users/employees – create employee (admin)
 router.post("/employees", requireAuth, async (req, res, next) => {
   try {
-    const { companyId, fullName, email, phone, role = "technician", designation, departmentId, password } = req.body;
+    const { companyId, fullName, email, phone, role = "technician", designation, departmentId, password, permissions, moduleAccess } = req.body;
     if (!companyId || !fullName || !email) return res.status(400).json({ message: "companyId, fullName, email required" });
     const bcrypt = (await import("bcryptjs")).default;
     const hashedPw = password ? await bcrypt.hash(password, 10) : await bcrypt.hash("changeme123", 10);
+    const permJson = JSON.stringify(permissions && typeof permissions === "object" ? permissions : {});
+    const modJson  = JSON.stringify(Array.isArray(moduleAccess) ? moduleAccess : []);
     const [result] = await pool.query(
-      `INSERT INTO company_users (company_id, full_name, email, phone, role, designation, department_id, password, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active') RETURNING id`,
-      [companyId, fullName, email, phone || null, role, designation || null, departmentId || null, hashedPw]
+      `INSERT INTO company_users (company_id, full_name, email, phone, role, designation, department_id, password, status, permissions, module_access)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?::jsonb, ?::jsonb) RETURNING id`,
+      [companyId, fullName, email, phone || null, role, designation || null, departmentId || null, hashedPw, permJson, modJson]
     );
-    res.status(201).json({ id: result.insertId, fullName, email, role, status: "active" });
+    res.status(201).json({ id: result.insertId, fullName, email, role, status: "active", permissions: JSON.parse(permJson), moduleAccess: JSON.parse(modJson) });
   } catch (err) { next(err); }
 });
 
 // PUT /api/company-users/employees/:id – update employee (admin)
 router.put("/employees/:id", requireAuth, async (req, res, next) => {
   try {
-    const { fullName, email, phone, role, designation, departmentId, status } = req.body;
+    const { fullName, email, phone, role, designation, departmentId, status, permissions, moduleAccess } = req.body;
     const fields = []; const params = [];
     if (fullName !== undefined)    { fields.push("full_name = ?");    params.push(fullName); }
     if (email !== undefined)       { fields.push("email = ?");        params.push(email); }
@@ -461,6 +483,8 @@ router.put("/employees/:id", requireAuth, async (req, res, next) => {
     if (designation !== undefined) { fields.push("designation = ?");  params.push(designation); }
     if (departmentId !== undefined){ fields.push("department_id = ?");params.push(departmentId); }
     if (status !== undefined)      { fields.push("status = ?");       params.push(status); }
+    if (permissions !== undefined) { fields.push("permissions = ?::jsonb"); params.push(JSON.stringify(permissions || {})); }
+    if (moduleAccess !== undefined){ fields.push("module_access = ?::jsonb"); params.push(JSON.stringify(Array.isArray(moduleAccess) ? moduleAccess : [])); }
     if (!fields.length) return res.status(400).json({ message: "No fields" });
     params.push(req.params.id);
     await pool.query(`UPDATE company_users SET ${fields.join(", ")} WHERE id = ?`, params);

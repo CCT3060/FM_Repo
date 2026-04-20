@@ -39,6 +39,8 @@ router.post(
                 cu.role,
                 cu.company_id   AS "companyId",
                 cu.password_hash AS "passwordHash",
+                cu.permissions,
+                cu.module_access AS "moduleAccess",
                 c.company_name  AS "companyName"
          FROM company_users cu
          JOIN companies c ON c.id = cu.company_id
@@ -71,6 +73,8 @@ router.post(
           companyId: user.companyId,
           companyName: user.companyName,
           role: user.role,
+          permissions: user.permissions || {},
+          moduleAccess: user.moduleAccess || [],
         },
       });
     } catch (err) {

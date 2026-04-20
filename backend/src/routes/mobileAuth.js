@@ -67,6 +67,7 @@ router.post("/login", async (req, res, next) => {
       `SELECT cu.id, cu.company_id AS "companyId", cu.full_name AS "fullName",
               cu.email, cu.phone, cu.designation, cu.role, cu.status,
               cu.password_hash AS "passwordHash", cu.supervisor_id AS "supervisorId",
+              cu.permissions, cu.module_access AS "moduleAccess",
               c.company_name AS "companyName"
        FROM company_users cu
        JOIN companies c ON c.id = cu.company_id
@@ -120,6 +121,8 @@ router.post("/login", async (req, res, next) => {
         companyId: user.companyId,
         companyName: user.companyName,
         supervisorId: user.supervisorId,
+        permissions: user.permissions || {},
+        moduleAccess: user.moduleAccess || [],
       },
     });
   } catch (err) {

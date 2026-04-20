@@ -194,14 +194,45 @@ const downloadCSVTemplate = () => {
 };
 
 /* ─── Employee Modal ─────────────────────────────────────────────── */
+const DEFAULT_PERMS = {
+  checklists: { view: true, create: false, fill: true, edit: false, delete: false },
+  logsheets:  { view: true, create: false, fill: true, edit: false, delete: false },
+};
+const ALL_MODULES = [
+  { key: "dashboard",  label: "Dashboard" },
+  { key: "checklists", label: "Checklists" },
+  { key: "logsheets",  label: "Logsheets" },
+  { key: "workorders", label: "Work Orders" },
+  { key: "warnings",   label: "Warnings" },
+  { key: "assets",     label: "Assets" },
+  { key: "mytasks",    label: "My Tasks" },
+  { key: "ojt",        label: "OJT Training" },
+  { key: "shifts",     label: "Shifts" },
+];
+
+function normalizePerms(p) {
+  const src = p && typeof p === "object" ? p : {};
+  return {
+    checklists: { ...DEFAULT_PERMS.checklists, ...(src.checklists || {}) },
+    logsheets:  { ...DEFAULT_PERMS.logsheets,  ...(src.logsheets  || {}) },
+  };
+}
+
 function EmployeeModal({ existing, token, employees = [], currentUserRole = "admin", onClose, onSaved }) {
   const isEdit = !!existing;
-  const def = { fullName: "", email: "", phone: "", designation: "", role: "technician", shift: "", status: "Active", password: "", username: "", supervisorId: "" };
+  const def = {
+    fullName: "", email: "", phone: "", designation: "", role: "technician",
+    shift: "", status: "Active", password: "", username: "", supervisorId: "",
+    permissions: normalizePerms(null),
+    moduleAccess: ["dashboard", "checklists", "logsheets", "mytasks"],
+  };
   const [form, setForm] = useState(isEdit ? {
     ...def, ...existing, password: "",
     username: existing.username || "",
     supervisorId: existing.supervisorId ? String(existing.supervisorId) : "",
     shift: existing.shift || "",
+    permissions: normalizePerms(existing.permissions),
+    moduleAccess: Array.isArray(existing.moduleAccess) ? existing.moduleAccess : def.moduleAccess,
   } : def);
   const [saving, setSaving] = useState(false);
   const [error, setError]   = useState(null);
@@ -386,6 +417,55 @@ function EmployeeModal({ existing, token, employees = [], currentUserRole = "adm
                 Mobile access active — username: <strong>{form.username}</strong>
               </p>
             )}
+          </div>
+
+          {/* Permissions */}
+          <div style={{ gridColumn: "span 2", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "10px", padding: "16px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0ea5e9" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              <p style={{ fontWeight: 700, fontSize: "13.5px", color: "#0f172a", margin: 0 }}>Permissions (Checklists &amp; Logsheets)</p>
+            </div>
+            <p style={{ fontSize: "12px", color: "#64748b", marginBottom: "12px" }}>Fine-grained CRUD permissions applied when this user uses the mobile app or web portal.</p>
+            {["checklists", "logsheets"].map((area) => (
+              <div key={area} style={{ marginBottom: "8px" }}>
+                <p style={{ fontSize: "11.5px", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: "6px" }}>{area}</p>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                  {["view", "create", "fill", "edit", "delete"].map((op) => {
+                    const on = !!form.permissions?.[area]?.[op];
+                    return (
+                      <label key={op} style={{ display: "inline-flex", alignItems: "center", gap: "5px", padding: "5px 10px", background: on ? "#dbeafe" : "#fff", border: `1px solid ${on ? "#93c5fd" : "#e2e8f0"}`, borderRadius: "20px", fontSize: "12px", fontWeight: 600, color: on ? "#1d4ed8" : "#64748b", cursor: "pointer", userSelect: "none" }}>
+                        <input type="checkbox" checked={on} onChange={(e) =>
+                          setForm((p) => ({ ...p, permissions: { ...p.permissions, [area]: { ...(p.permissions?.[area] || {}), [op]: e.target.checked } } }))
+                        } style={{ margin: 0 }} />
+                        {op}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Module access */}
+          <div style={{ gridColumn: "span 2", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "10px", padding: "16px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+              <p style={{ fontWeight: 700, fontSize: "13.5px", color: "#0f172a", margin: 0 }}>Module Access</p>
+            </div>
+            <p style={{ fontSize: "12px", color: "#64748b", marginBottom: "12px" }}>Modules visible to this user on web portal and mobile app.</p>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+              {ALL_MODULES.map((m) => {
+                const on = form.moduleAccess?.includes(m.key);
+                return (
+                  <label key={m.key} style={{ display: "inline-flex", alignItems: "center", gap: "5px", padding: "5px 10px", background: on ? "#dcfce7" : "#fff", border: `1px solid ${on ? "#86efac" : "#e2e8f0"}`, borderRadius: "20px", fontSize: "12px", fontWeight: 600, color: on ? "#15803d" : "#64748b", cursor: "pointer", userSelect: "none" }}>
+                    <input type="checkbox" checked={on} onChange={(e) =>
+                      setForm((p) => ({ ...p, moduleAccess: e.target.checked ? [...(p.moduleAccess || []), m.key] : (p.moduleAccess || []).filter((k) => k !== m.key) }))
+                    } style={{ margin: 0 }} />
+                    {m.label}
+                  </label>
+                );
+              })}
+            </div>
           </div>
         </div>
 
@@ -2148,10 +2228,17 @@ export default function CompanyEmployeePortal() {
   const [enabledModules, setEnabledModules] = useState(null);
   const visibleNav = useMemo(() => {
     const base = getNav(currentUser?.role || "employee");
-    if (!enabledModules) return base;
     const ALWAYS_VISIBLE = new Set(["dashboard", "mytasks", "employees"]);
-    return base.filter((n) => ALWAYS_VISIBLE.has(n.key) || enabledModules.includes(n.key));
-  }, [enabledModules, currentUser?.role]);
+    const byCompany = !enabledModules
+      ? base
+      : base.filter((n) => ALWAYS_VISIBLE.has(n.key) || enabledModules.includes(n.key));
+    // Admins keep full access regardless of personal moduleAccess (so they can always manage).
+    const userModules = currentUser?.moduleAccess;
+    if (currentUser?.role === "admin" || !Array.isArray(userModules) || userModules.length === 0) {
+      return byCompany;
+    }
+    return byCompany.filter((n) => ALWAYS_VISIBLE.has(n.key) || userModules.includes(n.key));
+  }, [enabledModules, currentUser?.role, currentUser?.moduleAccess]);
   const [dashboard, setDashboard] = useState(null);
 
   // ── Alert sound / toast / bell notification state ───────────────
