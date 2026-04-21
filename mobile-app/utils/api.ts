@@ -14,7 +14,10 @@ import { notifyNetworkStatus } from './networkStatus';
 // OPTION 2: Auto-detect platform (recommended for development)
 const getApiBase = () => {
   if (!__DEV__) {
-    return 'https://d3kz9zxtx6891m.cloudfront.net';
+    // Production: point at the live EC2 backend behind HTTPS.
+    // (The old CloudFront distribution served a stale build and returned
+    // Supabase "Tenant or user not found" — use the direct domain instead.)
+    return 'https://fm.catalystsolutions.eco';
   }
   
   // Development URLs
