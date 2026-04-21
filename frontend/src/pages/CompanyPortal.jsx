@@ -1492,6 +1492,15 @@ const CompanyPortal = () => {
         departmentId = firstDept?.id || "";
       }
     }
+    // Soft services: asset name is derived from Room / Area
+    let resolvedAssetName = assetForm.assetName;
+    if (assetForm.assetType === "soft") {
+      resolvedAssetName = (assetForm.room || "").trim();
+      if (!resolvedAssetName) {
+        setAssetError("Room / Area is required for Soft Services");
+        return;
+      }
+    }
     setAssetLoading(true);
     setAssetError(null);
     try {
@@ -1499,7 +1508,7 @@ const CompanyPortal = () => {
       const payload = {
         companyId,
         departmentId: Number(departmentId),
-        assetName: assetForm.assetName,
+        assetName: resolvedAssetName,
         assetUniqueId: assetForm.assetUniqueId,
         assetType: assetForm.assetType,
         building: assetForm.building,
@@ -3208,19 +3217,15 @@ const CompanyPortal = () => {
                     )}
                   </div>
 
-                  {/* ── Soft Services: Area Name + Location fields only ── */}
+                  {/* ── Soft Services: Location fields only — asset name = Room / Area ── */}
                   {assetForm.assetType === "soft" && (
                     <div style={{ marginBottom: "12px" }}>
-                      <div className="form-group" style={{ marginBottom: "12px" }}>
-                        <label>Area / Asset Name <span style={{ color: "#ef4444" }}>*</span></label>
-                        <input name="assetName" value={assetForm.assetName} onChange={handleAssetChange} className="form-input" required placeholder="e.g. Hot Kitchen, Lobby Area" />
-                      </div>
                       <div className="form-section">
                         <h3 style={{ marginBottom: "12px", fontSize: "13px", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.05em" }}>Location</h3>
                         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px" }}>
                           <div className="form-group"><label>Building</label><input name="building" value={assetForm.building} onChange={handleAssetChange} className="form-input" placeholder="e.g. Block A" /></div>
                           <div className="form-group"><label>Floor</label><input name="floor" value={assetForm.floor} onChange={handleAssetChange} className="form-input" placeholder="e.g. 3rd Floor" /></div>
-                          <div className="form-group"><label>Room / Area</label><input name="room" value={assetForm.room} onChange={handleAssetChange} className="form-input" placeholder="e.g. Server Room" /></div>
+                          <div className="form-group"><label>Room / Area <span style={{ color: "#ef4444" }}>*</span></label><input name="room" value={assetForm.room} onChange={handleAssetChange} className="form-input" required placeholder="e.g. Hot Kitchen, Lobby Area" /></div>
                         </div>
                         <div className="form-group" style={{ marginTop: "10px" }}>
                           <label>Description</label>

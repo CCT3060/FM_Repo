@@ -19,6 +19,7 @@ import logsheetTemplatesRouter from "./routes/templateLogs.js";
 import companyUsersRouter from "./routes/companyUsers.js";
 import companyAuthRouter from "./routes/companyAuth.js";
 import companyPortalRouter from "./routes/companyPortal.js";
+import companyRolesRouter from "./routes/companyRoles.js";
 import assetQRRouter from "./routes/assetQR.js";
 import mobileAuthRouter from "./routes/mobileAuth.js";
 import templateAssignmentsRouter from "./routes/templateAssignments.js";
@@ -46,17 +47,18 @@ app.use(
 app.use(express.json());
 app.use(morgan("tiny"));
 
-app.get("/health", async (_req, res) => {
+const healthHandler = async (_req, res) => {
   try {
     await pool.query("SELECT 1");
     res.json({ status: "ok", db: "connected" });
   } catch (err) {
-    // Server is up but DB is unreachable – do NOT crash, just report degraded
     // eslint-disable-next-line no-console
     console.error("[health] DB check failed:", err.message);
     res.status(503).json({ status: "degraded", db: "error", detail: err.message });
   }
-});
+};
+app.get("/health", healthHandler);
+app.get("/api/health", healthHandler);
 app.use("/api/auth", authRouter);
 app.use("/api/clients", clientsRouter);
 app.use("/api/users", usersRouter);
@@ -71,6 +73,7 @@ app.use("/api/logsheet-templates", logsheetTemplatesRouter);
 app.use("/api/company-users", companyUsersRouter);
 app.use("/api/company-auth", companyAuthRouter);
 app.use("/api/company-portal", companyPortalRouter);
+app.use("/api/company-portal/roles", companyRolesRouter);
 app.use("/api/asset-qr", assetQRRouter);
 app.use("/api/mobile-auth", mobileAuthRouter);
 // Submission reports – accepts both company JWT and main-platform JWT (must be BEFORE templateAssignmentsRouter)
@@ -96,6 +99,35 @@ app.use((req, res) => res.status(404).json({ message: "Not found", path: req.ori
 app.use((err, _req, res, _next) => {
   // eslint-disable-next-line no-console
   console.error(err);
+  const msg = String(err?.message || "");
+  const code = String(err?.code || "");
+
+  // Detect database connection / tenant configuration problems and surface a
+  // clear, actionable message to mobile / web clients instead of leaking
+  // low-level driver errors.
+  const isDbConfigError =
+    msg.includes("Tenant or user not found") ||
+    msg.toLowerCase().includes("password authentication failed") ||
+    msg.toLowerCase().includes("database") && msg.toLowerCase().includes("does not exist");
+  const isDbUnreachable =
+    code === "ECONNREFUSED" ||
+    code === "ENETUNREACH" ||
+    code === "ETIMEDOUT" ||
+    msg.toLowerCase().includes("connect etimedout") ||
+    msg.toLowerCase().includes("circuit breaker");
+
+  if (isDbConfigError) {
+    return res.status(503).json({
+      message: "Database configuration error. Please contact your administrator.",
+      code: "DB_CONFIG",
+    });
+  }
+  if (isDbUnreachable) {
+    return res.status(503).json({
+      message: "Service temporarily unavailable. Please try again shortly.",
+      code: "DB_UNREACHABLE",
+    });
+  }
   res.status(500).json({ message: "Unexpected error", detail: err.message });
 });
 

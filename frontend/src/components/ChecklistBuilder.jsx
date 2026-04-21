@@ -135,6 +135,7 @@ const ChecklistBuilder = ({ token, assets, users = [] }) => {
   };
 
   const normalizeConfig = (q) => {
+    let base = null;
     if (["single_select", "dropdown", "multi_select"].includes(q.answerType)) {
       const raw = q.config?.options || [];
       const options = Array.isArray(raw)
@@ -143,22 +144,23 @@ const ChecklistBuilder = ({ token, assets, users = [] }) => {
             .split(/\n|,/)
             .map((v) => v.trim())
             .filter(Boolean);
-      return { options };
-    }
-    if (q.answerType === "number") {
-      return {
+      base = { options };
+    } else if (q.answerType === "number") {
+      base = {
         min: q.config?.min ?? "",
         max: q.config?.max ?? "",
         unit: q.config?.unit ?? "",
       };
+    } else if (q.answerType === "star_rating") {
+      base = { scale: q.config?.scale || 5 };
+    } else if (q.answerType === "label") {
+      base = { text: q.config?.text || "" };
     }
-    if (q.answerType === "star_rating") {
-      return { scale: q.config?.scale || 5 };
+    // Preserve per-question flag rule
+    if (q.config?.flagRule?.enabled) {
+      base = { ...(base || {}), flagRule: q.config.flagRule };
     }
-    if (q.answerType === "label") {
-      return { text: q.config?.text || "" };
-    }
-    return null;
+    return base;
   };
 
   const handleSave = async (e) => {

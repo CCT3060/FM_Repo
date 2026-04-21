@@ -45,6 +45,10 @@ import {
   getCompanyPortalRecentLogsheetEntries,
   getCompanyPortalRecentChecklistSubmissions,
   getCompanyPortalSupervisors,
+  getCompanyRoles,
+  createCompanyRole,
+  updateCompanyRole,
+  deleteCompanyRole,
   createTemplateUserAssignment,
   getTemplateUserAssignments,
   getMyTemplateAssignments,
@@ -88,16 +92,54 @@ const ROLES = [
 ];
 const roleInfo = (r) => ROLES.find((x) => x.value === r) || ROLES[ROLES.length - 1];
 
-// 5-level maintenance hierarchy
-const HIERARCHY_CHAIN = [
+// Default 5-level maintenance hierarchy (used when company has no custom roles)
+const DEFAULT_HIERARCHY_CHAIN = [
   { role: "technical_lead",      label: "Technical Lead",      parentRole: null,                  color: "#1d4ed8", bg: "#dbeafe", border: "#bfdbfe" },
   { role: "assistant_manager",   label: "Asst. Manager",       parentRole: "technical_lead",      color: "#5b21b6", bg: "#ede9fe", border: "#c4b5fd" },
   { role: "technical_executive", label: "Technical Executive", parentRole: "assistant_manager",   color: "#0e7490", bg: "#cffafe", border: "#a5f3fc" },
   { role: "supervisor",          label: "Supervisor",          parentRole: "technical_executive", color: "#0369a1", bg: "#e0f2fe", border: "#bae6fd" },
   { role: "technician",          label: "Technician",          parentRole: "supervisor",          color: "#059669", bg: "#d1fae5", border: "#6ee7b7" },
 ];
-const PARENT_ROLE = Object.fromEntries(HIERARCHY_CHAIN.map((h) => [h.role, h.parentRole]));
-const HIERARCHY_ROLES = new Set(HIERARCHY_CHAIN.map((h) => h.role));
+
+// Runtime-mutable hierarchy — can be replaced by admin-defined custom roles.
+// Mutating in place preserves references held by closures; callers that need
+// a render should bump their own re-render counter after invoking applyRoles.
+let HIERARCHY_CHAIN  = [...DEFAULT_HIERARCHY_CHAIN];
+let PARENT_ROLE      = Object.fromEntries(HIERARCHY_CHAIN.map((h) => [h.role, h.parentRole]));
+let HIERARCHY_ROLES  = new Set(HIERARCHY_CHAIN.map((h) => h.role));
+
+const lightenHex = (hex) => {
+  // Produce a pale background from any hex color; fallback if parsing fails.
+  try {
+    const h = hex.replace("#", "");
+    const r = parseInt(h.slice(0, 2), 16);
+    const g = parseInt(h.slice(2, 4), 16);
+    const b = parseInt(h.slice(4, 6), 16);
+    const mix = (c) => Math.round(c + (255 - c) * 0.85);
+    return `#${mix(r).toString(16).padStart(2, "0")}${mix(g).toString(16).padStart(2, "0")}${mix(b).toString(16).padStart(2, "0")}`;
+  } catch {
+    return "#dbeafe";
+  }
+};
+
+const applyCustomRoles = (rolesFromServer) => {
+  if (!Array.isArray(rolesFromServer) || !rolesFromServer.length) {
+    // Reset to defaults
+    HIERARCHY_CHAIN.splice(0, HIERARCHY_CHAIN.length, ...DEFAULT_HIERARCHY_CHAIN);
+  } else {
+    const mapped = rolesFromServer.map((r) => ({
+      role:       r.roleKey,
+      label:      r.label,
+      parentRole: r.parentRoleKey || null,
+      color:      r.color    || "#2563eb",
+      bg:         r.bgColor  || lightenHex(r.color || "#2563eb"),
+      border:     r.color    || "#bfdbfe",
+    }));
+    HIERARCHY_CHAIN.splice(0, HIERARCHY_CHAIN.length, ...mapped);
+  }
+  PARENT_ROLE     = Object.fromEntries(HIERARCHY_CHAIN.map((h) => [h.role, h.parentRole]));
+  HIERARCHY_ROLES = new Set(HIERARCHY_CHAIN.map((h) => h.role));
+};
 const SHIFTS = ["Morning", "Afternoon", "Evening", "Night"];
 
 const NAV_ALL = [
@@ -816,8 +858,10 @@ function AssetModal({ existing, token, departments, employees = [], onClose, onS
     if (!form.assetType) return setError("Please select an asset type");
     let assetNameToUse = form.assetName.trim();
     if (form.assetType === "soft") {
-      const parts = [form.building, form.floor, form.room].map(s => (s || "").trim()).filter(Boolean);
-      assetNameToUse = parts.join(" · ") || "Soft Services Area";
+      assetNameToUse = (form.room || "").trim();
+      if (!assetNameToUse) {
+        return setError("Room / Area is required for Soft Services");
+      }
     } else if (!assetNameToUse) {
       return setError("Asset name is required");
     }
@@ -2202,6 +2246,137 @@ function FleetMaintModal({ token, fleetAssets, onClose, onSaved }) {
   );
 }
 
+/* ─── Role Management Modal (custom hierarchy) ───────────────────────── */
+function RolesModal({ token, initialRoles, onClose, onSaved }) {
+  const [roles, setRoles] = useState(initialRoles || []);
+  const [draftLabel, setDraftLabel] = useState("");
+  const [draftParent, setDraftParent] = useState("");
+  const [draftColor, setDraftColor] = useState("#2563eb");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
+  const addRole = async () => {
+    if (!draftLabel.trim()) return setError("Role label required");
+    setSaving(true); setError(null);
+    try {
+      await createCompanyRole(token, {
+        label: draftLabel.trim(),
+        parentRoleKey: draftParent || null,
+        color: draftColor,
+        bgColor: lightenHex(draftColor),
+      });
+      const list = await getCompanyRoles(token);
+      setRoles(list || []);
+      setDraftLabel(""); setDraftParent(""); setDraftColor("#2563eb");
+    } catch (err) { setError(err.message || "Create failed"); }
+    finally { setSaving(false); }
+  };
+
+  const removeRole = async (id) => {
+    if (!window.confirm("Delete this role? Existing employees keep their role string.")) return;
+    setSaving(true);
+    try {
+      await deleteCompanyRole(token, id);
+      const list = await getCompanyRoles(token);
+      setRoles(list || []);
+    } catch (err) { setError(err.message || "Delete failed"); }
+    finally { setSaving(false); }
+  };
+
+  const moveRole = async (id, dir) => {
+    const idx = roles.findIndex((r) => r.id === id);
+    if (idx < 0) return;
+    const swap = idx + dir;
+    if (swap < 0 || swap >= roles.length) return;
+    const a = roles[idx], b = roles[swap];
+    setSaving(true);
+    try {
+      await updateCompanyRole(token, a.id, { sortOrder: b.sortOrder });
+      await updateCompanyRole(token, b.id, { sortOrder: a.sortOrder });
+      const list = await getCompanyRoles(token);
+      setRoles(list || []);
+    } catch (err) { setError(err.message || "Reorder failed"); }
+    finally { setSaving(false); }
+  };
+
+  const handleClose = () => {
+    onSaved(roles);
+    onClose();
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 1200, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+      <div style={{ background: "#fff", borderRadius: "14px", width: "100%", maxWidth: "720px", maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
+        <div style={{ padding: "18px 22px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <p style={{ fontWeight: 700, fontSize: "16px", color: "#0f172a" }}>Manage Custom Roles & Hierarchy</p>
+            <p style={{ fontSize: "12px", color: "#64748b", marginTop: "2px" }}>Define your organization's role hierarchy. Top of list = top of chain.</p>
+          </div>
+          <button onClick={handleClose} style={{ width: "28px", height: "28px", borderRadius: "7px", background: "#f1f5f9", border: "none", cursor: "pointer", color: "#64748b" }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+
+        <div style={{ padding: "18px 22px", overflowY: "auto", flex: 1 }}>
+          {error && <Alert>{error}</Alert>}
+
+          {/* Existing roles */}
+          <div style={{ marginBottom: "16px" }}>
+            {roles.length === 0 && (
+              <p style={{ color: "#94a3b8", fontSize: "13px", padding: "16px", textAlign: "center", background: "#f8fafc", borderRadius: "8px" }}>
+                No custom roles yet. Using default hierarchy.<br />Add a role below to start customizing.
+              </p>
+            )}
+            {roles.map((r, i) => (
+              <div key={r.id} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px", borderRadius: "8px", border: "1px solid #e2e8f0", marginBottom: "6px", background: "#fff" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                  <button onClick={() => moveRole(r.id, -1)} disabled={saving || i === 0} style={{ padding: "0 4px", border: "none", background: "transparent", cursor: i === 0 ? "default" : "pointer", color: i === 0 ? "#cbd5e1" : "#64748b" }}>▲</button>
+                  <button onClick={() => moveRole(r.id, 1)} disabled={saving || i === roles.length - 1} style={{ padding: "0 4px", border: "none", background: "transparent", cursor: i === roles.length - 1 ? "default" : "pointer", color: i === roles.length - 1 ? "#cbd5e1" : "#64748b" }}>▼</button>
+                </div>
+                <span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: r.bgColor || "#dbeafe", color: r.color || "#2563eb" }}>{r.label}</span>
+                <span style={{ fontSize: "11.5px", color: "#94a3b8" }}>
+                  {r.parentRoleKey ? `reports to ${roles.find((x) => x.roleKey === r.parentRoleKey)?.label || r.parentRoleKey}` : "top level"}
+                </span>
+                <span style={{ marginLeft: "auto", fontSize: "11px", color: "#94a3b8" }}>{r.roleKey}</span>
+                <button onClick={() => removeRole(r.id)} disabled={saving} style={{ padding: "4px 8px", border: "1px solid #fecaca", background: "#fff0f0", color: "#dc2626", borderRadius: "6px", cursor: "pointer", fontSize: "11.5px", fontWeight: 600 }}>Delete</button>
+              </div>
+            ))}
+          </div>
+
+          {/* Add new role */}
+          <div style={{ background: "#f8fafc", borderRadius: "10px", padding: "14px 16px", border: "1px solid #e2e8f0" }}>
+            <p style={{ fontSize: "12.5px", fontWeight: 700, color: "#475569", marginBottom: "10px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Add New Role</p>
+            <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr auto", gap: "10px", alignItems: "end" }}>
+              <div>
+                <label style={{ display: "block", fontSize: "11.5px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>Role Label *</label>
+                <input value={draftLabel} onChange={(e) => setDraftLabel(e.target.value)} placeholder="e.g. Regional Manager" style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", border: "1px solid #e2e8f0", borderRadius: "6px", fontSize: "13px", outline: "none" }} />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: "11.5px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>Reports To (optional)</label>
+                <select value={draftParent} onChange={(e) => setDraftParent(e.target.value)} style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", border: "1px solid #e2e8f0", borderRadius: "6px", fontSize: "13px", background: "#fff", outline: "none" }}>
+                  <option value="">— Top of hierarchy —</option>
+                  {roles.map((r) => (
+                    <option key={r.roleKey} value={r.roleKey}>{r.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: "11.5px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>Color</label>
+                <input type="color" value={draftColor} onChange={(e) => setDraftColor(e.target.value)} style={{ width: "100%", height: "34px", padding: "2px", border: "1px solid #e2e8f0", borderRadius: "6px", cursor: "pointer" }} />
+              </div>
+              <Btn onClick={addRole} disabled={saving || !draftLabel.trim()}>Add</Btn>
+            </div>
+          </div>
+        </div>
+
+        <div style={{ padding: "14px 22px", borderTop: "1px solid #e2e8f0", display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+          <Btn onClick={handleClose}>Done</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ─── Main Portal ────────────────────────────────────────────────── */
 export default function CompanyEmployeePortal() {
   const navigate = useNavigate();
@@ -2308,6 +2483,9 @@ export default function CompanyEmployeePortal() {
   const [checklists, setChecklists] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [supervisors, setSupervisors] = useState([]);
+  const [customRoles, setCustomRoles] = useState([]);
+  const [showRolesModal, setShowRolesModal] = useState(false);
+  const [roleRefreshKey, setRoleRefreshKey] = useState(0);
   const [assignments, setAssignments] = useState([]);
   const [myAssignments, setMyAssignments] = useState([]);
   const [shifts, setShifts] = useState([]);
@@ -2609,6 +2787,14 @@ export default function CompanyEmployeePortal() {
     }
     if (nav === "employees") {
       load("employees", () => getCompanyPortalEmployees(token)).then((d) => d && setEmployees(d));
+      getCompanyRoles(token)
+        .then((d) => {
+          const list = Array.isArray(d) ? d : [];
+          setCustomRoles(list);
+          applyCustomRoles(list);
+          setRoleRefreshKey((k) => k + 1);
+        })
+        .catch(() => {});
       if (currentUser?.role === "admin" || currentUser?.role === "supervisor") {
         getCompanyPortalSupervisors(token).then((d) => d && setSupervisors(d)).catch(() => {});
         getTemplateUserAssignments(token).then((d) => d && setAssignments(d)).catch(() => {});
@@ -3942,6 +4128,12 @@ export default function CompanyEmployeePortal() {
                 </div>
                 {canManage && (
                   <div style={{ display: "flex", gap: "8px" }}>
+                    {isAdmin && (
+                      <Btn onClick={() => setShowRolesModal(true)} outline color="#7c3aed" bg="#fff">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 7h18M3 12h18M3 17h18"/></svg>
+                        Manage Roles
+                      </Btn>
+                    )}
                     <Btn onClick={() => setShowImport(true)} outline color="#64748b" bg="#fff">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
                       Import CSV
@@ -5359,12 +5551,25 @@ export default function CompanyEmployeePortal() {
       )}
       {showEmpModal && (
         <EmployeeModal
+          key={`emp-modal-${roleRefreshKey}`}
           token={token}
           existing={editEmp}
           employees={employees}
           currentUserRole={currentUser.role}
           onClose={() => { setShowEmpModal(false); setEditEmp(null); }}
           onSaved={handleEmpSaved}
+        />
+      )}
+      {showRolesModal && (
+        <RolesModal
+          token={token}
+          initialRoles={customRoles}
+          onClose={() => setShowRolesModal(false)}
+          onSaved={(list) => {
+            setCustomRoles(list);
+            applyCustomRoles(list);
+            setRoleRefreshKey((k) => k + 1);
+          }}
         />
       )}
       {showAssignModal && assignTarget && (

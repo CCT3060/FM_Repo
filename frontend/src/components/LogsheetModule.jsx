@@ -70,7 +70,7 @@ const emptyQuestion = () => ({
   questionText: "",
   specification: "",
   answerType: "yes_no",
-  rule: { ruleText: "", minValue: "", maxValue: "" },
+  rule: { ruleText: "", minValue: "", maxValue: "", enabled: false, operator: "", value1: "", value2: "", severity: "medium" },
   priority: "medium",
   mandatory: true,
 });
@@ -203,6 +203,95 @@ function QuestionEditor({ q, sIdx, qIdx, onChange, onRemove }) {
           <Input value={q.rule.ruleText} onChange={(e) => updateRule("ruleText", e.target.value)} placeholder="e.g. If NO → Raise issue" />
         </div>
       )}
+
+      {/* ── Flexible auto-flag rule (works for any answer type) ── */}
+      <div style={{ marginTop: "10px", padding: "8px 10px", background: "#fff7ed", border: "1px dashed #fdba74", borderRadius: "6px" }}>
+        <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "#9a3412", cursor: "pointer", fontWeight: 600 }}>
+          <input
+            type="checkbox"
+            checked={!!q.rule.enabled}
+            onChange={(e) => updateRule("enabled", e.target.checked)}
+          />
+          Set Rule — auto-flag when condition matches
+        </label>
+        {q.rule.enabled && (
+          <div style={{ marginTop: "8px", display: "grid", gridTemplateColumns: "1.2fr 1fr 1fr 1fr", gap: "8px", alignItems: "end" }}>
+            <div>
+              <Label>Operator</Label>
+              <Select
+                value={q.rule.operator || ""}
+                onChange={(e) => updateRule("operator", e.target.value)}
+              >
+                <option value="" disabled>Select</option>
+                {q.answerType === "yes_no" && (
+                  <>
+                    <option value="eq">equals</option>
+                    <option value="neq">not equals</option>
+                  </>
+                )}
+                {q.answerType === "text" && (
+                  <>
+                    <option value="eq">equals</option>
+                    <option value="neq">not equals</option>
+                    <option value="contains">contains</option>
+                    <option value="not_contains">does not contain</option>
+                    <option value="empty">is empty</option>
+                    <option value="not_empty">is not empty</option>
+                  </>
+                )}
+                {q.answerType === "number" && (
+                  <>
+                    <option value="gt">&gt;</option>
+                    <option value="gte">≥</option>
+                    <option value="lt">&lt;</option>
+                    <option value="lte">≤</option>
+                    <option value="eq">=</option>
+                    <option value="neq">≠</option>
+                    <option value="between">between</option>
+                    <option value="outside">outside</option>
+                  </>
+                )}
+              </Select>
+            </div>
+
+            {!["empty", "not_empty"].includes(q.rule.operator) && (
+              <div>
+                <Label>{["between", "outside"].includes(q.rule.operator) ? "Min" : "Value"}</Label>
+                {q.answerType === "yes_no" ? (
+                  <Select value={q.rule.value1 ?? ""} onChange={(e) => updateRule("value1", e.target.value)}>
+                    <option value="">—</option>
+                    <option value="yes">Yes</option>
+                    <option value="no">No</option>
+                  </Select>
+                ) : (
+                  <Input
+                    type={q.answerType === "number" ? "number" : "text"}
+                    value={q.rule.value1 ?? ""}
+                    onChange={(e) => updateRule("value1", e.target.value)}
+                  />
+                )}
+              </div>
+            )}
+
+            {["between", "outside"].includes(q.rule.operator) && (
+              <div>
+                <Label>Max</Label>
+                <Input type="number" value={q.rule.value2 ?? ""} onChange={(e) => updateRule("value2", e.target.value)} />
+              </div>
+            )}
+
+            <div>
+              <Label>Severity</Label>
+              <Select value={q.rule.severity || "medium"} onChange={(e) => updateRule("severity", e.target.value)}>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="critical">Critical</option>
+              </Select>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -284,7 +373,18 @@ function TemplateBuilder({ token, companies, assets, shifts = [], onBack, onSave
           questionText: q.questionText || "",
           specification: q.specification || "",
           answerType: q.answerType || q.answer_type || "yes_no",
-          rule: q.rule ? { ruleText: q.rule.ruleText || "", minValue: q.rule.minValue ?? "", maxValue: q.rule.maxValue ?? "" } : { ruleText: "", minValue: "", maxValue: "" },
+          rule: q.rule
+            ? {
+                ruleText: q.rule.ruleText || "",
+                minValue: q.rule.minValue ?? "",
+                maxValue: q.rule.maxValue ?? "",
+                enabled: !!q.rule.enabled,
+                operator: q.rule.operator || "",
+                value1: q.rule.value1 ?? "",
+                value2: q.rule.value2 ?? "",
+                severity: q.rule.severity || "medium",
+              }
+            : { ruleText: "", minValue: "", maxValue: "", enabled: false, operator: "", value1: "", value2: "", severity: "medium" },
           priority: q.priority || "medium",
           mandatory: q.isMandatory ?? q.mandatory ?? true,
         })),
@@ -345,6 +445,13 @@ function TemplateBuilder({ token, companies, assets, shifts = [], onBack, onSave
     if (q.rule.ruleText) r.ruleText = q.rule.ruleText;
     if (q.rule.minValue !== "") r.minValue = Number(q.rule.minValue);
     if (q.rule.maxValue !== "") r.maxValue = Number(q.rule.maxValue);
+    if (q.rule.enabled && q.rule.operator) {
+      r.enabled = true;
+      r.operator = q.rule.operator;
+      if (q.rule.value1 !== "") r.value1 = q.rule.value1;
+      if (q.rule.value2 !== "") r.value2 = q.rule.value2;
+      r.severity = q.rule.severity || "medium";
+    }
     return Object.keys(r).length ? r : undefined;
   };
 

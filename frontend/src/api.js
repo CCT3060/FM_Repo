@@ -146,6 +146,13 @@ export const updateCompanyPortalEmployee = (token, id, data) => request("PUT", `
 export const deleteCompanyPortalEmployee = (token, id) => request("DELETE", `/api/company-portal/employees/${id}`, undefined, { authToken: token });
 export const bulkImportCompanyEmployees = (token, employees) => request("POST", "/api/company-portal/employees/bulk", { employees }, { authToken: token });
 export const getCompanyPortalSupervisors = (token) => request("GET", "/api/company-portal/employees/supervisors", undefined, { authToken: token });
+
+// ── Custom roles / hierarchy (per-company) ───────────────────────────────────
+export const getCompanyRoles    = (token) => request("GET",  "/api/company-portal/roles", undefined, { authToken: token });
+export const createCompanyRole  = (token, data) => request("POST", "/api/company-portal/roles", data, { authToken: token });
+export const updateCompanyRole  = (token, id, data) => request("PUT", `/api/company-portal/roles/${id}`, data, { authToken: token });
+export const deleteCompanyRole  = (token, id) => request("DELETE", `/api/company-portal/roles/${id}`, undefined, { authToken: token });
+export const reorderCompanyRoles = (token, items) => request("PUT", "/api/company-portal/roles/reorder/bulk", { items }, { authToken: token });
 export const createTemplateUserAssignment = (token, data) => request("POST", "/api/company-portal/template-user-assignments", data, { authToken: token });
 export const getTemplateUserAssignments = (token) => request("GET", "/api/company-portal/template-user-assignments", undefined, { authToken: token });
 export const getMyTemplateAssignments = (token) => request("GET", "/api/company-portal/template-user-assignments/mine", undefined, { authToken: token });
