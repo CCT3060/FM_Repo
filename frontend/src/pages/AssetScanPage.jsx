@@ -35,13 +35,13 @@ export default function AssetScanPage() {
   // Immediately try to open the Klean app via deep link
   useEffect(() => {
     if (!assetId) return;
-    window.location.href = `klean://asset-scan?assetId=${assetId}`;
+    window.location.href = `mobileapp://asset-scan?assetId=${assetId}`;
     const timer = setTimeout(() => setShowFallback(true), 2500);
     return () => clearTimeout(timer);
   }, [assetId]);
 
   const handleOpenApp = () => {
-    window.location.href = `klean://asset-scan?assetId=${assetId}`;
+    window.location.href = `mobileapp://asset-scan?assetId=${assetId}`;
     setTimeout(() => setShowFallback(true), 2000);
   };
 
