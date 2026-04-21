@@ -31,8 +31,15 @@ export default function LoginScreen() {
             const result = await verifyToken();
             
             if (result && result.user) {
-                // Valid token found, navigate to checklists (main screen)
-                router.replace('/checklists');
+                // Valid token found, navigate to appropriate dashboard
+                const role = result.user.role?.toLowerCase();
+                if (role === 'supervisor') {
+                    router.replace('/supervisor-dashboard');
+                } else if (role === 'technician') {
+                    router.replace('/tech-dashboard');
+                } else {
+                    router.replace('/dashboard');
+                }
             } else {
                 // No stored token, stay on login page
                 console.log('No stored authentication found');

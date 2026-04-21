@@ -77,7 +77,15 @@ export default function EmployeeLoginScreen() {
             console.log('User role:', response.user.role);
             
             // Don't reset loading here - let the navigation happen with loading state
-            router.replace('/checklists');
+            // Route based on user role (case-insensitive)
+            const userRole = response.user.role?.toLowerCase();
+            if (userRole === 'supervisor') {
+                router.replace('/supervisor-dashboard');
+            } else if (userRole === 'technician') {
+                router.replace('/tech-dashboard');
+            } else {
+                router.replace('/dashboard');
+            }
         } catch (error) {
             console.error('Login error:', error);
             
