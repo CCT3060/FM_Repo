@@ -7,7 +7,6 @@ import {
     Modal,
     Platform,
     RefreshControl,
-    SafeAreaView,
     ScrollView,
     StyleSheet,
     Text,
@@ -16,6 +15,7 @@ import {
     View,
 } from 'react-native';
 import { Image } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import {
     getMyAssignments,
     getMyUnassignedToTeam,

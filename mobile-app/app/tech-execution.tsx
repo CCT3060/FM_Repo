@@ -9,7 +9,6 @@ import {
     KeyboardAvoidingView,
     Modal,
     Platform,
-    SafeAreaView,
     ScrollView,
     StyleSheet,
     Text,
@@ -18,6 +17,7 @@ import {
     View,
 } from 'react-native';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { getTemplateDetails, submitChecklist, submitLogsheet, submitTabularLogsheet, type TabularHeaderConfig, type TemplateDetails } from '../utils/api';
 
 export default function TechExecutionScreen() {

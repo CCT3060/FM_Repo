@@ -6,7 +6,6 @@ import {
     Alert,
     KeyboardAvoidingView,
     Platform,
-    SafeAreaView,
     StyleSheet,
     Text,
     TextInput,
@@ -14,6 +13,7 @@ import {
     View,
 } from 'react-native';
 import { Image } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { loginEmployee, getStoredCompany } from '../utils/api';
 
 export default function EmployeeLoginScreen() {
@@ -77,18 +77,7 @@ export default function EmployeeLoginScreen() {
             console.log('User role:', response.user.role);
             
             // Don't reset loading here - let the navigation happen with loading state
-            // Route based on user role (case-insensitive)
-            const userRole = response.user.role?.toLowerCase();
-            if (userRole === 'supervisor') {
-                console.log('Routing to supervisor-dashboard');
-                router.replace('/supervisor-dashboard');
-            } else if (userRole === 'technician') {
-                console.log('Routing to tech-dashboard (technician)');
-                router.replace('/tech-dashboard');
-            } else {
-                console.log('Routing to dashboard (general employee)');
-                router.replace('/dashboard');
-            }
+            router.replace('/checklists');
         } catch (error) {
             console.error('Login error:', error);
             

@@ -7,13 +7,13 @@ import {
     Image,
     KeyboardAvoidingView,
     Platform,
-    SafeAreaView,
     StyleSheet,
     Text,
     TextInput,
     TouchableOpacity,
     View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { verifyToken, verifyCompanyCode } from '../utils/api';
 
 export default function LoginScreen() {
@@ -31,15 +31,8 @@ export default function LoginScreen() {
             const result = await verifyToken();
             
             if (result && result.user) {
-                // Valid token found, navigate to appropriate dashboard
-                const role = result.user.role?.toLowerCase();
-                if (role === 'supervisor') {
-                    router.replace('/supervisor-dashboard');
-                } else if (role === 'technician') {
-                    router.replace('/tech-dashboard');
-                } else {
-                    router.replace('/dashboard');
-                }
+                // Valid token found, navigate to checklists (main screen)
+                router.replace('/checklists');
             } else {
                 // No stored token, stay on login page
                 console.log('No stored authentication found');
@@ -104,7 +97,7 @@ export default function LoginScreen() {
                         <Image source={require('../assets/logo.webp')} style={{ width: 200, height: 66, resizeMode: 'contain' }} />
                     </View>
 
-                    {/* Input section */}}
+                    {/* Input section */}
                     <View style={styles.inputSection}>
                         <Text style={styles.label}>Company Code</Text>
                         <View style={styles.inputContainer}>

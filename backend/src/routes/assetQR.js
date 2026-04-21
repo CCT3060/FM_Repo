@@ -73,7 +73,7 @@ router.get("/:assetId", async (req, res, next) => {
                 lt.description
          FROM logsheet_templates lt
          JOIN template_user_assignments tua ON tua.template_id = lt.id AND tua.template_type = 'logsheet'
-         WHERE lt.asset_id = ? AND lt.is_active = 1 AND tua.company_user_id = ?
+         WHERE lt.asset_id = ? AND lt.is_active = 1 AND tua.assigned_to = ?
          ORDER BY lt.template_name`,
         [assetId, companyUser.sub]
       );
@@ -102,7 +102,7 @@ router.get("/:assetId", async (req, res, next) => {
                 ct.category, ct.description, ct.frequency, ct.shift, ct.status, ct.questions
          FROM checklist_templates ct
          JOIN template_user_assignments tua ON tua.template_id = ct.id AND tua.template_type = 'checklist'
-         WHERE ct.company_id = ? AND ct.asset_type = ? AND ct.is_active = 1 AND tua.company_user_id = ?
+         WHERE ct.company_id = ? AND ct.asset_type = ? AND ct.is_active = 1 AND tua.assigned_to = ?
          ORDER BY ct.template_name`,
         [asset.companyId, asset.assetType, companyUser.sub]
       );
