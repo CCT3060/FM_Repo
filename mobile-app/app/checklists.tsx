@@ -14,7 +14,6 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
-import { Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
     getMyAssignments,
@@ -24,6 +23,7 @@ import {
     reassignTemplate,
     getStoredUser,
 } from '../utils/api';
+import { useTheme } from '../utils/theme';
 import { SupervisorBottomNav } from './supervisor-dashboard';
 
 interface Template {
@@ -64,6 +64,7 @@ function getPriority(frequency?: string): { label: string; bg: string; color: st
 
 
 export default function ChecklistManagementScreen() {
+    const { colors } = useTheme();
     const [assignedTemplates, setAssignedTemplates] = useState<Template[]>([]);
     const [unassignedTemplates, setUnassignedTemplates] = useState<Template[]>([]);
     const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
@@ -97,8 +98,8 @@ export default function ChecklistManagementScreen() {
             const supervisor = storedUser?.role === 'supervisor';
             setIsSupervisor(supervisor);
             if (storedUser?.id) setCurrentUserId(storedUser.id);
-            if (storedUser?.fullName || storedUser?.full_name) {
-                setCurrentUserName(storedUser.fullName || storedUser.full_name || 'Me');
+            if (storedUser?.fullName) {
+                setCurrentUserName(storedUser.fullName || 'Me');
             }
 
             const myAssignments = await getMyAssignments();
@@ -183,7 +184,7 @@ export default function ChecklistManagementScreen() {
                 assetId: template.assetId ? String(template.assetId) : '',
                 assetName: template.assetName || '',
             },
-        });
+        } as any);
     };
 
     const handleViewChecklistHistory = (template: Template) => {
@@ -284,22 +285,17 @@ export default function ChecklistManagementScreen() {
     };
 
     return (
-        <SafeAreaView style={styles.container}>
-            {/* Catalyst Logo */}
-            <View style={styles.logoBar}>
-                <Image source={require('../assets/images/catalyst-logo.webp')} style={{ width: 120, height: 36, resizeMode: 'contain' }} />
-            </View>
-
+        <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
             {/* Header */}
-            <View style={styles.header}>
+            <View style={[styles.header, { backgroundColor: colors.headerBg, borderBottomColor: colors.headerBorder }]}>
                 <TouchableOpacity style={styles.headerBtn} onPress={() => router.push('/supervisor-dashboard' as any)}>
-                    <MaterialCommunityIcons name="arrow-left" size={24} color="#1E293B" />
+                    <MaterialCommunityIcons name="arrow-left" size={24} color={colors.headerText} />
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>
+                <Text style={[styles.headerTitle, { color: colors.headerText }]}>
                     {activeTab === 'unassigned' ? 'Unassigned Tasks' : 'My Tasks'}
                 </Text>
                 <TouchableOpacity style={styles.bellBtn} onPress={() => router.push('/tech-notifications' as any)}>
-                    <MaterialCommunityIcons name="bell-outline" size={20} color="#1E293B" />
+                    <MaterialCommunityIcons name="bell-outline" size={20} color={colors.headerText} />
                 </TouchableOpacity>
             </View>
 
@@ -398,8 +394,8 @@ export default function ChecklistManagementScreen() {
                                 {searchQuery
                                     ? 'No templates match your search'
                                     : activeTab === 'assigned'
-                                    ? 'Your admin has not assigned any templates to you yet'
-                                    : 'All templates are already assigned to someone'}
+                                        ? 'Your admin has not assigned any templates to you yet'
+                                        : 'All templates are already assigned to someone'}
                             </Text>
                         </View>
                     ) : (

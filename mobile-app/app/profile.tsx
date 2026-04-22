@@ -15,6 +15,8 @@ import {
 } from 'react-native';
 import { clearAuth, getStoredUser, getStoredCompany } from '../utils/api';
 import { useTheme, type ThemePreference } from '../utils/theme';
+import { SupervisorBottomNav } from './supervisor-dashboard';
+import { TechBottomNav } from './tech-dashboard';
 
 export default function ProfileScreen() {
     const { colors, isDark, preference, setPreference } = useTheme();
@@ -66,7 +68,6 @@ export default function ProfileScreen() {
         : '?';
 
     const themeModes: { label: string; value: ThemePreference; icon: string; desc: string }[] = [
-        { label: 'System Default', value: 'system', icon: 'cellphone-cog', desc: 'Follow device setting' },
         { label: 'Light Mode', value: 'light', icon: 'white-balance-sunny', desc: 'Always light' },
         { label: 'Dark Mode', value: 'dark', icon: 'moon-waning-crescent', desc: 'Always dark' },
     ];
@@ -232,44 +233,12 @@ export default function ProfileScreen() {
                 <View style={{ height: 20 }} />
             </ScrollView>
 
-            {/* Role-aware Bottom Nav */}
-            <View style={[styles.navContainer, { backgroundColor: colors.navBg, borderTopColor: colors.navBorder }]}>
-                {user?.role === 'supervisor' ? (
-                    <>
-                        <TouchableOpacity style={styles.navTab} onPress={() => router.push('/checklists' as any)}>
-                            <MaterialCommunityIcons name="clipboard-check-outline" size={24} color={colors.navInactive} />
-                            <Text style={[styles.navLabel, { color: colors.navInactive }]}>Tasks</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity style={styles.navTab} onPress={() => router.push('/assets-list' as any)}>
-                            <MaterialCommunityIcons name="archive-outline" size={24} color={colors.navInactive} />
-                            <Text style={[styles.navLabel, { color: colors.navInactive }]}>Assets</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity style={styles.navTab} onPress={() => router.push('/team-assignments' as any)}>
-                            <MaterialCommunityIcons name="account-group-outline" size={24} color={colors.navInactive} />
-                            <Text style={[styles.navLabel, { color: colors.navInactive }]}>Team</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity style={styles.navTab}>
-                            <MaterialCommunityIcons name="account-circle" size={24} color={colors.navActive} />
-                            <Text style={[styles.navLabel, { color: colors.navActive }]}>Profile</Text>
-                        </TouchableOpacity>
-                    </>
-                ) : (
-                    <>
-                        <TouchableOpacity style={styles.navTab} onPress={() => router.push('/tech-dashboard' as any)}>
-                            <MaterialCommunityIcons name="view-dashboard-outline" size={24} color={colors.navInactive} />
-                            <Text style={[styles.navLabel, { color: colors.navInactive }]}>Dashboard</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity style={styles.navTab} onPress={() => router.push('/tech-tasks' as any)}>
-                            <MaterialCommunityIcons name="clipboard-check-outline" size={24} color={colors.navInactive} />
-                            <Text style={[styles.navLabel, { color: colors.navInactive }]}>Tasks</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity style={styles.navTab}>
-                            <MaterialCommunityIcons name="account-circle" size={24} color={colors.navActive} />
-                            <Text style={[styles.navLabel, { color: colors.navActive }]}>Profile</Text>
-                        </TouchableOpacity>
-                    </>
-                )}
-            </View>
+            {/* Role-aware Bottom Nav — uses the same shared components as all other screens */}
+            {user?.role === 'supervisor' || user?.role === 'Supervisor' ? (
+                <SupervisorBottomNav activeRoute="profile" />
+            ) : (
+                <TechBottomNav activeRoute="profile" />
+            )}
         </SafeAreaView>
     );
 }
@@ -282,7 +251,7 @@ function SettingRow({
 }) {
     return (
         <TouchableOpacity style={styles.settingRow} activeOpacity={0.7}>
-            <View style={[styles.settingIconBox, { backgroundColor: colors.isDark ? '#1A1D27' : '#EFF6FF' }]}>
+            <View style={[styles.settingIconBox, { backgroundColor: colors.buttonBlueBg || '#EFF6FF' }]}>
                 <MaterialCommunityIcons name={icon as any} size={18} color={colors.accentBlue} />
             </View>
             <View style={styles.settingText}>
