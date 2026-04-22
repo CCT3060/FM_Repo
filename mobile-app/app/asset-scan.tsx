@@ -129,10 +129,25 @@ export default function AssetScanScreen() {
                     <View style={styles.section}>
                         <Text style={styles.sectionTitle}>✅ Checklists</Text>
                         {checklistTemplates.map((c: any) => (
-                            <View key={c.id} style={styles.listItem}>
+                            <TouchableOpacity
+                                key={c.id}
+                                style={[styles.listItem, styles.listItemTappable]}
+                                onPress={() => router.push({
+                                    pathname: '/assignment-form',
+                                    params: {
+                                        templateType: 'checklist',
+                                        templateId: String(c.id),
+                                        templateName: c.templateName || c.name,
+                                        assignmentId: '0',
+                                        assetId: String(assetId),
+                                        assetName: asset.assetName,
+                                    },
+                                } as any)}
+                            >
                                 <MaterialCommunityIcons name="checkbox-marked-outline" size={18} color="#16A34A" />
-                                <Text style={styles.listItemText}>{c.templateName || c.name}</Text>
-                            </View>
+                                <Text style={[styles.listItemText, { flex: 1 }]}>{c.templateName || c.name}</Text>
+                                <MaterialCommunityIcons name="chevron-right" size={18} color="#94A3B8" />
+                            </TouchableOpacity>
                         ))}
                     </View>
                 )}
@@ -142,10 +157,25 @@ export default function AssetScanScreen() {
                     <View style={styles.section}>
                         <Text style={styles.sectionTitle}>📋 Logsheets</Text>
                         {logsheetTemplates.map((l: any) => (
-                            <View key={l.id} style={styles.listItem}>
+                            <TouchableOpacity
+                                key={l.id}
+                                style={[styles.listItem, styles.listItemTappable]}
+                                onPress={() => router.push({
+                                    pathname: '/assignment-form',
+                                    params: {
+                                        templateType: 'logsheet',
+                                        templateId: String(l.id),
+                                        templateName: l.templateName || l.name,
+                                        assignmentId: '0',
+                                        assetId: String(assetId),
+                                        assetName: asset.assetName,
+                                    },
+                                } as any)}
+                            >
                                 <MaterialCommunityIcons name="clipboard-text-outline" size={18} color="#2563EB" />
-                                <Text style={styles.listItemText}>{l.templateName || l.name}</Text>
-                            </View>
+                                <Text style={[styles.listItemText, { flex: 1 }]}>{l.templateName || l.name}</Text>
+                                <MaterialCommunityIcons name="chevron-right" size={18} color="#94A3B8" />
+                            </TouchableOpacity>
                         ))}
                     </View>
                 )}
@@ -210,6 +240,7 @@ const styles = StyleSheet.create({
     trainingDesc: { fontSize: 12, color: '#64748B', marginTop: 2 },
     passingPct: { fontSize: 11, color: '#2563EB', marginTop: 4, fontWeight: '600' },
     listItem: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 8, padding: 12, marginBottom: 6 },
+    listItemTappable: { borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOpacity: 0.03, shadowRadius: 2, elevation: 1 },
     listItemText: { fontSize: 13, color: '#334155', marginLeft: 8, fontWeight: '500' },
     emptySection: { margin: 16, padding: 24, backgroundColor: '#fff', borderRadius: 12, alignItems: 'center' },
     emptyText: { color: '#94A3B8', fontSize: 14, textAlign: 'center' },

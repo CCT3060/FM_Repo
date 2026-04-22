@@ -5,7 +5,6 @@ import {
     ActivityIndicator,
     Platform,
     RefreshControl,
-    SafeAreaView,
     ScrollView,
     StyleSheet,
     Text,
@@ -13,6 +12,7 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeInUp, Layout } from 'react-native-reanimated';
 import { getMyAssets } from '../utils/api';
 import { SupervisorBottomNav } from './supervisor-dashboard';

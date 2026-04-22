@@ -5,13 +5,13 @@ import {
     ActivityIndicator,
     Platform,
     RefreshControl,
-    SafeAreaView,
     ScrollView,
     StyleSheet,
     Text,
     TouchableOpacity,
     View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeInUp, Layout } from 'react-native-reanimated';
 import { getWorkOrders, getStoredUser } from '../utils/api';
 import { TechBottomNav } from './tech-dashboard';

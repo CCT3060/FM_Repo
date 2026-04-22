@@ -5,13 +5,13 @@ import {
     ActivityIndicator,
     Platform,
     RefreshControl,
-    SafeAreaView,
     ScrollView,
     StyleSheet,
     Text,
     TouchableOpacity,
     View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeInUp } from 'react-native-reanimated';
 import { getMyAssignments, getMySubmissionHistoryWithFallback, type Assignment, type SubmissionHistoryItem } from '../utils/api';
 import { TechBottomNav } from './tech-dashboard';

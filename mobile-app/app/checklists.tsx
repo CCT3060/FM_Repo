@@ -5,7 +5,6 @@ import {
     ActivityIndicator,
     Alert,
     Modal,
-    Platform,
     RefreshControl,
     ScrollView,
     StyleSheet,
@@ -24,6 +23,7 @@ import {
     reassignTemplate,
     getStoredUser,
 } from '../utils/api';
+import { SupervisorBottomNav } from './supervisor-dashboard';
 
 interface Template {
     id: number;
@@ -61,47 +61,6 @@ function getPriority(frequency?: string): { label: string; bg: string; color: st
     return { label: 'NORMAL PRIORITY', bg: '#F1F5F9', color: '#475569' };
 }
 
-// Bottom nav for Tasks screens
-function TasksBottomNav({ activeRoute }: { activeRoute: string }) {
-    return (
-        <View style={navStyles.container}>
-            <TouchableOpacity style={navStyles.tab} onPress={() => router.push('/checklists' as any)}>
-                <MaterialCommunityIcons
-                    name={activeRoute === 'tasks' ? 'clipboard-check' : 'clipboard-check-outline'}
-                    size={24}
-                    color={activeRoute === 'tasks' ? '#2563EB' : '#94A3B8'}
-                />
-                <Text style={[navStyles.label, activeRoute === 'tasks' && navStyles.labelActive]}>Tasks</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={navStyles.tab} onPress={() => router.push('/assets-list' as any)}>
-                <MaterialCommunityIcons name="archive-outline" size={24} color="#94A3B8" />
-                <Text style={navStyles.label}>Assets</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={navStyles.tab} onPress={() => router.push('/team-assignments' as any)}>
-                <MaterialCommunityIcons name="account-group-outline" size={24} color="#94A3B8" />
-                <Text style={navStyles.label}>Team</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={navStyles.tab} onPress={() => router.push('/profile' as any)}>
-                <MaterialCommunityIcons name="account-circle-outline" size={24} color="#94A3B8" />
-                <Text style={navStyles.label}>Profile</Text>
-            </TouchableOpacity>
-        </View>
-    );
-}
-
-const navStyles = StyleSheet.create({
-    container: {
-        flexDirection: 'row',
-        backgroundColor: '#FFFFFF',
-        borderTopWidth: 1,
-        borderTopColor: '#E2E8F0',
-        paddingBottom: Platform.OS === 'ios' ? 20 : 8,
-        paddingTop: 8,
-    },
-    tab: { flex: 1, alignItems: 'center', gap: 3 },
-    label: { fontSize: 11, color: '#94A3B8', fontWeight: '500' },
-    labelActive: { color: '#2563EB' },
-});
 
 export default function ChecklistManagementScreen() {
     const [assignedTemplates, setAssignedTemplates] = useState<Template[]>([]);
@@ -274,6 +233,8 @@ export default function ChecklistManagementScreen() {
         const priority = getPriority(item.frequency);
         const isChecklist = item.templateType === 'checklist';
         const locationText = item.assetName || item.location || item.assetType || '';
+        const isSoftService = (item.assetType || '').toLowerCase() === 'soft' ||
+            (item.assetType || '').toLowerCase().includes('soft');
 
         return (
             <View key={`${item.source}-${item.id}-${item.assignmentId}`} style={styles.card}>
@@ -310,10 +271,12 @@ export default function ChecklistManagementScreen() {
                             <Text style={styles.historyBtnText}>History</Text>
                         </TouchableOpacity>
                     )}
-                    <TouchableOpacity style={styles.assignBtn} onPress={() => handleAssignToTeam(item)}>
-                        <MaterialCommunityIcons name="account-plus-outline" size={15} color="#FFFFFF" />
-                        <Text style={styles.assignBtnText}>Assign</Text>
-                    </TouchableOpacity>
+                    {!isSoftService && (
+                        <TouchableOpacity style={styles.assignBtn} onPress={() => handleAssignToTeam(item)}>
+                            <MaterialCommunityIcons name="account-plus-outline" size={15} color="#FFFFFF" />
+                            <Text style={styles.assignBtnText}>Assign</Text>
+                        </TouchableOpacity>
+                    )}
                 </View>
             </View>
         );
@@ -329,7 +292,7 @@ export default function ChecklistManagementScreen() {
                 <Text style={styles.headerTitle}>
                     {activeTab === 'unassigned' ? 'Unassigned Tasks' : 'My Tasks'}
                 </Text>
-                <TouchableOpacity style={styles.bellBtn}>
+                <TouchableOpacity style={styles.bellBtn} onPress={() => router.push('/tech-notifications' as any)}>
                     <MaterialCommunityIcons name="bell-outline" size={20} color="#1E293B" />
                 </TouchableOpacity>
             </View>
@@ -520,7 +483,7 @@ export default function ChecklistManagementScreen() {
                 </View>
             </Modal>
 
-            <TasksBottomNav activeRoute="tasks" />
+            <SupervisorBottomNav activeRoute="checklists" />
         </SafeAreaView>
     );
 }

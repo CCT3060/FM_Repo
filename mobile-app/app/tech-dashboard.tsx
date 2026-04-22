@@ -30,7 +30,7 @@ type DashboardHistoryItem = {
 export const TechBottomNav = ({ activeRoute }: { activeRoute: string }) => {
     return (
         <View style={navStyles.container}>
-            <TouchableOpacity style={navStyles.navItem} onPress={() => router.push('/tech-dashboard')}>
+            <TouchableOpacity style={navStyles.navItem} onPress={() => router.push('/tech-tasks' as any)}>
                 <View style={[navStyles.iconWrapper, activeRoute === 'home' && navStyles.iconWrapperActive]}>
                     <MaterialCommunityIcons
                         name={activeRoute === 'home' ? 'clipboard-list' : 'clipboard-list-outline'}
