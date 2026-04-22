@@ -193,9 +193,7 @@ function Header({ onBack }: { onBack: () => void }) {
                 <MaterialCommunityIcons name="arrow-left" size={24} color="#0F172A" />
             </TouchableOpacity>
             <Text style={styles.headerTitle}>Assigned Assets</Text>
-            <TouchableOpacity style={styles.addBtn}>
-                <MaterialCommunityIcons name="plus" size={22} color="#0F172A" />
-            </TouchableOpacity>
+            <View style={{ width: 38 }} />
         </View>
     );
 }
@@ -208,7 +206,11 @@ function AssetCard({ asset }: { asset: Asset }) {
     const isCritical = health.label === 'Critical';
 
     return (
-        <View style={[styles.card, isOffline && styles.cardOffline]}>
+        <TouchableOpacity
+            activeOpacity={0.75}
+            onPress={() => router.push({ pathname: '/asset-scan' as any, params: { assetId: String(asset.id) } })}
+            style={[styles.card, isOffline && styles.cardOffline]}
+        >
             <View style={styles.cardTop}>
                 <View style={[styles.assetImg, { backgroundColor: isOffline ? '#94A3B8' : '#1E293B' }]}>
                     <MaterialCommunityIcons name={icon as any} size={28} color="#FFFFFF" />
@@ -257,7 +259,7 @@ function AssetCard({ asset }: { asset: Asset }) {
                     </>
                 )}
             </View>
-        </View>
+        </TouchableOpacity>
     );
 }
 

@@ -13,8 +13,8 @@ import {
     View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import Animated, { FadeInDown, FadeInUp, Layout, SlideInDown } from 'react-native-reanimated';
-import { getMyTeam, clearAuth, getDashboardStats, getStoredUser, getTeamStats, getChecklistSubmissions, getWorkOrders } from '../utils/api';
+import Animated, { FadeInDown, FadeInUp, SlideInDown } from 'react-native-reanimated';
+import { getMyTeam, clearAuth, getDashboardStats, getStoredUser, getTeamStats, getChecklistSubmissions, getRecentLogsheetEntries, getTodayProgress, getWorkOrders } from '../utils/api';
 
 // Reusable Navigation Bar Component for Supervisor
 export const SupervisorBottomNav = ({ activeRoute }: { activeRoute: string }) => {
@@ -102,6 +102,8 @@ export default function SupervisorDashboardScreen() {
     const [dashboardStats, setDashboardStats] = useState<any>(null);
     const [currentUser, setCurrentUser] = useState<any>(null);
     const [recentSubmissions, setRecentSubmissions] = useState<any[]>([]);
+    const [recentLogsheets, setRecentLogsheets] = useState<any[]>([]);
+    const [todayProgress, setTodayProgress] = useState<{ checklistsDone: number; logsheetsDone: number; totalDone: number } | null>(null);
     const [workOrders, setWorkOrders] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
@@ -110,12 +112,14 @@ export default function SupervisorDashboardScreen() {
 
     const loadData = async () => {
         try {
-            const [teamStatsData, teamData, statsData, userData, submissions, orders] = await Promise.all([
+            const [teamStatsData, teamData, statsData, userData, submissions, logsheets, progress, orders] = await Promise.all([
                 getTeamStats().catch(() => []),
                 getMyTeam().catch(() => []),
                 getDashboardStats().catch(() => null),
                 getStoredUser(),
                 getChecklistSubmissions().catch(() => []),
+                getRecentLogsheetEntries().catch(() => []),
+                getTodayProgress().catch(() => null),
                 getWorkOrders(4).catch(() => []),
             ]);
             setTeamStats(teamStatsData);
@@ -123,6 +127,8 @@ export default function SupervisorDashboardScreen() {
             if (statsData) setDashboardStats(statsData);
             if (userData) setCurrentUser(userData);
             setRecentSubmissions(submissions);
+            setRecentLogsheets(logsheets);
+            if (progress) setTodayProgress(progress);
             setWorkOrders(orders);
         } catch (error: any) {
             if (error.message?.includes('authentication') || error.message?.includes('token')) {
@@ -146,8 +152,13 @@ export default function SupervisorDashboardScreen() {
     const totalTasks = teamStats.reduce((s, m) => s + Number(m.totalCount || 0), 0);
 
     const todayStr = new Date().toISOString().split('T')[0];
-    const completedToday = recentSubmissions.filter(s => s.submittedAt?.startsWith(todayStr)).length;
-    const inProgressCount = Math.max(0, Math.min(dashboardStats?.openIssues ?? 0, totalTasks - completedToday));
+    const checklistsDoneToday = recentSubmissions.filter(s => s.submittedAt?.startsWith(todayStr)).length;
+    const logsheetsDoneToday = recentLogsheets.filter(e => e.submittedAt?.startsWith(todayStr)).length;
+    // Prefer the dedicated today-progress endpoint if available; fall back to counting recent submissions
+    const completedToday = todayProgress
+        ? todayProgress.totalDone
+        : checklistsDoneToday + logsheetsDoneToday;
+    const inProgressCount = Math.max(0, Math.min(totalTasks - completedToday, Math.ceil(totalTasks * 0.2)));
     const pendingCount = Math.max(0, totalTasks - completedToday - inProgressCount);
     const pct = totalTasks > 0 ? Math.round((completedToday / totalTasks) * 100) : 0;
 
@@ -308,58 +319,6 @@ export default function SupervisorDashboardScreen() {
                             </ScrollView>
                         </Animated.View>
                     )}
-
-                    {/* ── Technicians on Duty ────────────────────────── */}
-                    <Animated.View entering={FadeInUp.delay(600).duration(400).springify()}>
-                        <View style={styles.techHeader}>
-                            <Text style={styles.sectionTitle}>Technicians on Duty</Text>
-                            <TouchableOpacity onPress={() => router.push('/team-assignments')}>
-                                <Text style={styles.viewAllText}>View All</Text>
-                            </TouchableOpacity>
-                        </View>
-
-                        {teamMembers.length === 0 ? (
-                            <View style={styles.emptyTeam}>
-                                <MaterialCommunityIcons name="account-group-outline" size={36} color="#CBD5E1" />
-                                <Text style={styles.emptyTeamText}>No team members yet</Text>
-                            </View>
-                        ) : (
-                            <Animated.View layout={Layout.springify()} style={{ paddingBottom: 6 }}>
-                                {teamMembers.map((member: any, idx: number) => {
-                                    const name = member.fullName || member.fullname || 'Unknown';
-                                    const initials = name.split(' ').map((n: string) => n[0] || '').join('').slice(0, 2).toUpperCase();
-                                    const memberStat = teamStats.find((s) => s.id === member.id);
-                                    const taskInfo = memberStat
-                                        ? `${String(member.role).replace('_', ' ')} • ${memberStat.totalCount || 0} task${memberStat.totalCount !== 1 ? 's' : ''}`
-                                        : String(member.role).replace('_', ' ');
-                                    // Vary status dot color: Active=green, first non-active if any=orange, rest=grey
-                                    const statusColor = member.status === 'Active'
-                                        ? '#10B981'
-                                        : idx % 2 === 0 ? '#F59E0B' : '#CBD5E1';
-                                    // Avatar background color cycle
-                                    const avatarBgs = ['#EFF6FF', '#ECFDF5', '#FEF2F2', '#FAF5FF'];
-                                    const avatarBg = avatarBgs[idx % avatarBgs.length];
-                                    const avatarTxtColors = ['#2563EB', '#059669', '#DC2626', '#7C3AED'];
-                                    const avatarTxt = avatarTxtColors[idx % avatarTxtColors.length];
-                                    return (
-                                        <Animated.View key={member.id} entering={FadeInUp.delay(650 + (idx * 50)).duration(400).springify()} style={styles.techCard}>
-                                            <View style={[styles.techAvatar, { backgroundColor: avatarBg }]}>
-                                                <Text style={[styles.techInitials, { color: avatarTxt }]}>{initials}</Text>
-                                                <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
-                                            </View>
-                                            <View style={styles.techInfo}>
-                                                <Text style={styles.techName}>{name}</Text>
-                                                <Text style={styles.techRole}>{taskInfo}</Text>
-                                            </View>
-                                            <TouchableOpacity style={styles.msgBtn} activeOpacity={0.7} onPress={() => router.push('/checklists')}>
-                                                <MaterialCommunityIcons name="message-text-outline" size={20} color="#64748B" />
-                                            </TouchableOpacity>
-                                        </Animated.View>
-                                    );
-                                })}
-                            </Animated.View>
-                        )}
-                    </Animated.View>
 
                     {/* ── Assign New Task button ─────────────────────── */}
                     <Animated.View entering={SlideInDown.delay(200).duration(800)}>

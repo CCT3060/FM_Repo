@@ -5,6 +5,7 @@ import {
     ActivityIndicator,
     Alert,
     Modal,
+    Platform,
     RefreshControl,
     ScrollView,
     StyleSheet,
@@ -284,6 +285,11 @@ export default function ChecklistManagementScreen() {
 
     return (
         <SafeAreaView style={styles.container}>
+            {/* Catalyst Logo */}
+            <View style={styles.logoBar}>
+                <Image source={require('../assets/images/catalyst-logo.webp')} style={{ width: 120, height: 36, resizeMode: 'contain' }} />
+            </View>
+
             {/* Header */}
             <View style={styles.header}>
                 <TouchableOpacity style={styles.headerBtn} onPress={() => router.push('/supervisor-dashboard' as any)}>
@@ -295,11 +301,6 @@ export default function ChecklistManagementScreen() {
                 <TouchableOpacity style={styles.bellBtn} onPress={() => router.push('/tech-notifications' as any)}>
                     <MaterialCommunityIcons name="bell-outline" size={20} color="#1E293B" />
                 </TouchableOpacity>
-            </View>
-
-            {/* Catalyst Logo */}
-            <View style={styles.logoBar}>
-                <Image source={require('../assets/images/catalyst-logo.webp')} style={{ width: 120, height: 36, resizeMode: 'contain' }} />
             </View>
 
             {/* Search bar */}
