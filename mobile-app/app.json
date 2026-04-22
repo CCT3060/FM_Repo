@@ -40,7 +40,14 @@
           }
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow $(PRODUCT_NAME) to access your photos.",
+          "cameraPermission": "Allow $(PRODUCT_NAME) to use the camera."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
@@ -49,9 +56,9 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "e2a0bdac-f4d3-4daf-a1ff-53568b79221e"
+        "projectId": "9e054c0f-0868-4787-8424-3ea4a6344bd8"
       }
     },
-    "owner": "cct123"
+    "owner": "archit947"
   }
 }

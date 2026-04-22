@@ -1,13 +1,14 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
+import * as ImagePicker from 'expo-image-picker';
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
+    Image,
     KeyboardAvoidingView,
     Platform,
-    SafeAreaView,
     ScrollView,
     StyleSheet,
     Text,
@@ -15,7 +16,8 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
-import { getMyAssets, getTemplateDetails, submitChecklist, submitLogsheet, submitTabularLogsheet, checkShiftAccess, type TemplateDetails, type TabularColumnGroup } from '../utils/api';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { getMyAssets, getTemplateDetails, submitChecklist, submitLogsheet, submitTabularLogsheet, checkShiftAccess, API_BASE, type TemplateDetails, type TabularColumnGroup } from '../utils/api';
 
 export default function AssignmentFormScreen() {
     const params = useLocalSearchParams();
@@ -104,6 +106,7 @@ export default function AssignmentFormScreen() {
 
         if (['yes_no', 'yes/no', 'yesno', 'boolean'].includes(raw)) return 'yes_no';
         if (['ok_not_ok', 'ok/not_ok', 'ok_notok'].includes(raw)) return 'ok_not_ok';
+        if (['cleaned_not_cleaned', 'cleaned/not_cleaned', 'clean_unclean', 'cleaned'].includes(raw)) return 'cleaned_not_cleaned';
         if (['photo', 'photo_upload', 'image', 'image_upload', 'file'].includes(raw)) return 'photo';
         if (['upload', 'video', 'video_upload', 'document', 'document_upload'].includes(raw)) return 'upload';
         if (['single_select', 'single_choice', 'radio', 'multi_select', 'multiple_select', 'checkbox'].includes(raw)) return 'dropdown';
@@ -112,16 +115,67 @@ export default function AssignmentFormScreen() {
         return raw || 'text';
     };
 
+    const uploadFileToServer = async (uri: string, name: string, mimeType: string): Promise<string> => {
+        const formData = new FormData();
+        formData.append('file', { uri, name, type: mimeType } as any);
+        const res = await fetch(`${API_BASE}/api/upload`, { method: 'POST', body: formData });
+        if (!res.ok) throw new Error('Upload failed');
+        const json = await res.json();
+        return json.url;
+    };
+
+    const handleTakePhoto = async (questionId: number) => {
+        try {
+            const perm = await ImagePicker.requestCameraPermissionsAsync();
+            if (!perm.granted) { Alert.alert('Permission required', 'Camera permission is needed to take photos.'); return; }
+            const result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.7, allowsEditing: false });
+            if (result.canceled || !result.assets?.[0]) return;
+            const asset = result.assets[0];
+            const name = asset.fileName || `photo_${Date.now()}.jpg`;
+            const mimeType = asset.mimeType || 'image/jpeg';
+            try {
+                const serverUrl = await uploadFileToServer(asset.uri, name, mimeType);
+                setAnswers(prev => ({ ...prev, [questionId]: JSON.stringify({ name, uri: serverUrl, url: serverUrl, mimeType }) }));
+            } catch {
+                setAnswers(prev => ({ ...prev, [questionId]: JSON.stringify({ name, uri: asset.uri, mimeType }) }));
+            }
+        } catch {
+            Alert.alert('Error', 'Could not open camera. Please try again.');
+        }
+    };
+
+    const handlePickPhoto = async (questionId: number) => {
+        try {
+            const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+            if (!perm.granted) { Alert.alert('Permission required', 'Photo library permission is needed to upload photos.'); return; }
+            const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images', 'videos'], quality: 0.7 });
+            if (result.canceled || !result.assets?.[0]) return;
+            const asset = result.assets[0];
+            const name = asset.fileName || `photo_${Date.now()}.jpg`;
+            const mimeType = asset.mimeType || 'image/jpeg';
+            try {
+                const serverUrl = await uploadFileToServer(asset.uri, name, mimeType);
+                setAnswers(prev => ({ ...prev, [questionId]: JSON.stringify({ name, uri: serverUrl, url: serverUrl, mimeType }) }));
+            } catch {
+                setAnswers(prev => ({ ...prev, [questionId]: JSON.stringify({ name, uri: asset.uri, mimeType }) }));
+            }
+        } catch {
+            Alert.alert('Error', 'Could not open photo library. Please try again.');
+        }
+    };
+
     const handlePickUpload = async (questionId: number) => {
         try {
-            const result = await DocumentPicker.getDocumentAsync({
-                copyToCacheDirectory: true,
-                multiple: false,
-            });
+            const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true, multiple: false });
             if (result.canceled) return;
             const file = result.assets?.[0];
             if (!file) return;
-            setAnswers({ ...answers, [questionId]: JSON.stringify({ name: file.name, uri: file.uri, mimeType: file.mimeType || null }) });
+            try {
+                const serverUrl = await uploadFileToServer(file.uri, file.name, file.mimeType || 'application/octet-stream');
+                setAnswers(prev => ({ ...prev, [questionId]: JSON.stringify({ name: file.name, uri: serverUrl, url: serverUrl, mimeType: file.mimeType }) }));
+            } catch {
+                setAnswers(prev => ({ ...prev, [questionId]: JSON.stringify({ name: file.name, uri: file.uri, mimeType: file.mimeType || null }) }));
+            }
         } catch {
             Alert.alert('Upload Failed', 'Could not select file. Please try again.');
         }
@@ -441,27 +495,92 @@ export default function AssignmentFormScreen() {
                     </View>
                 );
 
+            case 'cleaned_not_cleaned':
+                return (
+                    <View style={styles.yesNoContainer}>
+                        <TouchableOpacity
+                            style={[styles.yesNoButton, value === 'Cleaned' && { backgroundColor: '#F0FDF4', borderColor: '#16A34A' }]}
+                            onPress={() => setAnswers({ ...answers, [question.id]: 'Cleaned' })}
+                        >
+                            <MaterialCommunityIcons name="check-circle-outline" size={18} color="#16A34A" style={{ marginRight: 6 }} />
+                            <Text style={[styles.yesNoText, value === 'Cleaned' && { color: '#16A34A' }]}>Cleaned</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={[styles.yesNoButton, value === 'Not Cleaned' && { backgroundColor: '#FEE2E2', borderColor: '#DC2626' }]}
+                            onPress={() => setAnswers({ ...answers, [question.id]: 'Not Cleaned' })}
+                        >
+                            <MaterialCommunityIcons name="close-circle-outline" size={18} color={value === 'Not Cleaned' ? '#DC2626' : '#DC2626'} style={{ marginRight: 6 }} />
+                            <Text style={[styles.yesNoText, value === 'Not Cleaned' && { color: '#DC2626' }]}>Not Cleaned</Text>
+                        </TouchableOpacity>
+                    </View>
+                );
+
             case 'upload':
             case 'file':
-            case 'photo':
-            case 'image':
             case 'signature': {
                 let fileLabel = 'No file selected';
+                let fileUri: string | null = null;
                 if (typeof value === 'string' && value) {
                     try {
                         const parsed = JSON.parse(value);
-                        fileLabel = parsed?.name || parsed?.uri || 'Selected file';
+                        fileLabel = parsed?.name || 'Selected file';
+                        fileUri = parsed?.url || parsed?.uri || null;
                     } catch {
                         fileLabel = value;
                     }
                 }
                 return (
                     <View style={styles.uploadWrap}>
-                        <TouchableOpacity style={styles.uploadBtn} onPress={() => handlePickUpload(question.id)}>
-                            <MaterialCommunityIcons name="paperclip" size={18} color="#1E3A8A" />
-                            <Text style={styles.uploadBtnText}>Choose File</Text>
-                        </TouchableOpacity>
-                        <Text style={styles.uploadFileName} numberOfLines={2}>{fileLabel}</Text>
+                        <View style={{ flexDirection: 'row', gap: 8 }}>
+                            <TouchableOpacity style={[styles.uploadBtn, { flex: 1 }]} onPress={() => handlePickUpload(question.id)}>
+                                <MaterialCommunityIcons name="paperclip" size={18} color="#1E3A8A" />
+                                <Text style={styles.uploadBtnText}>Choose File</Text>
+                            </TouchableOpacity>
+                        </View>
+                        {fileUri ? (
+                            <Text style={styles.uploadFileName} numberOfLines={1}>✓ {fileLabel}</Text>
+                        ) : (
+                            <Text style={styles.uploadFileName} numberOfLines={1}>{fileLabel}</Text>
+                        )}
+                    </View>
+                );
+            }
+
+            case 'photo':
+            case 'image': {
+                let photoLabel = 'No photo selected';
+                let photoUri: string | null = null;
+                if (typeof value === 'string' && value) {
+                    try {
+                        const parsed = JSON.parse(value);
+                        photoLabel = parsed?.name || 'Photo selected';
+                        photoUri = parsed?.url || parsed?.uri || null;
+                    } catch {
+                        photoLabel = value;
+                    }
+                }
+                const isServer = photoUri?.startsWith('http');
+                return (
+                    <View style={styles.uploadWrap}>
+                        <View style={{ flexDirection: 'row', gap: 8 }}>
+                            <TouchableOpacity style={[styles.uploadBtn, { flex: 1 }]} onPress={() => handleTakePhoto(question.id)}>
+                                <MaterialCommunityIcons name="camera" size={18} color="#1E3A8A" />
+                                <Text style={styles.uploadBtnText}>Take Photo</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={[styles.uploadBtn, { flex: 1 }]} onPress={() => handlePickPhoto(question.id)}>
+                                <MaterialCommunityIcons name="image-multiple-outline" size={18} color="#1E3A8A" />
+                                <Text style={styles.uploadBtnText}>Upload Photo</Text>
+                            </TouchableOpacity>
+                        </View>
+                        {photoUri ? (
+                            isServer ? (
+                                <Image source={{ uri: photoUri }} style={{ width: '100%', height: 160, borderRadius: 8, marginTop: 8 }} resizeMode="cover" />
+                            ) : (
+                                <Image source={{ uri: photoUri }} style={{ width: '100%', height: 160, borderRadius: 8, marginTop: 8 }} resizeMode="cover" />
+                            )
+                        ) : (
+                            <Text style={styles.uploadFileName}>{photoLabel}</Text>
+                        )}
                     </View>
                 );
             }
@@ -548,11 +667,9 @@ export default function AssignmentFormScreen() {
             >
                 <ScrollView style={styles.scrollContent} showsVerticalScrollIndicator={false}>
                     <View style={styles.contentPadding}>
-                    {/* Asset Selector */}
-                        <View style={styles.questionCard}>
-                            <Text style={styles.questionLabel}>
-                                Asset {templateType === 'logsheet' ? '(Required)' : '(Optional)'}
-                            </Text>
+                    {/* Asset Selector — only shown for logsheets */}
+                    {templateType === 'logsheet' && <View style={styles.questionCard}>
+                            <Text style={styles.questionLabel}>Asset (Required)</Text>
                             {(template?.assetId || routeAssetId || assetId) ? (
                                 // Asset is known — show badge; locked if from template/assignment, tappable if auto-selected
                                 <TouchableOpacity
@@ -607,7 +724,7 @@ export default function AssignmentFormScreen() {
                                     ))}
                                 </View>
                             )}
-                        </View>
+                        </View>}
 
                         {/* Questions */}
                         {template.layoutType === 'tabular' ? (

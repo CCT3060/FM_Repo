@@ -74,6 +74,32 @@ function tryParse(s) {
   try { return JSON.parse(s); } catch { return null; }
 }
 
+function renderAnswerValue(val) {
+  if (!val) return <span style={{ color: "#94a3b8", fontWeight: 400 }}>No answer</span>;
+  const parsed = typeof val === "string" ? tryParse(val) : val;
+  if (parsed && typeof parsed === "object" && (parsed.uri || parsed.url || parsed.name)) {
+    const src = parsed.url || parsed.uri || "";
+    const name = parsed.name || "Photo";
+    if (src.startsWith("http")) {
+      const isImage = /\.(jpe?g|png|gif|webp)$/i.test(src) || (parsed.mimeType || "").startsWith("image/");
+      if (isImage) {
+        return (
+          <div>
+            <img src={src} alt={name}
+              style={{ maxWidth: "240px", maxHeight: "180px", borderRadius: "8px",
+                objectFit: "cover", display: "block", border: "1px solid #e2e8f0", marginTop: "6px" }} />
+            <div style={{ fontSize: "11px", color: "#64748b", marginTop: "4px" }}>{name}</div>
+          </div>
+        );
+      }
+      return <a href={src} target="_blank" rel="noopener noreferrer"
+        style={{ color: "#2563eb", fontWeight: 600, fontSize: "13px" }}>📎 {name}</a>;
+    }
+    return <span style={{ fontSize: "13px", color: "#64748b" }}>📷 {name} (from device)</span>;
+  }
+  return <span style={{ fontWeight: 600, color: "#0f172a" }}>{String(val)}</span>;
+}
+
 function downloadCSV(rows, filename) {
   const csv = rows.map((row) =>
     row.map((cell) => {
@@ -346,9 +372,8 @@ function DetailModal({ submission, type, onClose }) {
                       <div style={{ fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "3px" }}>
                         {a.questionText}
                       </div>
-                      <div style={{ fontSize: "14px", color: val ? (a.isIssue ? "#dc2626" : "#0f172a") : "#94a3b8",
-                        fontWeight: val ? 600 : 400 }}>
-                        {val || "No answer"}
+                      <div style={{ fontSize: "14px", color: a.isIssue ? "#dc2626" : "#0f172a" }}>
+                        {renderAnswerValue(val)}
                         {a.isIssue && <span style={{ marginLeft: "6px", fontSize: "11px", background: "#fee2e2",
                           color: "#dc2626", padding: "2px 7px", borderRadius: "9px" }}>⚠ Issue</span>}
                       </div>
@@ -602,7 +627,7 @@ function ConsolidatedGridView({ userName, templateId, templateName, assetName, c
                       const val = c.indexMap[q] ?? "";
                       return (
                         <td key={ci} style={vCell(val)}>
-                          {val || "—"}
+                          {renderAnswerValue(val || "") || "—"}
                         </td>
                       );
                     })}

@@ -6,13 +6,13 @@ import {
     Alert,
     Platform,
     RefreshControl,
-    SafeAreaView,
     ScrollView,
     StyleSheet,
     Text,
     TouchableOpacity,
     View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeInDown, FadeInUp, Layout, SlideInDown } from 'react-native-reanimated';
 import { getMyTeam, clearAuth, getDashboardStats, getStoredUser, getTeamStats, getChecklistSubmissions, getWorkOrders } from '../utils/api';
 
@@ -36,6 +36,15 @@ export const SupervisorBottomNav = ({ activeRoute }: { activeRoute: string }) =>
                     color={activeRoute === 'checklists' ? '#1E3A8A' : '#A0AEC0'}
                 />
                 <Text style={[navStyles.navText, activeRoute === 'checklists' && navStyles.navTextActive]}>Tasks</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={navStyles.navItem} onPress={() => router.push('/qr-scanner')}>
+                <MaterialCommunityIcons
+                    name={activeRoute === 'scanner' ? 'qrcode-scan' : 'qrcode-scan'}
+                    size={24}
+                    color={activeRoute === 'scanner' ? '#1E3A8A' : '#A0AEC0'}
+                />
+                <Text style={[navStyles.navText, activeRoute === 'scanner' && navStyles.navTextActive]}>Scanner</Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={navStyles.navItem} onPress={() => router.push('/assets-list')}>
