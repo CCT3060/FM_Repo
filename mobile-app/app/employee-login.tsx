@@ -15,8 +15,10 @@ import {
 import { Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { loginEmployee, getStoredCompany } from '../utils/api';
+import { useTheme } from '../utils/theme';
 
 export default function EmployeeLoginScreen() {
+    const { colors } = useTheme();
     const [employeeId, setEmployeeId] = useState('');
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
@@ -34,14 +36,14 @@ export default function EmployeeLoginScreen() {
         setIsLoadingCompany(true);
         const company = await getStoredCompany();
         console.log('Stored company:', company);
-        
+
         if (!company) {
             // No company data, go back to company code screen
             Alert.alert('Error', 'Please enter company code first');
             router.replace('/');
             return;
         }
-        
+
         console.log('Setting company name:', company.companyName);
         console.log('Setting company ID:', company.companyId);
         setCompanyName(company.companyName);
@@ -69,13 +71,13 @@ export default function EmployeeLoginScreen() {
             console.log('Attempting login with username:', employeeId.trim());
             console.log('Company ID:', companyId);
             console.log('Company name:', companyName);
-            
+
             // Call authentication API with company ID (companyId is guaranteed to be number here)
             const response = await loginEmployee(employeeId.trim(), password, companyId as number);
-            
+
             console.log('Login successful, user:', response.user);
             console.log('User role:', response.user.role);
-            
+
             // Don't reset loading here - let the navigation happen with loading state
             // Route based on user role (case-insensitive)
             const userRole = response.user.role?.toLowerCase();
@@ -88,11 +90,11 @@ export default function EmployeeLoginScreen() {
             }
         } catch (error) {
             console.error('Login error:', error);
-            
-            const errorMessage = error instanceof Error 
-                ? error.message 
+
+            const errorMessage = error instanceof Error
+                ? error.message
                 : 'Login failed. Please try again.';
-            
+
             Alert.alert('Login Failed', errorMessage);
         } finally {
             // Always reset loading state
@@ -101,13 +103,13 @@ export default function EmployeeLoginScreen() {
     };
 
     return (
-        <SafeAreaView style={styles.container}>
+        <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
             {/* Back Button */}
             <TouchableOpacity
                 style={styles.backButton}
                 onPress={() => router.back()}
             >
-                <MaterialCommunityIcons name="arrow-left" size={24} color="#1A202C" />
+                <MaterialCommunityIcons name="arrow-left" size={24} color={colors.backIcon} />
             </TouchableOpacity>
 
             <KeyboardAvoidingView
@@ -116,8 +118,8 @@ export default function EmployeeLoginScreen() {
             >
                 <View style={styles.formContainer}>
                     {/* Header section */}
-                    <Text style={styles.header}>Welcome Back</Text>
-                    <Text style={styles.subtitle}>{companyName || 'Please enter your employee details.'}</Text>
+                    <Text style={[styles.header, { color: colors.textPrimary }]}>Welcome Back</Text>
+                    <Text style={[styles.subtitle, { color: colors.textSecondary }]}>{companyName || 'Please enter your employee details.'}</Text>
 
                     {/* Catalyst Logo */}
                     <View style={styles.logoWrapper}>
@@ -126,18 +128,18 @@ export default function EmployeeLoginScreen() {
 
                     {/* Input section */}
                     <View style={styles.inputSection}>
-                        <Text style={styles.label}>Username</Text>
-                        <View style={styles.inputContainer}>
+                        <Text style={[styles.label, { color: colors.textLabel }]}>Username</Text>
+                        <View style={[styles.inputContainer, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder }]}>
                             <MaterialCommunityIcons
                                 name="account-outline"
                                 size={24}
-                                color="#8E8E93"
+                                color={colors.inputIcon}
                                 style={styles.inputIcon}
                             />
                             <TextInput
-                                style={styles.input}
+                                style={[styles.input, { color: colors.inputText }]}
                                 placeholder="Enter username"
-                                placeholderTextColor="#C7C7CC"
+                                placeholderTextColor={colors.inputPlaceholder}
                                 value={employeeId}
                                 onChangeText={setEmployeeId}
                                 autoCapitalize="none"
@@ -147,32 +149,32 @@ export default function EmployeeLoginScreen() {
                     </View>
 
                     <View style={styles.inputSection}>
-                        <Text style={styles.label}>Password</Text>
-                        <View style={styles.inputContainer}>
+                        <Text style={[styles.label, { color: colors.textLabel }]}>Password</Text>
+                        <View style={[styles.inputContainer, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder }]}>
                             <MaterialCommunityIcons
                                 name="lock-outline"
                                 size={24}
-                                color="#8E8E93"
+                                color={colors.inputIcon}
                                 style={styles.inputIcon}
                             />
                             <TextInput
-                                style={styles.input}
+                                style={[styles.input, { color: colors.inputText }]}
                                 placeholder="Enter Password"
-                                placeholderTextColor="#C7C7CC"
+                                placeholderTextColor={colors.inputPlaceholder}
                                 value={password}
                                 onChangeText={setPassword}
                                 secureTextEntry={!showPassword}
                                 autoCapitalize="none"
                                 editable={!isLoading}
                             />
-                            <TouchableOpacity 
+                            <TouchableOpacity
                                 onPress={() => setShowPassword(!showPassword)}
                                 disabled={isLoading}
                             >
                                 <MaterialCommunityIcons
                                     name={showPassword ? "eye-off-outline" : "eye-outline"}
                                     size={24}
-                                    color="#8E8E93"
+                                    color={colors.inputIcon}
                                 />
                             </TouchableOpacity>
                         </View>
@@ -180,7 +182,7 @@ export default function EmployeeLoginScreen() {
 
                     {/* Login Button */}
                     <TouchableOpacity
-                        style={[styles.button, (isLoading || isLoadingCompany) && styles.buttonDisabled]}
+                        style={[styles.button, { backgroundColor: colors.buttonPrimary, shadowColor: colors.buttonPrimary }, (isLoading || isLoadingCompany) && [styles.buttonDisabled, { backgroundColor: colors.buttonDisabled }]]}
                         activeOpacity={0.8}
                         onPress={handleLogin}
                         disabled={isLoading || isLoadingCompany}
@@ -188,9 +190,9 @@ export default function EmployeeLoginScreen() {
                         {isLoading ? (
                             <ActivityIndicator color="#FFFFFF" />
                         ) : isLoadingCompany ? (
-                            <Text style={styles.buttonText}>Loading...</Text>
+                            <Text style={[styles.buttonText, { color: colors.buttonPrimaryText }]}>Loading...</Text>
                         ) : (
-                            <Text style={styles.buttonText}>Sign in</Text>
+                            <Text style={[styles.buttonText, { color: colors.buttonPrimaryText }]}>Sign in</Text>
                         )}
                     </TouchableOpacity>
                 </View>
@@ -202,7 +204,6 @@ export default function EmployeeLoginScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#F8F9FA',
     },
     backButton: {
         position: 'absolute',
@@ -222,13 +223,11 @@ const styles = StyleSheet.create({
     header: {
         fontSize: 32,
         fontWeight: '800',
-        color: '#1A202C',
         textAlign: 'center',
         marginBottom: 8,
     },
     subtitle: {
         fontSize: 16,
-        color: '#718096',
         textAlign: 'center',
         marginBottom: 40,
     },
@@ -242,15 +241,12 @@ const styles = StyleSheet.create({
     label: {
         fontSize: 14,
         fontWeight: '600',
-        color: '#2D3748',
         marginBottom: 8,
     },
     inputContainer: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#FFFFFF',
         borderWidth: 1,
-        borderColor: '#E2E8F0',
         borderRadius: 8,
         paddingHorizontal: 12,
         height: 52,
@@ -261,15 +257,12 @@ const styles = StyleSheet.create({
     input: {
         flex: 1,
         fontSize: 16,
-        color: '#1A202C',
     },
     button: {
-        backgroundColor: '#1E3A8A', // Deep blue as per design
         borderRadius: 8,
         height: 52,
         justifyContent: 'center',
         alignItems: 'center',
-        shadowColor: '#1E3A8A',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.2,
         shadowRadius: 8,
@@ -277,11 +270,9 @@ const styles = StyleSheet.create({
         marginTop: 16,
     },
     buttonDisabled: {
-        backgroundColor: '#6B7280',
         opacity: 0.7,
     },
     buttonText: {
-        color: '#FFFFFF',
         fontSize: 16,
         fontWeight: '700',
     },

@@ -15,8 +15,10 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { verifyToken, verifyCompanyCode } from '../utils/api';
+import { useTheme } from '../utils/theme';
 
 export default function LoginScreen() {
+    const { colors } = useTheme();
     const [companyCode, setCompanyCode] = useState('');
     const [isCheckingAuth, setIsCheckingAuth] = useState(true);
     const [isVerifying, setIsVerifying] = useState(false);
@@ -29,7 +31,7 @@ export default function LoginScreen() {
     const checkStoredAuth = async () => {
         try {
             const result = await verifyToken();
-            
+
             if (result && result.user) {
                 // Valid token found, navigate to appropriate dashboard
                 const role = result.user.role?.toLowerCase();
@@ -55,11 +57,11 @@ export default function LoginScreen() {
     // Show loading screen while checking auth
     if (isCheckingAuth) {
         return (
-            <SafeAreaView style={styles.container}>
+            <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
                 <View style={[styles.formContainer, styles.centerContent]}>
                     <Image source={require('../assets/logo.webp')} style={{ width: 200, height: 66, resizeMode: 'contain' }} />
-                    <ActivityIndicator size="large" color="#1E3A8A" style={styles.loader} />
-                    <Text style={styles.loadingText}>Loading...</Text>
+                    <ActivityIndicator size="large" color={colors.loaderColor} style={styles.loader} />
+                    <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading...</Text>
                 </View>
             </SafeAreaView>
         );
@@ -78,10 +80,10 @@ export default function LoginScreen() {
             // Navigate to employee login after successful verification
             router.push('/employee-login');
         } catch (error) {
-            const errorMessage = error instanceof Error 
-                ? error.message 
+            const errorMessage = error instanceof Error
+                ? error.message
                 : 'Company verification failed. Please try again.';
-            
+
             Alert.alert('Verification Failed', errorMessage);
         } finally {
             setIsVerifying(false);
@@ -89,15 +91,15 @@ export default function LoginScreen() {
     };
 
     return (
-        <SafeAreaView style={styles.container}>
+        <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
             <KeyboardAvoidingView
                 behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
                 style={styles.keyboardView}
             >
                 <View style={styles.formContainer}>
                     {/* Header section */}
-                    <Text style={styles.header}>Welcome</Text>
-                    <Text style={styles.subtitle}>Enter your company code to continue</Text>
+                    <Text style={[styles.header, { color: colors.textPrimary }]}>Welcome</Text>
+                    <Text style={[styles.subtitle, { color: colors.textSecondary }]}>Enter your company code to continue</Text>
 
                     {/* Catalyst Logo */}
                     <View style={styles.logoWrapper}>
@@ -106,18 +108,18 @@ export default function LoginScreen() {
 
                     {/* Input section */}
                     <View style={styles.inputSection}>
-                        <Text style={styles.label}>Company Code</Text>
-                        <View style={styles.inputContainer}>
+                        <Text style={[styles.label, { color: colors.textLabel }]}>Company Code</Text>
+                        <View style={[styles.inputContainer, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder }]}>
                             <MaterialCommunityIcons
                                 name="office-building"
                                 size={24}
-                                color="#8E8E93"
+                                color={colors.inputIcon}
                                 style={styles.inputIcon}
                             />
                             <TextInput
-                                style={styles.input}
+                                style={[styles.input, { color: colors.inputText }]}
                                 placeholder="Enter company code"
-                                placeholderTextColor="#C7C7CC"
+                                placeholderTextColor={colors.inputPlaceholder}
                                 value={companyCode}
                                 onChangeText={setCompanyCode}
                                 autoCapitalize="characters"
@@ -128,7 +130,7 @@ export default function LoginScreen() {
 
                     {/* Login Button */}
                     <TouchableOpacity
-                        style={[styles.button, isVerifying && styles.buttonDisabled]}
+                        style={[styles.button, { backgroundColor: colors.buttonPrimary, shadowColor: colors.buttonPrimary }, isVerifying && [styles.buttonDisabled, { backgroundColor: colors.buttonDisabled }]]}
                         activeOpacity={0.8}
                         onPress={handleVerifyCompany}
                         disabled={isVerifying}
@@ -136,7 +138,7 @@ export default function LoginScreen() {
                         {isVerifying ? (
                             <ActivityIndicator color="#FFFFFF" />
                         ) : (
-                            <Text style={styles.buttonText}>Continue</Text>
+                            <Text style={[styles.buttonText, { color: colors.buttonPrimaryText }]}>Continue</Text>
                         )}
                     </TouchableOpacity>
                 </View>
@@ -148,7 +150,6 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#F8F9FA',
     },
     keyboardView: {
         flex: 1,
@@ -164,13 +165,11 @@ const styles = StyleSheet.create({
     header: {
         fontSize: 32,
         fontWeight: '800',
-        color: '#1A202C',
         textAlign: 'center',
         marginBottom: 8,
     },
     subtitle: {
         fontSize: 16,
-        color: '#718096',
         textAlign: 'center',
         marginBottom: 40,
     },
@@ -183,7 +182,6 @@ const styles = StyleSheet.create({
     },
     loadingText: {
         fontSize: 16,
-        color: '#718096',
         marginTop: 12,
     },
     inputSection: {
@@ -192,15 +190,12 @@ const styles = StyleSheet.create({
     label: {
         fontSize: 14,
         fontWeight: '600',
-        color: '#2D3748',
         marginBottom: 8,
     },
     inputContainer: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#FFFFFF',
         borderWidth: 1,
-        borderColor: '#E2E8F0',
         borderRadius: 8,
         paddingHorizontal: 12,
         height: 52,
@@ -211,15 +206,12 @@ const styles = StyleSheet.create({
     input: {
         flex: 1,
         fontSize: 16,
-        color: '#1A202C',
     },
     button: {
-        backgroundColor: '#1E3A8A', // Deep blue as per design
         borderRadius: 8,
         height: 52,
         justifyContent: 'center',
         alignItems: 'center',
-        shadowColor: '#1E3A8A',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.2,
         shadowRadius: 8,
@@ -227,11 +219,9 @@ const styles = StyleSheet.create({
         marginTop: 8,
     },
     buttonDisabled: {
-        backgroundColor: '#6B7280',
         opacity: 0.7,
     },
     buttonText: {
-        color: '#FFFFFF',
         fontSize: 16,
         fontWeight: '700',
     },

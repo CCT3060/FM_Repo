@@ -19,8 +19,10 @@ import {
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { getTemplateDetails, submitChecklist, submitLogsheet, submitTabularLogsheet, type TabularHeaderConfig, type TemplateDetails } from '../utils/api';
+import { useTheme, type LightColors } from '../utils/theme';
 
 export default function TechExecutionScreen() {
+    const { colors, isDark } = useTheme();
     const params = useLocalSearchParams<{
         assignmentId: string;
         templateType: string;
@@ -218,19 +220,19 @@ export default function TechExecutionScreen() {
     // ─── Success screen ───────────────────────────────────────────────────────
     if (submitted) {
         return (
-            <SafeAreaView style={styles.container}>
+            <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
                 <Animated.View entering={FadeInUp.duration(600).springify()} style={styles.successContainer}>
-                    <View style={styles.successIcon}>
-                        <MaterialCommunityIcons name="check-circle" size={80} color="#10B981" />
+                    <View style={[styles.successIcon, { backgroundColor: isDark ? '#0D2818' : '#ECFDF5' }]}>
+                        <MaterialCommunityIcons name="check-circle" size={80} color={colors.accentGreen} />
                     </View>
-                    <Text style={styles.successTitle}>
+                    <Text style={[styles.successTitle, { color: colors.textPrimary }]}>
                         {templateType === 'checklist' ? 'Checklist' : 'Logsheet'} Submitted!
                     </Text>
-                    <Text style={styles.successSub}>
+                    <Text style={[styles.successSub, { color: colors.textSecondary }]}>
                         {template?.templateName || templateName} has been submitted successfully.
                     </Text>
                     <TouchableOpacity
-                        style={styles.doneBtn}
+                        style={[styles.doneBtn, { backgroundColor: colors.buttonBlue }]}
                         onPress={() => router.replace('/tech-dashboard' as any)}
                     >
                         <Text style={styles.doneBtnText}>Back to Dashboard</Text>
@@ -243,10 +245,10 @@ export default function TechExecutionScreen() {
     // ─── Loading ──────────────────────────────────────────────────────────────
     if (isLoading) {
         return (
-            <SafeAreaView style={styles.container}>
+            <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
                 <View style={styles.center}>
-                    <ActivityIndicator size="large" color="#2B6CB0" />
-                    <Text style={styles.loadingText}>Loading task...</Text>
+                    <ActivityIndicator size="large" color={colors.loaderColor} />
+                    <Text style={[styles.loadingText, { color: colors.textMuted }]}>Loading task...</Text>
                 </View>
             </SafeAreaView>
         );
@@ -255,24 +257,24 @@ export default function TechExecutionScreen() {
     // ─── Error ────────────────────────────────────────────────────────────────
     if (loadError || !template) {
         return (
-            <SafeAreaView style={styles.container}>
-                <View style={styles.header}>
+            <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+                <View style={[styles.header, { backgroundColor: colors.headerBg, borderBottomColor: colors.headerBorder }]}>
                     <View style={styles.headerTop}>
                         <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-                            <MaterialCommunityIcons name="arrow-left" size={24} color="#1A202C" />
+                            <MaterialCommunityIcons name="arrow-left" size={24} color={colors.backIcon} />
                         </TouchableOpacity>
-                        <Text style={styles.headerTitle}>Task</Text>
+                        <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>Task</Text>
                         <View style={{ width: 32 }} />
                     </View>
                 </View>
                 <View style={styles.center}>
-                    <MaterialCommunityIcons name="alert-circle-outline" size={56} color="#EF4444" />
-                    <Text style={styles.errorText}>{loadError || 'Template not found'}</Text>
-                    <TouchableOpacity style={styles.retryBtn} onPress={loadTemplate}>
+                    <MaterialCommunityIcons name="alert-circle-outline" size={56} color={colors.accentRed} />
+                    <Text style={[styles.errorText, { color: colors.accentRed }]}>{loadError || 'Template not found'}</Text>
+                    <TouchableOpacity style={[styles.retryBtn, { backgroundColor: colors.buttonBlue }]} onPress={loadTemplate}>
                         <Text style={styles.retryText}>Retry</Text>
                     </TouchableOpacity>
                     <TouchableOpacity onPress={() => router.back()} style={{ marginTop: 12 }}>
-                        <Text style={styles.backLink}>Go Back</Text>
+                        <Text style={[styles.backLink, { color: colors.accentBlue }]}>Go Back</Text>
                     </TouchableOpacity>
                 </View>
             </SafeAreaView>
@@ -298,13 +300,13 @@ export default function TechExecutionScreen() {
         const tabPct = totalCells > 0 ? Math.round((filledCells / totalCells) * 100) : 0;
 
         return (
-            <SafeAreaView style={styles.container}>
-                <View style={[styles.header, { paddingBottom: 16 }]}>
+            <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+                <View style={[styles.header, { paddingBottom: 16, backgroundColor: colors.headerBg, borderBottomColor: colors.headerBorder }]}>
                     <View style={styles.headerTop}>
                         <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-                            <MaterialCommunityIcons name="arrow-left" size={24} color="#0F172A" />
+                            <MaterialCommunityIcons name="arrow-left" size={24} color={colors.backIcon} />
                         </TouchableOpacity>
-                        <Text style={styles.headerTitle} numberOfLines={1}>{template.templateName || templateName}</Text>
+                        <Text style={[styles.headerTitle, { color: colors.textPrimary }]} numberOfLines={1}>{template.templateName || templateName}</Text>
                         <View style={{ width: 32 }} />
                     </View>
                     <View style={styles.headerSubtitleRow}>
@@ -318,10 +320,10 @@ export default function TechExecutionScreen() {
                             </View>
                         ) : null}
                     </View>
-                    <View style={styles.progressContainer}>
-                        <Animated.View style={[styles.progressFill, { width: `${tabPct}%` as any }]} />
+                    <View style={[styles.progressContainer, { backgroundColor: colors.progressBg }]}>
+                        <Animated.View style={[styles.progressFill, { width: `${tabPct}%` as any, backgroundColor: colors.progressFill }]} />
                     </View>
-                    <Text style={styles.progressText}>{tabPct}% filled · {filledCells}/{totalCells} cells</Text>
+                    <Text style={[styles.progressText, { color: colors.progressFill }]}>{tabPct}% filled · {filledCells}/{totalCells} cells</Text>
                 </View>
 
                 <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
@@ -429,9 +431,9 @@ export default function TechExecutionScreen() {
                     </ScrollView>
                 </KeyboardAvoidingView>
 
-                <View style={styles.bottomBar}>
+                <View style={[styles.bottomBar, { backgroundColor: colors.headerBg, borderTopColor: colors.headerBorder }]}>
                     <TouchableOpacity
-                        style={[styles.submitBtn, isSubmitting && styles.submitBtnDisabled]}
+                        style={[styles.submitBtn, { backgroundColor: colors.buttonBlue, shadowColor: colors.buttonBlue }, isSubmitting && styles.submitBtnDisabled]}
                         activeOpacity={0.85}
                         onPress={handleSubmit}
                         disabled={isSubmitting}
@@ -448,14 +450,14 @@ export default function TechExecutionScreen() {
     }
 
     return (
-        <SafeAreaView style={styles.container}>
+        <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
             {/* Header */}
-            <View style={styles.header}>
+            <View style={[styles.header, { backgroundColor: colors.headerBg, borderBottomColor: colors.headerBorder }]}>
                 <View style={styles.headerTop}>
                     <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-                        <MaterialCommunityIcons name="arrow-left" size={24} color="#1A202C" />
+                        <MaterialCommunityIcons name="arrow-left" size={24} color={colors.backIcon} />
                     </TouchableOpacity>
-                    <Text style={styles.headerTitle} numberOfLines={1}>{template.templateName || templateName}</Text>
+                    <Text style={[styles.headerTitle, { color: colors.textPrimary }]} numberOfLines={1}>{template.templateName || templateName}</Text>
                     <View style={{ width: 32 }} />
                 </View>
 
@@ -485,10 +487,10 @@ export default function TechExecutionScreen() {
                 </View>
 
                 {/* Progress bar */}
-                <View style={styles.progressContainer}>
-                    <View style={[styles.progressFill, { width: `${pct}%` as any }]} />
+                <View style={[styles.progressContainer, { backgroundColor: colors.progressBg }]}>
+                    <View style={[styles.progressFill, { width: `${pct}%` as any, backgroundColor: colors.progressFill }]} />
                 </View>
-                <Text style={styles.progressText}>{pct}% Complete &middot; {filledCount}/{totalCount} questions</Text>
+                <Text style={[styles.progressText, { color: colors.progressFill }]}>{pct}% Complete &middot; {filledCount}/{totalCount} questions</Text>
             </View>
 
             <KeyboardAvoidingView
@@ -503,12 +505,12 @@ export default function TechExecutionScreen() {
                             .map((q, index) => {
                                 const isFilled = answers[q.id] !== '' && answers[q.id] != null;
                                 return (
-                                    <Animated.View key={q.id} entering={FadeInUp.delay(50 * index).duration(400).springify()} style={[styles.questionCard, isFilled && styles.questionCardFilled]}>
+                                    <Animated.View key={q.id} entering={FadeInUp.delay(50 * index).duration(400).springify()} style={[styles.questionCard, { backgroundColor: colors.card, borderColor: colors.cardBorder, shadowColor: colors.shadowColor }, isFilled && { borderColor: isDark ? '#2A3A4D' : '#E2E8F0', backgroundColor: isDark ? '#1E2838' : '#FCFCFD' }]}>
                                         <View style={styles.questionHeader}>
-                                            <View style={[styles.questionNumCircle, isFilled && styles.questionNumCircleFilled]}>
-                                                <Text style={[styles.questionNum, isFilled && styles.questionNumFilled]}>{index + 1}</Text>
+                                            <View style={[styles.questionNumCircle, { backgroundColor: isDark ? '#252836' : '#F1F5F9' }, isFilled && { backgroundColor: isDark ? '#0D2818' : '#ECFDF5' }]}>
+                                                <Text style={[styles.questionNum, { color: colors.textMuted }, isFilled && { color: colors.accentGreen }]}>{index + 1}</Text>
                                             </View>
-                                            <Text style={styles.questionText} numberOfLines={3}>{q.questionText}</Text>
+                                            <Text style={[styles.questionText, { color: colors.textPrimary }]} numberOfLines={3}>{q.questionText}</Text>
                                             {!!q.isRequired && (
                                                 <Text style={styles.requiredStar}>*</Text>
                                             )}
@@ -519,16 +521,16 @@ export default function TechExecutionScreen() {
                                             )}
                                         </View>
                                         <View style={styles.answerArea}>
-                                            {renderAnswerWidget(q, answers[q.id], setAnswer, handlePickUpload)}
+                                            {renderAnswerWidget(q, answers[q.id], setAnswer, handlePickUpload, colors)}
                                         </View>
                                     </Animated.View>
                                 );
                             })}
 
                         {template.description ? (
-                            <View style={styles.descCard}>
-                                <MaterialCommunityIcons name="information" size={18} color="#64748B" />
-                                <Text style={styles.descText}>{template.description}</Text>
+                            <View style={[styles.descCard, { backgroundColor: colors.descCardBg, borderColor: colors.descCardBorder }]}>
+                                <MaterialCommunityIcons name="information" size={18} color={colors.textMuted} />
+                                <Text style={[styles.descText, { color: colors.textMuted }]}>{template.description}</Text>
                             </View>
                         ) : null}
 
@@ -538,9 +540,9 @@ export default function TechExecutionScreen() {
             </KeyboardAvoidingView>
 
             {/* Bottom action bar */}
-            <View style={styles.bottomBar}>
+            <View style={[styles.bottomBar, { backgroundColor: colors.headerBg, borderTopColor: colors.headerBorder }]}>
                 <TouchableOpacity
-                    style={[styles.submitBtn, isSubmitting && styles.submitBtnDisabled]}
+                    style={[styles.submitBtn, { backgroundColor: colors.buttonBlue, shadowColor: colors.buttonBlue }, isSubmitting && styles.submitBtnDisabled]}
                     activeOpacity={0.85}
                     onPress={handleSubmit}
                     disabled={isSubmitting}
@@ -591,7 +593,9 @@ function renderAnswerWidget(
     value: any,
     setAnswer: (id: number, val: any) => void,
     handlePickUpload: (questionId: number) => void,
+    colors?: typeof LightColors,
 ) {
+    const c = colors || require('../utils/theme').LightColors;
     const answerType = (q.answerType || q.inputType || '').toLowerCase();
 
     const parseOptions = (): string[] => {
@@ -705,12 +709,12 @@ function renderAnswerWidget(
     if (answerType === 'number' || answerType === 'numeric') {
         return (
             <TextInput
-                style={widgetStyles.textInput}
+                style={[widgetStyles.textInput, { backgroundColor: c.inputBg, borderColor: c.inputBorder, color: c.inputText }]}
                 value={value ?? ''}
                 onChangeText={v => setAnswer(q.id, v)}
                 keyboardType="numeric"
                 placeholder="Enter number..."
-                placeholderTextColor="#A0AEC0"
+                placeholderTextColor={c.inputPlaceholder}
             />
         );
     }
@@ -735,11 +739,11 @@ function renderAnswerWidget(
     if (answerType === 'remark') {
         return (
             <TextInput
-                style={[widgetStyles.textInput, { minHeight: 80, textAlignVertical: 'top' }]}
+                style={[widgetStyles.textInput, { minHeight: 80, textAlignVertical: 'top', backgroundColor: c.inputBg, borderColor: c.inputBorder, color: c.inputText }]}
                 value={value ?? ''}
                 onChangeText={v => setAnswer(q.id, v)}
                 placeholder="Enter remark..."
-                placeholderTextColor="#A0AEC0"
+                placeholderTextColor={c.inputPlaceholder}
                 multiline
             />
         );
@@ -800,13 +804,13 @@ function renderAnswerWidget(
     // Default: multiline text
     return (
         <TextInput
-            style={[widgetStyles.textInput, widgetStyles.textArea]}
+            style={[widgetStyles.textInput, widgetStyles.textArea, { backgroundColor: c.inputBg, borderColor: c.inputBorder, color: c.inputText }]}
             value={value ?? ''}
             onChangeText={v => setAnswer(q.id, v)}
             multiline
             numberOfLines={3}
             placeholder="Enter your answer..."
-            placeholderTextColor="#A0AEC0"
+            placeholderTextColor={c.inputPlaceholder}
             textAlignVertical="top"
         />
     );
