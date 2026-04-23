@@ -32,25 +32,50 @@ const slugify = (s) =>
 /* ── List roles ───────────────────────────────────────────────────────────── */
 router.get("/", async (req, res, next) => {
   try {
-    const [rows] = await pool.query(
-      `SELECT id,
-              company_id               AS "companyId",
-              role_key                 AS "roleKey",
-              label,
-              parent_role_key          AS "parentRoleKey",
-              sort_order               AS "sortOrder",
-              color,
-              bg_color                 AS "bgColor",
-              is_active                AS "isActive",
-              can_raise_soft_issue     AS "canRaiseSoftIssue",
-              can_resolve_soft_issue   AS "canResolveSoftIssue",
-              is_soft_manager          AS "isSoftManager"
-         FROM company_roles
-        WHERE company_id = ?
-          AND is_active = TRUE
-        ORDER BY sort_order ASC, id ASC`,
-      [cid(req)]
-    );
+    let rows;
+    try {
+      [rows] = await pool.query(
+        `SELECT id,
+                company_id               AS "companyId",
+                role_key                 AS "roleKey",
+                label,
+                parent_role_key          AS "parentRoleKey",
+                sort_order               AS "sortOrder",
+                color,
+                bg_color                 AS "bgColor",
+                is_active                AS "isActive",
+                can_raise_soft_issue     AS "canRaiseSoftIssue",
+                can_resolve_soft_issue   AS "canResolveSoftIssue",
+                is_soft_manager          AS "isSoftManager"
+           FROM company_roles
+          WHERE company_id = ?
+            AND is_active = TRUE
+          ORDER BY sort_order ASC, id ASC`,
+        [cid(req)]
+      );
+    } catch (selectErr) {
+      // Capability columns not migrated yet — select without them
+      if (String(selectErr?.message).includes("Unknown column")) {
+        [rows] = await pool.query(
+          `SELECT id,
+                  company_id      AS "companyId",
+                  role_key        AS "roleKey",
+                  label,
+                  parent_role_key AS "parentRoleKey",
+                  sort_order      AS "sortOrder",
+                  color,
+                  bg_color        AS "bgColor",
+                  is_active       AS "isActive"
+             FROM company_roles
+            WHERE company_id = ?
+              AND is_active = TRUE
+            ORDER BY sort_order ASC, id ASC`,
+          [cid(req)]
+        );
+      } else {
+        throw selectErr;
+      }
+    }
     res.json(rows);
   } catch (err) {
     next(err);
@@ -78,24 +103,43 @@ router.post("/", async (req, res, next) => {
       [cid(req)]
     );
     const order = Number.isFinite(sortOrder) ? sortOrder : nextOrder.next;
-    await pool.query(
-      `INSERT INTO company_roles
-         (company_id, role_key, label, parent_role_key, sort_order, color, bg_color,
-          can_raise_soft_issue, can_resolve_soft_issue, is_soft_manager)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        cid(req),
-        key,
-        String(label).trim().slice(0, 120),
-        parentRoleKey ? slugify(parentRoleKey) : null,
-        order,
-        color || "#2563eb",
-        bgColor || "#dbeafe",
-        canRaiseSoftIssue   ? 1 : 0,
-        canResolveSoftIssue ? 1 : 0,
-        isSoftManager       ? 1 : 0,
-      ]
-    );
+    const baseValues = [
+      cid(req),
+      key,
+      String(label).trim().slice(0, 120),
+      parentRoleKey ? slugify(parentRoleKey) : null,
+      order,
+      color || "#2563eb",
+      bgColor || "#dbeafe",
+    ];
+    // Try INSERT with soft-service capability columns (requires migration).
+    // Fall back to INSERT without them if the columns don't exist yet.
+    try {
+      await pool.query(
+        `INSERT INTO company_roles
+           (company_id, role_key, label, parent_role_key, sort_order, color, bg_color,
+            can_raise_soft_issue, can_resolve_soft_issue, is_soft_manager)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          ...baseValues,
+          canRaiseSoftIssue   ? 1 : 0,
+          canResolveSoftIssue ? 1 : 0,
+          isSoftManager       ? 1 : 0,
+        ]
+      );
+    } catch (insertErr) {
+      // Column doesn't exist yet (migration pending) — insert without it
+      if (String(insertErr?.message).includes("Unknown column")) {
+        await pool.query(
+          `INSERT INTO company_roles
+             (company_id, role_key, label, parent_role_key, sort_order, color, bg_color)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          baseValues
+        );
+      } else {
+        throw insertErr;
+      }
+    }
     res.status(201).json({ ok: true, roleKey: key });
   } catch (err) {
     next(err);
