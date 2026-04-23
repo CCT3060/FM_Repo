@@ -33,14 +33,23 @@ export default function LoginScreen() {
             const result = await verifyToken();
 
             if (result && result.user) {
-                // Valid token found, navigate to appropriate dashboard
-                const role = result.user.role?.toLowerCase();
-                if (role === 'supervisor') {
+                // Route by soft-service capabilities first, then legacy role names
+                const caps = result.user.roleCapabilities;
+                if (caps?.canResolveSoftIssue) {
                     router.replace('/supervisor-dashboard');
-                } else if (role === 'technician') {
-                    router.replace('/tech-dashboard');
-                } else {
+                } else if (caps?.isSoftManager) {
+                    router.replace('/soft-manager-dashboard');
+                } else if (caps?.canRaiseSoftIssue) {
                     router.replace('/dashboard');
+                } else {
+                    const role = result.user.role?.toLowerCase();
+                    if (role === 'supervisor') {
+                        router.replace('/supervisor-dashboard');
+                    } else if (role === 'technician') {
+                        router.replace('/tech-dashboard');
+                    } else {
+                        router.replace('/dashboard');
+                    }
                 }
             } else {
                 // No stored token, stay on login page

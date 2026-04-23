@@ -10,7 +10,7 @@ import {
     View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { getAssetQrData } from '../utils/api';
+import { getAssetQrData, getStoredUser, getSoftRequestsForAsset } from '../utils/api';
 
 export default function AssetScanScreen() {
     const { assetId } = useLocalSearchParams<{ assetId: string }>();
@@ -19,12 +19,64 @@ export default function AssetScanScreen() {
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
-        if (assetId) {
-            getAssetQrData(assetId)
-                .then(setData)
-                .catch((e: Error) => setError(e.message || 'Failed to load asset'))
-                .finally(() => setLoading(false));
-        }
+        if (!assetId) return;
+        (async () => {
+            try {
+                const [qrData, user] = await Promise.all([
+                    getAssetQrData(assetId),
+                    getStoredUser(),
+                ]);
+                setData(qrData);
+
+                const caps = user?.roleCapabilities;
+                const isSoftAsset = qrData?.asset?.assetCategory === 'soft' ||
+                                    qrData?.asset?.assetType === 'soft';
+
+                if (isSoftAsset && caps) {
+                    if (caps.canResolveSoftIssue) {
+                        // Catalyst supervisor: check for open requests first
+                        const openRequests = await getSoftRequestsForAsset(Number(assetId));
+                        if (openRequests.length > 0) {
+                            router.replace({
+                                pathname: '/soft-resolve-form',
+                                params: {
+                                    assetId,
+                                    assetName: qrData.asset.assetName,
+                                    requestId: String(openRequests[0].id),
+                                    templateId: String(openRequests[0].templateId),
+                                    templateType: openRequests[0].templateType,
+                                    beforeAnswers: JSON.stringify(openRequests[0].beforeAnswers || []),
+                                    raisedByName: openRequests[0].raisedByName || '',
+                                    raisedAt: openRequests[0].raisedAt || '',
+                                },
+                            } as any);
+                            return;
+                        }
+                        // No open request → fall through to show normal asset screen
+                    } else if (caps.canRaiseSoftIssue) {
+                        // Client supervisor: go straight to raise-request flow
+                        if (qrData.checklistTemplates?.length > 0) {
+                            const tpl = qrData.checklistTemplates[0];
+                            router.replace({
+                                pathname: '/soft-raise-request',
+                                params: {
+                                    assetId,
+                                    assetName: qrData.asset.assetName,
+                                    templateId: String(tpl.id),
+                                    templateName: tpl.templateName || tpl.name,
+                                },
+                            } as any);
+                            return;
+                        }
+                    }
+                    // isSoftManager → just show the normal asset info screen (read-only)
+                }
+            } catch (e: any) {
+                setError(e.message || 'Failed to load asset');
+            } finally {
+                setLoading(false);
+            }
+        })();
     }, [assetId]);
 
     if (loading) {

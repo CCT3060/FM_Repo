@@ -34,14 +34,17 @@ router.get("/", async (req, res, next) => {
   try {
     const [rows] = await pool.query(
       `SELECT id,
-              company_id      AS "companyId",
-              role_key        AS "roleKey",
+              company_id               AS "companyId",
+              role_key                 AS "roleKey",
               label,
-              parent_role_key AS "parentRoleKey",
-              sort_order      AS "sortOrder",
+              parent_role_key          AS "parentRoleKey",
+              sort_order               AS "sortOrder",
               color,
-              bg_color        AS "bgColor",
-              is_active       AS "isActive"
+              bg_color                 AS "bgColor",
+              is_active                AS "isActive",
+              can_raise_soft_issue     AS "canRaiseSoftIssue",
+              can_resolve_soft_issue   AS "canResolveSoftIssue",
+              is_soft_manager          AS "isSoftManager"
          FROM company_roles
         WHERE company_id = ?
           AND is_active = TRUE
@@ -57,7 +60,8 @@ router.get("/", async (req, res, next) => {
 /* ── Create role ──────────────────────────────────────────────────────────── */
 router.post("/", async (req, res, next) => {
   try {
-    const { label, parentRoleKey, color, bgColor, sortOrder } = req.body || {};
+    const { label, parentRoleKey, color, bgColor, sortOrder,
+            canRaiseSoftIssue, canResolveSoftIssue, isSoftManager } = req.body || {};
     if (!label || !String(label).trim()) {
       return res.status(400).json({ message: "label is required" });
     }
@@ -76,8 +80,9 @@ router.post("/", async (req, res, next) => {
     const order = Number.isFinite(sortOrder) ? sortOrder : nextOrder.next;
     await pool.query(
       `INSERT INTO company_roles
-         (company_id, role_key, label, parent_role_key, sort_order, color, bg_color)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+         (company_id, role_key, label, parent_role_key, sort_order, color, bg_color,
+          can_raise_soft_issue, can_resolve_soft_issue, is_soft_manager)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         cid(req),
         key,
@@ -86,6 +91,9 @@ router.post("/", async (req, res, next) => {
         order,
         color || "#2563eb",
         bgColor || "#dbeafe",
+        canRaiseSoftIssue   ? 1 : 0,
+        canResolveSoftIssue ? 1 : 0,
+        isSoftManager       ? 1 : 0,
       ]
     );
     res.status(201).json({ ok: true, roleKey: key });
@@ -99,7 +107,8 @@ router.put("/:id", async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
-    const { label, parentRoleKey, color, bgColor, sortOrder } = req.body || {};
+    const { label, parentRoleKey, color, bgColor, sortOrder,
+            canRaiseSoftIssue, canResolveSoftIssue, isSoftManager } = req.body || {};
     const fields = [];
     const params = [];
     if (label !== undefined) {
@@ -121,6 +130,18 @@ router.put("/:id", async (req, res, next) => {
     if (sortOrder !== undefined && Number.isFinite(sortOrder)) {
       fields.push(`sort_order = ?`);
       params.push(sortOrder);
+    }
+    if (canRaiseSoftIssue !== undefined) {
+      fields.push(`can_raise_soft_issue = ?`);
+      params.push(canRaiseSoftIssue ? 1 : 0);
+    }
+    if (canResolveSoftIssue !== undefined) {
+      fields.push(`can_resolve_soft_issue = ?`);
+      params.push(canResolveSoftIssue ? 1 : 0);
+    }
+    if (isSoftManager !== undefined) {
+      fields.push(`is_soft_manager = ?`);
+      params.push(isSoftManager ? 1 : 0);
     }
     if (!fields.length) return res.json({ ok: true });
     fields.push(`updated_at = NOW()`);

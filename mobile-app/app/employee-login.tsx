@@ -15,6 +15,7 @@ import {
 import { Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { loginEmployee, getStoredCompany } from '../utils/api';
+import { registerForPushNotifications } from '../utils/notifications';
 import { useTheme } from '../utils/theme';
 
 export default function EmployeeLoginScreen() {
@@ -78,15 +79,28 @@ export default function EmployeeLoginScreen() {
             console.log('Login successful, user:', response.user);
             console.log('User role:', response.user.role);
 
+            // Register push token in the background (non-blocking)
+            registerForPushNotifications().catch(() => {});
+
             // Don't reset loading here - let the navigation happen with loading state
-            // Route based on user role (case-insensitive)
-            const userRole = response.user.role?.toLowerCase();
-            if (userRole === 'supervisor') {
-                router.replace('/supervisor-dashboard');
-            } else if (userRole === 'technician') {
-                router.replace('/tech-dashboard');
+            // Route based on role capabilities first (soft-service roles),
+            // then fall back to legacy technical role names.
+            const caps = response.user.roleCapabilities;
+            if (caps?.canResolveSoftIssue) {
+                router.replace('/supervisor-dashboard');   // catalyst supervisor
+            } else if (caps?.isSoftManager) {
+                router.replace('/soft-manager-dashboard'); // client manager
+            } else if (caps?.canRaiseSoftIssue) {
+                router.replace('/dashboard');              // client supervisor uses standard dashboard
             } else {
-                router.replace('/dashboard');
+                const userRole = response.user.role?.toLowerCase();
+                if (userRole === 'supervisor') {
+                    router.replace('/supervisor-dashboard');
+                } else if (userRole === 'technician') {
+                    router.replace('/tech-dashboard');
+                } else {
+                    router.replace('/dashboard');
+                }
             }
         } catch (error) {
             console.error('Login error:', error);

@@ -1,5 +1,5 @@
 import * as SecureStore from 'expo-secure-store';
-import { Platform } from 'react-native';
+
 import { cacheData, getCachedData, addToOfflineQueue, getOfflineQueue, removeFromOfflineQueue } from './offlineStorage';
 import { notifyNetworkStatus } from './networkStatus';
 
@@ -11,28 +11,10 @@ import { notifyNetworkStatus } from './networkStatus';
 // Find your IP: Run "ipconfig" (Windows) or "ifconfig" (Mac/Linux) in terminal
 // Example: const API_BASE = 'http://192.168.1.100:4000';
 //
-// OPTION 2: Auto-detect platform (recommended for development)
-const getApiBase = () => {
-  if (!__DEV__) {
-    // Production: point at the live EC2 backend behind HTTPS.
-    // (The old CloudFront distribution served a stale build and returned
-    // Supabase "Tenant or user not found" — use the direct domain instead.)
-    return 'https://fm.catalystsolutions.eco';
-  }
-  
-  // Development URLs
-  if (Platform.OS === 'android') {
-    // For physical Android device, use your PC's IP
-    return 'http://192.168.1.56:4000';
-    // For Android emulator, use: return 'http://10.0.2.2:4000';
-  } else if (Platform.OS === 'ios') {
-    // For physical iOS device, use your PC's IP
-    return 'http://192.168.1.56:4000';
-    // For iOS simulator, use: return 'http://localhost:4000';
-  } else {
-    return 'http://localhost:4000'; // Web or other platforms
-  }
-};
+// Always use the production backend — works on any device/network without
+// needing a local server or correct LAN IP. For local backend testing,
+// replace with your PC's IP on the same WiFi, e.g. 'http://192.168.1.5:4000'.
+const getApiBase = () => 'https://fm.catalystsolutions.eco';
 
 export const API_BASE = getApiBase();
 
@@ -48,29 +30,49 @@ interface CompanyVerifyResponse {
   companyCode: string;
 }
 
+export interface RoleCapabilities {
+  canRaiseSoftIssue:   boolean;
+  canResolveSoftIssue: boolean;
+  isSoftManager:       boolean;
+}
+
+export interface AppUser {
+  id: number;
+  fullName: string;
+  email: string;
+  role: string;
+  companyId: number;
+  companyName: string;
+  supervisorId: number | null;
+  permissions?: Record<string, any>;
+  moduleAccess?: string[];
+  roleCapabilities?: RoleCapabilities;
+}
+
 interface LoginResponse {
   token: string;
-  user: {
-    id: number;
-    fullName: string;
-    email: string;
-    role: 'supervisor' | 'employee';
-    companyId: number;
-    companyName: string;
-    supervisorId: number | null;
-  };
+  user: AppUser;
 }
 
 interface VerifyResponse {
-  user: {
-    id: number;
-    fullName: string;
-    email: string;
-    role: 'supervisor' | 'employee';
-    companyId: number;
-    companyName: string;
-    supervisorId: number | null;
-  };
+  user: AppUser;
+}
+
+export interface SoftServiceRequest {
+  id: number;
+  assetId: number;
+  assetName: string;
+  assetUniqueId: string;
+  templateId: number;
+  templateType: string;
+  status: 'open' | 'resolved';
+  raisedAt: string;
+  raisedByName?: string;
+  resolvedAt?: string;
+  resolvedByName?: string;
+  beforeAnswers?: any;
+  beforeSubmittedAt?: string;
+  raiseSubmissionId?: number;
 }
 
 /**
@@ -1175,3 +1177,86 @@ export async function getOjtTestAttempts(trainingId: number): Promise<any[]> {
   if (!response.ok) throw new Error('Failed to fetch attempt history');
   return response.json();
 }
+
+// ── Soft Service Requests ─────────────────────────────────────────────────────
+
+/**
+ * Register or update this device's Expo push token on the server.
+ */
+export async function registerPushToken(pushToken: string, platform: string): Promise<void> {
+  const token = await SecureStore.getItemAsync(TOKEN_KEY).catch(() => null);
+  if (!token) return;
+  await fetch(`${API_BASE}/api/mobile-auth/push-token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+    body: JSON.stringify({ token: pushToken, platform }),
+  });
+}
+
+/**
+ * Check if there are open soft-service requests for a given asset.
+ * Used by catalyst supervisor after scanning QR to decide whether to show before/after view.
+ */
+export async function getSoftRequestsForAsset(assetId: number): Promise<SoftServiceRequest[]> {
+  const response = await authenticatedFetch(`/api/soft-service/requests/asset/${assetId}`);
+  if (!response.ok) throw new Error('Failed to load requests');
+  return response.json();
+}
+
+/**
+ * Raise a soft-service request (client supervisor submits an issue).
+ */
+export async function raiseSoftRequest(params: {
+  assetId: number;
+  templateId: number;
+  templateType?: string;
+  submissionId?: number | null;
+}): Promise<{ requestId: number }> {
+  const response = await authenticatedFetch('/api/soft-service/requests', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error((err as any).message || 'Failed to raise request');
+  }
+  return response.json();
+}
+
+/**
+ * Catalyst supervisor resolves a soft-service request.
+ */
+export async function resolveSoftRequest(requestId: number, resolveSubmissionId?: number | null): Promise<void> {
+  const response = await authenticatedFetch(`/api/soft-service/requests/${requestId}/resolve`, {
+    method: 'PUT',
+    body: JSON.stringify({ resolveSubmissionId: resolveSubmissionId ?? null }),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error((err as any).message || 'Failed to resolve request');
+  }
+}
+
+/**
+ * Client supervisor: get their own raised requests.
+ */
+export async function getMySoftRequests(status?: 'open' | 'resolved'): Promise<SoftServiceRequest[]> {
+  const qs = status ? `?status=${status}` : '';
+  const response = await authenticatedFetch(`/api/soft-service/requests/my${qs}`);
+  if (!response.ok) throw new Error('Failed to load requests');
+  return response.json();
+}
+
+/**
+ * Client manager / admin: get all requests for the company.
+ */
+export async function getAllSoftRequests(params?: { status?: string; assetId?: number }): Promise<SoftServiceRequest[]> {
+  const qs = new URLSearchParams();
+  if (params?.status)  qs.set('status',  params.status);
+  if (params?.assetId) qs.set('assetId', String(params.assetId));
+  const query = qs.toString() ? `?${qs}` : '';
+  const response = await authenticatedFetch(`/api/soft-service/requests/all${query}`);
+  if (!response.ok) throw new Error('Failed to load requests');
+  return response.json();
+}
+

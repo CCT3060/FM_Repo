@@ -47,10 +47,12 @@ router.get("/:assetId", async (req, res, next) => {
               a.company_id AS "companyId",
               c.company_name AS "companyName",
               d.name AS "departmentName",
+              at.category AS "assetCategory",
               ad.metadata, ad.documents
        FROM assets a
        LEFT JOIN companies c    ON c.id = a.company_id
        LEFT JOIN departments d  ON d.id = a.department_id
+       LEFT JOIN asset_types at ON at.id = a.asset_type_id
        LEFT JOIN asset_details ad ON ad.asset_id = a.id
        WHERE a.id = ?`,
       [assetId]

@@ -49,6 +49,26 @@ router.post("/verify-company", async (req, res, next) => {
   }
 });
 
+/* ── Helper: fetch role capabilities from company_roles table ─────────────── */
+async function getRoleCapabilities(companyId, roleKey) {
+  if (!roleKey) return { canRaiseSoftIssue: false, canResolveSoftIssue: false, isSoftManager: false };
+  const [[row]] = await pool.query(
+    `SELECT can_raise_soft_issue   AS "canRaiseSoftIssue",
+            can_resolve_soft_issue AS "canResolveSoftIssue",
+            is_soft_manager        AS "isSoftManager"
+       FROM company_roles
+      WHERE company_id = ? AND role_key = ? AND is_active = TRUE
+      LIMIT 1`,
+    [companyId, roleKey]
+  );
+  if (!row) return { canRaiseSoftIssue: false, canResolveSoftIssue: false, isSoftManager: false };
+  return {
+    canRaiseSoftIssue:   Boolean(row.canRaiseSoftIssue),
+    canResolveSoftIssue: Boolean(row.canResolveSoftIssue),
+    isSoftManager:       Boolean(row.isSoftManager),
+  };
+}
+
 /* ── Mobile Login (username + password) ──────────────────────────────────────── */
 router.post("/login", async (req, res, next) => {
   try {
@@ -97,7 +117,7 @@ router.post("/login", async (req, res, next) => {
     // Generate JWT token (compatible with requireCompanyAuth middleware)
     const token = jwt.sign(
       {
-        sub: user.id,         // User ID (standard JWT claim)
+        sub: user.id,
         email: user.email,
         companyId: user.companyId,
         role: user.role,
@@ -107,7 +127,9 @@ router.post("/login", async (req, res, next) => {
       { expiresIn: "30d" }
     );
 
-    // Return user info + token
+    // Fetch dynamic role capabilities
+    const roleCapabilities = await getRoleCapabilities(user.companyId, user.role);
+
     delete user.passwordHash;
     res.json({
       token,
@@ -123,6 +145,7 @@ router.post("/login", async (req, res, next) => {
         supervisorId: user.supervisorId,
         permissions: user.permissions || {},
         moduleAccess: user.moduleAccess || [],
+        roleCapabilities,
       },
     });
   } catch (err) {
@@ -154,7 +177,7 @@ router.get("/verify", async (req, res, next) => {
        FROM company_users cu
        JOIN companies c ON c.id = cu.company_id
        WHERE cu.id = ?`,
-      [decoded.sub || decoded.userId]  // Support both old and new token format
+      [decoded.sub || decoded.userId]
     );
 
     if (!user) {
@@ -165,7 +188,36 @@ router.get("/verify", async (req, res, next) => {
       return res.status(403).json({ message: "Account is inactive" });
     }
 
-    res.json({ user });
+    const roleCapabilities = await getRoleCapabilities(user.companyId, user.role);
+    res.json({ user: { ...user, roleCapabilities } });
+  } catch (err) {
+    if (err.name === "JsonWebTokenError" || err.name === "TokenExpiredError") {
+      return res.status(401).json({ message: "Invalid or expired token" });
+    }
+    next(err);
+  }
+});
+
+/* ── Register / update push token ───────────────────────────────────────────── */
+router.post("/push-token", async (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ message: "No token provided" });
+    }
+    const decoded = jwt.verify(authHeader.substring(7), JWT_SECRET);
+    if (decoded.type !== "company_user") {
+      return res.status(401).json({ message: "Invalid token type" });
+    }
+
+    const { token: pushToken, platform } = req.body || {};
+    if (!pushToken) return res.status(400).json({ message: "token is required" });
+
+    await pool.query(
+      `UPDATE company_users SET push_token = ?, push_token_platform = ? WHERE id = ?`,
+      [pushToken, platform || null, decoded.sub || decoded.userId]
+    );
+    res.json({ ok: true });
   } catch (err) {
     if (err.name === "JsonWebTokenError" || err.name === "TokenExpiredError") {
       return res.status(401).json({ message: "Invalid or expired token" });

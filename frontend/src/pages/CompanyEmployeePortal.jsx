@@ -123,20 +123,17 @@ const lightenHex = (hex) => {
 };
 
 const applyCustomRoles = (rolesFromServer) => {
-  if (!Array.isArray(rolesFromServer) || !rolesFromServer.length) {
-    // Reset to defaults
-    HIERARCHY_CHAIN.splice(0, HIERARCHY_CHAIN.length, ...DEFAULT_HIERARCHY_CHAIN);
-  } else {
-    const mapped = rolesFromServer.map((r) => ({
-      role:       r.roleKey,
-      label:      r.label,
-      parentRole: r.parentRoleKey || null,
-      color:      r.color    || "#2563eb",
-      bg:         r.bgColor  || lightenHex(r.color || "#2563eb"),
-      border:     r.color    || "#bfdbfe",
-    }));
-    HIERARCHY_CHAIN.splice(0, HIERARCHY_CHAIN.length, ...mapped);
-  }
+  const mapped = Array.isArray(rolesFromServer)
+    ? rolesFromServer.map((r) => ({
+        role:       r.roleKey,
+        label:      r.label,
+        parentRole: r.parentRoleKey || null,
+        color:      r.color    || "#2563eb",
+        bg:         r.bgColor  || lightenHex(r.color || "#2563eb"),
+        border:     r.color    || "#bfdbfe",
+      }))
+    : [];
+  HIERARCHY_CHAIN.splice(0, HIERARCHY_CHAIN.length, ...mapped);
   PARENT_ROLE     = Object.fromEntries(HIERARCHY_CHAIN.map((h) => [h.role, h.parentRole]));
   HIERARCHY_ROLES = new Set(HIERARCHY_CHAIN.map((h) => h.role));
 };
@@ -2252,6 +2249,10 @@ function RolesModal({ token, initialRoles, onClose, onSaved }) {
   const [draftLabel, setDraftLabel] = useState("");
   const [draftParent, setDraftParent] = useState("");
   const [draftColor, setDraftColor] = useState("#2563eb");
+  // Soft-service capability flags for the new role being created
+  const [draftCanRaise, setDraftCanRaise]   = useState(false);
+  const [draftCanResolve, setDraftCanResolve] = useState(false);
+  const [draftIsManager, setDraftIsManager]   = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
@@ -2264,10 +2265,14 @@ function RolesModal({ token, initialRoles, onClose, onSaved }) {
         parentRoleKey: draftParent || null,
         color: draftColor,
         bgColor: lightenHex(draftColor),
+        canRaiseSoftIssue:   draftCanRaise,
+        canResolveSoftIssue: draftCanResolve,
+        isSoftManager:       draftIsManager,
       });
       const list = await getCompanyRoles(token);
       setRoles(list || []);
       setDraftLabel(""); setDraftParent(""); setDraftColor("#2563eb");
+      setDraftCanRaise(false); setDraftCanResolve(false); setDraftIsManager(false);
     } catch (err) { setError(err.message || "Create failed"); }
     finally { setSaving(false); }
   };
@@ -2324,11 +2329,11 @@ function RolesModal({ token, initialRoles, onClose, onSaved }) {
           <div style={{ marginBottom: "16px" }}>
             {roles.length === 0 && (
               <p style={{ color: "#94a3b8", fontSize: "13px", padding: "16px", textAlign: "center", background: "#f8fafc", borderRadius: "8px" }}>
-                No custom roles yet. Using default hierarchy.<br />Add a role below to start customizing.
+                No roles defined yet. Add roles below to build your hierarchy.
               </p>
             )}
             {roles.map((r, i) => (
-              <div key={r.id} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px", borderRadius: "8px", border: "1px solid #e2e8f0", marginBottom: "6px", background: "#fff" }}>
+              <div key={r.id} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px", borderRadius: "8px", border: "1px solid #e2e8f0", marginBottom: "6px", background: "#fff", flexWrap: "wrap" }}>
                 <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
                   <button onClick={() => moveRole(r.id, -1)} disabled={saving || i === 0} style={{ padding: "0 4px", border: "none", background: "transparent", cursor: i === 0 ? "default" : "pointer", color: i === 0 ? "#cbd5e1" : "#64748b" }}>▲</button>
                   <button onClick={() => moveRole(r.id, 1)} disabled={saving || i === roles.length - 1} style={{ padding: "0 4px", border: "none", background: "transparent", cursor: i === roles.length - 1 ? "default" : "pointer", color: i === roles.length - 1 ? "#cbd5e1" : "#64748b" }}>▼</button>
@@ -2337,6 +2342,10 @@ function RolesModal({ token, initialRoles, onClose, onSaved }) {
                 <span style={{ fontSize: "11.5px", color: "#94a3b8" }}>
                   {r.parentRoleKey ? `reports to ${roles.find((x) => x.roleKey === r.parentRoleKey)?.label || r.parentRoleKey}` : "top level"}
                 </span>
+                {/* Soft-service capability badges */}
+                {r.canRaiseSoftIssue   && <span style={{ padding: "2px 8px", borderRadius: "12px", fontSize: "10.5px", fontWeight: 600, background: "#fef9c3", color: "#854d0e" }}>Raises Issues</span>}
+                {r.canResolveSoftIssue && <span style={{ padding: "2px 8px", borderRadius: "12px", fontSize: "10.5px", fontWeight: 600, background: "#dcfce7", color: "#166534" }}>Resolves Issues</span>}
+                {r.isSoftManager       && <span style={{ padding: "2px 8px", borderRadius: "12px", fontSize: "10.5px", fontWeight: 600, background: "#e0f2fe", color: "#0369a1" }}>Manager View</span>}
                 <span style={{ marginLeft: "auto", fontSize: "11px", color: "#94a3b8" }}>{r.roleKey}</span>
                 <button onClick={() => removeRole(r.id)} disabled={saving} style={{ padding: "4px 8px", border: "1px solid #fecaca", background: "#fff0f0", color: "#dc2626", borderRadius: "6px", cursor: "pointer", fontSize: "11.5px", fontWeight: 600 }}>Delete</button>
               </div>
@@ -2346,10 +2355,10 @@ function RolesModal({ token, initialRoles, onClose, onSaved }) {
           {/* Add new role */}
           <div style={{ background: "#f8fafc", borderRadius: "10px", padding: "14px 16px", border: "1px solid #e2e8f0" }}>
             <p style={{ fontSize: "12.5px", fontWeight: 700, color: "#475569", marginBottom: "10px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Add New Role</p>
-            <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr auto", gap: "10px", alignItems: "end" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr auto", gap: "10px", alignItems: "end", marginBottom: "12px" }}>
               <div>
                 <label style={{ display: "block", fontSize: "11.5px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>Role Label *</label>
-                <input value={draftLabel} onChange={(e) => setDraftLabel(e.target.value)} placeholder="e.g. Regional Manager" style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", border: "1px solid #e2e8f0", borderRadius: "6px", fontSize: "13px", outline: "none" }} />
+                <input value={draftLabel} onChange={(e) => setDraftLabel(e.target.value)} placeholder="e.g. Jabil Client Supervisor" style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", border: "1px solid #e2e8f0", borderRadius: "6px", fontSize: "13px", outline: "none" }} />
               </div>
               <div>
                 <label style={{ display: "block", fontSize: "11.5px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>Reports To (optional)</label>
@@ -2365,6 +2374,24 @@ function RolesModal({ token, initialRoles, onClose, onSaved }) {
                 <input type="color" value={draftColor} onChange={(e) => setDraftColor(e.target.value)} style={{ width: "100%", height: "34px", padding: "2px", border: "1px solid #e2e8f0", borderRadius: "6px", cursor: "pointer" }} />
               </div>
               <Btn onClick={addRole} disabled={saving || !draftLabel.trim()}>Add</Btn>
+            </div>
+            {/* Soft-service mobile capabilities */}
+            <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: "10px" }}>
+              <p style={{ fontSize: "11px", fontWeight: 700, color: "#94a3b8", marginBottom: "8px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Soft Services Mobile Permissions</p>
+              <div style={{ display: "flex", gap: "20px", flexWrap: "wrap" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12.5px", color: "#475569", cursor: "pointer" }}>
+                  <input type="checkbox" checked={draftCanRaise} onChange={(e) => { setDraftCanRaise(e.target.checked); if (e.target.checked) { setDraftCanResolve(false); setDraftIsManager(false); } }} />
+                  Can raise issues (e.g. Client Supervisor)
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12.5px", color: "#475569", cursor: "pointer" }}>
+                  <input type="checkbox" checked={draftCanResolve} onChange={(e) => { setDraftCanResolve(e.target.checked); if (e.target.checked) { setDraftCanRaise(false); setDraftIsManager(false); } }} />
+                  Can resolve issues (e.g. Catalyst Supervisor)
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12.5px", color: "#475569", cursor: "pointer" }}>
+                  <input type="checkbox" checked={draftIsManager} onChange={(e) => { setDraftIsManager(e.target.checked); if (e.target.checked) { setDraftCanRaise(false); setDraftCanResolve(false); } }} />
+                  Manager view only (e.g. Client Manager)
+                </label>
+              </div>
             </div>
           </div>
         </div>

@@ -32,6 +32,7 @@ import templateImportRouter from "./routes/templateImport.js";
 import assetDashboardRouter from "./routes/assetDashboard.js";
 import companyPortalAssetDashboardRouter from "./routes/companyPortalAssetDashboard.js";
 import uploadRouter from "./routes/upload.js";
+import softServiceRequestsRouter from "./routes/softServiceRequests.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -88,6 +89,7 @@ app.use("/api/template-import", templateImportRouter);
 app.use("/api/asset-dashboard", assetDashboardRouter);
 app.use("/api/company-portal/asset-dashboard", companyPortalAssetDashboardRouter);
 app.use("/api/upload", uploadRouter);
+app.use("/api/soft-service", softServiceRequestsRouter);
 
 app.use("/uploads", (req, res, next) => {
   res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
