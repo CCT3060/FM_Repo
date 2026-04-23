@@ -12,6 +12,7 @@ import React, { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
+    Image,
     ScrollView,
     StyleSheet,
     Text,
@@ -20,19 +21,21 @@ import {
     View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as ImagePicker from 'expo-image-picker';
 import { submitChecklist, resolveSoftRequest, getTemplateDetails } from '../utils/api';
 
 interface Question {
     id: number;
     questionText: string;
-    questionType: string;
+    answerType: string;   // normalised: yes_no, ok_not_ok, text, number, photo, dropdown, date, remark …
     options?: string[];
-    required?: boolean;
+    isRequired?: boolean;
 }
 
 interface BeforeAnswer {
     questionId: number;
     answer: string | null;
+    optionSelected?: string | null;
 }
 
 export default function SoftResolveFormScreen() {
@@ -59,8 +62,10 @@ export default function SoftResolveFormScreen() {
     let beforeAnswers: BeforeAnswer[] = [];
     try { beforeAnswers = JSON.parse(params.beforeAnswers || '[]'); } catch { /* ignore */ }
 
-    const getBeforeAnswer = (questionId: number) =>
-        beforeAnswers.find(a => a.questionId === questionId)?.answer ?? '—';
+    const getBeforeAnswer = (questionId: number) => {
+        const a = beforeAnswers.find(x => x.questionId === questionId);
+        return a?.optionSelected || a?.answer || '—';
+    };
 
     useEffect(() => {
         getTemplateDetails('checklist', templateId)
@@ -69,29 +74,60 @@ export default function SoftResolveFormScreen() {
             .finally(() => setLoading(false));
     }, [templateId]);
 
+    const setAfterAnswer = (qId: number, val: string) =>
+        setAfterAnswers(prev => ({ ...prev, [qId]: val }));
+
+    const handlePickPhoto = async (qId: number) => {
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!perm.granted) {
+            Alert.alert('Permission required', 'Allow photo library access to attach photos.');
+            return;
+        }
+        const result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            quality: 0.7,
+            base64: false,
+        });
+        if (!result.canceled && result.assets[0]?.uri) {
+            setAfterAnswer(qId, result.assets[0].uri);
+        }
+    };
+
+    const handleTakePhoto = async (qId: number) => {
+        const perm = await ImagePicker.requestCameraPermissionsAsync();
+        if (!perm.granted) {
+            Alert.alert('Permission required', 'Allow camera access to take photos.');
+            return;
+        }
+        const result = await ImagePicker.launchCameraAsync({
+            quality: 0.7,
+            base64: false,
+        });
+        if (!result.canceled && result.assets[0]?.uri) {
+            setAfterAnswer(qId, result.assets[0].uri);
+        }
+    };
+
     const handleResolve = async () => {
-        const unanswered = questions.filter(q => q.required && !afterAnswers[q.id]?.trim());
+        const unanswered = questions.filter(q => q.isRequired && !afterAnswers[q.id]?.trim());
         if (unanswered.length > 0) {
-            Alert.alert('Required Fields', 'Please fill all required fields in the After column.');
+            Alert.alert('Required Fields', `Please fill: ${unanswered.map(q => q.questionText).join(', ')}`);
             return;
         }
 
         setSubmitting(true);
         try {
-            // Submit the catalyst's checklist (the "after" record)
             const answerList = questions.map(q => ({
                 questionId: q.id,
                 answer: afterAnswers[q.id] ?? null,
             }));
-            await submitChecklist(templateId, assetId, answerList);
-
-            // Resolve the soft-service request
-            await resolveSoftRequest(requestId);
+            const resolveSubmissionId = await submitChecklist(templateId, assetId, answerList);
+            await resolveSoftRequest(requestId, resolveSubmissionId);
 
             Alert.alert(
                 'Request Resolved',
                 'The issue has been closed. The client supervisor has been notified.',
-                [{ text: 'OK', onPress: () => router.replace('/supervisor-dashboard') }]
+                [{ text: 'OK', onPress: () => router.replace('/soft-supervisor-dashboard') }]
             );
         } catch (err: any) {
             Alert.alert('Error', err.message || 'Failed to resolve request');
@@ -159,65 +195,26 @@ export default function SoftResolveFormScreen() {
                         <View key={q.id} style={styles.questionBlock}>
                             <Text style={styles.questionLabel}>
                                 {idx + 1}. {q.questionText}
-                                {q.required && <Text style={{ color: '#dc2626' }}> *</Text>}
+                                {q.isRequired && <Text style={{ color: '#dc2626' }}> *</Text>}
                             </Text>
 
                             <View style={styles.beforeAfterRow}>
                                 {/* BEFORE — read-only answer from client supervisor */}
                                 <View style={styles.beforeCol}>
                                     <Text style={styles.beforeValue}>
-                                        {getBeforeAnswer(q.id) || '—'}
+                                        {getBeforeAnswer(q.id)}
                                     </Text>
                                 </View>
 
                                 {/* AFTER — catalyst fills this */}
                                 <View style={styles.afterCol}>
-                                    {q.questionType === 'yes_no' ? (
-                                        <View style={styles.yesNoRow}>
-                                            {['Yes', 'No'].map(opt => (
-                                                <TouchableOpacity
-                                                    key={opt}
-                                                    style={[
-                                                        styles.yesNoBtn,
-                                                        afterAnswers[q.id] === opt && styles.yesNoBtnActive,
-                                                    ]}
-                                                    onPress={() => setAfterAnswers(prev => ({ ...prev, [q.id]: opt }))}
-                                                >
-                                                    <Text style={[
-                                                        styles.yesNoBtnText,
-                                                        afterAnswers[q.id] === opt && styles.yesNoBtnTextActive,
-                                                    ]}>
-                                                        {opt}
-                                                    </Text>
-                                                </TouchableOpacity>
-                                            ))}
-                                        </View>
-                                    ) : q.questionType === 'multiple_choice' && q.options?.length ? (
-                                        <View>
-                                            {q.options.map(opt => (
-                                                <TouchableOpacity
-                                                    key={opt}
-                                                    style={styles.optionBtn}
-                                                    onPress={() => setAfterAnswers(prev => ({ ...prev, [q.id]: opt }))}
-                                                >
-                                                    <View style={[
-                                                        styles.radio,
-                                                        afterAnswers[q.id] === opt && styles.radioActive,
-                                                    ]} />
-                                                    <Text style={styles.optionText}>{opt}</Text>
-                                                </TouchableOpacity>
-                                            ))}
-                                        </View>
-                                    ) : (
-                                        <TextInput
-                                            style={styles.textInput}
-                                            placeholder="Your answer…"
-                                            placeholderTextColor="#94A3B8"
-                                            multiline
-                                            value={afterAnswers[q.id] || ''}
-                                            onChangeText={text => setAfterAnswers(prev => ({ ...prev, [q.id]: text }))}
-                                        />
-                                    )}
+                                    <AfterInput
+                                        question={q}
+                                        value={afterAnswers[q.id] ?? ''}
+                                        onChange={val => setAfterAnswer(q.id, val)}
+                                        onPickPhoto={() => handlePickPhoto(q.id)}
+                                        onTakePhoto={() => handleTakePhoto(q.id)}
+                                    />
                                 </View>
                             </View>
                         </View>
@@ -246,6 +243,141 @@ export default function SoftResolveFormScreen() {
     );
 }
 
+/* ── After-column input renderer ─────────────────────────────────────────── */
+function AfterInput({
+    question, value, onChange, onPickPhoto, onTakePhoto,
+}: {
+    question: Question;
+    value: string;
+    onChange: (v: string) => void;
+    onPickPhoto: () => void;
+    onTakePhoto: () => void;
+}) {
+    const type = (question.answerType || 'text').toLowerCase();
+
+    if (type === 'yes_no') {
+        return <ToggleButtons value={value} onChange={onChange} options={['Yes', 'No']} colors={['#16a34a', '#DC2626']} />;
+    }
+    if (type === 'ok_not_ok') {
+        return <ToggleButtons value={value} onChange={onChange} options={['Ok', 'Not Ok']} colors={['#16a34a', '#DC2626']} />;
+    }
+    if (type === 'cleaned_not_cleaned') {
+        return <ToggleButtons value={value} onChange={onChange} options={['Cleaned', 'Not Cleaned']} colors={['#16a34a', '#DC2626']} />;
+    }
+    if (type === 'photo' || type === 'image') {
+        return (
+            <View>
+                <View style={s.photoRow}>
+                    <TouchableOpacity style={s.photoBtn} onPress={onTakePhoto}>
+                        <MaterialCommunityIcons name="camera" size={18} color="#2563EB" />
+                        <Text style={s.photoBtnText}>Camera</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={s.photoBtn} onPress={onPickPhoto}>
+                        <MaterialCommunityIcons name="image-multiple" size={18} color="#2563EB" />
+                        <Text style={s.photoBtnText}>Gallery</Text>
+                    </TouchableOpacity>
+                </View>
+                {value ? (
+                    <View style={s.photoPreview}>
+                        <Image source={{ uri: value }} style={s.photoImg} resizeMode="cover" />
+                        <TouchableOpacity style={s.photoRemove} onPress={() => onChange('')}>
+                            <MaterialCommunityIcons name="close-circle" size={20} color="#DC2626" />
+                        </TouchableOpacity>
+                    </View>
+                ) : (
+                    <View style={s.photoPlaceholder}>
+                        <MaterialCommunityIcons name="image-outline" size={32} color="#CBD5E1" />
+                        <Text style={s.photoPlaceholderText}>No photo</Text>
+                    </View>
+                )}
+            </View>
+        );
+    }
+    if ((type === 'dropdown' || type === 'multiple_choice' || type === 'custom_options') && question.options?.length) {
+        return (
+            <View>
+                {question.options.map(opt => (
+                    <TouchableOpacity
+                        key={opt}
+                        style={[s.optionBtn, value === opt && s.optionBtnActive]}
+                        onPress={() => onChange(opt)}
+                    >
+                        <View style={[s.radio, value === opt && s.radioActive]} />
+                        <Text style={[s.optionText, value === opt && s.optionTextActive]}>{opt}</Text>
+                    </TouchableOpacity>
+                ))}
+            </View>
+        );
+    }
+    if (type === 'number') {
+        return (
+            <TextInput
+                style={styles.textInput}
+                placeholder="Enter number"
+                placeholderTextColor="#94A3B8"
+                keyboardType="numeric"
+                value={value}
+                onChangeText={onChange}
+            />
+        );
+    }
+    if (type === 'date') {
+        return (
+            <TextInput
+                style={styles.textInput}
+                placeholder="YYYY-MM-DD"
+                placeholderTextColor="#94A3B8"
+                value={value}
+                onChangeText={onChange}
+            />
+        );
+    }
+    if (type === 'remark' || type === 'textarea' || type === 'long_text') {
+        return (
+            <TextInput
+                style={[styles.textInput, { minHeight: 70 }]}
+                placeholder="Enter remarks…"
+                placeholderTextColor="#94A3B8"
+                multiline
+                numberOfLines={3}
+                textAlignVertical="top"
+                value={value}
+                onChangeText={onChange}
+            />
+        );
+    }
+    return (
+        <TextInput
+            style={styles.textInput}
+            placeholder="Your answer…"
+            placeholderTextColor="#94A3B8"
+            value={value}
+            onChangeText={onChange}
+        />
+    );
+}
+
+function ToggleButtons({ value, onChange, options, colors }: {
+    value: string; onChange: (v: string) => void; options: string[]; colors: string[];
+}) {
+    return (
+        <View style={s.toggleRow}>
+            {options.map((opt, i) => {
+                const active = value === opt;
+                return (
+                    <TouchableOpacity
+                        key={opt}
+                        style={[s.toggleBtn, active && { borderColor: colors[i], backgroundColor: colors[i] + '15' }]}
+                        onPress={() => onChange(opt)}
+                    >
+                        <Text style={[s.toggleText, active && { color: colors[i], fontWeight: '800' }]}>{opt}</Text>
+                    </TouchableOpacity>
+                );
+            })}
+        </View>
+    );
+}
+
 const styles = StyleSheet.create({
     container:          { flex: 1, backgroundColor: '#F8FAFC' },
     centered:           { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8FAFC' },
@@ -269,19 +401,30 @@ const styles = StyleSheet.create({
     beforeCol:          { flex: 1, backgroundColor: '#fef9c3', borderRadius: 8, padding: 10, minHeight: 44, justifyContent: 'center' },
     afterCol:           { flex: 1 },
     beforeValue:        { fontSize: 13, color: '#78350f', fontStyle: 'italic' },
-    textInput:          { borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8, padding: 8, fontSize: 13, color: '#0F172A', minHeight: 60, textAlignVertical: 'top', backgroundColor: '#F8FAFC' },
-    yesNoRow:           { flexDirection: 'row', gap: 6 },
-    yesNoBtn:           { flex: 1, paddingVertical: 8, borderRadius: 7, borderWidth: 1.5, borderColor: '#E2E8F0', alignItems: 'center', backgroundColor: '#F8FAFC' },
-    yesNoBtnActive:     { borderColor: '#16a34a', backgroundColor: '#f0fdf4' },
-    yesNoBtnText:       { fontSize: 13, fontWeight: '600', color: '#64748B' },
-    yesNoBtnTextActive: { color: '#16a34a' },
-    optionBtn:          { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 5 },
-    radio:              { width: 16, height: 16, borderRadius: 8, borderWidth: 2, borderColor: '#CBD5E1', backgroundColor: '#fff' },
-    radioActive:        { borderColor: '#16a34a', backgroundColor: '#16a34a' },
-    optionText:         { fontSize: 13, color: '#334155' },
+    textInput:          { borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8, padding: 8, fontSize: 13, color: '#0F172A', minHeight: 44, textAlignVertical: 'top', backgroundColor: '#F8FAFC' },
     emptyBox:           { margin: 24, padding: 20, backgroundColor: '#fff', borderRadius: 10, alignItems: 'center' },
     emptyText:          { color: '#94A3B8', fontSize: 14 },
     resolveBar:         { padding: 16, backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#E2E8F0' },
     resolveBtn:         { backgroundColor: '#16a34a', borderRadius: 10, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
     resolveBtnText:     { color: '#fff', fontSize: 15, fontWeight: '700' },
+});
+
+const s = StyleSheet.create({
+    toggleRow:              { flexDirection: 'row', gap: 6 },
+    toggleBtn:              { flex: 1, paddingVertical: 8, borderRadius: 7, borderWidth: 1.5, borderColor: '#E2E8F0', alignItems: 'center', backgroundColor: '#F8FAFC' },
+    toggleText:             { fontSize: 12, fontWeight: '600', color: '#64748B' },
+    photoRow:               { flexDirection: 'row', gap: 6, marginBottom: 8 },
+    photoBtn:               { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, padding: 8, borderRadius: 7, borderWidth: 1.5, borderColor: '#2563EB', backgroundColor: '#EFF6FF' },
+    photoBtnText:           { fontSize: 12, fontWeight: '700', color: '#2563EB' },
+    photoPreview:           { position: 'relative' },
+    photoImg:               { width: '100%', height: 120, borderRadius: 7 },
+    photoRemove:            { position: 'absolute', top: 4, right: 4 },
+    photoPlaceholder:       { alignItems: 'center', justifyContent: 'center', height: 70, borderRadius: 7, borderWidth: 1, borderColor: '#E2E8F0', borderStyle: 'dashed' },
+    photoPlaceholderText:   { fontSize: 11, color: '#94A3B8', marginTop: 2 },
+    optionBtn:              { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 5, borderRadius: 6 },
+    optionBtnActive:        { backgroundColor: '#EFF6FF' },
+    radio:                  { width: 15, height: 15, borderRadius: 7.5, borderWidth: 2, borderColor: '#CBD5E1', backgroundColor: '#fff' },
+    radioActive:            { borderColor: '#2563EB', backgroundColor: '#2563EB' },
+    optionText:             { fontSize: 12, color: '#334155' },
+    optionTextActive:       { color: '#2563EB', fontWeight: '700' },
 });

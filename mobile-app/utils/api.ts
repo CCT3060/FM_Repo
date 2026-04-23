@@ -488,7 +488,7 @@ export interface GeoLocation {
  * Submit checklist response (with optional GPS location).
  * When offline, queues the submission and throws an error with `error.queued = true`.
  */
-export async function submitChecklist(templateId: number, assetId: number | null, answers: SubmissionAnswer[], location?: GeoLocation | null): Promise<void> {
+export async function submitChecklist(templateId: number, assetId: number | null, answers: SubmissionAnswer[], location?: GeoLocation | null): Promise<number | null> {
   const payload = { templateId, assetId, answers, latitude: location?.latitude ?? null, longitude: location?.longitude ?? null };
   try {
     const response = await authenticatedFetch('/api/template-assignments/submit-checklist', {
@@ -507,6 +507,10 @@ export async function submitChecklist(templateId: number, assetId: number | null
       if (error.shiftLocked) { err.shiftLocked = true; err.shiftName = error.shiftName; }
       throw err;
     }
+    try {
+      const data = await response.json();
+      return data?.submissionId ?? data?.id ?? null;
+    } catch { return null; }
   } catch (err: unknown) {
     if (isNetworkError(err)) {
       notifyNetworkStatus(false);

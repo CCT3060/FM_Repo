@@ -146,10 +146,11 @@ export default function SupervisorDashboardScreen() {
     const onRefresh = () => { setRefreshing(true); loadData(); };
 
     // Derived stats
-    const pendingLogsheets = teamStats.reduce((s, m) => s + Number(m.logsheetCount || 0), 0);
-    const activeChecklists = teamStats.reduce((s, m) => s + Number(m.checklistCount || 0), 0);
+    const safeTeamStats = Array.isArray(teamStats) ? teamStats : [];
+    const pendingLogsheets = safeTeamStats.reduce((s, m) => s + Number(m.logsheetCount || 0), 0);
+    const activeChecklists = safeTeamStats.reduce((s, m) => s + Number(m.checklistCount || 0), 0);
     const urgentAlerts = dashboardStats?.flags?.critical ?? 0;
-    const totalTasks = teamStats.reduce((s, m) => s + Number(m.totalCount || 0), 0);
+    const totalTasks = safeTeamStats.reduce((s, m) => s + Number(m.totalCount || 0), 0);
 
     const todayStr = new Date().toISOString().split('T')[0];
     const checklistsDoneToday = recentSubmissions.filter(s => s.submittedAt?.startsWith(todayStr)).length;

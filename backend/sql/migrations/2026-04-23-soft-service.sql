@@ -1,9 +1,9 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Soft Services: dynamic role capabilities + request tracking + push tokens
+-- PostgreSQL-compatible migration
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- 1. Add soft-service capability flags to company_roles
---    These replace the hardcoded role-name checks on mobile.
 ALTER TABLE company_roles
   ADD COLUMN IF NOT EXISTS can_raise_soft_issue   BOOLEAN NOT NULL DEFAULT FALSE,
   ADD COLUMN IF NOT EXISTS can_resolve_soft_issue BOOLEAN NOT NULL DEFAULT FALSE,
@@ -12,31 +12,27 @@ ALTER TABLE company_roles
 -- 2. Push token storage on company_users (for Expo push notifications)
 ALTER TABLE company_users
   ADD COLUMN IF NOT EXISTS push_token          VARCHAR(500) DEFAULT NULL,
-  ADD COLUMN IF NOT EXISTS push_token_platform VARCHAR(10)  DEFAULT NULL;  -- 'ios' | 'android'
+  ADD COLUMN IF NOT EXISTS push_token_platform VARCHAR(10)  DEFAULT NULL;
 
 -- 3. Soft-service request table
---    Raised by users with can_raise_soft_issue=true.
---    Resolved by users with can_resolve_soft_issue=true.
 CREATE TABLE IF NOT EXISTS soft_service_requests (
-  id                   BIGINT AUTO_INCREMENT PRIMARY KEY,
-  company_id           BIGINT       NOT NULL,
-  asset_id             BIGINT       NOT NULL,
-  template_id          BIGINT       NOT NULL,  -- checklist template used for the request
-  template_type        VARCHAR(20)  NOT NULL DEFAULT 'checklist',
-  -- client submission (the "before" record)
-  raise_submission_id  BIGINT       DEFAULT NULL,  -- FK: checklist_submissions.id
-  raised_by_user_id    BIGINT       NOT NULL,
-  raised_at            TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  -- resolution (the "after" record)
-  status               VARCHAR(20)  NOT NULL DEFAULT 'open',  -- 'open' | 'resolved'
-  resolve_submission_id BIGINT      DEFAULT NULL,  -- FK: checklist_submissions.id
-  resolved_by_user_id  BIGINT       DEFAULT NULL,
-  resolved_at          TIMESTAMP    DEFAULT NULL,
-  created_at           TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at           TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  id                    BIGSERIAL PRIMARY KEY,
+  company_id            BIGINT        NOT NULL,
+  asset_id              BIGINT        NOT NULL,
+  template_id           BIGINT        NOT NULL,
+  template_type         VARCHAR(20)   NOT NULL DEFAULT 'checklist',
+  raise_submission_id   BIGINT        DEFAULT NULL,
+  raised_by_user_id     BIGINT        NOT NULL,
+  raised_at             TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+  status                VARCHAR(20)   NOT NULL DEFAULT 'open',
+  resolve_submission_id BIGINT        DEFAULT NULL,
+  resolved_by_user_id   BIGINT        DEFAULT NULL,
+  resolved_at           TIMESTAMPTZ   DEFAULT NULL,
+  created_at            TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+  updated_at            TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+);
 
-  INDEX idx_ssr_company   (company_id),
-  INDEX idx_ssr_asset     (company_id, asset_id, status),
-  INDEX idx_ssr_raised_by (raised_by_user_id),
-  INDEX idx_ssr_resolver  (resolved_by_user_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE INDEX IF NOT EXISTS idx_ssr_company  ON soft_service_requests (company_id);
+CREATE INDEX IF NOT EXISTS idx_ssr_asset    ON soft_service_requests (company_id, asset_id, status);
+CREATE INDEX IF NOT EXISTS idx_ssr_raiser   ON soft_service_requests (raised_by_user_id);
+CREATE INDEX IF NOT EXISTS idx_ssr_resolver ON soft_service_requests (resolved_by_user_id);

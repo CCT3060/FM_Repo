@@ -36,7 +36,7 @@ export default function LoginScreen() {
                 // Route by soft-service capabilities first, then legacy role names
                 const caps = result.user.roleCapabilities;
                 if (caps?.canResolveSoftIssue) {
-                    router.replace('/supervisor-dashboard');
+                    router.replace('/soft-supervisor-dashboard');
                 } else if (caps?.isSoftManager) {
                     router.replace('/soft-manager-dashboard');
                 } else if (caps?.canRaiseSoftIssue) {

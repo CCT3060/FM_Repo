@@ -55,7 +55,7 @@ router.get("/", async (req, res, next) => {
       );
     } catch (selectErr) {
       // Capability columns not migrated yet — select without them
-      if (String(selectErr?.message).includes("Unknown column")) {
+      if (String(selectErr?.message).includes("does not exist") || selectErr?.code === '42703' || String(selectErr?.message).includes("Unknown column")) {
         [rows] = await pool.query(
           `SELECT id,
                   company_id      AS "companyId",
@@ -129,7 +129,7 @@ router.post("/", async (req, res, next) => {
       );
     } catch (insertErr) {
       // Column doesn't exist yet (migration pending) — insert without it
-      if (String(insertErr?.message).includes("Unknown column")) {
+      if (String(insertErr?.message).includes("does not exist") || insertErr?.code === '42703' || String(insertErr?.message).includes("Unknown column")) {
         await pool.query(
           `INSERT INTO company_roles
              (company_id, role_key, label, parent_role_key, sort_order, color, bg_color)

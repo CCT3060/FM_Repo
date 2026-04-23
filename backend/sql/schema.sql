@@ -175,6 +175,7 @@ CREATE TABLE IF NOT EXISTS checklist_templates (
 	category VARCHAR(80),
 	description VARCHAR(500),
 	frequency ENUM('Daily','Weekly','Monthly','Custom') NOT NULL DEFAULT 'Daily',
+	custom_hours JSON NULL,
 	shift VARCHAR(80),
 	status ENUM('active','inactive') NOT NULL DEFAULT 'active',
 	is_active TINYINT(1) NOT NULL DEFAULT 1,

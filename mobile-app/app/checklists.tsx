@@ -84,12 +84,18 @@ export default function ChecklistManagementScreen() {
     const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
     const [assignNote, setAssignNote] = useState('');
     const [isAssigning, setIsAssigning] = useState(false);
+    const [unreadCount, setUnreadCount] = useState(0);
 
     useFocusEffect(
         useCallback(() => {
             loadData();
         }, [])
     );
+
+    // Update badge whenever unassigned count changes
+    React.useEffect(() => {
+        setUnreadCount(unassignedTemplates.length);
+    }, [unassignedTemplates.length]);
 
     const loadData = async () => {
         try {
@@ -296,6 +302,11 @@ export default function ChecklistManagementScreen() {
                 </Text>
                 <TouchableOpacity style={styles.bellBtn} onPress={() => router.push('/tech-notifications' as any)}>
                     <MaterialCommunityIcons name="bell-outline" size={20} color={colors.headerText} />
+                    {unreadCount > 0 && (
+                        <View style={styles.bellBadge}>
+                            <Text style={styles.bellBadgeText}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
+                        </View>
+                    )}
                 </TouchableOpacity>
             </View>
 
@@ -505,6 +516,13 @@ const styles = StyleSheet.create({
         width: 36, height: 36, borderRadius: 10,
         backgroundColor: '#F1F5F9', justifyContent: 'center', alignItems: 'center',
     },
+    bellBadge: {
+        position: 'absolute', top: -4, right: -4,
+        minWidth: 16, height: 16, borderRadius: 8,
+        backgroundColor: '#DC2626', justifyContent: 'center', alignItems: 'center',
+        paddingHorizontal: 3,
+    },
+    bellBadgeText: { fontSize: 9, fontWeight: '800', color: '#fff' },
 
     // Logo bar
     logoBar: {

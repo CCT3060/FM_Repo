@@ -87,11 +87,11 @@ export default function EmployeeLoginScreen() {
             // then fall back to legacy technical role names.
             const caps = response.user.roleCapabilities;
             if (caps?.canResolveSoftIssue) {
-                router.replace('/supervisor-dashboard');   // catalyst supervisor
+                router.replace('/soft-supervisor-dashboard'); // resolve-capable: soft service dashboard
             } else if (caps?.isSoftManager) {
-                router.replace('/soft-manager-dashboard'); // client manager
+                router.replace('/soft-manager-dashboard');    // manager: view-only
             } else if (caps?.canRaiseSoftIssue) {
-                router.replace('/dashboard');              // client supervisor uses standard dashboard
+                router.replace('/dashboard');                 // raise-capable: client supervisor
             } else {
                 const userRole = response.user.role?.toLowerCase();
                 if (userRole === 'supervisor') {

@@ -62,6 +62,8 @@ router.post(
     body("category").optional().isString(),
     body("description").optional().isString(),
     body("frequency").optional().isIn(frequencies),
+    body("customHours").optional().isArray(),
+    body("customHours.*").optional().isInt({ min: 0, max: 23 }),
     body("shift").optional().isString(),
     body("status").optional().isIn(["active", "inactive"]),
     body("isActive").optional().isBoolean().toBoolean(),
@@ -97,6 +99,7 @@ router.post(
       category,
       description,
       frequency = "Daily",
+      customHours,
       shift,
       status = "active",
       isActive = true,
@@ -113,8 +116,8 @@ router.post(
       const conn = pool;
       const [templateResult] = await conn.execute(
         `INSERT INTO checklist_templates (
-            company_id, template_name, asset_type, asset_id, category, description, frequency, shift, status, is_active, created_by
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            company_id, template_name, asset_type, asset_id, category, description, frequency, custom_hours, shift, status, is_active, created_by
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          RETURNING id` ,
         [
           companyId,
@@ -124,6 +127,7 @@ router.post(
           category || null,
           description || null,
           frequency,
+          customHours?.length ? JSON.stringify(customHours) : null,
           shift || null,
           status,
           isActive ? 1 : 0,
@@ -204,7 +208,7 @@ router.get(
       const [templates] = await pool.query(
         `SELECT ct.id, ct.company_id AS "companyId", ct.template_name AS "templateName", ct.asset_type AS "assetType",
           ct.asset_id AS "assetId", a.asset_name AS "assetName",
-          ct.category, ct.description, ct.frequency, ct.shift, ct.status, ct.is_active AS "isActive",
+          ct.category, ct.description, ct.frequency, ct.custom_hours AS "customHours", ct.shift, ct.status, ct.is_active AS "isActive",
           ct.questions, ct.created_at AS "createdAt"
          FROM checklist_templates ct
          JOIN companies c ON ct.company_id = c.id
@@ -947,6 +951,8 @@ router.put(
     body("category").optional().isString(),
     body("description").optional().isString(),
     body("frequency").optional().isIn(frequencies),
+    body("customHours").optional().isArray(),
+    body("customHours.*").optional().isInt({ min: 0, max: 23 }),
     body("shift").optional().isString(),
     body("status").optional().isIn(["active", "inactive"]),
     body("isActive").optional().isBoolean().toBoolean(),
@@ -974,7 +980,7 @@ router.put(
   ]),
   async (req, res, next) => {
     const templateId = Number(req.params.id);
-    const { templateName, assetType, category, description, frequency, shift, status, isActive, questions } = req.body;
+    const { templateName, assetType, category, description, frequency, customHours, shift, status, isActive, questions } = req.body;
     try {
       const owned = await ensureTemplateOwned(templateId, req.user.id);
       if (!owned) return res.status(404).json({ message: "Template not found" });
@@ -986,6 +992,7 @@ router.put(
       if (category !== undefined) { setClauses.push("category = ?"); setParams.push(category || null); }
       if (description !== undefined) { setClauses.push("description = ?"); setParams.push(description || null); }
       if (frequency !== undefined) { setClauses.push("frequency = ?"); setParams.push(frequency); }
+      if (customHours !== undefined) { setClauses.push("custom_hours = ?"); setParams.push(customHours?.length ? JSON.stringify(customHours) : null); }
       if (shift !== undefined) { setClauses.push("shift = ?"); setParams.push(shift || null); }
       if (status !== undefined) { setClauses.push("status = ?"); setParams.push(status); }
       if (isActive !== undefined) { setClauses.push("is_active = ?"); setParams.push(isActive ? 1 : 0); }

@@ -184,7 +184,6 @@ export default function AssignmentFormScreen() {
     const loadTemplate = async () => {
         try {
             const data = await getTemplateDetails(templateType, templateId);
-            setTemplate(data);
 
             // Shift-based access control: check if user is allowed at this time
             if (data.shiftId) {
@@ -203,12 +202,14 @@ export default function AssignmentFormScreen() {
             } else if (routeAssetId) {
                 setAssetId(String(routeAssetId));
             }
-            // Initialize answers with empty values
+            // Initialize answers before setTemplate so render never sees template.questions
+            // without a corresponding answers map.
             const initialAnswers: Record<number, any> = {};
-            data.questions.forEach(q => {
+            (data.questions || []).forEach(q => {
                 initialAnswers[q.id] = '';
             });
             setAnswers(initialAnswers);
+            setTemplate(data);
         } catch (error) {
             console.error('Failed to load template:', error);
             Alert.alert('Error', 'Failed to load template details');
@@ -259,7 +260,7 @@ export default function AssignmentFormScreen() {
             }
             return;
         }
-        const missingRequired = template.questions
+        const missingRequired = (template.questions || [])
             .filter(q => {
                 if (!q.isRequired) return false;
                 const val = answers[q.id];
@@ -824,7 +825,7 @@ export default function AssignmentFormScreen() {
                                 )}
                             </View>
                         ) : (
-                        template.questions.map((question, index) => (
+                        (template.questions || []).map((question, index) => (
                             <View key={question.id} style={styles.questionCard}>
                                 <View style={styles.questionHeader}>
                                     <Text style={styles.questionNumber}>Q{index + 1}</Text>

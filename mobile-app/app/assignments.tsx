@@ -1,6 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -105,9 +105,9 @@ export default function AssignmentsScreen() {
     };
 
     // Reload every time this screen comes into focus (e.g. after submitting a form)
-    useFocusEffect(() => {
+    useFocusEffect(useCallback(() => {
         loadData();
-    });
+    }, []));
 
     const handleFillAssignment = (assignment: Assignment) => {
         // Safety check for undefined values
