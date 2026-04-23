@@ -40,14 +40,7 @@
           }
         }
       ],
-      "expo-secure-store",
-      [
-        "expo-image-picker",
-        {
-          "photosPermission": "Allow $(PRODUCT_NAME) to access your photos.",
-          "cameraPermission": "Allow $(PRODUCT_NAME) to use the camera."
-        }
-      ]
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": true,
