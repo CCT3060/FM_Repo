@@ -1,18 +1,13 @@
 import "dotenv/config";
-import dns from "dns";
 import { Pool } from "pg";
 
-// Force IPv4 DNS resolution — EC2 VPC subnets lack IPv6 routing,
-// but Supabase hostnames return IPv6 addresses (AAAA records) first.
-dns.setDefaultResultOrder("ipv4first");
-
-const connectionString = process.env.SUPABASE_DB_URL || process.env.DATABASE_URL;
+const connectionString = process.env.DATABASE_URL;
 
 if (!connectionString) {
-  throw new Error("Missing SUPABASE_DB_URL (or DATABASE_URL) for Supabase connection");
+  throw new Error("Missing DATABASE_URL environment variable");
 }
 
-const sslMode = (process.env.SUPABASE_DB_SSL || "require").toLowerCase();
+const sslMode = (process.env.DB_SSL || "disable").toLowerCase();
 const sslConfig = sslMode === "disable" ? false : { rejectUnauthorized: false };
 
 const poolInstance = new Pool({
@@ -20,9 +15,6 @@ const poolInstance = new Pool({
   ssl: sslConfig,
   max: Number(process.env.DB_POOL_SIZE || 10),
   idleTimeoutMillis: 30000,
-  // Force IPv4 — EC2 VPC subnets typically lack IPv6 routing,
-  // and Supabase DNS returns an IPv6 address that would cause ENETUNREACH.
-  family: 4,
 });
 
 const RETRY_ATTEMPTS = Number(process.env.DB_RETRY_ATTEMPTS || 3);
@@ -31,15 +23,12 @@ const RETRY_BASE_DELAY_MS = Number(process.env.DB_RETRY_BASE_DELAY_MS || 300);
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const isTransientDbError = (error) => {
-  const message = String(error?.message || "").toLowerCase();
   const code = String(error?.code || "").toLowerCase();
-
   return (
-    message.includes("circuit breaker open") ||
-    message.includes("unable to establish connection to upstream database") ||
     code === "etimedout" ||
     code === "econnreset" ||
-    code === "enetunreach"
+    code === "enetunreach" ||
+    code === "econnrefused"
   );
 };
 
