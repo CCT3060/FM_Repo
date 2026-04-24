@@ -14,7 +14,7 @@ import {
     View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { verifyToken, verifyCompanyCode } from '../utils/api';
+import { verifyToken, verifyCompanyCode, isTechSupervisor, isTechnicianUser } from '../utils/api';
 import { useTheme } from '../utils/theme';
 
 export default function LoginScreen() {
@@ -36,12 +36,11 @@ export default function LoginScreen() {
                 // Technical role takes priority: supervisor/technician get their own dashboards
                 // (which also surface soft-service features if the user has those caps).
                 // Pure soft-service users (no technical role) get the soft-only dashboards.
-                const role = result.user.role?.toLowerCase();
                 const caps = result.user.roleCapabilities;
 
-                if (role === 'supervisor') {
+                if (isTechSupervisor(result.user)) {
                     router.replace('/supervisor-dashboard');
-                } else if (role === 'technician') {
+                } else if (isTechnicianUser(result.user)) {
                     router.replace('/tech-dashboard');
                 } else if (caps?.canResolveSoftIssue) {
                     router.replace('/soft-supervisor-dashboard');

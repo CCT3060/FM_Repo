@@ -142,9 +142,20 @@ router.get("/check-access", async (req, res, next) => {
       return res.json({ allowed: false, message: "Shift not found" });
     }
 
-    // Admins, technical leads, and supervisors are always allowed regardless of shift
+    // Admins, technical leads, supervisors, and any custom role flagged as technical supervisor
+    // are always allowed regardless of shift time.
     const { role } = req.companyUser;
     if (role === "admin" || role === "technical_lead" || role === "supervisor") {
+      return res.json({ allowed: true, shiftName: shift.name });
+    }
+    // Check if this custom role is a technical supervisor
+    const [[roleCaps]] = await pool.query(
+      `SELECT is_technical_supervisor AS "isTechSup", is_technician AS "isTech"
+         FROM company_roles
+        WHERE company_id = ? AND role_key = ? AND is_active = TRUE LIMIT 1`,
+      [cid(req), role]
+    ).catch(() => [[null]]);
+    if (roleCaps?.isTechSup || roleCaps?.isTech) {
       return res.json({ allowed: true, shiftName: shift.name });
     }
 

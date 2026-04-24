@@ -46,7 +46,9 @@ router.get("/", async (req, res, next) => {
                 is_active                AS "isActive",
                 can_raise_soft_issue     AS "canRaiseSoftIssue",
                 can_resolve_soft_issue   AS "canResolveSoftIssue",
-                is_soft_manager          AS "isSoftManager"
+                is_soft_manager          AS "isSoftManager",
+                is_technical_supervisor  AS "isTechnicalSupervisor",
+                is_technician            AS "isTechnician"
            FROM company_roles
           WHERE company_id = ?
             AND is_active = TRUE
@@ -86,7 +88,8 @@ router.get("/", async (req, res, next) => {
 router.post("/", async (req, res, next) => {
   try {
     const { label, parentRoleKey, color, bgColor, sortOrder,
-            canRaiseSoftIssue, canResolveSoftIssue, isSoftManager } = req.body || {};
+            canRaiseSoftIssue, canResolveSoftIssue, isSoftManager,
+            isTechnicalSupervisor, isTechnician } = req.body || {};
     if (!label || !String(label).trim()) {
       return res.status(400).json({ message: "label is required" });
     }
@@ -118,13 +121,16 @@ router.post("/", async (req, res, next) => {
       await pool.query(
         `INSERT INTO company_roles
            (company_id, role_key, label, parent_role_key, sort_order, color, bg_color,
-            can_raise_soft_issue, can_resolve_soft_issue, is_soft_manager)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            can_raise_soft_issue, can_resolve_soft_issue, is_soft_manager,
+            is_technical_supervisor, is_technician)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           ...baseValues,
-          canRaiseSoftIssue   ? 1 : 0,
-          canResolveSoftIssue ? 1 : 0,
-          isSoftManager       ? 1 : 0,
+          canRaiseSoftIssue     ? 1 : 0,
+          canResolveSoftIssue   ? 1 : 0,
+          isSoftManager         ? 1 : 0,
+          isTechnicalSupervisor ? 1 : 0,
+          isTechnician          ? 1 : 0,
         ]
       );
     } catch (insertErr) {
@@ -152,7 +158,8 @@ router.put("/:id", async (req, res, next) => {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
     const { label, parentRoleKey, color, bgColor, sortOrder,
-            canRaiseSoftIssue, canResolveSoftIssue, isSoftManager } = req.body || {};
+            canRaiseSoftIssue, canResolveSoftIssue, isSoftManager,
+            isTechnicalSupervisor, isTechnician } = req.body || {};
     const fields = [];
     const params = [];
     if (label !== undefined) {
@@ -186,6 +193,14 @@ router.put("/:id", async (req, res, next) => {
     if (isSoftManager !== undefined) {
       fields.push(`is_soft_manager = ?`);
       params.push(isSoftManager ? 1 : 0);
+    }
+    if (isTechnicalSupervisor !== undefined) {
+      fields.push(`is_technical_supervisor = ?`);
+      params.push(isTechnicalSupervisor ? 1 : 0);
+    }
+    if (isTechnician !== undefined) {
+      fields.push(`is_technician = ?`);
+      params.push(isTechnician ? 1 : 0);
     }
     if (!fields.length) return res.json({ ok: true });
     fields.push(`updated_at = NOW()`);

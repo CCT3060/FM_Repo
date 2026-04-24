@@ -22,6 +22,7 @@ import {
     supervisorAssignTemplate,
     reassignTemplate,
     getStoredUser,
+    isTechSupervisor,
 } from '../utils/api';
 import { useTheme } from '../utils/theme';
 import { SupervisorBottomNav } from './supervisor-dashboard';
@@ -101,7 +102,7 @@ export default function ChecklistManagementScreen() {
         try {
             setError(null);
             const storedUser = await getStoredUser();
-            const supervisor = storedUser?.role === 'supervisor';
+            const supervisor = isTechSupervisor(storedUser);
             setIsSupervisor(supervisor);
             if (storedUser?.id) setCurrentUserId(storedUser.id);
             if (storedUser?.fullName) {

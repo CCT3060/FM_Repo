@@ -2253,6 +2253,8 @@ function RolesModal({ token, initialRoles, onClose, onSaved }) {
   const [draftCanRaise, setDraftCanRaise]   = useState(false);
   const [draftCanResolve, setDraftCanResolve] = useState(false);
   const [draftIsManager, setDraftIsManager]   = useState(false);
+  const [draftIsTechSupervisor, setDraftIsTechSupervisor] = useState(false);
+  const [draftIsTechnician, setDraftIsTechnician]         = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
@@ -2268,11 +2270,14 @@ function RolesModal({ token, initialRoles, onClose, onSaved }) {
         canRaiseSoftIssue:   draftCanRaise,
         canResolveSoftIssue: draftCanResolve,
         isSoftManager:       draftIsManager,
+        isTechnicalSupervisor: draftIsTechSupervisor,
+        isTechnician:          draftIsTechnician,
       });
       const list = await getCompanyRoles(token);
       setRoles(list || []);
       setDraftLabel(""); setDraftParent(""); setDraftColor("#2563eb");
       setDraftCanRaise(false); setDraftCanResolve(false); setDraftIsManager(false);
+      setDraftIsTechSupervisor(false); setDraftIsTechnician(false);
     } catch (err) { setError(err.message || "Create failed"); }
     finally { setSaving(false); }
   };
@@ -2346,6 +2351,8 @@ function RolesModal({ token, initialRoles, onClose, onSaved }) {
                 {r.canRaiseSoftIssue   && <span style={{ padding: "2px 8px", borderRadius: "12px", fontSize: "10.5px", fontWeight: 600, background: "#fef9c3", color: "#854d0e" }}>Raises Issues</span>}
                 {r.canResolveSoftIssue && <span style={{ padding: "2px 8px", borderRadius: "12px", fontSize: "10.5px", fontWeight: 600, background: "#dcfce7", color: "#166534" }}>Resolves Issues</span>}
                 {r.isSoftManager       && <span style={{ padding: "2px 8px", borderRadius: "12px", fontSize: "10.5px", fontWeight: 600, background: "#e0f2fe", color: "#0369a1" }}>Manager View</span>}
+                {r.isTechnicalSupervisor && <span style={{ padding: "2px 8px", borderRadius: "12px", fontSize: "10.5px", fontWeight: 600, background: "#eff6ff", color: "#1d4ed8" }}>Tech Supervisor</span>}
+                {r.isTechnician          && <span style={{ padding: "2px 8px", borderRadius: "12px", fontSize: "10.5px", fontWeight: 600, background: "#f5f3ff", color: "#6d28d9" }}>Technician</span>}
                 <span style={{ marginLeft: "auto", fontSize: "11px", color: "#94a3b8" }}>{r.roleKey}</span>
                 <button onClick={() => removeRole(r.id)} disabled={saving} style={{ padding: "4px 8px", border: "1px solid #fecaca", background: "#fff0f0", color: "#dc2626", borderRadius: "6px", cursor: "pointer", fontSize: "11.5px", fontWeight: 600 }}>Delete</button>
               </div>
@@ -2392,6 +2399,23 @@ function RolesModal({ token, initialRoles, onClose, onSaved }) {
                   Manager view only (e.g. Client Manager)
                 </label>
               </div>
+            </div>
+            {/* Technical asset mobile permissions */}
+            <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: "10px", marginTop: "6px" }}>
+              <p style={{ fontSize: "11px", fontWeight: 700, color: "#94a3b8", marginBottom: "8px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Technical Asset Mobile Permissions</p>
+              <div style={{ display: "flex", gap: "20px", flexWrap: "wrap" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12.5px", color: "#475569", cursor: "pointer" }}>
+                  <input type="checkbox" checked={draftIsTechSupervisor} onChange={(e) => { setDraftIsTechSupervisor(e.target.checked); if (e.target.checked) setDraftIsTechnician(false); }} />
+                  Technical Supervisor (assign checklists, manage team, fill forms)
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12.5px", color: "#475569", cursor: "pointer" }}>
+                  <input type="checkbox" checked={draftIsTechnician} onChange={(e) => { setDraftIsTechnician(e.target.checked); if (e.target.checked) setDraftIsTechSupervisor(false); }} />
+                  Technician (fill assigned checklists, view own work orders)
+                </label>
+              </div>
+              <p style={{ fontSize: "11px", color: "#94a3b8", marginTop: "6px" }}>
+                A role can have both Technical and Soft Service permissions simultaneously.
+              </p>
             </div>
           </div>
         </div>

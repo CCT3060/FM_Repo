@@ -15,7 +15,7 @@ import {
     View,
 } from 'react-native';
 import Animated, { FadeInUp, Layout } from 'react-native-reanimated';
-import { getMyAssignments, getMyTeam, getMySubmissionHistoryWithFallback, reassignTemplate, clearAuth, getStoredUser, type Assignment, type SubmissionHistoryItem } from '../utils/api';
+import { getMyAssignments, getMyTeam, getMySubmissionHistoryWithFallback, reassignTemplate, clearAuth, getStoredUser, isTechSupervisor, type Assignment, type SubmissionHistoryItem } from '../utils/api';
 import { SupervisorBottomNav } from './supervisor-dashboard';
 
 interface TeamMember {
@@ -41,10 +41,9 @@ export default function AssignmentsScreen() {
     const loadData = async () => {
         try {
             const user = await getStoredUser();
-            if (user?.role) setUserRole(user.role.toLowerCase());
+            setUserRole(isTechSupervisor(user) ? 'supervisor' : user?.role?.toLowerCase() ?? '');
         } catch { /* ignore */ }
-        await Promise.all([loadAssignments(), loadTeamMembers(), loadHistory()]);
-    };
+        await Promise.all([loadAssignments(), loadTeamMembers(), loadHistory()]);\n    };
 
     const loadHistory = async () => {
         try {

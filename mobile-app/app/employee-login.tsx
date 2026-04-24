@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { loginEmployee, getStoredCompany } from '../utils/api';
+import { loginEmployee, getStoredCompany, isTechSupervisor, isTechnicianUser } from '../utils/api';
 import { registerForPushNotifications } from '../utils/notifications';
 import { useTheme } from '../utils/theme';
 
@@ -86,21 +86,18 @@ export default function EmployeeLoginScreen() {
             // Route based on role capabilities first (soft-service roles),
             // then fall back to legacy technical role names.
             const caps = response.user.roleCapabilities;
-            if (caps?.canResolveSoftIssue) {
-                router.replace('/soft-supervisor-dashboard'); // resolve-capable: soft service dashboard
+            if (isTechSupervisor(response.user)) {
+                router.replace('/supervisor-dashboard');
+            } else if (isTechnicianUser(response.user)) {
+                router.replace('/tech-dashboard');
+            } else if (caps?.canResolveSoftIssue) {
+                router.replace('/soft-supervisor-dashboard');
             } else if (caps?.isSoftManager) {
-                router.replace('/soft-manager-dashboard');    // manager: view-only
+                router.replace('/soft-manager-dashboard');
             } else if (caps?.canRaiseSoftIssue) {
-                router.replace('/dashboard');                 // raise-capable: client supervisor
+                router.replace('/dashboard');
             } else {
-                const userRole = response.user.role?.toLowerCase();
-                if (userRole === 'supervisor') {
-                    router.replace('/supervisor-dashboard');
-                } else if (userRole === 'technician') {
-                    router.replace('/tech-dashboard');
-                } else {
-                    router.replace('/dashboard');
-                }
+                router.replace('/dashboard');
             }
         } catch (error) {
             console.error('Login error:', error);

@@ -21,8 +21,6 @@ export const API_BASE: string =
 
 console.log('🔗 API_BASE configured as:', API_BASE);
 
-console.log('🔗 API_BASE configured as:', API_BASE);
-
 const TOKEN_KEY = 'auth_token';
 const USER_KEY = 'user_data';
 const COMPANY_KEY = 'company_data';
@@ -34,9 +32,36 @@ interface CompanyVerifyResponse {
 }
 
 export interface RoleCapabilities {
-  canRaiseSoftIssue:   boolean;
-  canResolveSoftIssue: boolean;
-  isSoftManager:       boolean;
+  canRaiseSoftIssue:     boolean;
+  canResolveSoftIssue:   boolean;
+  isSoftManager:         boolean;
+  /** Custom role flagged as a technical supervisor (can fill checklists, manage work orders) */
+  isTechnicalSupervisor: boolean;
+  /** Custom role flagged as a technician (fills assigned checklists) */
+  isTechnician:          boolean;
+}
+
+/** Returns true if this user has any technical (non-soft-service) role access */
+export function isTechUser(user: { role?: string; roleCapabilities?: RoleCapabilities } | null | undefined): boolean {
+  if (!user) return false;
+  const role = user.role?.toLowerCase();
+  if (role === 'supervisor' || role === 'technician' || role === 'admin' || role === 'technical_lead') return true;
+  return Boolean(user.roleCapabilities?.isTechnicalSupervisor || user.roleCapabilities?.isTechnician);
+}
+
+/** Returns true if user has technical supervisor permissions (manage team, assign checklists) */
+export function isTechSupervisor(user: { role?: string; roleCapabilities?: RoleCapabilities } | null | undefined): boolean {
+  if (!user) return false;
+  const role = user.role?.toLowerCase();
+  if (role === 'supervisor' || role === 'admin' || role === 'technical_lead') return true;
+  return Boolean(user.roleCapabilities?.isTechnicalSupervisor);
+}
+
+/** Returns true if user has technician-level access (fill assigned work, view own history) */
+export function isTechnicianUser(user: { role?: string; roleCapabilities?: RoleCapabilities } | null | undefined): boolean {
+  if (!user) return false;
+  if (user.role?.toLowerCase() === 'technician') return true;
+  return Boolean(user.roleCapabilities?.isTechnician);
 }
 
 export interface AppUser {

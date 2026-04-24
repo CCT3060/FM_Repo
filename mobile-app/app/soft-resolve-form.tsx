@@ -22,7 +22,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
-import { submitChecklist, resolveSoftRequest, getTemplateDetails, getStoredUser } from '../utils/api';
+import { submitChecklist, resolveSoftRequest, getTemplateDetails, getStoredUser, isTechSupervisor, isTechnicianUser } from '../utils/api';
 
 interface Question {
     id: number;
@@ -134,9 +134,8 @@ export default function SoftResolveFormScreen() {
 
             // Navigate back to the user's actual home based on their role
             const storedUser = await getStoredUser().catch(() => null);
-            const role = storedUser?.role?.toLowerCase();
-            const homePath = role === 'supervisor' ? '/supervisor-dashboard'
-                           : role === 'technician' ? '/tech-dashboard'
+            const homePath = isTechSupervisor(storedUser) ? '/supervisor-dashboard'
+                           : isTechnicianUser(storedUser) ? '/tech-dashboard'
                            : '/soft-supervisor-dashboard';
 
             Alert.alert(

@@ -51,21 +51,49 @@ router.post("/verify-company", async (req, res, next) => {
 
 /* ── Helper: fetch role capabilities from company_roles table ─────────────── */
 async function getRoleCapabilities(companyId, roleKey) {
-  if (!roleKey) return { canRaiseSoftIssue: false, canResolveSoftIssue: false, isSoftManager: false };
-  const [[row]] = await pool.query(
-    `SELECT can_raise_soft_issue   AS "canRaiseSoftIssue",
-            can_resolve_soft_issue AS "canResolveSoftIssue",
-            is_soft_manager        AS "isSoftManager"
-       FROM company_roles
-      WHERE company_id = ? AND role_key = ? AND is_active = TRUE
-      LIMIT 1`,
-    [companyId, roleKey]
-  );
-  if (!row) return { canRaiseSoftIssue: false, canResolveSoftIssue: false, isSoftManager: false };
+  const empty = { canRaiseSoftIssue: false, canResolveSoftIssue: false, isSoftManager: false, isTechnicalSupervisor: false, isTechnician: false };
+  if (!roleKey) return empty;
+
+  // Legacy built-in role keys that are always technical
+  const legacyRole = roleKey.toLowerCase();
+  if (legacyRole === 'supervisor') return { ...empty, isTechnicalSupervisor: true };
+  if (legacyRole === 'technician') return { ...empty, isTechnician: true };
+  if (legacyRole === 'admin' || legacyRole === 'technical_lead') return { ...empty, isTechnicalSupervisor: true };
+
+  // Custom role — look up in company_roles
+  let row;
+  try {
+    [[row]] = await pool.query(
+      `SELECT can_raise_soft_issue       AS "canRaiseSoftIssue",
+              can_resolve_soft_issue     AS "canResolveSoftIssue",
+              is_soft_manager            AS "isSoftManager",
+              is_technical_supervisor    AS "isTechnicalSupervisor",
+              is_technician              AS "isTechnician"
+         FROM company_roles
+        WHERE company_id = ? AND role_key = ? AND is_active = TRUE
+        LIMIT 1`,
+      [companyId, roleKey]
+    );
+  } catch {
+    // Columns may not be migrated yet on some instances — fall back gracefully
+    [[row]] = await pool.query(
+      `SELECT can_raise_soft_issue   AS "canRaiseSoftIssue",
+              can_resolve_soft_issue AS "canResolveSoftIssue",
+              is_soft_manager        AS "isSoftManager"
+         FROM company_roles
+        WHERE company_id = ? AND role_key = ? AND is_active = TRUE
+        LIMIT 1`,
+      [companyId, roleKey]
+    ).catch(() => [[null]]);
+  }
+
+  if (!row) return empty;
   return {
-    canRaiseSoftIssue:   Boolean(row.canRaiseSoftIssue),
-    canResolveSoftIssue: Boolean(row.canResolveSoftIssue),
-    isSoftManager:       Boolean(row.isSoftManager),
+    canRaiseSoftIssue:     Boolean(row.canRaiseSoftIssue),
+    canResolveSoftIssue:   Boolean(row.canResolveSoftIssue),
+    isSoftManager:         Boolean(row.isSoftManager),
+    isTechnicalSupervisor: Boolean(row.isTechnicalSupervisor),
+    isTechnician:          Boolean(row.isTechnician),
   };
 }
 

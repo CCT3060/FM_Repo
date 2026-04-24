@@ -23,6 +23,8 @@ import {
     getAllSoftRequests,
     getMyAssignments,
     getStoredUser,
+    isTechSupervisor,
+    isTechnicianUser,
 } from '../utils/api';
 import type { SoftServiceRequest } from '../utils/api';
 
@@ -48,10 +50,9 @@ export default function SoftSupervisorDashboard() {
             setAssignments(Array.isArray(asgn) ? asgn : []);
             setOpenRequests(Array.isArray(reqs) ? reqs : []);
 
-            // Detect if this user also has a technical role — they came here from the main dashboard
-            const role = userData?.role?.toLowerCase();
-            if (role === 'supervisor') setTechHomePath('/supervisor-dashboard');
-            else if (role === 'technician') setTechHomePath('/tech-dashboard');
+            // Detect if this user also has a technical role — show a home button back to their main dashboard
+            if (isTechSupervisor(userData)) setTechHomePath('/supervisor-dashboard');
+            else if (isTechnicianUser(userData)) setTechHomePath('/tech-dashboard');
             else setTechHomePath(null);
         } catch { /* silent */ }
         finally { setLoading(false); setRefreshing(false); }

@@ -234,7 +234,7 @@ export default function ProfileScreen() {
             </ScrollView>
 
             {/* Role-aware Bottom Nav — uses the same shared components as all other screens */}
-            {user?.role === 'supervisor' || user?.role === 'Supervisor' ? (
+            {isTechSupervisor(user) ? (
                 <SupervisorBottomNav activeRoute="profile" />
             ) : (
                 <TechBottomNav activeRoute="profile" />
