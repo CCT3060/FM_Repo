@@ -345,6 +345,14 @@ async function cachedAuthGet<T>(endpoint: string): Promise<T> {
       notifyNetworkStatus(true);
       return data;
     }
+    // 304 Not Modified — server says nothing changed, serve from cache
+    if (response.status === 304) {
+      const cached = await getCachedData(endpoint);
+      if (cached != null) {
+        notifyNetworkStatus(true);
+        return cached as T;
+      }
+    }
     throw new Error(`HTTP ${response.status}`);
   } catch (err) {
     if (isNetworkError(err)) {
