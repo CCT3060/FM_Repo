@@ -13,23 +13,16 @@
 
 $EC2_IP    = "13.203.194.93"
 $EC2_USER  = "ec2-user"
-$PEM_FILE  = "$PSScriptRoot\mobile-app\upload_certificate.pem"
+# Key.pem copied here with correct permissions during first-time setup
+$PEM_FILE  = "$env:USERPROFILE\fm-ec2.pem"
 
 # ── Validate PEM file ─────────────────────────────────────────────────────────
 if (-not (Test-Path $PEM_FILE)) {
     Write-Error "PEM file not found: $PEM_FILE"
+    Write-Error "Run once: copy your EC2 Key.pem to $PEM_FILE with user-only read permissions."
+    Write-Error "  Get-Content 'C:\path\to\Key.pem' | Set-Content '$PEM_FILE'"
     exit 1
 }
-
-# Fix PEM permissions — SSH on Windows requires the key file is not world-readable
-$acl = Get-Acl $PEM_FILE
-$acl.SetAccessRuleProtection($true, $false)
-$rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
-    [System.Security.Principal.WindowsIdentity]::GetCurrent().Name,
-    "Read", "Allow"
-)
-$acl.SetAccessRule($rule)
-Set-Acl -Path $PEM_FILE -AclObject $acl
 
 Write-Host ""
 Write-Host "===================================================" -ForegroundColor Cyan
