@@ -1,0 +1,459 @@
+/**
+ * API layer — all backend communication.
+ *
+ * Base URL: set EXPO_PUBLIC_API_URL in .env.local for local dev.
+ * Falls back to production URL automatically.
+ */
+
+import * as SecureStore from 'expo-secure-store';
+import { cacheData, getCachedData, addToOfflineQueue, getOfflineQueue, removeFromOfflineQueue } from './offlineStorage';
+import { notifyNetworkStatus } from './networkStatus';
+import type { RoleCapabilities } from './permissions';
+
+// ─── Config ───────────────────────────────────────────────────────────────────
+export const API_BASE: string =
+  (process.env.EXPO_PUBLIC_API_URL as string | undefined) ??
+  'https://fm.catalystsolutions.eco';
+
+const TOKEN_KEY   = 'auth_token_v2';
+const USER_KEY    = 'user_data_v2';
+const COMPANY_KEY = 'company_data_v2';
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+export interface AppUser {
+  id:          number;
+  fullName:    string;
+  email:       string;
+  role:        string;
+  companyId:   number;
+  companyName: string;
+  supervisorId:     number | null;
+  permissions?:     Record<string, unknown>;
+  moduleAccess?:    string[];
+  roleCapabilities: RoleCapabilities;
+}
+
+export interface StoredCompany {
+  companyId:   number;
+  companyName: string;
+  companyCode: string;
+}
+
+export interface SoftRequest {
+  id:              number;
+  assetId:         number;
+  assetName:       string;
+  assetUniqueId:   string;
+  templateId:      number;
+  templateType:    string;
+  status:          'open' | 'resolved';
+  raisedAt:        string;
+  raisedByName?:   string;
+  resolvedAt?:     string;
+  resolvedByName?: string;
+  beforeAnswers?:  unknown;
+  beforeSubmittedAt?: string;
+  raiseSubmissionId?: number;
+}
+
+// ─── Token helpers ────────────────────────────────────────────────────────────
+export async function getToken(): Promise<string | null> {
+  return SecureStore.getItemAsync(TOKEN_KEY);
+}
+async function setToken(t: string) { await SecureStore.setItemAsync(TOKEN_KEY, t); }
+async function clearToken()        { await SecureStore.deleteItemAsync(TOKEN_KEY); }
+
+export async function getStoredUser(): Promise<AppUser | null> {
+  const raw = await SecureStore.getItemAsync(USER_KEY);
+  if (!raw) return null;
+  try { return JSON.parse(raw) as AppUser; } catch { return null; }
+}
+async function setStoredUser(u: AppUser) {
+  await SecureStore.setItemAsync(USER_KEY, JSON.stringify(u));
+}
+
+export async function getStoredCompany(): Promise<StoredCompany | null> {
+  const raw = await SecureStore.getItemAsync(COMPANY_KEY);
+  if (!raw) return null;
+  try { return JSON.parse(raw) as StoredCompany; } catch { return null; }
+}
+async function setStoredCompany(c: StoredCompany) {
+  await SecureStore.setItemAsync(COMPANY_KEY, JSON.stringify(c));
+}
+
+export async function clearSession() {
+  await Promise.all([
+    SecureStore.deleteItemAsync(TOKEN_KEY),
+    SecureStore.deleteItemAsync(USER_KEY),
+    SecureStore.deleteItemAsync(COMPANY_KEY),
+  ]);
+}
+
+// ─── Fetch helpers ────────────────────────────────────────────────────────────
+export async function authenticatedFetch(
+  path: string,
+  opts: RequestInit = {}
+): Promise<Response> {
+  const token = await getToken();
+  const headers = new Headers(opts.headers ?? {});
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  if (!headers.has('Content-Type') && opts.body) headers.set('Content-Type', 'application/json');
+
+  try {
+    const res = await fetch(`${API_BASE}${path}`, { ...opts, headers });
+    notifyNetworkStatus(true);
+    return res;
+  } catch (err) {
+    notifyNetworkStatus(false);
+    throw err;
+  }
+}
+
+async function apiGet<T>(path: string, useCache = false): Promise<T> {
+  if (useCache) {
+    const cached = await getCachedData(path);
+    if (cached != null) return cached as T;
+  }
+  const res = await authenticatedFetch(path);
+  if (!res.ok) {
+    const msg = await res.text().catch(() => 'Request failed');
+    throw new Error(msg || `HTTP ${res.status}`);
+  }
+  const data = await res.json() as T;
+  if (useCache) await cacheData(path, data);
+  return data;
+}
+
+async function apiPost<T>(path: string, body: unknown): Promise<T> {
+  const res = await authenticatedFetch(path, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const msg = await res.text().catch(() => 'Request failed');
+    throw new Error(msg || `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+async function apiPut<T>(path: string, body: unknown): Promise<T> {
+  const res = await authenticatedFetch(path, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const msg = await res.text().catch(() => 'Request failed');
+    throw new Error(msg || `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+async function apiPatch<T>(path: string, body: unknown): Promise<T> {
+  const res = await authenticatedFetch(path, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const msg = await res.text().catch(() => 'Request failed');
+    throw new Error(msg || `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+// ─── Auth ─────────────────────────────────────────────────────────────────────
+export async function verifyCompanyCode(code: string): Promise<StoredCompany> {
+  const res = await fetch(`${API_BASE}/api/mobile-auth/verify-company`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ companyCode: code }),
+  });
+  if (!res.ok) {
+    const msg = await res.json().catch(() => ({ message: 'Invalid company code' }));
+    throw new Error((msg as any).message ?? 'Invalid company code');
+  }
+  const data = await res.json() as StoredCompany;
+  await setStoredCompany(data);
+  return data;
+}
+
+export async function loginEmployee(
+  companyId: number,
+  employeeId: string,
+  password: string
+): Promise<{ user: AppUser; token: string }> {
+  const res = await fetch(`${API_BASE}/api/mobile-auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ companyId, username: employeeId, password }),
+  });
+  if (!res.ok) {
+    const msg = await res.json().catch(() => ({ message: 'Login failed' }));
+    throw new Error((msg as any).message ?? 'Login failed');
+  }
+  const { token, user } = await res.json() as { token: string; user: AppUser };
+  await setToken(token);
+  await setStoredUser(user);
+  return { token, user };
+}
+
+export async function verifyToken(): Promise<{ user: AppUser } | null> {
+  try {
+    const token = await getToken();
+    if (!token) return null;
+    const res = await authenticatedFetch('/api/mobile-auth/verify');
+    if (!res.ok) { await clearSession(); return null; }
+    const data = await res.json() as { user: AppUser };
+    await setStoredUser(data.user);
+    return data;
+  } catch { return null; }
+}
+
+export async function logout() {
+  await clearSession();
+}
+
+// ─── Push token ───────────────────────────────────────────────────────────────
+export async function registerPushToken(token: string, platform: string): Promise<void> {
+  try {
+    await authenticatedFetch('/api/mobile-auth/push-token', {
+      method: 'POST',
+      body: JSON.stringify({ token, platform }),
+    });
+  } catch { /* non-critical */ }
+}
+
+// ─── Assets ───────────────────────────────────────────────────────────────────
+export async function fetchAssets(params?: { search?: string; type?: string }) {
+  const q = new URLSearchParams();
+  if (params?.search) q.set('search', params.search);
+  if (params?.type)   q.set('type', params.type);
+  const qs = q.toString() ? `?${q}` : '';
+  return apiGet<unknown[]>(`/api/company-portal/assets${qs}`, true);
+}
+
+export async function fetchAssetById(id: number) {
+  return apiGet<unknown>(`/api/company-portal/assets/${id}`);
+}
+
+export async function fetchAssetByQR(assetId: number) {
+  return apiGet<unknown>(`/api/asset-qr/${assetId}`);
+}
+
+// ─── Assignments / Templates ─────────────────────────────────────────────────
+export async function fetchMyAssignments() {
+  return apiGet<unknown[]>('/api/mobile-auth/template-assignments/my-assignments');
+}
+
+export async function fetchMyTodayProgress() {
+  return apiGet<unknown>('/api/mobile-auth/template-assignments/my-today-progress');
+}
+
+export async function fetchMySubmissionHistory() {
+  return apiGet<unknown[]>('/api/mobile-auth/template-assignments/my-submission-history');
+}
+
+export async function fetchMySubmissionDetail(type: string, id: number) {
+  return apiGet<unknown>(`/api/mobile-auth/template-assignments/my-submission-detail/${type}/${id}`);
+}
+
+export async function fetchMyWarnings() {
+  return apiGet<unknown[]>('/api/mobile-auth/template-assignments/my-warnings');
+}
+
+export async function fetchTeamAssignments() {
+  return apiGet<unknown[]>('/api/mobile-auth/template-assignments/team-assignments');
+}
+
+export async function fetchTeamStats() {
+  return apiGet<unknown>('/api/mobile-auth/template-assignments/team-stats');
+}
+
+export async function fetchUnassignedTemplates() {
+  return apiGet<unknown[]>('/api/mobile-auth/template-assignments/unassigned-templates');
+}
+
+export async function assignTemplate(payload: {
+  templateId: number;
+  templateType: string;
+  userId: number;
+  frequency?: string;
+}) {
+  return apiPost<unknown>('/api/mobile-auth/template-assignments', payload);
+}
+
+// ─── Checklists ───────────────────────────────────────────────────────────────
+export async function fetchMyChecklists() {
+  return apiGet<unknown[]>('/api/mobile-auth/template-assignments/my-assignments');
+}
+
+export async function submitChecklist(
+  assetId: number,
+  templateId: number,
+  answers: unknown[],
+  offline = false
+): Promise<unknown> {
+  const endpoint = `/api/asset-qr/${assetId}/checklist/${templateId}/submissions`;
+  const payload  = { answers };
+
+  if (offline) {
+    await addToOfflineQueue({
+      type: 'checklist',
+      endpoint,
+      payload: payload as Record<string, unknown>,
+      templateName: `Checklist ${templateId}`,
+    });
+    return { queued: true };
+  }
+
+  try {
+    return await apiPost<unknown>(endpoint, payload);
+  } catch (err) {
+    if (!navigator.onLine) {
+      await addToOfflineQueue({
+        type: 'checklist',
+        endpoint,
+        payload: payload as Record<string, unknown>,
+        templateName: `Checklist ${templateId}`,
+      });
+      return { queued: true };
+    }
+    throw err;
+  }
+}
+
+// ─── Logsheets ────────────────────────────────────────────────────────────────
+export async function submitLogsheet(
+  assetId: number,
+  templateId: number,
+  entries: unknown[]
+): Promise<unknown> {
+  return apiPost<unknown>(
+    `/api/asset-qr/${assetId}/logsheet/${templateId}/entries`,
+    { entries }
+  );
+}
+
+// ─── Work Orders ──────────────────────────────────────────────────────────────
+export async function fetchWorkOrders(params?: { status?: string }) {
+  const q = params?.status ? `?status=${params.status}` : '';
+  return apiGet<unknown[]>(`/api/company-portal/work-orders${q}`);
+}
+
+export async function fetchWorkOrderById(id: number) {
+  return apiGet<unknown>(`/api/company-portal/work-orders/${id}`);
+}
+
+export async function createWorkOrder(payload: unknown) {
+  return apiPost<unknown>('/api/company-portal/work-orders', payload);
+}
+
+export async function updateWorkOrderStatus(id: number, status: string, notes?: string) {
+  return apiPut<unknown>(`/api/company-portal/work-orders/${id}/status`, { status, notes });
+}
+
+export async function assignWorkOrder(id: number, userId: number) {
+  return apiPut<unknown>(`/api/company-portal/work-orders/${id}/assign`, { userId });
+}
+
+// ─── Soft Service ─────────────────────────────────────────────────────────────
+export async function fetchMySoftRequests(): Promise<SoftRequest[]> {
+  return apiGet<SoftRequest[]>('/api/mobile-auth/soft-service/requests/my');
+}
+
+export async function fetchAllSoftRequests(): Promise<SoftRequest[]> {
+  return apiGet<SoftRequest[]>('/api/mobile-auth/soft-service/requests/all');
+}
+
+export async function raiseSoftRequest(payload: {
+  assetId: number;
+  templateId: number;
+  answers: unknown[];
+}): Promise<unknown> {
+  return apiPost<unknown>('/api/mobile-auth/soft-service/requests', payload);
+}
+
+export async function resolveSoftRequest(id: number, payload: {
+  answers: unknown[];
+}): Promise<unknown> {
+  return apiPut<unknown>(`/api/mobile-auth/soft-service/requests/${id}/resolve`, payload);
+}
+
+// ─── Notifications ────────────────────────────────────────────────────────────
+export async function fetchNotifications() {
+  return apiGet<unknown[]>('/api/notifications');
+}
+
+export async function fetchNotificationCount(): Promise<{ count: number }> {
+  return apiGet<{ count: number }>('/api/notifications/count');
+}
+
+export async function markAllNotificationsRead() {
+  return authenticatedFetch('/api/notifications/read-all', { method: 'PUT' });
+}
+
+export async function markNotificationRead(id: number) {
+  return authenticatedFetch(`/api/notifications/${id}`, { method: 'PUT' });
+}
+
+// ─── OJT Training ────────────────────────────────────────────────────────────
+export async function fetchMyTrainings() {
+  return apiGet<unknown[]>('/api/company-portal/ojt/mobile/my-assignments');
+}
+
+export async function fetchTrainingById(id: number) {
+  return apiGet<unknown>(`/api/company-portal/ojt/mobile/trainings/${id}`);
+}
+
+export async function startTraining(id: number) {
+  return apiPost<unknown>(`/api/company-portal/ojt/mobile/trainings/${id}/start`, {});
+}
+
+export async function completeTrainingModule(id: number, payload: unknown) {
+  return apiPost<unknown>(`/api/company-portal/ojt/mobile/trainings/${id}/complete-module`, payload);
+}
+
+export async function submitTrainingTest(id: number, answers: unknown[]) {
+  return apiPost<unknown>(`/api/company-portal/ojt/mobile/trainings/${id}/submit-test`, { answers });
+}
+
+// ─── Employees (for supervisor) ───────────────────────────────────────────────
+export async function fetchMyTeam() {
+  return apiGet<unknown[]>('/api/company-portal/my-team');
+}
+
+export async function fetchChecklistHistory() {
+  return apiGet<unknown[]>('/api/mobile-auth/template-assignments/checklist-history');
+}
+
+export async function fetchEmployeesByRole(role?: string) {
+  const q = role ? `?role=${role}` : '';
+  return apiGet<unknown[]>(`/api/company-portal/employees/by-role${q}`);
+}
+
+// ─── Shifts ───────────────────────────────────────────────────────────────────
+export async function fetchMyShifts() {
+  return apiGet<unknown[]>('/api/shifts/my-shifts');
+}
+
+export async function fetchActiveShift() {
+  return apiGet<unknown>('/api/shifts/active');
+}
+
+// ─── Offline sync ────────────────────────────────────────────────────────────
+export async function syncOfflineSubmissions(): Promise<number> {
+  const queue = await getOfflineQueue();
+  let synced = 0;
+  for (const item of queue) {
+    try {
+      const res = await authenticatedFetch(item.endpoint, {
+        method: 'POST',
+        body: JSON.stringify(item.payload),
+      });
+      if (res.ok) {
+        await removeFromOfflineQueue(item.id);
+        synced++;
+      }
+    } catch { /* retry next time */ }
+  }
+  return synced;
+}
