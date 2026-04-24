@@ -4,19 +4,22 @@ import { cacheData, getCachedData, addToOfflineQueue, getOfflineQueue, removeFro
 import { notifyNetworkStatus } from './networkStatus';
 
 // ────────────────────────────────────────────────────────────────────────────
-// API Configuration - UPDATE THIS WITH YOUR SERVER URL
+// API Configuration
 // ────────────────────────────────────────────────────────────────────────────
-// 
-// OPTION 1: Use your computer's local IP for physical device testing
-// Find your IP: Run "ipconfig" (Windows) or "ifconfig" (Mac/Linux) in terminal
-// Example: const API_BASE = 'http://192.168.1.100:4000';
 //
-// Always use the production backend — works on any device/network without
-// needing a local server or correct LAN IP. For local backend testing,
-// replace with your PC's IP on the same WiFi, e.g. 'http://192.168.1.5:4000'.
-const getApiBase = () => 'https://fm.catalystsolutions.eco';
+// For LOCAL testing (testing branch): create mobile-app/.env.local and add:
+//   EXPO_PUBLIC_API_URL=http://192.168.1.5:4000
+//   (replace 192.168.1.5 with your machine's IP — run `ipconfig` to find it)
+//
+// For PRODUCTION (develop branch / EAS build): leave .env.local absent.
+// Falls back automatically to https://fm.catalystsolutions.eco
+//
+// .env.local is git-ignored — it never gets committed or pushed.
+export const API_BASE: string =
+    (process.env.EXPO_PUBLIC_API_URL as string | undefined) ??
+    'https://fm.catalystsolutions.eco';
 
-export const API_BASE = getApiBase();
+console.log('🔗 API_BASE configured as:', API_BASE);
 
 console.log('🔗 API_BASE configured as:', API_BASE);
 
