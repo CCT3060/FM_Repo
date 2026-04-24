@@ -32,6 +32,8 @@ export default function SoftSupervisorDashboard() {
     const [openRequests, setOpenRequests] = useState<SoftServiceRequest[]>([]);
     const [loading, setLoading]     = useState(true);
     const [refreshing, setRefreshing] = useState(false);
+    // Whether this user also has a technical role (supervisor/technician) — shows a back button to their main dashboard
+    const [techHomePath, setTechHomePath] = useState<string | null>(null);
 
     useFocusEffect(useCallback(() => { loadData(); }, []));
 
@@ -45,6 +47,12 @@ export default function SoftSupervisorDashboard() {
             setUser(userData);
             setAssignments(Array.isArray(asgn) ? asgn : []);
             setOpenRequests(Array.isArray(reqs) ? reqs : []);
+
+            // Detect if this user also has a technical role — they came here from the main dashboard
+            const role = userData?.role?.toLowerCase();
+            if (role === 'supervisor') setTechHomePath('/supervisor-dashboard');
+            else if (role === 'technician') setTechHomePath('/tech-dashboard');
+            else setTechHomePath(null);
         } catch { /* silent */ }
         finally { setLoading(false); setRefreshing(false); }
     };
@@ -84,6 +92,14 @@ export default function SoftSupervisorDashboard() {
                 <TouchableOpacity onPress={() => router.push('/qr-scanner' as any)} style={s.scanBtn}>
                     <MaterialCommunityIcons name="qrcode-scan" size={22} color="#2563EB" />
                 </TouchableOpacity>
+                {techHomePath && (
+                    <TouchableOpacity
+                        onPress={() => router.replace(techHomePath as any)}
+                        style={[s.logoutBtn, { backgroundColor: '#EFF6FF', marginRight: 4 }]}
+                    >
+                        <MaterialCommunityIcons name="home-outline" size={20} color="#2563EB" />
+                    </TouchableOpacity>
+                )}
                 <TouchableOpacity onPress={handleLogout} style={s.logoutBtn}>
                     <MaterialCommunityIcons name="logout" size={20} color="#64748B" />
                 </TouchableOpacity>

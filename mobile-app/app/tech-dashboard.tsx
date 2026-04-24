@@ -14,7 +14,7 @@ import {
     View,
 } from 'react-native';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
-import { getMyAssignments, getMyShifts, getMySubmissionHistoryWithFallback, getMyWarnings, getStoredUser, getTodayProgress, getWorkOrders, type Assignment, type Shift, type SubmissionHistoryItem } from '../utils/api';
+import { getMyAssignments, getMyShifts, getMySubmissionHistoryWithFallback, getMyWarnings, getStoredUser, getTodayProgress, getWorkOrders, getMySoftRequests, type Assignment, type Shift, type SubmissionHistoryItem, type SoftServiceRequest } from '../utils/api';
 
 type DashboardHistoryItem = {
     kind: 'checklist' | 'logsheet' | 'workorder';
@@ -156,6 +156,7 @@ export default function TechDashboardScreen() {
     const [historyItems, setHistoryItems] = useState<SubmissionHistoryItem[]>([]);
     const [historyWorkOrders, setHistoryWorkOrders] = useState<any[]>([]);
     const [historyLoaded, setHistoryLoaded] = useState(false);
+    const [mySoftRequests, setMySoftRequests] = useState<SoftServiceRequest[]>([]);
 
     useEffect(() => {
         loadData();
@@ -198,6 +199,13 @@ export default function TechDashboardScreen() {
             setHistoryItems(submissionHistory);
             setHistoryWorkOrders(workOrdersHistory);
             setHistoryLoaded(true);
+
+            // Load soft service raised requests if technician has soft caps
+            const caps = storedUser?.roleCapabilities;
+            if (caps?.canRaiseSoftIssue || caps?.canResolveSoftIssue) {
+                const softReqs = await getMySoftRequests().catch(() => []);
+                setMySoftRequests(softReqs);
+            }
         } catch (error: any) {
             console.warn('Failed to load dashboard:', error instanceof Error ? error.message : error);
         } finally {
@@ -514,6 +522,73 @@ export default function TechDashboardScreen() {
                 })()}
 
                 <View style={{ height: 30 }} />
+
+                {/* Soft Services section — only if technician has soft service caps */}
+                {(() => {
+                    const caps = user?.roleCapabilities;
+                    if (!caps?.canRaiseSoftIssue && !caps?.canResolveSoftIssue) return null;
+                    const openCount = mySoftRequests.filter(r => r.status === 'open').length;
+                    return (
+                        <View style={styles.softSectionCard}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12, gap: 8 }}>
+                                <View style={styles.softLabel}>
+                                    <Text style={styles.softLabelText}>SOFT SERVICES</Text>
+                                </View>
+                                <Text style={{ fontSize: 15, fontWeight: '700', color: '#0F172A' }}>Service Requests</Text>
+                            </View>
+
+                            {caps.canRaiseSoftIssue && (
+                                <TouchableOpacity
+                                    style={styles.softScanBtn}
+                                    activeOpacity={0.85}
+                                    onPress={() => router.push('/qr-scanner' as any)}
+                                >
+                                    <MaterialCommunityIcons name="qrcode-scan" size={18} color="#fff" />
+                                    <Text style={styles.softScanBtnText}>Scan Asset to Raise Issue</Text>
+                                    <MaterialCommunityIcons name="chevron-right" size={16} color="#fff" />
+                                </TouchableOpacity>
+                            )}
+
+                            {mySoftRequests.length > 0 ? (
+                                <>
+                                    <Text style={{ fontSize: 12, color: '#64748B', fontWeight: '600', marginTop: 10, marginBottom: 6 }}>
+                                        MY RECENT REQUESTS
+                                    </Text>
+                                    {mySoftRequests.slice(0, 3).map(req => (
+                                        <View key={req.id} style={styles.softReqRow}>
+                                            <MaterialCommunityIcons
+                                                name={req.status === 'open' ? 'clock-alert-outline' : 'check-circle-outline'}
+                                                size={18}
+                                                color={req.status === 'open' ? '#D97706' : '#16A34A'}
+                                            />
+                                            <View style={{ flex: 1 }}>
+                                                <Text style={styles.softReqName} numberOfLines={1}>{req.assetName}</Text>
+                                                <Text style={styles.softReqDate}>{req.raisedAt ? new Date(req.raisedAt).toLocaleDateString() : '—'}</Text>
+                                            </View>
+                                            <View style={[styles.softStatusBadge, req.status === 'open' ? styles.softStatusOpen : styles.softStatusDone]}>
+                                                <Text style={[styles.softStatusText, req.status === 'open' ? { color: '#92400E' } : { color: '#166534' }]}>
+                                                    {req.status === 'open' ? 'Pending' : 'Resolved'}
+                                                </Text>
+                                            </View>
+                                        </View>
+                                    ))}
+                                    {openCount > 3 && (
+                                        <Text style={{ fontSize: 12, color: '#64748B', textAlign: 'center', marginTop: 6 }}>
+                                            +{openCount - 3} more open requests
+                                        </Text>
+                                    )}
+                                </>
+                            ) : (
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8 }}>
+                                    <MaterialCommunityIcons name="check-circle-outline" size={18} color="#16A34A" />
+                                    <Text style={{ fontSize: 13, color: '#16A34A', fontWeight: '600' }}>No pending service requests</Text>
+                                </View>
+                            )}
+                        </View>
+                    );
+                })()}
+
+                <View style={{ height: 20 }} />
             </ScrollView>
 
             <TechBottomNav activeRoute="home" />
@@ -710,6 +785,30 @@ const styles = StyleSheet.create({
     emptyIconCircle: { width: 64, height: 64, borderRadius: 32, backgroundColor: '#ECFDF5', alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
     emptyTitle: { fontSize: 16, fontWeight: '700', color: '#0F172A', marginBottom: 4 },
     emptyText: { fontSize: 14, color: '#94A3B8' },
+
+    // Soft Services section
+    softSectionCard: {
+        backgroundColor: '#FFFFFF', borderRadius: 16, padding: 16, marginBottom: 10,
+        borderWidth: 1, borderColor: '#F1F5F9',
+        shadowColor: '#64748B', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 1,
+    },
+    softLabel: { backgroundColor: '#F0FDF4', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, borderWidth: 1, borderColor: '#BBF7D0' },
+    softLabelText: { fontSize: 9, fontWeight: '800', color: '#166534', letterSpacing: 0.8 },
+    softScanBtn: {
+        flexDirection: 'row', alignItems: 'center', backgroundColor: '#0369A1',
+        borderRadius: 10, padding: 12, gap: 8,
+    },
+    softScanBtnText: { flex: 1, color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
+    softReqRow: {
+        flexDirection: 'row', alignItems: 'center', gap: 10,
+        paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#F1F5F9',
+    },
+    softReqName: { fontSize: 13, fontWeight: '700', color: '#0F172A' },
+    softReqDate: { fontSize: 11, color: '#64748B', marginTop: 1 },
+    softStatusBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+    softStatusOpen: { backgroundColor: '#FEF3C7' },
+    softStatusDone: { backgroundColor: '#DCFCE7' },
+    softStatusText: { fontSize: 11, fontWeight: '700' },
 });
 
 const shiftBannerStyles = StyleSheet.create({

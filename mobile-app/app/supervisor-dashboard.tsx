@@ -14,10 +14,19 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeInDown, FadeInUp, SlideInDown } from 'react-native-reanimated';
-import { getMyTeam, clearAuth, getDashboardStats, getStoredUser, getTeamStats, getChecklistSubmissions, getRecentLogsheetEntries, getTodayProgress, getWorkOrders } from '../utils/api';
+import { getMyTeam, clearAuth, getDashboardStats, getStoredUser, getTeamStats, getChecklistSubmissions, getRecentLogsheetEntries, getTodayProgress, getWorkOrders, getAllSoftRequests, type SoftServiceRequest } from '../utils/api';
 
 // Reusable Navigation Bar Component for Supervisor
 export const SupervisorBottomNav = ({ activeRoute }: { activeRoute: string }) => {
+    const [hasSoftCaps, setHasSoftCaps] = React.useState(false);
+
+    React.useEffect(() => {
+        getStoredUser().then(u => {
+            const caps = u?.roleCapabilities;
+            setHasSoftCaps(!!(caps?.canRaiseSoftIssue || caps?.canResolveSoftIssue || caps?.isSoftManager));
+        }).catch(() => {});
+    }, []);
+
     return (
         <View style={navStyles.container}>
             <TouchableOpacity style={navStyles.navItem} onPress={() => router.push('/supervisor-dashboard')}>
@@ -47,14 +56,25 @@ export const SupervisorBottomNav = ({ activeRoute }: { activeRoute: string }) =>
                 <Text style={[navStyles.navText, activeRoute === 'scanner' && navStyles.navTextActive]}>Scanner</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={navStyles.navItem} onPress={() => router.push('/assets-list')}>
-                <MaterialCommunityIcons
-                    name={activeRoute === 'assets' ? 'wrench' : 'wrench-outline'}
-                    size={24}
-                    color={activeRoute === 'assets' ? '#1E3A8A' : '#A0AEC0'}
-                />
-                <Text style={[navStyles.navText, activeRoute === 'assets' && navStyles.navTextActive]}>Assets</Text>
-            </TouchableOpacity>
+            {hasSoftCaps ? (
+                <TouchableOpacity style={navStyles.navItem} onPress={() => router.push('/soft-supervisor-dashboard' as any)}>
+                    <MaterialCommunityIcons
+                        name={activeRoute === 'requests' ? 'clipboard-alert' : 'clipboard-alert-outline'}
+                        size={24}
+                        color={activeRoute === 'requests' ? '#1E3A8A' : '#A0AEC0'}
+                    />
+                    <Text style={[navStyles.navText, activeRoute === 'requests' && navStyles.navTextActive]}>Requests</Text>
+                </TouchableOpacity>
+            ) : (
+                <TouchableOpacity style={navStyles.navItem} onPress={() => router.push('/assets-list')}>
+                    <MaterialCommunityIcons
+                        name={activeRoute === 'assets' ? 'wrench' : 'wrench-outline'}
+                        size={24}
+                        color={activeRoute === 'assets' ? '#1E3A8A' : '#A0AEC0'}
+                    />
+                    <Text style={[navStyles.navText, activeRoute === 'assets' && navStyles.navTextActive]}>Assets</Text>
+                </TouchableOpacity>
+            )}
 
             <TouchableOpacity style={navStyles.navItem} onPress={() => router.push('/profile')}>
                 <MaterialCommunityIcons
@@ -105,6 +125,7 @@ export default function SupervisorDashboardScreen() {
     const [recentLogsheets, setRecentLogsheets] = useState<any[]>([]);
     const [todayProgress, setTodayProgress] = useState<{ checklistsDone: number; logsheetsDone: number; totalDone: number } | null>(null);
     const [workOrders, setWorkOrders] = useState<any[]>([]);
+    const [openSoftRequests, setOpenSoftRequests] = useState<SoftServiceRequest[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
 
@@ -130,6 +151,13 @@ export default function SupervisorDashboardScreen() {
             setRecentLogsheets(logsheets);
             if (progress) setTodayProgress(progress);
             setWorkOrders(orders);
+
+            // Load soft-service requests only if this user has any soft caps
+            const caps = userData?.roleCapabilities;
+            if (caps?.canResolveSoftIssue || caps?.canRaiseSoftIssue || caps?.isSoftManager) {
+                const softReqs = await getAllSoftRequests({ status: 'open' }).catch(() => []);
+                setOpenSoftRequests(softReqs);
+            }
         } catch (error: any) {
             if (error.message?.includes('authentication') || error.message?.includes('token')) {
                 Alert.alert('Session Expired', 'Please log in again', [{
@@ -320,6 +348,87 @@ export default function SupervisorDashboardScreen() {
                             </ScrollView>
                         </Animated.View>
                     )}
+
+                    {/* ── Soft Services Section (shown only if user has soft caps) ─── */}
+                    {(() => {
+                        const caps = currentUser?.roleCapabilities;
+                        if (!caps?.canResolveSoftIssue && !caps?.canRaiseSoftIssue && !caps?.isSoftManager) return null;
+
+                        return (
+                            <Animated.View entering={FadeInUp.delay(520).duration(400).springify()} style={styles.softSection}>
+                                {/* Header row */}
+                                <View style={styles.techHeader}>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                        <View style={styles.softBadge}>
+                                            <Text style={styles.softBadgeText}>SOFT SERVICES</Text>
+                                        </View>
+                                        <Text style={styles.sectionTitle}>Service Requests</Text>
+                                    </View>
+                                    <TouchableOpacity onPress={() => router.push('/soft-supervisor-dashboard' as any)}>
+                                        <Text style={styles.viewAllText}>View All</Text>
+                                    </TouchableOpacity>
+                                </View>
+
+                                {/* Resolver: show open requests to act on */}
+                                {caps.canResolveSoftIssue && (
+                                    openSoftRequests.length > 0 ? (
+                                        openSoftRequests.slice(0, 3).map(req => (
+                                            <TouchableOpacity
+                                                key={req.id}
+                                                style={styles.softReqCard}
+                                                activeOpacity={0.8}
+                                                onPress={() => router.push('/qr-scanner' as any)}
+                                            >
+                                                <View style={styles.softReqLeft}>
+                                                    <MaterialCommunityIcons name="alert-circle" size={22} color="#DC2626" />
+                                                </View>
+                                                <View style={{ flex: 1 }}>
+                                                    <Text style={styles.softReqAsset} numberOfLines={1}>{req.assetName}</Text>
+                                                    <Text style={styles.softReqMeta}>
+                                                        Raised by {req.raisedByName || 'Client Supervisor'} · {req.raisedAt ? new Date(req.raisedAt).toLocaleDateString() : '—'}
+                                                    </Text>
+                                                </View>
+                                                <View style={styles.softOpenBadge}>
+                                                    <Text style={styles.softOpenBadgeText}>Open</Text>
+                                                </View>
+                                            </TouchableOpacity>
+                                        ))
+                                    ) : (
+                                        <View style={styles.softEmptyRow}>
+                                            <MaterialCommunityIcons name="check-circle-outline" size={20} color="#16A34A" />
+                                            <Text style={styles.softEmptyText}>No open service requests</Text>
+                                        </View>
+                                    )
+                                )}
+
+                                {/* Raiser: show quick action to raise an issue */}
+                                {caps.canRaiseSoftIssue && !caps.canResolveSoftIssue && (
+                                    <TouchableOpacity
+                                        style={styles.softRaiseBtn}
+                                        activeOpacity={0.85}
+                                        onPress={() => router.push('/qr-scanner' as any)}
+                                    >
+                                        <MaterialCommunityIcons name="qrcode-scan" size={20} color="#fff" />
+                                        <Text style={styles.softRaiseBtnText}>Scan Asset to Raise Issue</Text>
+                                        <MaterialCommunityIcons name="chevron-right" size={18} color="#fff" />
+                                    </TouchableOpacity>
+                                )}
+
+                                {/* Manager: view-only summary */}
+                                {caps.isSoftManager && !caps.canResolveSoftIssue && !caps.canRaiseSoftIssue && (
+                                    <TouchableOpacity
+                                        style={styles.softManagerBtn}
+                                        activeOpacity={0.85}
+                                        onPress={() => router.push('/soft-manager-dashboard' as any)}
+                                    >
+                                        <MaterialCommunityIcons name="clipboard-text-outline" size={20} color="#7C3AED" />
+                                        <Text style={styles.softManagerBtnText}>View Service Request Reports</Text>
+                                        <MaterialCommunityIcons name="chevron-right" size={18} color="#7C3AED" />
+                                    </TouchableOpacity>
+                                )}
+                            </Animated.View>
+                        );
+                    })()}
 
                     {/* ── Assign New Task button ─────────────────────── */}
                     <Animated.View entering={SlideInDown.delay(200).duration(800)}>
@@ -599,6 +708,70 @@ const styles = StyleSheet.create({
     woTitle: { fontSize: 15, fontWeight: '700', color: '#0F172A', marginBottom: 12, lineHeight: 22 },
     woPriorityRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
     woPriorityText: { fontSize: 13, fontWeight: '600' },
+
+    // Soft Services section
+    softSection: {
+        backgroundColor: '#FFFFFF',
+        borderRadius: 16,
+        padding: 16,
+        marginBottom: 16,
+        borderWidth: 1,
+        borderColor: '#F1F5F9',
+        shadowColor: '#64748B',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.04,
+        shadowRadius: 6,
+        elevation: 1,
+    },
+    softBadge: {
+        backgroundColor: '#F0FDF4',
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+        borderRadius: 6,
+        borderWidth: 1,
+        borderColor: '#BBF7D0',
+    },
+    softBadgeText: { fontSize: 9, fontWeight: '800', color: '#166534', letterSpacing: 0.8 },
+    softReqCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#FFF7F7',
+        borderRadius: 10,
+        padding: 12,
+        marginTop: 10,
+        gap: 10,
+        borderWidth: 1,
+        borderColor: '#FEE2E2',
+    },
+    softReqLeft: { width: 30, alignItems: 'center' },
+    softReqAsset: { fontSize: 14, fontWeight: '700', color: '#0F172A' },
+    softReqMeta: { fontSize: 12, color: '#64748B', marginTop: 2 },
+    softOpenBadge: { backgroundColor: '#FEE2E2', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+    softOpenBadgeText: { fontSize: 11, fontWeight: '700', color: '#DC2626' },
+    softEmptyRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10 },
+    softEmptyText: { fontSize: 13, color: '#16A34A', fontWeight: '600' },
+    softRaiseBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#0369A1',
+        borderRadius: 10,
+        padding: 14,
+        marginTop: 10,
+        gap: 10,
+    },
+    softRaiseBtnText: { flex: 1, color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
+    softManagerBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#F5F3FF',
+        borderRadius: 10,
+        padding: 14,
+        marginTop: 10,
+        gap: 10,
+        borderWidth: 1,
+        borderColor: '#DDD6FE',
+    },
+    softManagerBtnText: { flex: 1, color: '#7C3AED', fontSize: 14, fontWeight: '700' },
 
     // Assign button
     assignBtn: {

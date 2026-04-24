@@ -323,9 +323,12 @@ router.get(
                   ct.asset_type     AS "assetType",
                   ct.asset_id       AS "assetId",
                   a.asset_name      AS "assetName",
+                  ct.shift_id       AS "shiftId",
+                  s.name            AS "shiftName",
                   ct.questions
            FROM checklist_templates ct
            LEFT JOIN assets a ON ct.asset_id = a.id
+           LEFT JOIN shifts s ON s.id = ct.shift_id
            WHERE ct.id = ? AND ct.company_id = ?`,
           [id, cid(req)]
         );
@@ -381,11 +384,14 @@ router.get(
                   lt.asset_type AS "assetType",
                   COALESCE(lt.layout_type, 'standard') AS "layoutType",
                   lt.header_config AS "headerConfig",
+                  lt.shift_id AS "shiftId",
+                  s.name AS "shiftName",
                   lta.asset_id AS "assetId",
                   a.asset_name AS "assetName"
            FROM logsheet_templates lt
            LEFT JOIN logsheet_template_assignments lta ON lta.template_id = lt.id
            LEFT JOIN assets a ON lta.asset_id = a.id
+           LEFT JOIN shifts s ON s.id = lt.shift_id
            WHERE lt.id = ? AND lt.company_id = ?
            LIMIT 1`,
           [id, cid(req)]

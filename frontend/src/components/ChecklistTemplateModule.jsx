@@ -335,6 +335,7 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
         description: source.description || "",
         // When cloning, clear frequency so user picks a new one
         frequency: isClone ? "" : (source.frequency || "Daily"),
+        customHours: isClone ? [] : (Array.isArray(source.customHours) ? source.customHours : []),
         shiftId: source.shiftId ? String(source.shiftId) : "",
         status: source.status || "active",
       };
@@ -347,6 +348,7 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
       category: "",
       description: "",
       frequency: "Daily",
+      customHours: [],
       shiftId: "",
       status: "active",
     };
@@ -450,6 +452,7 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
       category: form.category.trim() || undefined,
       description: form.description.trim() || undefined,
       frequency: form.frequency || "Custom",
+      customHours: (form.frequency === "" || form.frequency === "Custom") ? (form.customHours || []) : undefined,
       shiftId: form.shiftId ? Number(form.shiftId) : undefined,
       status: form.status,
       questions: questions.map((q, idx) => ({
@@ -581,6 +584,50 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
               <option value="inactive">Inactive</option>
             </Sel>
           </div>
+          {(form.frequency === "" || form.frequency === "Custom") && (
+            <div style={{ gridColumn: "span 3" }}>
+              <Label>Schedule Hours <span style={{ color: "#94a3b8", fontWeight: 400 }}>(select hours when this checklist should trigger)</span></Label>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "8px" }}>
+                {Array.from({ length: 24 }, (_, h) => {
+                  const label = `${String(h).padStart(2, "0")}:00`;
+                  const selected = (form.customHours || []).includes(h);
+                  return (
+                    <button
+                      key={h}
+                      type="button"
+                      onClick={() => setForm((p) => ({
+                        ...p,
+                        customHours: selected
+                          ? (p.customHours || []).filter((x) => x !== h)
+                          : [...(p.customHours || []), h].sort((a, b) => a - b),
+                      }))}
+                      style={{
+                        padding: "6px 10px",
+                        borderRadius: "6px",
+                        border: selected ? "1.5px solid #2563eb" : "1px solid #cbd5e1",
+                        background: selected ? "#eff6ff" : "#f8fafc",
+                        color: selected ? "#1e40af" : "#64748b",
+                        fontWeight: selected ? 700 : 400,
+                        fontSize: "12px",
+                        cursor: "pointer",
+                        minWidth: "52px",
+                        transition: "all 0.1s",
+                      }}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+              {(form.customHours || []).length > 0 ? (
+                <p style={{ fontSize: "12px", color: "#2563eb", marginTop: "8px", fontWeight: 600 }}>
+                  Triggers at: {(form.customHours || []).map((h) => `${String(h).padStart(2, "0")}:00`).join(", ")}
+                </p>
+              ) : (
+                <p style={{ fontSize: "12px", color: "#94a3b8", marginTop: "8px" }}>No hours selected — checklist can be filled any time.</p>
+              )}
+            </div>
+          )}
           <div style={{ gridColumn: "span 3" }}>
             <Label>Description</Label>
             <Inp value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} placeholder="Purpose / scope of this checklist" />

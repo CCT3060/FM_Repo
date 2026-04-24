@@ -180,13 +180,17 @@ export default function ChecklistManagementScreen() {
     });
 
     const handleFillNow = (template: Template) => {
+        if (!template.id || !template.templateType) {
+            Alert.alert('Error', 'Invalid template data. Please refresh and try again.');
+            return;
+        }
         router.push({
             pathname: '/assignment-form',
             params: {
                 templateType: template.templateType,
-                templateId: template.id.toString(),
-                templateName: template.templateName,
-                assignmentId: template.assignmentId?.toString() || '0',
+                templateId: String(template.id),
+                templateName: template.templateName || 'Untitled',
+                assignmentId: template.assignmentId ? String(template.assignmentId) : '0',
                 assetId: template.assetId ? String(template.assetId) : '',
                 assetName: template.assetName || '',
             },

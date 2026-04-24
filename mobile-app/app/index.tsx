@@ -33,23 +33,24 @@ export default function LoginScreen() {
             const result = await verifyToken();
 
             if (result && result.user) {
-                // Route by soft-service capabilities first, then legacy role names
+                // Technical role takes priority: supervisor/technician get their own dashboards
+                // (which also surface soft-service features if the user has those caps).
+                // Pure soft-service users (no technical role) get the soft-only dashboards.
+                const role = result.user.role?.toLowerCase();
                 const caps = result.user.roleCapabilities;
-                if (caps?.canResolveSoftIssue) {
+
+                if (role === 'supervisor') {
+                    router.replace('/supervisor-dashboard');
+                } else if (role === 'technician') {
+                    router.replace('/tech-dashboard');
+                } else if (caps?.canResolveSoftIssue) {
                     router.replace('/soft-supervisor-dashboard');
                 } else if (caps?.isSoftManager) {
                     router.replace('/soft-manager-dashboard');
                 } else if (caps?.canRaiseSoftIssue) {
                     router.replace('/dashboard');
                 } else {
-                    const role = result.user.role?.toLowerCase();
-                    if (role === 'supervisor') {
-                        router.replace('/supervisor-dashboard');
-                    } else if (role === 'technician') {
-                        router.replace('/tech-dashboard');
-                    } else {
-                        router.replace('/dashboard');
-                    }
+                    router.replace('/dashboard');
                 }
             } else {
                 // No stored token, stay on login page

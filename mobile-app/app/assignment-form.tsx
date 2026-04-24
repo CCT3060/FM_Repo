@@ -771,7 +771,25 @@ export default function AssignmentFormScreen() {
                                 </View>
 
                                 {/* Scrollable table */}
-                                {template.headerConfig && (
+                                {(() => {
+                                    // Guard: headerConfig must have valid rows and columnGroups arrays
+                                    const hc = template.headerConfig as TabularHeaderConfig | null;
+                                    const hasValidConfig = hc &&
+                                        Array.isArray(hc.columnGroups) && hc.columnGroups.length > 0 &&
+                                        Array.isArray(hc.rows);
+                                    if (!hasValidConfig) {
+                                        return (
+                                            <View style={{ padding: 16, backgroundColor: '#FEF3C7', borderRadius: 8, marginTop: 12 }}>
+                                                <Text style={{ color: '#92400E', textAlign: 'center', fontWeight: '600', fontSize: 14 }}>
+                                                    This logsheet template has not been configured yet.
+                                                </Text>
+                                                <Text style={{ color: '#92400E', textAlign: 'center', fontSize: 12, marginTop: 4 }}>
+                                                    Please ask your administrator to set up the column/row structure.
+                                                </Text>
+                                            </View>
+                                        );
+                                    }
+                                    return (
                                     <ScrollView horizontal showsHorizontalScrollIndicator
                                         style={{ marginTop: 12 }}
                                         contentContainerStyle={{ flexDirection: 'column' }}
@@ -780,10 +798,10 @@ export default function AssignmentFormScreen() {
                                         <View style={{ flexDirection: 'row' }}>
                                             <View style={[tabStyles.headerCell, tabStyles.rowLabelCell]}>
                                                 <Text style={tabStyles.headerText}>
-                                                    {template.headerConfig.rowLabelHeader || 'Time'}
+                                                    {hc!.rowLabelHeader || 'Time'}
                                                 </Text>
                                             </View>
-                                            {(template.headerConfig.columnGroups as TabularColumnGroup[]).map((g: TabularColumnGroup) => (
+                                            {hc!.columnGroups.map((g: TabularColumnGroup) => (
                                                 <View key={g.id}
                                                     style={[tabStyles.headerCell, { width: g.columns.length * 80 }]}>
                                                     <Text style={tabStyles.headerText}>{g.label}</Text>
@@ -793,7 +811,7 @@ export default function AssignmentFormScreen() {
                                         {/* Sub-column header row */}
                                         <View style={{ flexDirection: 'row' }}>
                                             <View style={[tabStyles.subHeaderCell, tabStyles.rowLabelCell]} />
-                                            {(template.headerConfig.columnGroups as TabularColumnGroup[]).flatMap((g: TabularColumnGroup) =>
+                                            {hc!.columnGroups.flatMap((g: TabularColumnGroup) =>
                                                 g.columns.map((c) => (
                                                     <View key={`${g.id}_${c.id}`} style={tabStyles.subHeaderCell}>
                                                         <Text style={tabStyles.subHeaderText}>{c.label}</Text>
@@ -803,12 +821,12 @@ export default function AssignmentFormScreen() {
                                             )}
                                         </View>
                                         {/* Data rows */}
-                                        {(template.headerConfig.rows as Array<{id:string;label:string}>).map((row) => (
+                                        {hc!.rows.map((row) => (
                                             <View key={row.id} style={{ flexDirection: 'row' }}>
                                                 <View style={[tabStyles.dataCell, tabStyles.rowLabelCell]}>
                                                     <Text style={tabStyles.rowLabelText}>{row.label}</Text>
                                                 </View>
-                                                {(template.headerConfig!.columnGroups as TabularColumnGroup[]).flatMap((g: TabularColumnGroup) =>
+                                                {hc!.columnGroups.flatMap((g: TabularColumnGroup) =>
                                                     g.columns.map((c) => {
                                                         const key = `${row.id}__${g.id}__${c.id}`;
                                                         return (
@@ -827,7 +845,8 @@ export default function AssignmentFormScreen() {
                                             </View>
                                         ))}
                                     </ScrollView>
-                                )}
+                                    );
+                                })()}
                             </View>
                         ) : (
                         (template.questions || []).map((question, index) => {

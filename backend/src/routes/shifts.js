@@ -142,9 +142,9 @@ router.get("/check-access", async (req, res, next) => {
       return res.json({ allowed: false, message: "Shift not found" });
     }
 
-    // Admins and technical leads are always allowed regardless of shift
+    // Admins, technical leads, and supervisors are always allowed regardless of shift
     const { role } = req.companyUser;
-    if (role === "admin" || role === "technical_lead") {
+    if (role === "admin" || role === "technical_lead" || role === "supervisor") {
       return res.json({ allowed: true, shiftName: shift.name });
     }
 

@@ -22,7 +22,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
-import { submitChecklist, resolveSoftRequest, getTemplateDetails } from '../utils/api';
+import { submitChecklist, resolveSoftRequest, getTemplateDetails, getStoredUser } from '../utils/api';
 
 interface Question {
     id: number;
@@ -132,10 +132,17 @@ export default function SoftResolveFormScreen() {
             const resolveSubmissionId = await submitChecklist(templateId, assetId, answerList);
             await resolveSoftRequest(requestId, resolveSubmissionId);
 
+            // Navigate back to the user's actual home based on their role
+            const storedUser = await getStoredUser().catch(() => null);
+            const role = storedUser?.role?.toLowerCase();
+            const homePath = role === 'supervisor' ? '/supervisor-dashboard'
+                           : role === 'technician' ? '/tech-dashboard'
+                           : '/soft-supervisor-dashboard';
+
             Alert.alert(
                 'Request Resolved',
                 'The issue has been closed. The client supervisor has been notified.',
-                [{ text: 'OK', onPress: () => router.replace('/soft-supervisor-dashboard') }]
+                [{ text: 'OK', onPress: () => router.replace(homePath as any) }]
             );
         } catch (err: any) {
             Alert.alert('Error', err.message || 'Failed to resolve request');

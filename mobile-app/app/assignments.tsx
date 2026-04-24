@@ -218,21 +218,29 @@ export default function AssignmentsScreen() {
                     <View style={styles.cardActions}>
                         {userRole === 'supervisor' ? (
                             <View style={{ gap: 8 }}>
+                                <TouchableOpacity
+                                    style={[styles.actionButton, styles.fillButton]}
+                                    onPress={() => handleFillAssignment(assignment)}
+                                >
+                                    <MaterialCommunityIcons name="pencil" size={18} color="#FFFFFF" />
+                                    <Text style={styles.fillButtonText}>Fill Now</Text>
+                                </TouchableOpacity>
                                 {assignment.templateType === 'logsheet' && (
                                     <TouchableOpacity
                                         style={[styles.actionButton, styles.viewButton]}
                                         onPress={() => handleViewLogsheetEntries(assignment)}
                                     >
                                         <MaterialCommunityIcons name="table-eye" size={18} color="#FFFFFF" />
-                                        <Text style={styles.fillButtonText}>View Logsheet</Text>
+                                        <Text style={styles.fillButtonText}>View Entries</Text>
                                     </TouchableOpacity>
                                 )}
-                                {assignment.templateType !== 'logsheet' && (
-                                    <View style={styles.viewOnlyBadge}>
-                                        <MaterialCommunityIcons name="eye-outline" size={16} color="#718096" />
-                                        <Text style={styles.viewOnlyText}>View Only — Supervisors cannot fill or reassign</Text>
-                                    </View>
-                                )}
+                                <TouchableOpacity
+                                    style={[styles.actionButton, styles.reassignButton]}
+                                    onPress={() => handleReassign(assignment)}
+                                >
+                                    <MaterialCommunityIcons name="account-arrow-right" size={18} color="#1E3A8A" />
+                                    <Text style={styles.reassignButtonText}>Reassign</Text>
+                                </TouchableOpacity>
                             </View>
                         ) : (
                             <>
