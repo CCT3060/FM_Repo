@@ -145,6 +145,7 @@ router.get("/requests/asset/:assetId", async (req, res, next) => {
       [companyId, assetId]
     );
 
+    res.set('Cache-Control', 'no-store');
     res.json(rows);
   } catch (err) {
     next(err);

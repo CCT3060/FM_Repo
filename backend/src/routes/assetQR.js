@@ -132,6 +132,7 @@ router.get("/:assetId", async (req, res, next) => {
       [assetId, asset.companyId]
     );
 
+    res.set('Cache-Control', 'no-store');
     res.json({
       asset,
       ojtTrainings,

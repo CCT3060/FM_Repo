@@ -1092,12 +1092,21 @@ export async function getMyShifts(): Promise<Shift[]> {
  * for the given asset ID via the public QR endpoint.
  */
 export async function getAssetQrData(assetId: string | number): Promise<any> {
-  const response = await fetch(`${API_BASE}/api/asset-qr/${assetId}`);
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error((err as any).message || 'Asset not found');
+  const cacheKey = `/api/asset-qr/${assetId}`;
+  const response = await fetch(`${API_BASE}${cacheKey}`, {
+    headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' },
+  });
+  if (response.ok) {
+    const data = await response.json();
+    await cacheData(cacheKey, data);
+    return data;
   }
-  return response.json();
+  if (response.status === 304) {
+    const cached = await getCachedData(cacheKey);
+    if (cached != null) return cached;
+  }
+  const err = await response.json().catch(() => ({}));
+  throw new Error((err as any).message || 'Asset not found');
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1210,9 +1219,13 @@ export async function registerPushToken(pushToken: string, platform: string): Pr
  * Used by catalyst supervisor after scanning QR to decide whether to show before/after view.
  */
 export async function getSoftRequestsForAsset(assetId: number): Promise<SoftServiceRequest[]> {
-  const response = await authenticatedFetch(`/api/soft-service/requests/asset/${assetId}`);
-  if (!response.ok) throw new Error('Failed to load requests');
-  return response.json();
+  const response = await authenticatedFetch(`/api/soft-service/requests/asset/${assetId}`, {
+    headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' },
+  });
+  if (response.ok) return response.json();
+  // 304 means server confirmed nothing changed — treat as empty (no new open requests)
+  if (response.status === 304) return [];
+  throw new Error('Failed to load requests');
 }
 
 /**
