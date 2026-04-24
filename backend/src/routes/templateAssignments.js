@@ -18,6 +18,17 @@ router.use(requireCompanyAuth);
 // Helper to get company ID
 const cid = (req) => req.companyUser.companyId;
 
+// Returns true if the user has any soft-service role capability (can fill any company template)
+async function hasSoftCapability(companyId, roleKey) {
+  if (!roleKey) return false;
+  const [[row]] = await pool.query(
+    `SELECT can_raise_soft_issue, can_resolve_soft_issue, is_soft_manager
+       FROM company_roles WHERE company_id = ? AND role_key = ? AND is_active = TRUE LIMIT 1`,
+    [companyId, roleKey]
+  ).catch(() => [[null]]);
+  return !!(row && (row.can_raise_soft_issue || row.can_resolve_soft_issue || row.is_soft_manager));
+}
+
 const normalizeInputType = (value) => {
   const raw = String(value || "text")
     .trim()
@@ -455,11 +466,16 @@ router.post(
     try {
       const { templateId, assetId, answers } = req.body;
 
-      // Supervisors can fill any company checklist directly; others need an assignment
-      if (req.companyUser.role !== 'supervisor') {
+      // Supervisors, admins, and users with any soft-service capability can fill
+      // any company checklist directly; regular employees need an explicit assignment.
+      const roleKey = req.companyUser.role;
+      const isPrivileged = roleKey === 'supervisor' || roleKey === 'admin' ||
+        await hasSoftCapability(cid(req), roleKey);
+
+      if (!isPrivileged) {
         const [[assignment]] = await pool.query(
-          `SELECT id FROM template_user_assignments 
-           WHERE template_type = 'checklist' AND template_id = ? 
+          `SELECT id FROM template_user_assignments
+           WHERE template_type = 'checklist' AND template_id = ?
              AND assigned_to = ? AND company_id = ?`,
           [templateId, req.companyUser.id, cid(req)]
         );
@@ -476,9 +492,9 @@ router.post(
       }
 
       // ── Shift Enforcement ────────────────────────────────────────────────
-      // Tech users (non-admin, non-supervisor) can only submit during their
-      // active shift window. Admins and supervisors are exempt.
-      if (req.companyUser.role !== 'admin' && req.companyUser.role !== 'supervisor') {
+      // Tech users (non-admin, non-supervisor, no soft cap) can only submit
+      // during their active shift window.
+      if (!isPrivileged) {
         const [[shiftInfo]] = await pool.query(
           `SELECT s.id, s.name AS "shiftName", s.start_time AS "startTime",
                   s.end_time AS "endTime", s.status AS "shiftStatus",
@@ -578,15 +594,24 @@ router.post(
           const inputType = (q.inputType || q.answerType || 'text').slice(0, 64);
           await pool.query(
             `INSERT INTO checklist_submission_answers
-             (submission_id, question_text, input_type, answer_json, option_selected)
-             VALUES (?, ?, ?, ?, ?)`,
+             (submission_id, question_id, question_text, input_type, answer_json, option_selected)
+             VALUES (?, ?, ?, ?, ?, ?)`,
             [
               submissionId,
+              Number.isFinite(a.questionId) ? a.questionId : null,
               questionText,
               inputType,
               JSON.stringify({ value: a.answer ?? null }),
               typeof a.answer === 'string' ? a.answer.slice(0, 255) : null,
             ]
+          ).catch(() =>
+            pool.query(
+              `INSERT INTO checklist_submission_answers
+               (submission_id, question_text, input_type, answer_json, option_selected)
+               VALUES (?, ?, ?, ?, ?)`,
+              [submissionId, questionText, inputType, JSON.stringify({ value: a.answer ?? null }),
+               typeof a.answer === 'string' ? a.answer.slice(0, 255) : null]
+            )
           );
         }
       }
@@ -710,11 +735,16 @@ router.post(
     try {
       const { templateId, assetId, answers } = req.body;
 
-      // Supervisors can fill any company logsheet directly; others need an assignment
-      if (req.companyUser.role !== 'supervisor') {
+      // Supervisors, admins, and users with any soft-service capability can fill
+      // any company logsheet directly; regular employees need an explicit assignment.
+      const logRoleKey = req.companyUser.role;
+      const logIsPrivileged = logRoleKey === 'supervisor' || logRoleKey === 'admin' ||
+        await hasSoftCapability(cid(req), logRoleKey);
+
+      if (!logIsPrivileged) {
         const [[assignment]] = await pool.query(
-          `SELECT id FROM template_user_assignments 
-           WHERE template_type = 'logsheet' AND template_id = ? 
+          `SELECT id FROM template_user_assignments
+           WHERE template_type = 'logsheet' AND template_id = ?
              AND assigned_to = ? AND company_id = ?`,
           [templateId, req.companyUser.id, cid(req)]
         );
@@ -730,7 +760,7 @@ router.post(
       }
 
       // ── Shift Enforcement ────────────────────────────────────────────────
-      if (req.companyUser.role !== 'admin' && req.companyUser.role !== 'supervisor') {
+      if (!logIsPrivileged) {
         const [[shiftInfo]] = await pool.query(
           `SELECT s.id, s.name AS "shiftName", s.start_time AS "startTime",
                   s.end_time AS "endTime", s.status AS "shiftStatus",

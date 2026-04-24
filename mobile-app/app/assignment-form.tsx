@@ -470,11 +470,15 @@ export default function AssignmentFormScreen() {
 
             case 'dropdown':
             case 'radio':
-            case 'custom_options':
-                const options = question.options?.options || question.options || [];
+            case 'custom_options': {
+                const rawOpts = question.options?.options || question.options || [];
+                // Normalise: options may be plain strings or {label, value} objects
+                const options: string[] = (Array.isArray(rawOpts) ? rawOpts : []).map((o: any) =>
+                    typeof o === 'string' ? o : (o?.label ?? o?.value ?? o?.text ?? String(o))
+                );
                 return (
                     <View style={styles.optionsContainer}>
-                        {options.map((option: string, index: number) => (
+                        {options.map((option, index) => (
                             <TouchableOpacity
                                 key={index}
                                 style={[styles.optionButton, value === option && styles.optionButtonActive]}
@@ -495,6 +499,7 @@ export default function AssignmentFormScreen() {
                         ))}
                     </View>
                 );
+            }
 
             case 'cleaned_not_cleaned':
                 return (
@@ -825,18 +830,31 @@ export default function AssignmentFormScreen() {
                                 )}
                             </View>
                         ) : (
-                        (template.questions || []).map((question, index) => (
-                            <View key={question.id} style={styles.questionCard}>
-                                <View style={styles.questionHeader}>
-                                    <Text style={styles.questionNumber}>Q{index + 1}</Text>
-                                    {!!question.isRequired && <View style={styles.requiredBadge}>
-                                        <Text style={styles.requiredText}>Required</Text>
-                                    </View>}
+                        (template.questions || []).map((question, index) => {
+                            let inputEl: React.ReactNode;
+                            try { inputEl = renderQuestionInput(question); }
+                            catch { inputEl = (
+                                <TextInput
+                                    style={styles.textInput}
+                                    value={answers[question.id] || ''}
+                                    onChangeText={t => setAnswers({ ...answers, [question.id]: t })}
+                                    placeholder="Enter your answer..."
+                                    placeholderTextColor="#A0AEC0"
+                                />
+                            ); }
+                            return (
+                                <View key={question.id} style={styles.questionCard}>
+                                    <View style={styles.questionHeader}>
+                                        <Text style={styles.questionNumber}>Q{index + 1}</Text>
+                                        {!!question.isRequired && <View style={styles.requiredBadge}>
+                                            <Text style={styles.requiredText}>Required</Text>
+                                        </View>}
+                                    </View>
+                                    <Text style={styles.questionText}>{question.questionText}</Text>
+                                    {inputEl}
                                 </View>
-                                <Text style={styles.questionText}>{question.questionText}</Text>
-                                {renderQuestionInput(question)}
-                            </View>
-                        ))
+                            );
+                        })
                         )}
 
                         {/* Submit Button */}

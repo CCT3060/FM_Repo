@@ -33,7 +33,8 @@ interface Question {
 }
 
 interface BeforeAnswer {
-    questionId: number;
+    questionId: number | null;
+    questionText?: string;
     answer: string | null;
     optionSelected?: string | null;
 }
@@ -62,8 +63,15 @@ export default function SoftResolveFormScreen() {
     let beforeAnswers: BeforeAnswer[] = [];
     try { beforeAnswers = JSON.parse(params.beforeAnswers || '[]'); } catch { /* ignore */ }
 
-    const getBeforeAnswer = (questionId: number) => {
-        const a = beforeAnswers.find(x => x.questionId === questionId);
+    const getBeforeAnswer = (questionId: number, questionText: string) => {
+        // question_id is NULL in DB for JSONB templates; match by questionText instead
+        let a = beforeAnswers.find(x => x.questionId != null && x.questionId === questionId);
+        if (!a) {
+            const qt = (questionText || '').trim().toLowerCase();
+            a = beforeAnswers.find(x =>
+                x.questionText && x.questionText.trim().toLowerCase() === qt
+            );
+        }
         return a?.optionSelected || a?.answer || '—';
     };
 
@@ -202,7 +210,7 @@ export default function SoftResolveFormScreen() {
                                 {/* BEFORE — read-only answer from client supervisor */}
                                 <View style={styles.beforeCol}>
                                     <Text style={styles.beforeValue}>
-                                        {getBeforeAnswer(q.id)}
+                                        {getBeforeAnswer(q.id, q.questionText)}
                                     </Text>
                                 </View>
 
