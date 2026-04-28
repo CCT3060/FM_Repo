@@ -13,19 +13,18 @@ import { notifyNetworkStatus } from './networkStatus';
 //
 // OPTION 2: Auto-detect platform (recommended for development)
 const getApiBase = () => {
+  // Always prefer env var (set in .env.local for local dev)
+  if (process.env.EXPO_PUBLIC_API_URL) {
+    return process.env.EXPO_PUBLIC_API_URL;
+  }
+
   if (!__DEV__) {
-    return 'https://d3kz9zxtx6891m.cloudfront.net';
+    return 'https://fm.catalystsolutions.eco';
   }
   
-  // Development URLs
-  if (Platform.OS === 'android') {
-    // For physical Android device, use your PC's IP
-    return 'http://192.168.1.56:4000';
-    // For Android emulator, use: return 'http://10.0.2.2:4000';
-  } else if (Platform.OS === 'ios') {
-    // For physical iOS device, use your PC's IP
-    return 'http://192.168.1.56:4000';
-    // For iOS simulator, use: return 'http://localhost:4000';
+  // Development fallback URLs
+  if (Platform.OS === 'android' || Platform.OS === 'ios') {
+    return 'http://192.168.1.10:4000';
   } else {
     return 'http://localhost:4000'; // Web or other platforms
   }
