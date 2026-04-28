@@ -527,32 +527,45 @@ export default function AssignmentFormScreen() {
 
             case 'photo':
             case 'image': {
-                // Photo-type questions: camera icon in header is the main input.
-                // Show a tap-to-change hint when no photo yet.
+                // Photo-type questions: show Take Photo + Gallery inline
                 let photoUri: string | null = null;
                 if (typeof value === 'string' && value) {
                     try { photoUri = JSON.parse(value)?.uri || value; } catch { photoUri = value; }
                 }
-                if (!photoUri) {
-                    return (
-                        <TouchableOpacity
-                            style={styles.photoPlaceholder}
-                            onPress={() => handleAttachPhoto(question.id, true)}
-                        >
-                            <MaterialCommunityIcons name="camera-plus-outline" size={28} color="#94A3B8" />
-                            <Text style={styles.photoPlaceholderText}>Tap camera icon above to add photo</Text>
-                        </TouchableOpacity>
-                    );
-                }
                 return (
-                    <View style={styles.photoThumbWrap}>
-                        <Image source={{ uri: photoUri }} style={styles.photoThumb} resizeMode="cover" />
-                        <TouchableOpacity
-                            style={styles.photoThumbRemove}
-                            onPress={() => handleAttachPhoto(question.id, true)}
-                        >
-                            <MaterialCommunityIcons name="pencil" size={14} color="#fff" />
-                        </TouchableOpacity>
+                    <View>
+                        <View style={styles.photoButtonRow}>
+                            <TouchableOpacity
+                                style={styles.photoBtn}
+                                onPress={() => launchCamera(question.id, true)}
+                            >
+                                <MaterialCommunityIcons name="camera" size={18} color="#1E3A8A" />
+                                <Text style={styles.photoBtnText}>Take Photo</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[styles.photoBtn, { backgroundColor: '#F1F5F9', borderColor: '#CBD5E0' }]}
+                                onPress={() => launchGallery(question.id, true)}
+                            >
+                                <MaterialCommunityIcons name="image-multiple-outline" size={18} color="#64748B" />
+                                <Text style={[styles.photoBtnText, { color: '#64748B' }]}>Gallery</Text>
+                            </TouchableOpacity>
+                        </View>
+                        {photoUri ? (
+                            <View style={styles.photoThumbWrap}>
+                                <Image source={{ uri: photoUri }} style={styles.photoThumb} resizeMode="cover" />
+                                <TouchableOpacity
+                                    style={styles.photoThumbRemove}
+                                    onPress={() => setAnswers((prev: any) => ({ ...prev, [question.id]: '' }))}
+                                >
+                                    <MaterialCommunityIcons name="close-circle" size={20} color="#fff" />
+                                </TouchableOpacity>
+                            </View>
+                        ) : (
+                            <View style={styles.photoPlaceholder}>
+                                <MaterialCommunityIcons name="image-outline" size={32} color="#CBD5E0" />
+                                <Text style={styles.photoPlaceholderText}>No photo selected</Text>
+                            </View>
+                        )}
                     </View>
                 );
             }
@@ -1115,6 +1128,28 @@ const styles = StyleSheet.create({
     },
     cameraIconBtnActive: {
         backgroundColor: '#DCFCE7',
+    },
+    photoButtonRow: {
+        flexDirection: 'row',
+        gap: 10,
+        marginBottom: 10,
+    },
+    photoBtn: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        paddingVertical: 10,
+        borderRadius: 8,
+        borderWidth: 1.5,
+        borderColor: '#BFDBFE',
+        backgroundColor: '#EFF6FF',
+    },
+    photoBtnText: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: '#1E3A8A',
     },
     photoPlaceholder: {
         borderWidth: 1,
