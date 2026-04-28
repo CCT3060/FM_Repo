@@ -122,6 +122,10 @@ router.get("/requests/asset/:assetId", async (req, res, next) => {
          cu.full_name                  AS "raisedByName",
          ssr.raised_at                 AS "raisedAt",
          ssr.status,
+         COALESCE(
+           (SELECT ct.template_name FROM checklist_templates ct WHERE ct.id = ssr.template_id AND ssr.template_type = 'checklist' LIMIT 1),
+           (SELECT lt.template_name FROM logsheet_templates lt WHERE lt.id = ssr.template_id AND ssr.template_type = 'logsheet' LIMIT 1)
+         )                             AS "templateName",
          (
            SELECT json_agg(
              json_build_object(
@@ -251,6 +255,10 @@ router.get("/requests/:id", async (req, res, next) => {
          cu.full_name                  AS "raisedByName",
          ssr.raised_at                 AS "raisedAt",
          ssr.status,
+         COALESCE(
+           (SELECT ct.template_name FROM checklist_templates ct WHERE ct.id = ssr.template_id AND ssr.template_type = 'checklist' LIMIT 1),
+           (SELECT lt.template_name FROM logsheet_templates lt WHERE lt.id = ssr.template_id AND ssr.template_type = 'logsheet' LIMIT 1)
+         )                             AS "templateName",
          (
            SELECT json_agg(
              json_build_object(

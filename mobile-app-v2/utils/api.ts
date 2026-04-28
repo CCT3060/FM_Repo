@@ -46,6 +46,7 @@ export interface SoftRequest {
   assetUniqueId:   string;
   templateId:      number;
   templateType:    string;
+  templateName?:   string;
   status:          'open' | 'resolved';
   raisedAt:        string;
   raisedByName?:   string;

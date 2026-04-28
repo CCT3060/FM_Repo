@@ -166,7 +166,7 @@ export default function AssetDetailsScreen() {
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.reqTitle, { color: theme.textPrimary }]} numberOfLines={1}>
-                  Request #{req.id}
+                  {req.templateName ?? `Request #${req.id}`}
                 </Text>
                 <Text style={[styles.reqSub, { color: theme.textSecondary }]}>
                   Raised by {req.raisedByName ?? 'Unknown'} · {new Date(req.raisedAt).toLocaleDateString()}
