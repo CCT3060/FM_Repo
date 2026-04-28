@@ -73,6 +73,56 @@ import catalystLogo from "../images/image.png";
 
 const TOKEN_KEY = "company_portal_token";
 
+/* ─── Photo thumbnail + full-screen lightbox ─────────────────── */
+function PhotoAnswer({ src, alt = "Photo" }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <div>
+        <img
+          src={src} alt={alt}
+          onClick={() => setOpen(true)}
+          style={{ maxWidth: "160px", maxHeight: "120px", borderRadius: "6px", objectFit: "cover",
+            display: "block", border: "1px solid #e2e8f0", cursor: "pointer", marginTop: "4px" }}
+        />
+        <button
+          onClick={() => setOpen(true)}
+          style={{ marginTop: "5px", padding: "3px 12px", background: "#eff6ff", color: "#2563eb",
+            border: "1px solid #bfdbfe", borderRadius: "6px", fontSize: "12px",
+            fontWeight: 600, cursor: "pointer" }}
+        >
+          🔍 View
+        </button>
+      </div>
+      {open && (
+        <div
+          onClick={() => setOpen(false)}
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.82)", zIndex: 9999,
+            display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}
+        >
+          <div onClick={(e) => e.stopPropagation()} style={{ position: "relative" }}>
+            <img
+              src={src} alt={alt}
+              style={{ maxWidth: "90vw", maxHeight: "85vh", borderRadius: "12px",
+                objectFit: "contain", boxShadow: "0 8px 40px rgba(0,0,0,0.5)" }}
+            />
+            <button
+              onClick={() => setOpen(false)}
+              style={{ position: "absolute", top: "-16px", right: "-16px", background: "#fff",
+                border: "none", borderRadius: "50%", width: "34px", height: "34px",
+                cursor: "pointer", fontSize: "20px", fontWeight: 700, lineHeight: 1,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                boxShadow: "0 2px 10px rgba(0,0,0,0.3)", color: "#1e293b" }}
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 const emptyCompany = {
   companyName: "",
   companyCode: "",
@@ -2053,7 +2103,7 @@ const CompanyPortal = () => {
                                     const v = val !== null && val !== undefined ? val : "—";
                                     const vStr = String(v);
                                     if (vStr.startsWith("http") && /\.(jpe?g|png|gif|webp)(\?|$)/i.test(vStr)) {
-                                      return <img src={vStr} alt="Photo" style={{ maxWidth: "200px", maxHeight: "140px", borderRadius: "6px", objectFit: "cover", display: "block", border: "1px solid #e2e8f0" }} />;
+                                      return <PhotoAnswer src={vStr} />;
                                     }
                                     return vStr;
                                   })()}

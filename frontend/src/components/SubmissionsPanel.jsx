@@ -74,18 +74,63 @@ function tryParse(s) {
   try { return JSON.parse(s); } catch { return null; }
 }
 
+/* ─── Photo thumbnail + full-screen lightbox ──────────────────── */
+function PhotoAnswer({ src, alt = "Photo", caption }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <div style={{ marginTop: "6px" }}>
+        <img
+          src={src} alt={alt}
+          onClick={() => setOpen(true)}
+          style={{ maxWidth: "160px", maxHeight: "120px", borderRadius: "8px", objectFit: "cover",
+            display: "block", border: "1px solid #e2e8f0", cursor: "pointer" }}
+        />
+        {caption && <div style={{ fontSize: "11px", color: "#64748b", marginTop: "3px" }}>{caption}</div>}
+        <button
+          onClick={() => setOpen(true)}
+          style={{ marginTop: "5px", padding: "3px 12px", background: "#eff6ff", color: "#2563eb",
+            border: "1px solid #bfdbfe", borderRadius: "6px", fontSize: "12px",
+            fontWeight: 600, cursor: "pointer" }}
+        >
+          🔍 View
+        </button>
+      </div>
+      {open && (
+        <div
+          onClick={() => setOpen(false)}
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.82)", zIndex: 9999,
+            display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}
+        >
+          <div onClick={(e) => e.stopPropagation()} style={{ position: "relative" }}>
+            <img
+              src={src} alt={alt}
+              style={{ maxWidth: "90vw", maxHeight: "85vh", borderRadius: "12px",
+                objectFit: "contain", boxShadow: "0 8px 40px rgba(0,0,0,0.5)" }}
+            />
+            <button
+              onClick={() => setOpen(false)}
+              style={{ position: "absolute", top: "-16px", right: "-16px", background: "#fff",
+                border: "none", borderRadius: "50%", width: "34px", height: "34px",
+                cursor: "pointer", fontSize: "20px", fontWeight: 700, lineHeight: 1,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                boxShadow: "0 2px 10px rgba(0,0,0,0.3)", color: "#1e293b" }}
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 function renderAnswerValue(val) {
   if (!val) return <span style={{ color: "#94a3b8", fontWeight: 400 }}>No answer</span>;
 
   // Plain image URL string (e.g. uploaded via mobile)
   if (typeof val === "string" && val.startsWith("http") && /\.(jpe?g|png|gif|webp)(\?|$)/i.test(val)) {
-    return (
-      <div>
-        <img src={val} alt="Photo"
-          style={{ maxWidth: "240px", maxHeight: "180px", borderRadius: "8px",
-            objectFit: "cover", display: "block", border: "1px solid #e2e8f0", marginTop: "6px" }} />
-      </div>
-    );
+    return <PhotoAnswer src={val} />;
   }
 
   const parsed = typeof val === "string" ? tryParse(val) : val;
@@ -95,14 +140,7 @@ function renderAnswerValue(val) {
     if (src.startsWith("http")) {
       const isImage = /\.(jpe?g|png|gif|webp)$/i.test(src) || (parsed.mimeType || "").startsWith("image/");
       if (isImage) {
-        return (
-          <div>
-            <img src={src} alt={name}
-              style={{ maxWidth: "240px", maxHeight: "180px", borderRadius: "8px",
-                objectFit: "cover", display: "block", border: "1px solid #e2e8f0", marginTop: "6px" }} />
-            <div style={{ fontSize: "11px", color: "#64748b", marginTop: "4px" }}>{name}</div>
-          </div>
-        );
+        return <PhotoAnswer src={src} alt={name} caption={name} />;
       }
       return <a href={src} target="_blank" rel="noopener noreferrer"
         style={{ color: "#2563eb", fontWeight: 600, fontSize: "13px" }}>📎 {name}</a>;
