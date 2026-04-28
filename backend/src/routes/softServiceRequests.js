@@ -64,7 +64,8 @@ async function hasCapability(companyId, roleKey, column) {
 /* ── POST /requests ── Raise a soft-service request ─────────────────────── */
 router.post("/requests", async (req, res, next) => {
   try {
-    const { assetId, templateId, templateType = "checklist", submissionId } = req.body || {};
+    const { assetId, templateId, templateType = "checklist", submissionId, checklistSubmissionId } = req.body || {};
+    const resolvedSubmissionId = submissionId ?? checklistSubmissionId ?? null;
     const userId    = req.companyUser.id;
     const companyId = req.companyUser.companyId;
     const roleKey   = req.companyUser.role;
@@ -92,7 +93,7 @@ router.post("/requests", async (req, res, next) => {
          (company_id, asset_id, template_id, template_type, raise_submission_id, raised_by_user_id, status)
        VALUES (?, ?, ?, ?, ?, ?, 'open')
        RETURNING id`,
-      [companyId, assetId, templateId, templateType, submissionId || null, userId]
+      [companyId, assetId, templateId, templateType, resolvedSubmissionId, userId]
     );
 
     const requestId = rows[0]?.id ?? rows.insertId;

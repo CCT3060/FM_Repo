@@ -397,8 +397,10 @@ export default function ChecklistEntryScreen() {
 
   const [fields,     setFields]    = useState<Field[]>([]);
   const [answers,    setAnswers]   = useState<Record<string, any>>({});
+  const [photos,     setPhotos]    = useState<Record<string, string | null>>({});
   const [loading,    setLoading]   = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [uploading,  setUploading]  = useState(false);
 
   useEffect(() => {
     const type = templateType === 'logsheet' ? 'logsheet' : 'checklist';
@@ -430,10 +432,14 @@ export default function ChecklistEntryScreen() {
 
     setSubmitting(true);
     try {
-      const answerArray = fields.map((f) => ({
-        questionId: f.id,
-        answer:     answers[f.id] ?? null,
-      }));
+      const answerArray = fields.map((f) => {
+        const mainVal  = answers[f.id] ?? null;
+        const photoUrl = photos[String(f.id)] ?? null;
+        const finalVal = f.type === 'photo'
+          ? mainVal
+          : (photoUrl ? { value: mainVal, photoUrl } : mainVal);
+        return { questionId: f.id, answer: finalVal };
+      });
 
       const tid = Number(templateId);
       const aid = assetId && Number(assetId) > 0 ? Number(assetId) : null;
@@ -445,8 +451,8 @@ export default function ChecklistEntryScreen() {
         await raiseSoftRequest({
           assetId: aid ?? 0,
           templateId: tid,
+          submissionId,
           answers: answerArray,
-          checklistSubmissionId: submissionId,
         });
         Alert.alert('Request Raised!', 'Your issue has been submitted successfully.', [
           { text: 'Done', onPress: () => router.back() },
@@ -470,7 +476,7 @@ export default function ChecklistEntryScreen() {
   };
 
   return (
-    <SafeAreaView style={[styles.safe, { backgroundColor: theme.background }]} edges={['top']}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: theme.background }]} edges={['top', 'bottom']}>
       <Header
         title={templateName ?? (templateType === 'logsheet' ? 'Log Sheet' : 'Checklist')}
         subtitle={assetName}
@@ -531,6 +537,19 @@ export default function ChecklistEntryScreen() {
                         value={answers[field.id]}
                         onChange={(v) => setAnswer(field.id, v)}
                       />
+                      {/* Optional photo attachment for every non-photo field */}
+                      {field.type !== 'photo' && (
+                        <View style={styles.attachPhotoSection}>
+                          <View style={styles.attachPhotoLabel}>
+                            <MaterialCommunityIcons name="camera-plus-outline" size={13} color={theme.textSecondary} />
+                            <Text style={[styles.attachPhotoText, { color: theme.textSecondary }]}>Attach Photo (optional)</Text>
+                          </View>
+                          <PhotoInput
+                            value={photos[String(field.id)] ?? null}
+                            onChange={(v) => setPhotos((prev) => ({ ...prev, [String(field.id)]: v }))}
+                          />
+                        </View>
+                      )}
                     </View>
                   </React.Fragment>
                 );
@@ -637,6 +656,11 @@ const styles = StyleSheet.create({
   // Empty state
   noFields:          { alignItems: 'center', gap: Spacing.lg, paddingVertical: Spacing.xxl },
   noFieldsText:      { ...Typography.body, textAlign: 'center' },
+
+  // Optional photo attachment section (shown below every non-photo field)
+  attachPhotoSection: { marginTop: Spacing.md, paddingTop: Spacing.md, borderTopWidth: 1, borderTopColor: '#E2E8F0' },
+  attachPhotoLabel:   { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: Spacing.sm },
+  attachPhotoText:    { ...Typography.micro, fontWeight: '600' },
 
   // Submit footer
   footer:            { borderTopWidth: 1, padding: Spacing.lg },

@@ -395,6 +395,7 @@ export async function fetchAllSoftRequests(): Promise<SoftRequest[]> {
 export async function raiseSoftRequest(payload: {
   assetId: number;
   templateId: number;
+  submissionId?: number;
   answers: unknown[];
 }): Promise<unknown> {
   return apiPost<unknown>('/api/soft-service/requests', payload);

@@ -1,6 +1,7 @@
 import { Tabs, router } from 'expo-router';
 import React, { useEffect } from 'react';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
 import { buildTabs } from '../../utils/permissions';
 import { useTheme, Spacing } from '../../utils/theme';
@@ -8,6 +9,7 @@ import { useTheme, Spacing } from '../../utils/theme';
 export default function TabsLayout() {
   const { theme } = useTheme();
   const { user, capabilities, isLoaded } = useAuth();
+  const insets = useSafeAreaInsets();
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -26,9 +28,9 @@ export default function TabsLayout() {
           backgroundColor: theme.tabBarBg,
           borderTopColor: theme.tabBarBorder,
           borderTopWidth: 1,
-          paddingBottom: Spacing.sm,
+          paddingBottom: Math.max(Spacing.sm, insets.bottom),
           paddingTop: Spacing.xs,
-          height: 60,
+          height: 60 + insets.bottom,
         },
         tabBarActiveTintColor:   theme.tabBarActive,
         tabBarInactiveTintColor: theme.tabBarInactive,

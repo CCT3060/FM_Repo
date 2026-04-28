@@ -362,8 +362,7 @@ export default function SoftResolveScreen() {
   const reqName = (request as any)?.templateName ?? assetName ?? 'Issue';
 
   return (
-    <SafeAreaView style={[styles.safe, { backgroundColor: theme.background }]} edges={['top']}>
-      <Header title="Resolve Issue" subtitle={assetName ?? undefined} showBack />
+    <SafeAreaView style={[styles.safe, { backgroundColor: theme.background }]} edges={['top', 'bottom']}>
 
       {/* Info banner */}
       <View style={[styles.infoBanner, { backgroundColor: theme.surface, borderBottomColor: theme.border }]}>
