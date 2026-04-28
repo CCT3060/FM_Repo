@@ -241,35 +241,35 @@ export async function fetchAssetByQR(assetId: number) {
 
 // ─── Assignments / Templates ─────────────────────────────────────────────────
 export async function fetchMyAssignments() {
-  return apiGet<unknown[]>('/api/mobile-auth/template-assignments/my-assignments');
+  return apiGet<unknown[]>('/api/template-assignments/my-assignments');
 }
 
 export async function fetchMyTodayProgress() {
-  return apiGet<unknown>('/api/mobile-auth/template-assignments/my-today-progress');
+  return apiGet<unknown>('/api/template-assignments/my-today-progress');
 }
 
 export async function fetchMySubmissionHistory() {
-  return apiGet<unknown[]>('/api/mobile-auth/template-assignments/my-submission-history');
+  return apiGet<unknown[]>('/api/template-assignments/my-submission-history');
 }
 
 export async function fetchMySubmissionDetail(type: string, id: number) {
-  return apiGet<unknown>(`/api/mobile-auth/template-assignments/my-submission-detail/${type}/${id}`);
+  return apiGet<unknown>(`/api/template-assignments/my-submission-detail/${type}/${id}`);
 }
 
 export async function fetchMyWarnings() {
-  return apiGet<unknown[]>('/api/mobile-auth/template-assignments/my-warnings');
+  return apiGet<unknown[]>('/api/template-assignments/my-warnings');
 }
 
 export async function fetchTeamAssignments() {
-  return apiGet<unknown[]>('/api/mobile-auth/template-assignments/team-assignments');
+  return apiGet<unknown[]>('/api/template-assignments/team-assignments');
 }
 
 export async function fetchTeamStats() {
-  return apiGet<unknown>('/api/mobile-auth/template-assignments/team-stats');
+  return apiGet<unknown>('/api/template-assignments/team-stats');
 }
 
 export async function fetchUnassignedTemplates() {
-  return apiGet<unknown[]>('/api/mobile-auth/template-assignments/unassigned-templates');
+  return apiGet<unknown[]>('/api/template-assignments/unassigned-templates');
 }
 
 export async function assignTemplate(payload: {
@@ -278,12 +278,35 @@ export async function assignTemplate(payload: {
   userId: number;
   frequency?: string;
 }) {
-  return apiPost<unknown>('/api/mobile-auth/template-assignments', payload);
+  return apiPost<unknown>('/api/template-assignments', payload);
 }
 
 // ─── Checklists ───────────────────────────────────────────────────────────────
 export async function fetchMyChecklists() {
-  return apiGet<unknown[]>('/api/mobile-auth/template-assignments/my-assignments');
+  return apiGet<unknown[]>('/api/template-assignments/my-assignments');
+}
+
+/** Fetch a single template (checklist or logsheet) with fully-normalised questions. */
+export async function fetchTemplateWithQuestions(type: string, id: number) {
+  return apiGet<any>(`/api/template-assignments/template/${type}/${id}`);
+}
+
+/** Submit a checklist response via the authenticated route (records company_user_id). */
+export async function submitChecklistAuth(payload: {
+  templateId: number;
+  assetId?: number | null;
+  answers: Array<{ questionId: number | string; answer: any }>;
+}): Promise<unknown> {
+  return apiPost<unknown>('/api/template-assignments/submit-checklist', payload);
+}
+
+/** Submit a logsheet entry via the authenticated route (records company_user_id). */
+export async function submitLogsheetAuth(payload: {
+  templateId: number;
+  assetId?: number | null;
+  answers: Array<{ questionId: number | string; answer: any }>;
+}): Promise<unknown> {
+  return apiPost<unknown>('/api/template-assignments/submit-logsheet', payload);
 }
 
 export async function submitChecklist(
@@ -357,11 +380,11 @@ export async function assignWorkOrder(id: number, userId: number) {
 
 // ─── Soft Service ─────────────────────────────────────────────────────────────
 export async function fetchMySoftRequests(): Promise<SoftRequest[]> {
-  return apiGet<SoftRequest[]>('/api/mobile-auth/soft-service/requests/my');
+  return apiGet<SoftRequest[]>('/api/soft-service/requests/my');
 }
 
 export async function fetchAllSoftRequests(): Promise<SoftRequest[]> {
-  return apiGet<SoftRequest[]>('/api/mobile-auth/soft-service/requests/all');
+  return apiGet<SoftRequest[]>('/api/soft-service/requests/all');
 }
 
 export async function raiseSoftRequest(payload: {
@@ -369,13 +392,13 @@ export async function raiseSoftRequest(payload: {
   templateId: number;
   answers: unknown[];
 }): Promise<unknown> {
-  return apiPost<unknown>('/api/mobile-auth/soft-service/requests', payload);
+  return apiPost<unknown>('/api/soft-service/requests', payload);
 }
 
 export async function resolveSoftRequest(id: number, payload: {
   answers: unknown[];
 }): Promise<unknown> {
-  return apiPut<unknown>(`/api/mobile-auth/soft-service/requests/${id}/resolve`, payload);
+  return apiPut<unknown>(`/api/soft-service/requests/${id}/resolve`, payload);
 }
 
 // ─── Notifications ────────────────────────────────────────────────────────────
@@ -422,7 +445,7 @@ export async function fetchMyTeam() {
 }
 
 export async function fetchChecklistHistory() {
-  return apiGet<unknown[]>('/api/mobile-auth/template-assignments/checklist-history');
+  return apiGet<unknown[]>('/api/template-assignments/checklist-history');
 }
 
 export async function fetchEmployeesByRole(role?: string) {
@@ -437,6 +460,43 @@ export async function fetchMyShifts() {
 
 export async function fetchActiveShift() {
   return apiGet<unknown>('/api/shifts/active');
+}
+
+// ─── File upload ─────────────────────────────────────────────────────────────
+/**
+ * Upload a local image/file URI to the server.
+ * Returns the public URL of the uploaded file.
+ * Does NOT set Content-Type — the native fetch will set it with the multipart boundary.
+ */
+export async function uploadFile(localUri: string): Promise<string> {
+  const token    = await getToken();
+  const filename = localUri.split('/').pop() ?? 'photo.jpg';
+  const ext      = (filename.split('.').pop() ?? 'jpg').toLowerCase();
+  const mimeMap: Record<string, string> = {
+    png: 'image/png', gif: 'image/gif', webp: 'image/webp',
+    jpg: 'image/jpeg', jpeg: 'image/jpeg',
+  };
+  const mimeType = mimeMap[ext] ?? 'image/jpeg';
+
+  const formData = new FormData();
+  formData.append('file', { uri: localUri, name: filename, type: mimeType } as any);
+
+  const headers: Record<string, string> = {};
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  // Do NOT set Content-Type — native fetch sets it automatically with multipart boundary
+
+  const res = await fetch(`${API_BASE}/api/upload`, {
+    method: 'POST',
+    headers,
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const msg = await res.text().catch(() => 'Upload failed');
+    throw new Error(msg || `Upload failed (${res.status})`);
+  }
+  const data = await res.json() as { url: string };
+  return data.url;
 }
 
 // ─── Offline sync ────────────────────────────────────────────────────────────

@@ -54,6 +54,16 @@ export default function TabsLayout() {
         }}
       />
 
+      {/* Tasks — supervisor unified view */}
+      <Tabs.Screen
+        name="tasks"
+        options={{
+          title: 'Tasks',
+          tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="format-list-checks" size={size} color={color} />,
+          href: capabilities.isTechnicalSupervisor ? undefined : null,
+        }}
+      />
+
       {/* Team / Assignments — supervisors only */}
       <Tabs.Screen
         name="assignments"
