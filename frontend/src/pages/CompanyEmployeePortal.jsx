@@ -150,6 +150,7 @@ const NAV_ALL = [
   { key: "warnings", label: "Warnings", roles: ["admin","supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> },
   { key: "workorders", label: "Work Orders", roles: ["admin","supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-4 0v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg> },
   { key: "shifts", label: "Shifts", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> },
+  { key: "roles", label: "Manage Roles", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 7h18M3 12h18M3 17h18"/></svg> },
   { key: "ojt", label: "OJT Management", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg> },
   { key: "fleet", label: "Fleet Management", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="1" y="3" width="15" height="13" rx="2"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg> },
   { key: "mytasks", label: "My Tasks", roles: ["supervisor","*"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg> },
@@ -257,7 +258,7 @@ function normalizePerms(p) {
   };
 }
 
-function EmployeeModal({ existing, token, employees = [], currentUserRole = "admin", onClose, onSaved }) {
+function EmployeeModal({ existing, token, employees = [], customRoles = [], currentUserRole = "admin", onClose, onSaved }) {
   const isEdit = !!existing;
   const def = {
     fullName: "", email: "", phone: "", designation: "", role: "technician",
@@ -382,6 +383,32 @@ function EmployeeModal({ existing, token, employees = [], currentUserRole = "adm
                 </button>
               ))}
             </div>
+
+            {/* Custom company roles */}
+            {customRoles.length > 0 && (
+              <div style={{ marginTop: "10px" }}>
+                <p style={{ fontSize: "11px", fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "8px" }}>Custom Roles</p>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                  {customRoles.map((r) => {
+                    const selected = form.role === r.roleKey;
+                    const badges = [
+                      r.isTechnicalSupervisor && "Tech Supervisor",
+                      r.isTechnician && "Technician",
+                      r.canResolveSoftIssue && "Resolves Issues",
+                      r.canRaiseSoftIssue && "Raises Issues",
+                      r.isSoftManager && "Manager View",
+                    ].filter(Boolean);
+                    return (
+                      <button key={r.roleKey} type="button" onClick={() => changeRole(r.roleKey)}
+                        style={{ padding: "5px 12px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: `1.5px solid ${selected ? (r.color || "#6366f1") : "#e2e8f0"}`, background: selected ? (r.bgColor || "#eef2ff") : "#fff", color: selected ? (r.color || "#6366f1") : "#64748b", display: "flex", alignItems: "center", gap: "5px" }}>
+                        {r.label}
+                        {badges[0] && <span style={{ fontSize: "10px", opacity: 0.7 }}>· {badges[0]}</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Shift — only for Assistant Manager */}
@@ -2244,12 +2271,11 @@ function FleetMaintModal({ token, fleetAssets, onClose, onSaved }) {
 }
 
 /* ─── Role Management Modal (custom hierarchy) ───────────────────────── */
-function RolesModal({ token, initialRoles, onClose, onSaved }) {
+function RolesModal({ token, initialRoles, onClose, onSaved, inline = false }) {
   const [roles, setRoles] = useState(initialRoles || []);
   const [draftLabel, setDraftLabel] = useState("");
   const [draftParent, setDraftParent] = useState("");
   const [draftColor, setDraftColor] = useState("#2563eb");
-  // Soft-service capability flags for the new role being created
   const [draftCanRaise, setDraftCanRaise]   = useState(false);
   const [draftCanResolve, setDraftCanResolve] = useState(false);
   const [draftIsManager, setDraftIsManager]   = useState(false);
@@ -2257,6 +2283,47 @@ function RolesModal({ token, initialRoles, onClose, onSaved }) {
   const [draftIsTechnician, setDraftIsTechnician]         = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  // Edit state
+  const [editingId, setEditingId] = useState(null);
+  const [editForm, setEditForm]   = useState({});
+
+  const startEdit = (r) => {
+    setEditingId(r.id);
+    setEditForm({
+      label:                r.label,
+      color:                r.color || "#2563eb",
+      parentRoleKey:        r.parentRoleKey || "",
+      canRaiseSoftIssue:    !!r.canRaiseSoftIssue,
+      canResolveSoftIssue:  !!r.canResolveSoftIssue,
+      isSoftManager:        !!r.isSoftManager,
+      isTechnicalSupervisor:!!r.isTechnicalSupervisor,
+      isTechnician:         !!r.isTechnician,
+    });
+  };
+
+  const saveEdit = async () => {
+    if (!editForm.label?.trim()) return setError("Label required");
+    setSaving(true); setError(null);
+    try {
+      await updateCompanyRole(token, editingId, {
+        label:                editForm.label.trim(),
+        color:                editForm.color,
+        bgColor:              lightenHex(editForm.color),
+        parentRoleKey:        editForm.parentRoleKey || null,
+        canRaiseSoftIssue:    editForm.canRaiseSoftIssue,
+        canResolveSoftIssue:  editForm.canResolveSoftIssue,
+        isSoftManager:        editForm.isSoftManager,
+        isTechnicalSupervisor:editForm.isTechnicalSupervisor,
+        isTechnician:         editForm.isTechnician,
+      });
+      const list = await getCompanyRoles(token);
+      setRoles(list || []);
+      setEditingId(null);
+    } catch (err) { setError(err.message || "Update failed"); }
+    finally { setSaving(false); }
+  };
+
+  const cancelEdit = () => { setEditingId(null); setEditForm({}); };
 
   const addRole = async () => {
     if (!draftLabel.trim()) return setError("Role label required");
@@ -2309,10 +2376,169 @@ function RolesModal({ token, initialRoles, onClose, onSaved }) {
     finally { setSaving(false); }
   };
 
-  const handleClose = () => {
-    onSaved(roles);
-    onClose();
-  };
+  const handleClose = () => { onSaved(roles); onClose(); };
+
+  const PermCheckboxes = ({ form, setForm }) => (
+    <>
+      <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: "10px" }}>
+        <p style={{ fontSize: "11px", fontWeight: 700, color: "#94a3b8", marginBottom: "8px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Soft Services Mobile Permissions</p>
+        <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" }}>
+          {[
+            { key: "canRaiseSoftIssue",   label: "Can raise issues (Client Supervisor)" },
+            { key: "canResolveSoftIssue", label: "Can resolve issues (Catalyst Supervisor)" },
+            { key: "isSoftManager",       label: "Manager view only (Client Manager)" },
+          ].map(({ key, label }) => (
+            <label key={key} style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "#475569", cursor: "pointer" }}>
+              <input type="checkbox" checked={!!form[key]} onChange={(e) => {
+                const v = e.target.checked;
+                const reset = key === "canRaiseSoftIssue" || key === "canResolveSoftIssue" || key === "isSoftManager"
+                  ? { canRaiseSoftIssue: false, canResolveSoftIssue: false, isSoftManager: false }
+                  : {};
+                setForm((p) => ({ ...p, ...reset, [key]: v }));
+              }} />
+              {label}
+            </label>
+          ))}
+        </div>
+      </div>
+      <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: "10px", marginTop: "6px" }}>
+        <p style={{ fontSize: "11px", fontWeight: 700, color: "#94a3b8", marginBottom: "8px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Technical Asset Mobile Permissions</p>
+        <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" }}>
+          {[
+            { key: "isTechnicalSupervisor", label: "Technical Supervisor (assign checklists, manage team)" },
+            { key: "isTechnician",          label: "Technician (fill assigned checklists)" },
+          ].map(({ key, label }) => (
+            <label key={key} style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "#475569", cursor: "pointer" }}>
+              <input type="checkbox" checked={!!form[key]} onChange={(e) => {
+                const v = e.target.checked;
+                const other = key === "isTechnicalSupervisor" ? "isTechnician" : "isTechnicalSupervisor";
+                setForm((p) => ({ ...p, [other]: v ? false : p[other], [key]: v }));
+              }} />
+              {label}
+            </label>
+          ))}
+        </div>
+        <p style={{ fontSize: "11px", color: "#94a3b8", marginTop: "6px" }}>A role can have both Technical and Soft Service permissions simultaneously.</p>
+      </div>
+    </>
+  );
+
+  const content = (
+    <div style={{ padding: "18px 22px", overflowY: "auto", flex: 1 }}>
+      {error && <Alert>{error}</Alert>}
+
+      {/* Existing roles */}
+      <div style={{ marginBottom: "16px" }}>
+        {roles.length === 0 && (
+          <p style={{ color: "#94a3b8", fontSize: "13px", padding: "16px", textAlign: "center", background: "#f8fafc", borderRadius: "8px" }}>
+            No roles defined yet. Add roles below to build your hierarchy.
+          </p>
+        )}
+        {roles.map((r, i) => (
+          <div key={r.id} style={{ borderRadius: "8px", border: `1px solid ${editingId === r.id ? "#6366f1" : "#e2e8f0"}`, marginBottom: "8px", background: editingId === r.id ? "#fafbff" : "#fff", overflow: "hidden" }}>
+            {/* Row header */}
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px", flexWrap: "wrap" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                <button onClick={() => moveRole(r.id, -1)} disabled={saving || i === 0} style={{ padding: "0 4px", border: "none", background: "transparent", cursor: i === 0 ? "default" : "pointer", color: i === 0 ? "#cbd5e1" : "#64748b" }}>▲</button>
+                <button onClick={() => moveRole(r.id, 1)} disabled={saving || i === roles.length - 1} style={{ padding: "0 4px", border: "none", background: "transparent", cursor: i === roles.length - 1 ? "default" : "pointer", color: i === roles.length - 1 ? "#cbd5e1" : "#64748b" }}>▼</button>
+              </div>
+              <span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: r.bgColor || "#dbeafe", color: r.color || "#2563eb" }}>{r.label}</span>
+              <span style={{ fontSize: "11.5px", color: "#94a3b8" }}>{r.parentRoleKey ? `reports to ${roles.find((x) => x.roleKey === r.parentRoleKey)?.label || r.parentRoleKey}` : "top level"}</span>
+              {r.canRaiseSoftIssue    && <span style={{ padding: "2px 8px", borderRadius: "12px", fontSize: "10.5px", fontWeight: 600, background: "#fef9c3", color: "#854d0e" }}>Raises Issues</span>}
+              {r.canResolveSoftIssue  && <span style={{ padding: "2px 8px", borderRadius: "12px", fontSize: "10.5px", fontWeight: 600, background: "#dcfce7", color: "#166534" }}>Resolves Issues</span>}
+              {r.isSoftManager        && <span style={{ padding: "2px 8px", borderRadius: "12px", fontSize: "10.5px", fontWeight: 600, background: "#e0f2fe", color: "#0369a1" }}>Manager View</span>}
+              {r.isTechnicalSupervisor && <span style={{ padding: "2px 8px", borderRadius: "12px", fontSize: "10.5px", fontWeight: 600, background: "#eff6ff", color: "#1d4ed8" }}>Tech Supervisor</span>}
+              {r.isTechnician         && <span style={{ padding: "2px 8px", borderRadius: "12px", fontSize: "10.5px", fontWeight: 600, background: "#f5f3ff", color: "#6d28d9" }}>Technician</span>}
+              <span style={{ marginLeft: "auto", fontSize: "11px", color: "#94a3b8" }}>{r.roleKey}</span>
+              <button onClick={() => editingId === r.id ? cancelEdit() : startEdit(r)} disabled={saving}
+                style={{ padding: "4px 10px", border: `1px solid ${editingId === r.id ? "#c7d2fe" : "#e2e8f0"}`, background: editingId === r.id ? "#eef2ff" : "#f8fafc", color: editingId === r.id ? "#4f46e5" : "#475569", borderRadius: "6px", cursor: "pointer", fontSize: "11.5px", fontWeight: 600 }}>
+                {editingId === r.id ? "Cancel" : "Edit"}
+              </button>
+              <button onClick={() => removeRole(r.id)} disabled={saving}
+                style={{ padding: "4px 8px", border: "1px solid #fecaca", background: "#fff0f0", color: "#dc2626", borderRadius: "6px", cursor: "pointer", fontSize: "11.5px", fontWeight: 600 }}>Delete</button>
+            </div>
+
+            {/* Inline edit form */}
+            {editingId === r.id && (
+              <div style={{ padding: "14px 16px", borderTop: "1px solid #e0e7ff", background: "#f5f7ff" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 80px", gap: "10px", marginBottom: "12px", alignItems: "end" }}>
+                  <div>
+                    <label style={{ display: "block", fontSize: "11px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>Role Label *</label>
+                    <input value={editForm.label || ""} onChange={(e) => setEditForm((p) => ({ ...p, label: e.target.value }))}
+                      style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", border: "1px solid #c7d2fe", borderRadius: "6px", fontSize: "13px" }} />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: "11px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>Reports To</label>
+                    <select value={editForm.parentRoleKey || ""} onChange={(e) => setEditForm((p) => ({ ...p, parentRoleKey: e.target.value }))}
+                      style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", border: "1px solid #c7d2fe", borderRadius: "6px", fontSize: "13px", background: "#fff" }}>
+                      <option value="">— Top of hierarchy —</option>
+                      {roles.filter((x) => x.id !== r.id).map((x) => <option key={x.roleKey} value={x.roleKey}>{x.label}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: "11px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>Color</label>
+                    <input type="color" value={editForm.color || "#2563eb"} onChange={(e) => setEditForm((p) => ({ ...p, color: e.target.value }))}
+                      style={{ width: "100%", height: "34px", padding: "2px", border: "1px solid #c7d2fe", borderRadius: "6px" }} />
+                  </div>
+                </div>
+                <PermCheckboxes form={editForm} setForm={setEditForm} />
+                <div style={{ marginTop: "12px", display: "flex", justifyContent: "flex-end", gap: "8px" }}>
+                  <Btn onClick={cancelEdit} outline color="#64748b" bg="#fff">Cancel</Btn>
+                  <Btn onClick={saveEdit} disabled={saving}>{saving ? "Saving…" : "Save Changes"}</Btn>
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Add new role */}
+      <div style={{ background: "#f8fafc", borderRadius: "10px", padding: "14px 16px", border: "1px solid #e2e8f0" }}>
+        <p style={{ fontSize: "12.5px", fontWeight: 700, color: "#475569", marginBottom: "10px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Add New Role</p>
+        <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr auto", gap: "10px", alignItems: "end", marginBottom: "12px" }}>
+          <div>
+            <label style={{ display: "block", fontSize: "11.5px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>Role Label *</label>
+            <input value={draftLabel} onChange={(e) => setDraftLabel(e.target.value)} placeholder="e.g. Jabil Client Supervisor" style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", border: "1px solid #e2e8f0", borderRadius: "6px", fontSize: "13px" }} />
+          </div>
+          <div>
+            <label style={{ display: "block", fontSize: "11.5px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>Reports To (optional)</label>
+            <select value={draftParent} onChange={(e) => setDraftParent(e.target.value)} style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", border: "1px solid #e2e8f0", borderRadius: "6px", fontSize: "13px", background: "#fff" }}>
+              <option value="">— Top of hierarchy —</option>
+              {roles.map((r) => <option key={r.roleKey} value={r.roleKey}>{r.label}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={{ display: "block", fontSize: "11.5px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>Color</label>
+            <input type="color" value={draftColor} onChange={(e) => setDraftColor(e.target.value)} style={{ width: "100%", height: "34px", padding: "2px", border: "1px solid #e2e8f0", borderRadius: "6px", cursor: "pointer" }} />
+          </div>
+          <Btn onClick={addRole} disabled={saving || !draftLabel.trim()}>Add</Btn>
+        </div>
+        <PermCheckboxes
+          form={{ canRaiseSoftIssue: draftCanRaise, canResolveSoftIssue: draftCanResolve, isSoftManager: draftIsManager, isTechnicalSupervisor: draftIsTechSupervisor, isTechnician: draftIsTechnician }}
+          setForm={(updater) => {
+            const next = typeof updater === "function"
+              ? updater({ canRaiseSoftIssue: draftCanRaise, canResolveSoftIssue: draftCanResolve, isSoftManager: draftIsManager, isTechnicalSupervisor: draftIsTechSupervisor, isTechnician: draftIsTechnician })
+              : updater;
+            setDraftCanRaise(next.canRaiseSoftIssue); setDraftCanResolve(next.canResolveSoftIssue);
+            setDraftIsManager(next.isSoftManager); setDraftIsTechSupervisor(next.isTechnicalSupervisor);
+            setDraftIsTechnician(next.isTechnician);
+          }}
+        />
+      </div>
+    </div>
+  );
+
+  if (inline) return (
+    <div>
+      <div style={{ marginBottom: "22px" }}>
+        <h1 style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px", marginBottom: "4px" }}>Manage Roles</h1>
+        <p style={{ color: "#64748b", fontSize: "13.5px" }}>Define your organization's role hierarchy and mobile app permissions. Top of list = top of chain.</p>
+      </div>
+      <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0" }}>
+        {content}
+      </div>
+    </div>
+  );
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 1200, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
@@ -2326,100 +2552,7 @@ function RolesModal({ token, initialRoles, onClose, onSaved }) {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
         </div>
-
-        <div style={{ padding: "18px 22px", overflowY: "auto", flex: 1 }}>
-          {error && <Alert>{error}</Alert>}
-
-          {/* Existing roles */}
-          <div style={{ marginBottom: "16px" }}>
-            {roles.length === 0 && (
-              <p style={{ color: "#94a3b8", fontSize: "13px", padding: "16px", textAlign: "center", background: "#f8fafc", borderRadius: "8px" }}>
-                No roles defined yet. Add roles below to build your hierarchy.
-              </p>
-            )}
-            {roles.map((r, i) => (
-              <div key={r.id} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px", borderRadius: "8px", border: "1px solid #e2e8f0", marginBottom: "6px", background: "#fff", flexWrap: "wrap" }}>
-                <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-                  <button onClick={() => moveRole(r.id, -1)} disabled={saving || i === 0} style={{ padding: "0 4px", border: "none", background: "transparent", cursor: i === 0 ? "default" : "pointer", color: i === 0 ? "#cbd5e1" : "#64748b" }}>▲</button>
-                  <button onClick={() => moveRole(r.id, 1)} disabled={saving || i === roles.length - 1} style={{ padding: "0 4px", border: "none", background: "transparent", cursor: i === roles.length - 1 ? "default" : "pointer", color: i === roles.length - 1 ? "#cbd5e1" : "#64748b" }}>▼</button>
-                </div>
-                <span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: r.bgColor || "#dbeafe", color: r.color || "#2563eb" }}>{r.label}</span>
-                <span style={{ fontSize: "11.5px", color: "#94a3b8" }}>
-                  {r.parentRoleKey ? `reports to ${roles.find((x) => x.roleKey === r.parentRoleKey)?.label || r.parentRoleKey}` : "top level"}
-                </span>
-                {/* Soft-service capability badges */}
-                {r.canRaiseSoftIssue   && <span style={{ padding: "2px 8px", borderRadius: "12px", fontSize: "10.5px", fontWeight: 600, background: "#fef9c3", color: "#854d0e" }}>Raises Issues</span>}
-                {r.canResolveSoftIssue && <span style={{ padding: "2px 8px", borderRadius: "12px", fontSize: "10.5px", fontWeight: 600, background: "#dcfce7", color: "#166534" }}>Resolves Issues</span>}
-                {r.isSoftManager       && <span style={{ padding: "2px 8px", borderRadius: "12px", fontSize: "10.5px", fontWeight: 600, background: "#e0f2fe", color: "#0369a1" }}>Manager View</span>}
-                {r.isTechnicalSupervisor && <span style={{ padding: "2px 8px", borderRadius: "12px", fontSize: "10.5px", fontWeight: 600, background: "#eff6ff", color: "#1d4ed8" }}>Tech Supervisor</span>}
-                {r.isTechnician          && <span style={{ padding: "2px 8px", borderRadius: "12px", fontSize: "10.5px", fontWeight: 600, background: "#f5f3ff", color: "#6d28d9" }}>Technician</span>}
-                <span style={{ marginLeft: "auto", fontSize: "11px", color: "#94a3b8" }}>{r.roleKey}</span>
-                <button onClick={() => removeRole(r.id)} disabled={saving} style={{ padding: "4px 8px", border: "1px solid #fecaca", background: "#fff0f0", color: "#dc2626", borderRadius: "6px", cursor: "pointer", fontSize: "11.5px", fontWeight: 600 }}>Delete</button>
-              </div>
-            ))}
-          </div>
-
-          {/* Add new role */}
-          <div style={{ background: "#f8fafc", borderRadius: "10px", padding: "14px 16px", border: "1px solid #e2e8f0" }}>
-            <p style={{ fontSize: "12.5px", fontWeight: 700, color: "#475569", marginBottom: "10px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Add New Role</p>
-            <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr auto", gap: "10px", alignItems: "end", marginBottom: "12px" }}>
-              <div>
-                <label style={{ display: "block", fontSize: "11.5px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>Role Label *</label>
-                <input value={draftLabel} onChange={(e) => setDraftLabel(e.target.value)} placeholder="e.g. Jabil Client Supervisor" style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", border: "1px solid #e2e8f0", borderRadius: "6px", fontSize: "13px", outline: "none" }} />
-              </div>
-              <div>
-                <label style={{ display: "block", fontSize: "11.5px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>Reports To (optional)</label>
-                <select value={draftParent} onChange={(e) => setDraftParent(e.target.value)} style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", border: "1px solid #e2e8f0", borderRadius: "6px", fontSize: "13px", background: "#fff", outline: "none" }}>
-                  <option value="">— Top of hierarchy —</option>
-                  {roles.map((r) => (
-                    <option key={r.roleKey} value={r.roleKey}>{r.label}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label style={{ display: "block", fontSize: "11.5px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>Color</label>
-                <input type="color" value={draftColor} onChange={(e) => setDraftColor(e.target.value)} style={{ width: "100%", height: "34px", padding: "2px", border: "1px solid #e2e8f0", borderRadius: "6px", cursor: "pointer" }} />
-              </div>
-              <Btn onClick={addRole} disabled={saving || !draftLabel.trim()}>Add</Btn>
-            </div>
-            {/* Soft-service mobile capabilities */}
-            <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: "10px" }}>
-              <p style={{ fontSize: "11px", fontWeight: 700, color: "#94a3b8", marginBottom: "8px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Soft Services Mobile Permissions</p>
-              <div style={{ display: "flex", gap: "20px", flexWrap: "wrap" }}>
-                <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12.5px", color: "#475569", cursor: "pointer" }}>
-                  <input type="checkbox" checked={draftCanRaise} onChange={(e) => { setDraftCanRaise(e.target.checked); if (e.target.checked) { setDraftCanResolve(false); setDraftIsManager(false); } }} />
-                  Can raise issues (e.g. Client Supervisor)
-                </label>
-                <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12.5px", color: "#475569", cursor: "pointer" }}>
-                  <input type="checkbox" checked={draftCanResolve} onChange={(e) => { setDraftCanResolve(e.target.checked); if (e.target.checked) { setDraftCanRaise(false); setDraftIsManager(false); } }} />
-                  Can resolve issues (e.g. Catalyst Supervisor)
-                </label>
-                <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12.5px", color: "#475569", cursor: "pointer" }}>
-                  <input type="checkbox" checked={draftIsManager} onChange={(e) => { setDraftIsManager(e.target.checked); if (e.target.checked) { setDraftCanRaise(false); setDraftCanResolve(false); } }} />
-                  Manager view only (e.g. Client Manager)
-                </label>
-              </div>
-            </div>
-            {/* Technical asset mobile permissions */}
-            <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: "10px", marginTop: "6px" }}>
-              <p style={{ fontSize: "11px", fontWeight: 700, color: "#94a3b8", marginBottom: "8px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Technical Asset Mobile Permissions</p>
-              <div style={{ display: "flex", gap: "20px", flexWrap: "wrap" }}>
-                <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12.5px", color: "#475569", cursor: "pointer" }}>
-                  <input type="checkbox" checked={draftIsTechSupervisor} onChange={(e) => { setDraftIsTechSupervisor(e.target.checked); if (e.target.checked) setDraftIsTechnician(false); }} />
-                  Technical Supervisor (assign checklists, manage team, fill forms)
-                </label>
-                <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12.5px", color: "#475569", cursor: "pointer" }}>
-                  <input type="checkbox" checked={draftIsTechnician} onChange={(e) => { setDraftIsTechnician(e.target.checked); if (e.target.checked) setDraftIsTechSupervisor(false); }} />
-                  Technician (fill assigned checklists, view own work orders)
-                </label>
-              </div>
-              <p style={{ fontSize: "11px", color: "#94a3b8", marginTop: "6px" }}>
-                A role can have both Technical and Soft Service permissions simultaneously.
-              </p>
-            </div>
-          </div>
-        </div>
-
+        {content}
         <div style={{ padding: "14px 22px", borderTop: "1px solid #e2e8f0", display: "flex", justifyContent: "flex-end", gap: "10px" }}>
           <Btn onClick={handleClose}>Done</Btn>
         </div>
@@ -2427,7 +2560,14 @@ function RolesModal({ token, initialRoles, onClose, onSaved }) {
     </div>
   );
 }
-
+  const [roles, setRoles] = useState(initialRoles || []);
+  const [draftLabel, setDraftLabel] = useState("");
+  const [draftParent, setDraftParent] = useState("");
+  const [draftColor, setDraftColor] = useState("#2563eb");
+  // Soft-service capability flags for the new role being created
+  const [draftCanRaise, setDraftCanRaise]   = useState(false);
+  const [draftCanResolve, setDraftCanResolve] = useState(false);
+  const [draftIsManager, setDraftIsManager]   = useState(false);
 /* ─── Main Portal ────────────────────────────────────────────────── */
 export default function CompanyEmployeePortal() {
   const navigate = useNavigate();
@@ -4444,6 +4584,21 @@ export default function CompanyEmployeePortal() {
           );
         })()}
 
+        {/* ── Manage Roles (inline tab) ─────────────────────── */}
+        {nav === "roles" && (
+          <RolesModal
+            token={token}
+            initialRoles={customRoles}
+            inline={true}
+            onClose={() => {}}
+            onSaved={(list) => {
+              setCustomRoles(list);
+              applyCustomRoles(list);
+              setRoleRefreshKey((k) => k + 1);
+            }}
+          />
+        )}
+
         {/* ── Shifts ────────────────────────────────────────────── */}
         {nav === "shifts" && (() => {
           const fmt12 = (t) => {
@@ -5606,6 +5761,7 @@ export default function CompanyEmployeePortal() {
           token={token}
           existing={editEmp}
           employees={employees}
+          customRoles={customRoles}
           currentUserRole={currentUser.role}
           onClose={() => { setShowEmpModal(false); setEditEmp(null); }}
           onSaved={handleEmpSaved}
