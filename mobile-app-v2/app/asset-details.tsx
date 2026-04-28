@@ -153,6 +153,7 @@ export default function AssetDetailsScreen() {
                   pathname: '/soft-resolve',
                   params: {
                     requestId: String(req.id),
+                    assetId: String(asset.id ?? asset.assetId ?? assetId),
                     assetName,
                     raisedByName: req.raisedByName ?? '',
                     raisedAt: req.raisedAt,

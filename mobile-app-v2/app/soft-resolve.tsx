@@ -3,10 +3,12 @@ import * as ImagePicker from 'expo-image-picker';
 import React, { useEffect, useState } from 'react';
 import {
   Alert, Image, ScrollView, StyleSheet, Text, TextInput,
-  TouchableOpacity, View, ActivityIndicator,
+  TouchableOpacity, View, ActivityIndicator, Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+
+const _SCREEN_W = Dimensions.get('window').width;
 import {
   getSoftRequestById,
   fetchTemplateWithQuestions,
@@ -15,7 +17,7 @@ import {
   uploadFile,
 } from '../utils/api';
 import type { SoftRequest } from '../utils/api';
-import { useTheme, Typography, Spacing, Radius } from '../utils/theme';
+import { useTheme, Spacing, Radius } from '../utils/theme';
 import Header from '../components/Header';
 
 // ─── Field type helpers ───────────────────────────────────────────────────────
@@ -30,7 +32,7 @@ function getFieldType(q: any): string {
   return 'text';
 }
 
-function getBoolLabels(q: any): [string, string, string] {
+function getBoolLabels(q: any): string[] {
   const raw = String(q.answerType || q.inputType || '').toLowerCase();
   if (raw.includes('ok_not_ok') || raw.includes('ok/not_ok')) return ['OK', 'Not OK', 'N/A'];
   if (raw.includes('cleaned')) return ['Cleaned', 'Not Cleaned', 'N/A'];
@@ -46,158 +48,238 @@ function parseOptions(q: any): string[] {
   } catch { return []; }
 }
 
-// ─── Before cell (read-only: client supervisor's answer) ─────────────────────
-
-function BeforeCell({ q, beforeAnswers }: { q: any; beforeAnswers: any[] }) {
-  const { theme } = useTheme();
-  const entry = beforeAnswers.find((a: any) => String(a.questionId) === String(q.id));
-  const val   = entry?.answer ?? entry?.value ?? null;
-
-  if (val && typeof val === 'string' && val.startsWith('http') && /\.(jpe?g|png|gif|webp)/i.test(val)) {
-    return (
-      <View style={bStyles.photoWrap}>
-        <Image source={{ uri: val }} style={bStyles.photo} resizeMode="cover" />
-      </View>
-    );
+function extractBeforeValue(entry: any): string | null {
+  if (!entry) return null;
+  const raw = entry.answer ?? entry.optionSelected ?? entry.value ?? entry.answerValue ?? null;
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw === 'object') {
+    const inner = raw.value ?? raw.label ?? raw.url ?? raw.uri ?? null;
+    return inner ? String(inner) : JSON.stringify(raw);
   }
+  const s = String(raw).trim();
+  return s.length > 0 ? s : null;
+}
+
+// ─── Before section (read-only) ───────────────────────────────────────────────
+function BeforeSection({ q, beforeAnswers }: { q: any; beforeAnswers: any[] }) {
+  const entry = beforeAnswers.find((a: any) => String(a.questionId) === String(q.id));
+  const val   = extractBeforeValue(entry);
+  const isPhoto = val !== null && val.startsWith('http') && /\.(jpe?g|png|gif|webp)/i.test(val);
+
   return (
-    <View style={[bStyles.cell, { backgroundColor: theme.inputBg }]}>
-      <Text style={[bStyles.cellText, { color: val ? theme.textPrimary : theme.textMuted }]} numberOfLines={4}>
-        {val ?? '—'}
-      </Text>
+    <View style={bStyles.wrap}>
+      <View style={bStyles.labelRow}>
+        <MaterialCommunityIcons name="account-clock-outline" size={12} color="#92400E" />
+        <Text style={bStyles.label}>Client's Answer</Text>
+      </View>
+      {isPhoto
+        ? <Image source={{ uri: val! }} style={bStyles.photo} resizeMode="cover" />
+        : <Text style={[bStyles.value, { color: val ? '#78350F' : '#B45309' }]}>
+            {val ?? 'No answer provided'}
+          </Text>
+      }
     </View>
   );
 }
 
 const bStyles = StyleSheet.create({
-  cell:      { minHeight: 44, justifyContent: 'center', padding: 10, borderRadius: 8 },
-  cellText:  { fontSize: 13, fontWeight: '500' },
-  photoWrap: { borderRadius: 8, overflow: 'hidden', marginTop: 4 },
-  photo:     { width: '100%', height: 100 },
+  wrap:     { backgroundColor: '#FFFBEB', borderWidth: 1, borderColor: '#FDE68A', borderRadius: 10, padding: 12, marginBottom: 10 },
+  labelRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 6 },
+  label:    { fontSize: 11, fontWeight: '700', color: '#92400E', textTransform: 'uppercase', letterSpacing: 0.4 },
+  value:    { fontSize: 14, fontWeight: '600' },
+  photo:    { width: '100%', height: 160, borderRadius: 8 },
 });
 
-// ─── After input (catalyst fills in) ─────────────────────────────────────────
-
-function AfterInput({
-  type, boolLabels, options, value, onChange, uploading, setUploading,
-}: {
-  type: string; boolLabels: [string, string, string]; options: string[];
-  value: any; onChange: (v: any) => void; uploading: boolean; setUploading: (v: boolean) => void;
+// ─── Photo picker ─────────────────────────────────────────────────────────────
+function PhotoPicker({ value, onChange, uploading, setUploading }: {
+  value: string | null; onChange: (v: string | null) => void;
+  uploading: boolean; setUploading: (v: boolean) => void;
 }) {
   const { theme } = useTheme();
 
-  const pickPhoto = async (fromCamera: boolean) => {
+  const pick = async (fromCamera: boolean) => {
     const perm = fromCamera
       ? await ImagePicker.requestCameraPermissionsAsync()
       : await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (perm.status !== 'granted') { Alert.alert('Permission Required', 'Please grant permission in settings.'); return; }
+    if (perm.status !== 'granted') {
+      Alert.alert('Permission Required', 'Please grant permission in settings.');
+      return;
+    }
     const result = fromCamera
       ? await ImagePicker.launchCameraAsync({ mediaTypes: 'images', quality: 0.75 })
       : await ImagePicker.launchImageLibraryAsync({ mediaTypes: 'images', quality: 0.75 });
     if (result.canceled || !result.assets?.[0]?.uri) return;
     setUploading(true);
-    try { onChange(await uploadFile(result.assets[0].uri)); }
+    try { onChange(await uploadFile(result.assets[0].uri) as string); }
     catch (err: any) { Alert.alert('Upload Failed', err.message ?? 'Could not upload.'); }
     finally { setUploading(false); }
   };
 
-  if (type === 'boolean') {
+  if (value) {
     return (
-      <View style={aStyles.boolRow}>
-        {boolLabels.map((opt) => (
-          <TouchableOpacity key={opt}
-            style={[aStyles.boolBtn, { backgroundColor: value === opt ? theme.primary : theme.inputBg, borderColor: value === opt ? theme.primary : theme.inputBorder }]}
-            onPress={() => onChange(opt)}>
-            <Text style={[aStyles.boolText, { color: value === opt ? '#fff' : theme.textSecondary }]}>{opt}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-    );
-  }
-
-  if (type === 'select' && options.length > 0) {
-    return (
-      <View style={aStyles.selectWrap}>
-        {options.map((opt) => (
-          <TouchableOpacity key={opt}
-            style={[aStyles.optBtn, { backgroundColor: value === opt ? theme.primary : theme.inputBg, borderColor: value === opt ? theme.primary : theme.inputBorder }]}
-            onPress={() => onChange(opt)}>
-            <Text style={[aStyles.optText, { color: value === opt ? '#fff' : theme.textSecondary }]}>{opt}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-    );
-  }
-
-  if (type === 'photo') {
-    if (value) {
-      return (
-        <View>
-          <Image source={{ uri: value }} style={aStyles.photo} resizeMode="cover" />
-          <TouchableOpacity style={[aStyles.removeBtn, { borderColor: theme.danger }]} onPress={() => onChange(null)}>
-            <Text style={[aStyles.removeBtnText, { color: theme.danger }]}>Remove</Text>
-          </TouchableOpacity>
-        </View>
-      );
-    }
-    return (
-      <View style={aStyles.photoRow}>
-        <TouchableOpacity style={[aStyles.photoBtn, { backgroundColor: theme.primary, opacity: uploading ? 0.6 : 1 }]} onPress={() => pickPhoto(true)} disabled={uploading}>
-          {uploading ? <ActivityIndicator size="small" color="#fff" /> : <MaterialCommunityIcons name="camera" size={15} color="#fff" />}
-          <Text style={aStyles.photoBtnText}>{uploading ? '…' : 'Camera'}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[aStyles.photoBtn, { backgroundColor: theme.inputBg, borderWidth: 1.5, borderColor: theme.primary, opacity: uploading ? 0.6 : 1 }]} onPress={() => pickPhoto(false)} disabled={uploading}>
-          <MaterialCommunityIcons name="image-multiple-outline" size={15} color={theme.primary} />
-          <Text style={[aStyles.photoBtnText, { color: theme.primary }]}>Gallery</Text>
+      <View style={ppStyles.wrap}>
+        <Image source={{ uri: value }} style={ppStyles.preview} resizeMode="cover" />
+        <TouchableOpacity
+          style={[ppStyles.removeBtn, { borderColor: theme.danger }]}
+          onPress={() => onChange(null)}
+        >
+          <MaterialCommunityIcons name="trash-can-outline" size={14} color={theme.danger} />
+          <Text style={[ppStyles.removeTxt, { color: theme.danger }]}>Remove photo</Text>
         </TouchableOpacity>
       </View>
     );
   }
 
   return (
-    <View style={[aStyles.inputWrap, { backgroundColor: theme.inputBg, borderColor: theme.inputBorder }]}>
-      <TextInput
-        style={[aStyles.input, type === 'textarea' ? aStyles.textarea : null, { color: theme.inputText }]}
-        value={value ?? ''}
-        onChangeText={onChange}
-        placeholder={type === 'number' ? 'Enter value' : 'Enter response'}
-        placeholderTextColor={theme.inputPlaceholder}
-        keyboardType={type === 'number' ? 'decimal-pad' : 'default'}
-        multiline={type === 'textarea'}
-        numberOfLines={type === 'textarea' ? 3 : 1}
-        textAlignVertical={type === 'textarea' ? 'top' : 'center'}
-      />
+    <View style={ppStyles.row}>
+      <TouchableOpacity
+        style={[ppStyles.btn, { backgroundColor: theme.primary, opacity: uploading ? 0.6 : 1 }]}
+        onPress={() => pick(true)} disabled={uploading}
+      >
+        {uploading
+          ? <ActivityIndicator size="small" color="#fff" />
+          : <MaterialCommunityIcons name="camera" size={16} color="#fff" />}
+        <Text style={ppStyles.btnTxt}>{uploading ? 'Uploading…' : 'Camera'}</Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={[ppStyles.btn, { backgroundColor: theme.inputBg, borderWidth: 1.5, borderColor: theme.primary, opacity: uploading ? 0.6 : 1 }]}
+        onPress={() => pick(false)} disabled={uploading}
+      >
+        <MaterialCommunityIcons name="image-multiple-outline" size={16} color={theme.primary} />
+        <Text style={[ppStyles.btnTxt, { color: theme.primary }]}>Gallery</Text>
+      </TouchableOpacity>
     </View>
   );
 }
 
-const aStyles = StyleSheet.create({
-  boolRow:      { flexDirection: 'row', gap: 4, flexWrap: 'wrap' },
-  boolBtn:      { flex: 1, minWidth: 44, paddingVertical: 8, borderRadius: 8, borderWidth: 1.5, alignItems: 'center' },
-  boolText:     { fontSize: 11, fontWeight: '700' },
-  selectWrap:   { flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
-  optBtn:       { paddingHorizontal: 9, paddingVertical: 7, borderRadius: 8, borderWidth: 1.5 },
-  optText:      { fontSize: 11, fontWeight: '600' },
-  photo:        { width: '100%', height: 100, borderRadius: 8 },
-  removeBtn:    { marginTop: 4, paddingVertical: 5, borderRadius: 6, borderWidth: 1, alignItems: 'center' },
-  removeBtnText:{ fontSize: 12, fontWeight: '600' },
-  photoRow:     { flexDirection: 'row', gap: 5 },
-  photoBtn:     { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 9, borderRadius: 8 },
-  photoBtnText: { fontSize: 12, fontWeight: '700', color: '#fff' },
-  inputWrap:    { borderWidth: 1.5, borderRadius: 8, paddingHorizontal: 10 },
-  input:        { fontSize: 13, paddingVertical: 10, minHeight: 44 },
-  textarea:     { minHeight: 64, paddingTop: 8 },
+const ppStyles = StyleSheet.create({
+  row:       { flexDirection: 'row', gap: 10 },
+  btn:       { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 11, borderRadius: 10 },
+  btnTxt:    { fontSize: 13, fontWeight: '700', color: '#fff' },
+  wrap:      { gap: 8 },
+  preview:   { width: '100%', height: 180, borderRadius: 10 },
+  removeBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, borderWidth: 1, borderRadius: 8, paddingVertical: 8 },
+  removeTxt: { fontSize: 12, fontWeight: '600' },
+});
+
+// ─── After input ──────────────────────────────────────────────────────────────
+function AfterInput({ q, value, onChange, photoValue, onPhotoChange, uploading, setUploading }: {
+  q: any; value: any; onChange: (v: any) => void;
+  photoValue: string | null; onPhotoChange: (v: string | null) => void;
+  uploading: boolean; setUploading: (v: boolean) => void;
+}) {
+  const { theme } = useTheme();
+  const type    = getFieldType(q);
+  const boolOpts = getBoolLabels(q);
+  const selOpts  = parseOptions(q);
+
+  return (
+    <View style={aiStyles.wrap}>
+      <View style={aiStyles.labelRow}>
+        <MaterialCommunityIcons name="account-check-outline" size={12} color="#065F46" />
+        <Text style={aiStyles.label}>Your Response</Text>
+      </View>
+
+      {type === 'boolean' && (
+        <View style={aiStyles.chipRow}>
+          {boolOpts.map((opt) => (
+            <TouchableOpacity
+              key={opt}
+              style={[aiStyles.chip, {
+                backgroundColor: value === opt ? theme.primary : theme.inputBg,
+                borderColor: value === opt ? theme.primary : theme.inputBorder,
+              }]}
+              onPress={() => onChange(opt)}
+            >
+              <Text style={[aiStyles.chipTxt, { color: value === opt ? '#fff' : theme.textSecondary }]}>
+                {opt}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+
+      {type === 'select' && selOpts.length > 0 && (
+        <View style={aiStyles.chipRow}>
+          {selOpts.map((opt) => (
+            <TouchableOpacity
+              key={opt}
+              style={[aiStyles.chip, {
+                backgroundColor: value === opt ? theme.primary : theme.inputBg,
+                borderColor: value === opt ? theme.primary : theme.inputBorder,
+              }]}
+              onPress={() => onChange(opt)}
+            >
+              <Text style={[aiStyles.chipTxt, { color: value === opt ? '#fff' : theme.textSecondary }]}>
+                {opt}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+
+      {(type === 'text' || type === 'textarea' || type === 'number') && (
+        <View style={[aiStyles.inputBox, { backgroundColor: theme.inputBg, borderColor: theme.inputBorder }]}>
+          <TextInput
+            style={[aiStyles.input, type === 'textarea' && aiStyles.multiline, { color: theme.inputText }]}
+            value={value ?? ''}
+            onChangeText={onChange}
+            placeholder={type === 'number' ? 'Enter number' : 'Type your response…'}
+            placeholderTextColor={theme.inputPlaceholder}
+            keyboardType={type === 'number' ? 'decimal-pad' : 'default'}
+            multiline={type === 'textarea'}
+            numberOfLines={type === 'textarea' ? 3 : 1}
+            textAlignVertical={type === 'textarea' ? 'top' : 'center'}
+          />
+        </View>
+      )}
+
+      {/* Photo field type: primary is photo */}
+      {type === 'photo' && (
+        <PhotoPicker value={photoValue} onChange={onPhotoChange} uploading={uploading} setUploading={setUploading} />
+      )}
+
+      {/* All other types: optional photo attachment */}
+      {type !== 'photo' && (
+        <View style={aiStyles.photoSection}>
+          <View style={aiStyles.photoLabelRow}>
+            <MaterialCommunityIcons name="camera-plus-outline" size={13} color={theme.textSecondary} />
+            <Text style={[aiStyles.photoLabel, { color: theme.textSecondary }]}>Attach Photo (optional)</Text>
+          </View>
+          <PhotoPicker value={photoValue} onChange={onPhotoChange} uploading={uploading} setUploading={setUploading} />
+        </View>
+      )}
+    </View>
+  );
+}
+
+const aiStyles = StyleSheet.create({
+  wrap:         { backgroundColor: '#F0FDF4', borderWidth: 1.5, borderColor: '#A7F3D0', borderRadius: 10, padding: 12 },
+  labelRow:     { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 10 },
+  label:        { fontSize: 11, fontWeight: '700', color: '#065F46', textTransform: 'uppercase', letterSpacing: 0.4 },
+  chipRow:      { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
+  chip:         { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 8, borderWidth: 1.5 },
+  chipTxt:      { fontSize: 13, fontWeight: '700' },
+  inputBox:     { borderWidth: 1.5, borderRadius: 8, paddingHorizontal: 12, marginBottom: 8 },
+  input:        { fontSize: 14, paddingVertical: 11, minHeight: 44 },
+  multiline:    { minHeight: 80, paddingTop: 10 },
+  photoSection: { marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#D1FAE5' },
+  photoLabelRow:{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 8 },
+  photoLabel:   { fontSize: 12, fontWeight: '600' },
 });
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function SoftResolveScreen() {
   const { theme } = useTheme();
-  const { requestId, assetName } = useLocalSearchParams<{ requestId: string; assetName: string }>();
+  const { requestId, assetId, assetName } = useLocalSearchParams<{
+    requestId: string; assetId?: string; assetName: string;
+  }>();
 
   const [request,    setRequest]    = useState<SoftRequest | null>(null);
   const [questions,  setQuestions]  = useState<any[]>([]);
   const [answers,    setAnswers]    = useState<Record<string, any>>({});
+  const [photos,     setPhotos]     = useState<Record<string, string | null>>({});
   const [loading,    setLoading]    = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [uploading,  setUploading]  = useState(false);
@@ -221,12 +303,23 @@ export default function SoftResolveScreen() {
     load();
   }, [requestId]);
 
-  const beforeAnswers: any[] = (request as any)?.beforeAnswers ?? [];
+  const beforeAnswers: any[] = Array.isArray((request as any)?.beforeAnswers)
+    ? (request as any).beforeAnswers
+    : [];
 
   const handleSubmit = async () => {
     setSubmitting(true);
     try {
-      const answerArray = questions.map((q) => ({ questionId: q.id, answer: answers[q.id] ?? null }));
+      const answerArray = questions.map((q) => {
+        const type     = getFieldType(q);
+        const mainVal  = answers[q.id] ?? null;
+        const photoUrl = photos[q.id] ?? null;
+        const finalVal = type === 'photo'
+          ? photoUrl
+          : (photoUrl ? { value: mainVal, photoUrl } : mainVal);
+        return { questionId: q.id, answer: finalVal };
+      });
+
       const submission: any = await submitChecklistAuth({
         templateId: request!.templateId,
         assetId:    request!.assetId,
@@ -234,8 +327,18 @@ export default function SoftResolveScreen() {
       });
       const submissionId: number | undefined = submission?.submissionId ?? submission?.id ?? undefined;
       await resolveSoftRequest(Number(requestId), submissionId);
-      Alert.alert('Resolved!', 'The issue has been marked as resolved.', [
-        { text: 'OK', onPress: () => router.back() },
+
+      Alert.alert('✓ Resolved', 'The issue has been marked as resolved.', [
+        {
+          text: 'OK',
+          onPress: () => {
+            if (assetId) {
+              router.replace({ pathname: '/asset-details', params: { assetId } });
+            } else {
+              router.back();
+            }
+          },
+        },
       ]);
     } catch (err: any) {
       Alert.alert('Error', err.message ?? 'Failed to resolve request.');
@@ -248,61 +351,79 @@ export default function SoftResolveScreen() {
     return (
       <SafeAreaView style={[styles.safe, { backgroundColor: theme.background }]} edges={['top']}>
         <Header title="Resolve Issue" showBack />
-        <ActivityIndicator color={theme.primary} style={{ marginTop: Spacing.xxl }} />
+        <View style={styles.loadWrap}>
+          <ActivityIndicator size="large" color={theme.primary} />
+          <Text style={[styles.loadTxt, { color: theme.textSecondary }]}>Loading checklist…</Text>
+        </View>
       </SafeAreaView>
     );
   }
+
+  const reqName = (request as any)?.templateName ?? assetName ?? 'Issue';
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.background }]} edges={['top']}>
       <Header title="Resolve Issue" subtitle={assetName ?? undefined} showBack />
 
-      {/* Before / After column labels */}
-      <View style={styles.colHeaderBar}>
-        <View style={[styles.colHeader, { backgroundColor: '#FEF3C7', flex: 1 }]}>
-          <MaterialCommunityIcons name="account-clock-outline" size={13} color="#92400E" />
-          <Text style={[styles.colHeaderText, { color: '#92400E' }]}>BEFORE (Client)</Text>
+      {/* Info banner */}
+      <View style={[styles.infoBanner, { backgroundColor: theme.surface, borderBottomColor: theme.border }]}>
+        <View style={styles.infoLeft}>
+          <Text style={[styles.infoTitle, { color: theme.textPrimary }]} numberOfLines={1}>{reqName}</Text>
+          {(request as any)?.raisedByName && (
+            <Text style={[styles.infoSub, { color: theme.textSecondary }]}>
+              {'Raised by '}{(request as any).raisedByName}
+              {(request as any).raisedAt
+                ? `  ·  ${new Date((request as any).raisedAt).toLocaleDateString()}`
+                : ''}
+            </Text>
+          )}
         </View>
-        <View style={{ width: 9 }} />
-        <View style={[styles.colHeader, { backgroundColor: '#D1FAE5', flex: 1 }]}>
-          <MaterialCommunityIcons name="account-check-outline" size={13} color="#065F46" />
-          <Text style={[styles.colHeaderText, { color: '#065F46' }]}>AFTER (Your Response)</Text>
+        <View style={styles.badge}>
+          <Text style={styles.badgeTxt}>OPEN</Text>
         </View>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        contentContainerStyle={styles.scroll}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
         {questions.length === 0 ? (
           <View style={[styles.emptyBox, { backgroundColor: theme.surface }]}>
-            <MaterialCommunityIcons name="clipboard-alert-outline" size={40} color={theme.textMuted} />
-            <Text style={[styles.emptyText, { color: theme.textSecondary }]}>No questions found for this checklist.</Text>
+            <MaterialCommunityIcons name="clipboard-alert-outline" size={48} color={theme.textMuted} />
+            <Text style={[styles.emptyText, { color: theme.textSecondary }]}>
+              No questions found for this checklist.
+            </Text>
           </View>
         ) : (
           questions.map((q, idx) => {
-            const type       = getFieldType(q);
-            const boolLabels = getBoolLabels(q);
-            const options    = parseOptions(q);
-            const label      = q.questionText || q.text || `Question ${idx + 1}`;
+            const label = q.questionText || q.text || `Question ${idx + 1}`;
             return (
               <View key={String(q.id ?? idx)} style={[styles.qCard, { backgroundColor: theme.surface, shadowColor: theme.cardShadow }]}>
-                <Text style={[styles.qLabel, { color: theme.textPrimary }]}>
-                  <Text style={{ color: theme.textMuted }}>{idx + 1}. </Text>
-                  {label}
-                  {q.isRequired ? <Text style={{ color: theme.danger }}> *</Text> : null}
-                </Text>
-                <View style={styles.twoCol}>
-                  <View style={styles.col}>
-                    <BeforeCell q={q} beforeAnswers={beforeAnswers} />
+                {/* Question label */}
+                <View style={styles.qLabelRow}>
+                  <View style={[styles.qNum, { backgroundColor: theme.primary }]}>
+                    <Text style={styles.qNumTxt}>{idx + 1}</Text>
                   </View>
-                  <View style={styles.divider} />
-                  <View style={styles.col}>
-                    <AfterInput
-                      type={type} boolLabels={boolLabels} options={options}
-                      value={answers[q.id]}
-                      onChange={(v) => setAnswers((prev) => ({ ...prev, [q.id]: v }))}
-                      uploading={uploading} setUploading={setUploading}
-                    />
-                  </View>
+                  <Text style={[styles.qLabel, { color: theme.textPrimary }]}>
+                    {label}
+                    {q.isRequired ? <Text style={{ color: theme.danger }}> *</Text> : null}
+                  </Text>
                 </View>
+
+                {/* Client's answer (before) */}
+                <BeforeSection q={q} beforeAnswers={beforeAnswers} />
+
+                {/* Catalyst's response (after) */}
+                <AfterInput
+                  q={q}
+                  value={answers[q.id]}
+                  onChange={(v) => setAnswers((prev) => ({ ...prev, [q.id]: v }))}
+                  photoValue={photos[q.id] ?? null}
+                  onPhotoChange={(v) => setPhotos((prev) => ({ ...prev, [q.id]: v }))}
+                  uploading={uploading}
+                  setUploading={setUploading}
+                />
               </View>
             );
           })
@@ -311,20 +432,19 @@ export default function SoftResolveScreen() {
 
       <View style={[styles.footer, { backgroundColor: theme.surface, borderTopColor: theme.border }]}>
         <TouchableOpacity
-          style={[styles.resolveBtn, { backgroundColor: submitting ? theme.textMuted : '#059669' }]}
+          style={[styles.resolveBtn, { backgroundColor: submitting ? '#6B7280' : '#059669' }]}
           onPress={handleSubmit}
           disabled={submitting || uploading}
           activeOpacity={0.85}
         >
-          {submitting
-            ? <ActivityIndicator color="#fff" />
-            : (
-              <>
-                <MaterialCommunityIcons name="check-circle-outline" size={22} color="#fff" />
-                <Text style={styles.resolveBtnText}>Mark as Resolved</Text>
-              </>
-            )
-          }
+          {submitting ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <>
+              <MaterialCommunityIcons name="check-circle" size={22} color="#fff" />
+              <Text style={styles.resolveBtnTxt}>Mark as Resolved</Text>
+            </>
+          )}
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -333,18 +453,23 @@ export default function SoftResolveScreen() {
 
 const styles = StyleSheet.create({
   safe:          { flex: 1 },
-  colHeaderBar:  { flexDirection: 'row', paddingHorizontal: Spacing.md, paddingVertical: Spacing.xs, gap: 0 },
-  colHeader:     { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 7, paddingHorizontal: 10, borderRadius: 8, justifyContent: 'center' },
-  colHeaderText: { fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
+  loadWrap:      { flex: 1, alignItems: 'center', justifyContent: 'center', gap: Spacing.md },
+  loadTxt:       { fontSize: 14 },
+  infoBanner:    { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.md, paddingVertical: 12, borderBottomWidth: 1, gap: 10 },
+  infoLeft:      { flex: 1, gap: 2 },
+  infoTitle:     { fontSize: 15, fontWeight: '700' },
+  infoSub:       { fontSize: 12 },
+  badge:         { backgroundColor: '#FEF3C7', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 },
+  badgeTxt:      { fontSize: 11, fontWeight: '800', color: '#92400E', letterSpacing: 0.5 },
   scroll:        { padding: Spacing.md, gap: Spacing.md, paddingBottom: 120 },
-  qCard:         { borderRadius: Radius.lg, padding: Spacing.md, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 5, elevation: 3 },
-  qLabel:        { fontSize: 14, fontWeight: '600', marginBottom: Spacing.sm },
-  twoCol:        { flexDirection: 'row', gap: 0, alignItems: 'flex-start' },
-  col:           { flex: 1 },
-  divider:       { width: 1, alignSelf: 'stretch', backgroundColor: '#E2E8F0', marginHorizontal: 6 },
+  qCard:         { borderRadius: Radius.lg, padding: Spacing.md, elevation: 2, shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 4 },
+  qLabelRow:     { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: 12 },
+  qNum:          { width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center', marginTop: 1, flexShrink: 0 },
+  qNumTxt:       { fontSize: 12, fontWeight: '800', color: '#fff' },
+  qLabel:        { fontSize: 15, fontWeight: '600', lineHeight: 22, flex: 1 },
   emptyBox:      { borderRadius: Radius.xl, padding: Spacing.xxl, alignItems: 'center', gap: Spacing.md },
   emptyText:     { fontSize: 14, textAlign: 'center' },
-  footer:        { borderTopWidth: 1, padding: Spacing.lg },
-  resolveBtn:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.md, height: 56, borderRadius: Radius.lg },
-  resolveBtnText:{ fontSize: 17, fontWeight: '700', color: '#fff' },
+  footer:        { borderTopWidth: 1, padding: Spacing.md, paddingBottom: Spacing.lg },
+  resolveBtn:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, height: 56, borderRadius: Radius.lg },
+  resolveBtnTxt: { fontSize: 17, fontWeight: '800', color: '#fff' },
 });
