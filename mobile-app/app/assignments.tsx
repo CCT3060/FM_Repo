@@ -43,7 +43,8 @@ export default function AssignmentsScreen() {
             const user = await getStoredUser();
             setUserRole(isTechSupervisor(user) ? 'supervisor' : user?.role?.toLowerCase() ?? '');
         } catch { /* ignore */ }
-        await Promise.all([loadAssignments(), loadTeamMembers(), loadHistory()]);\n    };
+        await Promise.all([loadAssignments(), loadTeamMembers(), loadHistory()]);
+    };
 
     const loadHistory = async () => {
         try {
