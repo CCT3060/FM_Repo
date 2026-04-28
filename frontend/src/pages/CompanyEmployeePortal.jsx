@@ -2560,14 +2560,6 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false }) {
     </div>
   );
 }
-  const [roles, setRoles] = useState(initialRoles || []);
-  const [draftLabel, setDraftLabel] = useState("");
-  const [draftParent, setDraftParent] = useState("");
-  const [draftColor, setDraftColor] = useState("#2563eb");
-  // Soft-service capability flags for the new role being created
-  const [draftCanRaise, setDraftCanRaise]   = useState(false);
-  const [draftCanResolve, setDraftCanResolve] = useState(false);
-  const [draftIsManager, setDraftIsManager]   = useState(false);
 /* ─── Main Portal ────────────────────────────────────────────────── */
 export default function CompanyEmployeePortal() {
   const navigate = useNavigate();
