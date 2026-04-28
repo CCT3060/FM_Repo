@@ -210,12 +210,14 @@ export default function AssetDetailsScreen() {
                 style={[styles.tplCard, { backgroundColor: theme.surface, shadowColor: theme.cardShadow }]}
                 onPress={() =>
                   router.push({
-                    pathname: '/soft-raise',
+                    pathname: '/checklist-entry',
                     params: {
                       assetId,
                       templateId: String(tpl.id),
+                      templateType: 'checklist',
                       templateName: tpl.templateName ?? tpl.name,
                       assetName,
+                      softRaise: '1',
                     },
                   })
                 }
@@ -228,7 +230,7 @@ export default function AssetDetailsScreen() {
                   <Text style={[styles.tplName, { color: theme.textPrimary }]} numberOfLines={2}>
                     {tpl.templateName ?? tpl.name}
                   </Text>
-                  <Text style={[styles.tplType, { color: theme.textSecondary }]}>Tap to report issue</Text>
+                  <Text style={[styles.tplType, { color: theme.textSecondary }]}>Fill checklist to report issue</Text>
                 </View>
                 <MaterialCommunityIcons name="chevron-right" size={20} color={theme.textMuted} />
               </TouchableOpacity>

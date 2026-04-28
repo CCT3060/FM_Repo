@@ -12,6 +12,7 @@ import {
   submitChecklistAuth,
   submitLogsheetAuth,
   uploadFile,
+  raiseSoftRequest,
 } from '../utils/api';
 import { useTheme, Typography, Spacing, Radius } from '../utils/theme';
 import Header from '../components/Header';
@@ -381,7 +382,7 @@ function FieldInput({ field, value, onChange }: { field: Field; value: any; onCh
 
 export default function ChecklistEntryScreen() {
   const { theme } = useTheme();
-  const { assetId, templateId, templateType, templateName, assetName } =
+  const { assetId, templateId, templateType, templateName, assetName, softRaise } =
     useLocalSearchParams<{
       assetId: string;
       templateId: string;
@@ -389,7 +390,10 @@ export default function ChecklistEntryScreen() {
       templateName: string;
       assetName: string;
       assignmentId: string;
+      softRaise: string;
     }>();
+
+  const isSoftRaise = softRaise === '1';
 
   const [fields,     setFields]    = useState<Field[]>([]);
   const [answers,    setAnswers]   = useState<Record<string, any>>({});
@@ -434,15 +438,30 @@ export default function ChecklistEntryScreen() {
       const tid = Number(templateId);
       const aid = assetId && Number(assetId) > 0 ? Number(assetId) : null;
 
-      if (templateType === 'logsheet') {
+      if (isSoftRaise) {
+        // Submit checklist AND raise a soft service request in one step
+        const submission = await submitChecklistAuth({ templateId: tid, assetId: aid, answers: answerArray });
+        const submissionId = (submission as any)?.submissionId ?? (submission as any)?.id ?? undefined;
+        await raiseSoftRequest({
+          assetId: aid ?? 0,
+          templateId: tid,
+          answers: answerArray,
+          checklistSubmissionId: submissionId,
+        });
+        Alert.alert('Request Raised!', 'Your issue has been submitted successfully.', [
+          { text: 'Done', onPress: () => router.back() },
+        ]);
+      } else if (templateType === 'logsheet') {
         await submitLogsheetAuth({ templateId: tid, assetId: aid, answers: answerArray });
+        Alert.alert('Submitted!', 'Your response has been recorded.', [
+          { text: 'Done', onPress: () => router.back() },
+        ]);
       } else {
         await submitChecklistAuth({ templateId: tid, assetId: aid, answers: answerArray });
+        Alert.alert('Submitted!', 'Your response has been recorded.', [
+          { text: 'Done', onPress: () => router.back() },
+        ]);
       }
-
-      Alert.alert('Submitted!', 'Your response has been recorded.', [
-        { text: 'Done', onPress: () => router.back() },
-      ]);
     } catch (err: any) {
       Alert.alert('Submission Failed', err.message ?? 'Please try again.');
     } finally {
@@ -531,7 +550,7 @@ export default function ChecklistEntryScreen() {
               ) : (
                 <>
                   <MaterialCommunityIcons name="check-circle-outline" size={20} color="#fff" />
-                  <Text style={styles.submitText}>Submit</Text>
+                  <Text style={styles.submitText}>{isSoftRaise ? 'Submit Request' : 'Submit'}</Text>
                 </>
               )}
             </TouchableOpacity>
