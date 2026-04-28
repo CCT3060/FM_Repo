@@ -379,6 +379,10 @@ export async function assignWorkOrder(id: number, userId: number) {
 }
 
 // ─── Soft Service ─────────────────────────────────────────────────────────────
+export async function getSoftRequestsForAsset(assetId: number): Promise<SoftRequest[]> {
+  return apiGet<SoftRequest[]>(`/api/soft-service/requests/asset/${assetId}`);
+}
+
 export async function fetchMySoftRequests(): Promise<SoftRequest[]> {
   return apiGet<SoftRequest[]>('/api/soft-service/requests/my');
 }
