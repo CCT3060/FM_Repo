@@ -22,12 +22,9 @@ const getApiBase = () => {
     return 'https://fm.catalystsolutions.eco';
   }
   
-  // Development fallback URLs
-  if (Platform.OS === 'android' || Platform.OS === 'ios') {
-    return 'http://192.168.1.10:4000';
-  } else {
-    return 'http://localhost:4000'; // Web or other platforms
-  }
+  // ⚠️ EXPO_PUBLIC_API_URL not set in .env.local — update mobile-app/.env.local with your machine IP
+  // e.g.  EXPO_PUBLIC_API_URL=http://192.168.1.10:4000
+  return 'http://localhost:4000';
 };
 
 export const API_BASE = getApiBase();
