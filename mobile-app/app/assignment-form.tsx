@@ -1,10 +1,12 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
+import * as ImagePicker from 'expo-image-picker';
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
+    Image,
     KeyboardAvoidingView,
     Platform,
     SafeAreaView,
@@ -15,6 +17,7 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getMyAssets, getTemplateDetails, submitChecklist, submitLogsheet, submitTabularLogsheet, checkShiftAccess, type TemplateDetails, type TabularColumnGroup } from '../utils/api';
 
 export default function AssignmentFormScreen() {
@@ -27,11 +30,14 @@ export default function AssignmentFormScreen() {
     const routeAssetId = params.assetId ? parseInt(params.assetId as string) : null;
     const routeAssetName = params.assetName as string | undefined;
 
+    const insets = useSafeAreaInsets();
     const [template, setTemplate] = useState<TemplateDetails | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [answers, setAnswers] = useState<Record<number, any>>({});
     const [answerNotes, setAnswerNotes] = useState<Record<number, string>>({});
+    // Optional photo attachments per question (for non-photo-type questions)
+    const [photoAttachments, setPhotoAttachments] = useState<Record<number, { uri: string } | null>>({});
     const [assetId, setAssetId] = useState<string>('');
     const [assets, setAssets] = useState<Array<{id: number; assetName: string; assetType: string}>>([]);
     const [showAssetPicker, setShowAssetPicker] = useState(false);
@@ -124,6 +130,61 @@ export default function AssignmentFormScreen() {
             setAnswers({ ...answers, [questionId]: JSON.stringify({ name: file.name, uri: file.uri, mimeType: file.mimeType || null }) });
         } catch {
             Alert.alert('Upload Failed', 'Could not select file. Please try again.');
+        }
+    };
+
+    // Camera icon handler — works for all question types
+    // For photo-type questions it sets the answer; for others it sets the attachment
+    const handleAttachPhoto = (questionId: number, isPhotoType: boolean) => {
+        const existingPhoto = isPhotoType ? answers[questionId] : photoAttachments[questionId];
+        const removeOption = existingPhoto
+            ? [{ text: 'Remove Photo', style: 'destructive' as const, onPress: () => {
+                if (isPhotoType) setAnswers((prev: any) => ({ ...prev, [questionId]: '' }));
+                else setPhotoAttachments(prev => ({ ...prev, [questionId]: null }));
+            }}]
+            : [];
+
+        Alert.alert('Add Photo', 'Choose source', [
+            { text: 'Take Photo', onPress: () => launchCamera(questionId, isPhotoType) },
+            { text: 'Choose from Gallery', onPress: () => launchGallery(questionId, isPhotoType) },
+            ...removeOption,
+            { text: 'Cancel', style: 'cancel' },
+        ]);
+    };
+
+    const launchCamera = async (questionId: number, isPhotoType: boolean) => {
+        const { status } = await ImagePicker.requestCameraPermissionsAsync();
+        if (status !== 'granted') {
+            Alert.alert('Permission Required', 'Camera access is needed to take photos.');
+            return;
+        }
+        const result = await ImagePicker.launchCameraAsync({
+            mediaTypes: ['images'],
+            quality: 0.7,
+            allowsEditing: false,
+        });
+        if (!result.canceled && result.assets[0]) {
+            const uri = result.assets[0].uri;
+            if (isPhotoType) setAnswers((prev: any) => ({ ...prev, [questionId]: JSON.stringify({ uri, name: 'photo.jpg' }) }));
+            else setPhotoAttachments(prev => ({ ...prev, [questionId]: { uri } }));
+        }
+    };
+
+    const launchGallery = async (questionId: number, isPhotoType: boolean) => {
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (status !== 'granted') {
+            Alert.alert('Permission Required', 'Gallery access is needed to select photos.');
+            return;
+        }
+        const result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ['images'],
+            quality: 0.7,
+            allowsEditing: false,
+        });
+        if (!result.canceled && result.assets[0]) {
+            const uri = result.assets[0].uri;
+            if (isPhotoType) setAnswers((prev: any) => ({ ...prev, [questionId]: JSON.stringify({ uri, name: 'photo.jpg' }) }));
+            else setPhotoAttachments(prev => ({ ...prev, [questionId]: { uri } }));
         }
     };
 
@@ -443,8 +504,6 @@ export default function AssignmentFormScreen() {
 
             case 'upload':
             case 'file':
-            case 'photo':
-            case 'image':
             case 'signature': {
                 let fileLabel = 'No file selected';
                 if (typeof value === 'string' && value) {
@@ -462,6 +521,38 @@ export default function AssignmentFormScreen() {
                             <Text style={styles.uploadBtnText}>Choose File</Text>
                         </TouchableOpacity>
                         <Text style={styles.uploadFileName} numberOfLines={2}>{fileLabel}</Text>
+                    </View>
+                );
+            }
+
+            case 'photo':
+            case 'image': {
+                // Photo-type questions: camera icon in header is the main input.
+                // Show a tap-to-change hint when no photo yet.
+                let photoUri: string | null = null;
+                if (typeof value === 'string' && value) {
+                    try { photoUri = JSON.parse(value)?.uri || value; } catch { photoUri = value; }
+                }
+                if (!photoUri) {
+                    return (
+                        <TouchableOpacity
+                            style={styles.photoPlaceholder}
+                            onPress={() => handleAttachPhoto(question.id, true)}
+                        >
+                            <MaterialCommunityIcons name="camera-plus-outline" size={28} color="#94A3B8" />
+                            <Text style={styles.photoPlaceholderText}>Tap camera icon above to add photo</Text>
+                        </TouchableOpacity>
+                    );
+                }
+                return (
+                    <View style={styles.photoThumbWrap}>
+                        <Image source={{ uri: photoUri }} style={styles.photoThumb} resizeMode="cover" />
+                        <TouchableOpacity
+                            style={styles.photoThumbRemove}
+                            onPress={() => handleAttachPhoto(question.id, true)}
+                        >
+                            <MaterialCommunityIcons name="pencil" size={14} color="#fff" />
+                        </TouchableOpacity>
                     </View>
                 );
             }
@@ -707,18 +798,61 @@ export default function AssignmentFormScreen() {
                                 )}
                             </View>
                         ) : (
-                        template.questions.map((question, index) => (
+                        template.questions.map((question, index) => {
+                            const qType = questionType(question);
+                            const isPhotoType = qType === 'photo' || qType === 'image';
+                            const allowsPhoto = (question as any).allowsPhotoUpload !== false;
+                            const hasPhotoAnswer = isPhotoType && (() => {
+                                const v = answers[question.id];
+                                if (!v) return false;
+                                try { return !!(JSON.parse(v)?.uri); } catch { return !!v; }
+                            })();
+                            const hasAttachment = !isPhotoType && !!photoAttachments[question.id];
+                            const showCameraActive = hasPhotoAnswer || hasAttachment;
+                            return (
                             <View key={question.id} style={styles.questionCard}>
                                 <View style={styles.questionHeader}>
-                                    <Text style={styles.questionNumber}>Q{index + 1}</Text>
-                                    {!!question.isRequired && <View style={styles.requiredBadge}>
-                                        <Text style={styles.requiredText}>Required</Text>
-                                    </View>}
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                                        <Text style={styles.questionNumber}>Q{index + 1}</Text>
+                                        {!!question.isRequired && <View style={styles.requiredBadge}>
+                                            <Text style={styles.requiredText}>Required</Text>
+                                        </View>}
+                                    </View>
+                                    {allowsPhoto && (
+                                        <TouchableOpacity
+                                            style={[styles.cameraIconBtn, showCameraActive && styles.cameraIconBtnActive]}
+                                            onPress={() => handleAttachPhoto(question.id, isPhotoType)}
+                                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                        >
+                                            <MaterialCommunityIcons
+                                                name={showCameraActive ? 'camera-check' : 'camera-plus-outline'}
+                                                size={19}
+                                                color={showCameraActive ? '#10B981' : '#94A3B8'}
+                                            />
+                                        </TouchableOpacity>
+                                    )}
                                 </View>
                                 <Text style={styles.questionText}>{question.questionText}</Text>
                                 {renderQuestionInput(question)}
+                                {hasAttachment && (
+                                    <View style={styles.attachmentRow}>
+                                        <Image
+                                            source={{ uri: photoAttachments[question.id]!.uri }}
+                                            style={styles.attachThumb}
+                                            resizeMode="cover"
+                                        />
+                                        <TouchableOpacity
+                                            style={styles.attachRemove}
+                                            onPress={() => setPhotoAttachments(prev => ({ ...prev, [question.id]: null }))}
+                                        >
+                                            <MaterialCommunityIcons name="close-circle" size={16} color="#EF4444" />
+                                            <Text style={styles.attachRemoveText}>Remove</Text>
+                                        </TouchableOpacity>
+                                    </View>
+                                )}
                             </View>
-                        ))
+                        );
+                        }))
                         )}
 
                         {/* Submit Button */}
@@ -816,7 +950,7 @@ const styles = StyleSheet.create({
     },
     contentPadding: {
         padding: 16,
-        paddingBottom: 40,
+        paddingBottom: Platform.OS === 'android' ? 100 : 60,
     },
     questionCard: {
         backgroundColor: '#FFFFFF',
@@ -970,6 +1104,76 @@ const styles = StyleSheet.create({
     uploadFileName: {
         fontSize: 12,
         color: '#64748B',
+    },
+    cameraIconBtn: {
+        width: 34,
+        height: 34,
+        borderRadius: 8,
+        backgroundColor: '#F1F5F9',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    cameraIconBtnActive: {
+        backgroundColor: '#DCFCE7',
+    },
+    photoPlaceholder: {
+        borderWidth: 1,
+        borderColor: '#E2E8F0',
+        borderStyle: 'dashed',
+        borderRadius: 10,
+        paddingVertical: 24,
+        alignItems: 'center',
+        gap: 8,
+        backgroundColor: '#F8FAFC',
+    },
+    photoPlaceholderText: {
+        fontSize: 13,
+        color: '#94A3B8',
+        textAlign: 'center',
+    },
+    photoThumbWrap: {
+        position: 'relative',
+        alignSelf: 'flex-start',
+    },
+    photoThumb: {
+        width: '100%',
+        height: 180,
+        borderRadius: 10,
+    },
+    photoThumbRemove: {
+        position: 'absolute',
+        bottom: 8,
+        right: 8,
+        backgroundColor: 'rgba(0,0,0,0.55)',
+        borderRadius: 16,
+        padding: 6,
+    },
+    attachmentRow: {
+        marginTop: 12,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        backgroundColor: '#F0FDF4',
+        borderRadius: 8,
+        padding: 8,
+        borderWidth: 1,
+        borderColor: '#BBF7D0',
+    },
+    attachThumb: {
+        width: 48,
+        height: 48,
+        borderRadius: 6,
+    },
+    attachRemove: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        marginLeft: 'auto',
+    },
+    attachRemoveText: {
+        fontSize: 12,
+        color: '#EF4444',
+        fontWeight: '600',
     },
     submitButton: {
         flexDirection: 'row',
