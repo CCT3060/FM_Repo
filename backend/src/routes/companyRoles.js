@@ -29,6 +29,27 @@ const slugify = (s) =>
     .replace(/^_+|_+$/g, "")
     .slice(0, 80) || `role_${Date.now()}`;
 
+// ── Auto-migration: replace full UNIQUE constraint with partial index ────────
+// Root cause: UNIQUE (company_id, role_key) blocks re-creating a soft-deleted
+// role. Fix: drop the table constraint, add a partial unique index that only
+// applies when is_active = TRUE so soft-deleted rows don't occupy the slot.
+(async () => {
+  try {
+    await pool.query(`
+      ALTER TABLE company_roles
+        DROP CONSTRAINT IF EXISTS company_roles_company_id_role_key_key
+    `);
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS company_roles_active_unique
+        ON company_roles (company_id, role_key)
+        WHERE is_active = TRUE
+    `);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[company-roles] migration:", err.message);
+  }
+})();
+
 /* ── List roles ───────────────────────────────────────────────────────────── */
 router.get("/", async (req, res, next) => {
   try {
@@ -94,18 +115,22 @@ router.post("/", async (req, res, next) => {
       return res.status(400).json({ message: "label is required" });
     }
     const key = req.body.roleKey ? slugify(req.body.roleKey) : slugify(label);
-    const [exists] = await pool.query(
+
+    // Block duplicate active roles
+    const [activeExists] = await pool.query(
       `SELECT id FROM company_roles WHERE company_id = ? AND role_key = ?`,
       [cid(req), key]
     );
-    if (exists.length) {
+    if (activeExists.length) {
       return res.status(409).json({ message: "Role with that key already exists" });
     }
+
     const [[nextOrder]] = await pool.query(
       `SELECT COALESCE(MAX(sort_order), -1) + 1 AS "next" FROM company_roles WHERE company_id = ?`,
       [cid(req)]
     );
     const order = Number.isFinite(sortOrder) ? sortOrder : nextOrder.next;
+
     const baseValues = [
       cid(req),
       key,
@@ -215,14 +240,13 @@ router.put("/:id", async (req, res, next) => {
   }
 });
 
-/* ── Delete role (soft) ───────────────────────────────────────────────────── */
+/* ── Delete role ──────────────────────────────────────────────────────────── */
 router.delete("/:id", async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
     await pool.query(
-      `UPDATE company_roles SET is_active = FALSE, updated_at = NOW()
-        WHERE company_id = ? AND id = ?`,
+      `DELETE FROM company_roles WHERE company_id = ? AND id = ?`,
       [cid(req), id]
     );
     res.json({ ok: true });

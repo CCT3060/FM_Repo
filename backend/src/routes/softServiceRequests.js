@@ -69,7 +69,7 @@ router.post("/requests", async (req, res, next) => {
     const companyId = req.companyUser.companyId;
     const roleKey   = req.companyUser.role;
 
-    if (!assetId || !templateId) {
+    if (!assetId || templateId == null) {
       return res.status(400).json({ message: "assetId and templateId are required" });
     }
 

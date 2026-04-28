@@ -1,4 +1,7 @@
-const DEV_API_BASE = "http://localhost:4000";
+const DEV_API_BASE = "";
+const KNOWN_API_HOST_ALIASES = {
+  "13.203.194.93": "https://fm.catalystsolutions.eco",
+};
 
 function trimTrailingSlash(value) {
   return value.replace(/\/+$/, "");
@@ -8,14 +11,28 @@ function isLocalHostname(hostname) {
   return hostname === "localhost" || hostname === "127.0.0.1";
 }
 
-function normalizeUrl(value) {
+function mapKnownApiHost(url) {
+  const alias = KNOWN_API_HOST_ALIASES[url.hostname];
+  if (!alias) return url;
+
+  const mappedUrl = new URL(alias);
+  if (url.pathname && url.pathname !== "/") {
+    mappedUrl.pathname = `${trimTrailingSlash(mappedUrl.pathname)}${url.pathname}`;
+  }
+  mappedUrl.search = url.search;
+  mappedUrl.hash = url.hash;
+  return mappedUrl;
+}
+
+function normalizeUrl(value, { preferHttps = false } = {}) {
   if (!value) return "";
 
   try {
-    const url = new URL(value);
+    let url = new URL(value);
     const pageProtocol = typeof window !== "undefined" ? window.location.protocol : "";
+    url = mapKnownApiHost(url);
 
-    if (pageProtocol === "https:" && url.protocol === "http:" && !isLocalHostname(url.hostname)) {
+    if ((preferHttps || pageProtocol === "https:") && url.protocol === "http:" && !isLocalHostname(url.hostname)) {
       url.protocol = "https:";
     }
 
@@ -26,9 +43,10 @@ function normalizeUrl(value) {
 }
 
 export function getApiBaseUrl() {
-  const configured = normalizeUrl(import.meta.env.VITE_API_URL || "");
+  const configured = normalizeUrl(import.meta.env.VITE_API_URL || "", { preferHttps: true });
+  if (import.meta.env.DEV) return DEV_API_BASE;
   if (configured) return configured;
-  return import.meta.env.DEV ? DEV_API_BASE : "";
+  return "";
 }
 
 export function buildApiUrl(path) {

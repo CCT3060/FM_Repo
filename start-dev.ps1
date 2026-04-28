@@ -7,8 +7,8 @@
 #   2. Starts backend    on  localhost:4000
 #   3. Starts frontend   on  localhost:5173
 #
-# Mobile app (Expo) must be started separately:
-#   cd mobile-app && npx expo start
+# Mobile app (Expo Go via tunnel QR) must be started separately:
+#   cd mobile-app && npm run start
 # =============================================================================
 
 $EC2_IP    = "13.203.194.93"
@@ -82,7 +82,7 @@ Write-Host "  Backend   →  http://localhost:4000" -ForegroundColor White
 Write-Host "  Frontend  →  http://localhost:5173" -ForegroundColor White
 Write-Host "  Database  →  EC2 PostgreSQL (via SSH tunnel)" -ForegroundColor White
 Write-Host ""
-Write-Host "  Mobile app: cd mobile-app && npx expo start" -ForegroundColor White
+Write-Host "  Mobile app: cd mobile-app && npm run start" -ForegroundColor White
 Write-Host ""
 Write-Host "  Press Ctrl+C to stop all services." -ForegroundColor DarkGray
 Write-Host "===================================================" -ForegroundColor Cyan
