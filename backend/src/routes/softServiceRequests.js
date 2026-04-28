@@ -233,6 +233,50 @@ router.get("/requests/all", async (req, res, next) => {
   }
 });
 
+/* ── GET /requests/:id ── Single request detail ─────────────────────────── */
+router.get("/requests/:id", async (req, res, next) => {
+  try {
+    const requestId = Number(req.params.id);
+    const companyId = req.companyUser.companyId;
+    if (!Number.isFinite(requestId)) return res.status(400).json({ message: "Invalid request id" });
+
+    const [[row]] = await pool.query(
+      `SELECT
+         ssr.id,
+         ssr.asset_id                  AS "assetId",
+         a.asset_name                  AS "assetName",
+         ssr.template_id               AS "templateId",
+         ssr.template_type             AS "templateType",
+         ssr.raise_submission_id       AS "raiseSubmissionId",
+         cu.full_name                  AS "raisedByName",
+         ssr.raised_at                 AS "raisedAt",
+         ssr.status,
+         (
+           SELECT json_agg(
+             json_build_object(
+               'questionId',     csa.question_id,
+               'questionText',   csa.question_text,
+               'inputType',      csa.input_type,
+               'answer',         csa.answer_json->>'value',
+               'optionSelected', csa.option_selected
+             ) ORDER BY csa.id
+           )
+           FROM checklist_submission_answers csa
+           WHERE csa.submission_id = ssr.raise_submission_id
+         )                             AS "beforeAnswers"
+       FROM soft_service_requests ssr
+       JOIN assets a ON a.id = ssr.asset_id
+       JOIN company_users cu ON cu.id = ssr.raised_by_user_id
+       WHERE ssr.id = ? AND ssr.company_id = ?`,
+      [requestId, companyId]
+    );
+    if (!row) return res.status(404).json({ message: "Request not found" });
+    res.json(row);
+  } catch (err) {
+    next(err);
+  }
+});
+
 /* ── PUT /requests/:id/resolve ── Resolve a request ─────────────────────── */
 router.put("/requests/:id/resolve", async (req, res, next) => {
   try {

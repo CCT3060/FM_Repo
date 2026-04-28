@@ -76,6 +76,18 @@ function tryParse(s) {
 
 function renderAnswerValue(val) {
   if (!val) return <span style={{ color: "#94a3b8", fontWeight: 400 }}>No answer</span>;
+
+  // Plain image URL string (e.g. uploaded via mobile)
+  if (typeof val === "string" && val.startsWith("http") && /\.(jpe?g|png|gif|webp)(\?|$)/i.test(val)) {
+    return (
+      <div>
+        <img src={val} alt="Photo"
+          style={{ maxWidth: "240px", maxHeight: "180px", borderRadius: "8px",
+            objectFit: "cover", display: "block", border: "1px solid #e2e8f0", marginTop: "6px" }} />
+      </div>
+    );
+  }
+
   const parsed = typeof val === "string" ? tryParse(val) : val;
   if (parsed && typeof parsed === "object" && (parsed.uri || parsed.url || parsed.name)) {
     const src = parsed.url || parsed.uri || "";

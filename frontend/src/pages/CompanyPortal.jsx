@@ -2049,7 +2049,14 @@ const CompanyPortal = () => {
                                 <td style={{ padding: "10px 14px", color: "#64748b", fontSize: "12px" }}>{a.inputType || a.answerType || "—"}</td>
                                 <td style={{ padding: "10px 14px", fontWeight: 600, color: isIssue ? "#dc2626" : "#0f172a" }}>
                                   {isIssue && <span style={{ marginRight: "4px" }}>⚠</span>}
-                                  {String(val !== null && val !== undefined ? val : "—")}
+                                  {(() => {
+                                    const v = val !== null && val !== undefined ? val : "—";
+                                    const vStr = String(v);
+                                    if (vStr.startsWith("http") && /\.(jpe?g|png|gif|webp)(\?|$)/i.test(vStr)) {
+                                      return <img src={vStr} alt="Photo" style={{ maxWidth: "200px", maxHeight: "140px", borderRadius: "6px", objectFit: "cover", display: "block", border: "1px solid #e2e8f0" }} />;
+                                    }
+                                    return vStr;
+                                  })()}
                                   {a.answerJson?.remark && <span style={{ display: "block", fontSize: "11px", color: "#64748b", fontWeight: 400 }}>{a.answerJson.remark}</span>}
                                 </td>
                               </tr>

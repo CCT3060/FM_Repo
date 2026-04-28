@@ -399,10 +399,12 @@ export async function raiseSoftRequest(payload: {
   return apiPost<unknown>('/api/soft-service/requests', payload);
 }
 
-export async function resolveSoftRequest(id: number, payload: {
-  answers: unknown[];
-}): Promise<unknown> {
-  return apiPut<unknown>(`/api/soft-service/requests/${id}/resolve`, payload);
+export async function getSoftRequestById(id: number): Promise<SoftRequest> {
+  return apiGet<SoftRequest>(`/api/soft-service/requests/${id}`);
+}
+
+export async function resolveSoftRequest(id: number, resolveSubmissionId?: number): Promise<unknown> {
+  return apiPut<unknown>(`/api/soft-service/requests/${id}/resolve`, { resolveSubmissionId });
 }
 
 // ─── Notifications ────────────────────────────────────────────────────────────
