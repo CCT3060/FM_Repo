@@ -145,11 +145,12 @@ router.post(
         q.options ? JSON.stringify(q.options) : null,
         JSON.stringify({ ...(q.meta || {}), ...(q.rule ? { rule: q.rule } : {}) }) || null,
         q.flagRule ? JSON.stringify(q.flagRule) : null,
+        q.referenceImageUrl || null,
       ]);
 
       await conn.query(
         `INSERT INTO checklist_template_questions
-           (template_id, question_text, input_type, is_required, order_index, options_json, meta, flag_rule_json)
+           (template_id, question_text, input_type, is_required, order_index, options_json, meta, flag_rule_json, reference_image_url)
          VALUES ?`,
         [values]
       );
@@ -1016,10 +1017,11 @@ router.put(
             q.options ? JSON.stringify(q.options) : null,
             JSON.stringify({ ...(q.meta || {}), ...(q.rule ? { rule: q.rule } : {}) }) || null,
             q.flagRule ? JSON.stringify(q.flagRule) : null,
+            q.referenceImageUrl || null,
           ]);
           await pool.query(
             `INSERT INTO checklist_template_questions
-               (template_id, question_text, input_type, is_required, order_index, options_json, meta, flag_rule_json)
+               (template_id, question_text, input_type, is_required, order_index, options_json, meta, flag_rule_json, reference_image_url)
              VALUES ?`,
             [values]
           );

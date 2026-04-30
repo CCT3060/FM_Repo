@@ -30,14 +30,15 @@ type FieldType =
   | 'signature';
 
 interface Field {
-  id:           number | string;
-  label:        string;
-  type:         FieldType;
-  required?:    boolean;
-  options?:     string[];
-  unit?:        string;
-  boolLabels?:  [string, string, string]; // e.g. Yes/No/N/A  or  OK/Not OK/N/A
-  sectionName?: string;
+  id:                number | string;
+  label:             string;
+  type:              FieldType;
+  required?:         boolean;
+  options?:          string[];
+  unit?:             string;
+  boolLabels?:       [string, string]; // e.g. Yes/No  or  OK/Not OK  or  Cleaned/Not Cleaned
+  sectionName?:      string;
+  referenceImageUrl?: string | null;
 }
 
 // ─── Field normalizer ─────────────────────────────────────────────────────────
@@ -56,17 +57,17 @@ function normalizeField(q: any, idx: number): Field {
     case 'yes_no':
     case 'yes/no':
       type       = 'boolean';
-      boolLabels = ['Yes', 'No', 'N/A'];
+      boolLabels = ['Yes', 'No'];
       break;
     case 'ok_not_ok':
     case 'ok/not_ok':
       type       = 'boolean';
-      boolLabels = ['OK', 'Not OK', 'N/A'];
+      boolLabels = ['OK', 'Not OK'];
       break;
     case 'cleaned_not_cleaned':
     case 'cleaned/not_cleaned':
       type       = 'boolean';
-      boolLabels = ['Cleaned', 'Not Cleaned', 'N/A'];
+      boolLabels = ['Cleaned', 'Not Cleaned'];
       break;
     case 'dropdown':
     case 'custom_options':
@@ -117,14 +118,15 @@ function normalizeField(q: any, idx: number): Field {
   }
 
   return {
-    id:          q.id ?? idx,
-    label:       q.questionText || q.text || q.label || `Question ${idx + 1}`,
+    id:                q.id ?? idx,
+    label:             q.questionText || q.text || q.label || `Question ${idx + 1}`,
     type,
     boolLabels,
-    required:    !!(q.isRequired ?? q.is_required ?? q.required),
+    required:          !!(q.isRequired ?? q.is_required ?? q.required),
     options,
-    unit:        q.unit,
-    sectionName: q.sectionName,
+    unit:              q.unit,
+    sectionName:       q.sectionName,
+    referenceImageUrl: q.referenceImageUrl || q.reference_image_url || null,
   };
 }
 
@@ -140,113 +142,87 @@ function PhotoInput({
 }) {
   const { theme } = useTheme();
   const [uploading, setUploading] = useState(false);
+  const [fileSize,  setFileSize]  = useState<string | null>(null);
 
   const pick = async (fromCamera: boolean) => {
-    // ── Request permissions ────────────────────────────────────────────────
     if (fromCamera) {
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert(
-          'Permission Required',
-          'Camera permission is required to take photos. Please enable it in your device settings.'
-        );
+        Alert.alert('Permission Required', 'Camera permission is required.');
         return;
       }
     } else {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert(
-          'Permission Required',
-          'Gallery permission is required to select photos. Please enable it in your device settings.'
-        );
+        Alert.alert('Permission Required', 'Gallery permission is required.');
         return;
       }
     }
 
-    // ── Launch picker ──────────────────────────────────────────────────────
     const result = fromCamera
-      ? await ImagePicker.launchCameraAsync({
-          mediaTypes: 'images',
-          quality: 0.75,
-          allowsEditing: false,
-        })
-      : await ImagePicker.launchImageLibraryAsync({
-          mediaTypes: 'images',
-          quality: 0.75,
-          allowsEditing: false,
-        });
+      ? await ImagePicker.launchCameraAsync({ mediaTypes: 'images', quality: 0.75 })
+      : await ImagePicker.launchImageLibraryAsync({ mediaTypes: 'images', quality: 0.75 });
 
     if (result.canceled || !result.assets?.[0]?.uri) return;
 
-    // ── Upload to server ───────────────────────────────────────────────────
+    const asset = result.assets[0];
     setUploading(true);
     try {
-      const url = await uploadFile(result.assets[0].uri);
+      const url = await uploadFile(asset.uri);
       onChange(url);
+      // Estimate size from fileSize field or fall back to a rough estimate
+      const bytes = asset.fileSize ?? 0;
+      if (bytes > 0) {
+        setFileSize(bytes > 1024 * 1024
+          ? `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+          : `${Math.round(bytes / 1024)} KB`);
+      }
     } catch (err: any) {
-      Alert.alert('Upload Failed', err.message ?? 'Could not upload the image. Please try again.');
+      Alert.alert('Upload Failed', err.message ?? 'Could not upload the image.');
     } finally {
       setUploading(false);
     }
   };
 
-  // ── Preview (image already selected) ──────────────────────────────────────
+  // ── Preview ──────────────────────────────────────────────────────────────
   if (value) {
     return (
       <View style={styles.photoPreviewWrap}>
         <Image source={{ uri: value }} style={styles.photoPreview} resizeMode="cover" />
         <TouchableOpacity
-          style={[styles.removePhotoBtn, { backgroundColor: theme.dangerBg, borderColor: theme.danger }]}
-          onPress={() => onChange(null)}
+          style={styles.removePhotoOverlay}
+          onPress={() => { onChange(null); setFileSize(null); }}
           activeOpacity={0.8}
         >
-          <MaterialCommunityIcons name="close-circle-outline" size={16} color={theme.danger} />
-          <Text style={[styles.removePhotoText, { color: theme.danger }]}>Remove photo</Text>
+          <MaterialCommunityIcons name="close" size={13} color="#fff" />
         </TouchableOpacity>
       </View>
     );
   }
 
-  // ── Picker buttons ─────────────────────────────────────────────────────────
+  // ── Icon buttons (compact, right-aligned) ──────────────────────────────────
   return (
-    <View style={styles.photoActions}>
-      {/* Take photo */}
+    <View style={styles.photoIconRow}>
       <TouchableOpacity
-        style={[
-          styles.photoBtn,
-          { backgroundColor: theme.primary, opacity: uploading ? 0.65 : 1 },
-        ]}
+        style={[styles.photoIconBtn, { borderColor: theme.inputBorder, opacity: uploading ? 0.6 : 1 }]}
         onPress={() => pick(true)}
         disabled={uploading}
-        activeOpacity={0.85}
+        activeOpacity={0.7}
       >
-        {uploading ? (
-          <ActivityIndicator size="small" color="#fff" />
-        ) : (
-          <MaterialCommunityIcons name="camera" size={18} color="#fff" />
-        )}
-        <Text style={[styles.photoBtnText, { color: '#fff' }]}>
-          {uploading ? 'Uploading…' : 'Take Photo'}
-        </Text>
+        {uploading
+          ? <ActivityIndicator size="small" color={theme.textSecondary} style={{ width: 16, height: 16 }} />
+          : <MaterialCommunityIcons name="camera-outline" size={16} color={theme.textSecondary} />}
+        <Text style={[styles.photoIconLabel, { color: theme.textSecondary }]}>Camera</Text>
       </TouchableOpacity>
 
-      {/* Choose from gallery */}
       <TouchableOpacity
-        style={[
-          styles.photoBtn,
-          {
-            backgroundColor: theme.inputBg,
-            borderWidth: 1.5,
-            borderColor: theme.primary,
-            opacity: uploading ? 0.65 : 1,
-          },
-        ]}
+        style={[styles.photoIconBtn, { borderColor: theme.inputBorder, opacity: uploading ? 0.6 : 1 }]}
         onPress={() => pick(false)}
         disabled={uploading}
-        activeOpacity={0.85}
+        activeOpacity={0.7}
       >
-        <MaterialCommunityIcons name="image-multiple-outline" size={18} color={theme.primary} />
-        <Text style={[styles.photoBtnText, { color: theme.primary }]}>Choose from Gallery</Text>
+        <MaterialCommunityIcons name="image-outline" size={16} color={theme.textSecondary} />
+        <Text style={[styles.photoIconLabel, { color: theme.textSecondary }]}>Gallery</Text>
       </TouchableOpacity>
     </View>
   );
@@ -259,19 +235,20 @@ function FieldInput({ field, value, onChange }: { field: Field; value: any; onCh
 
   // ── Boolean (Yes/No, OK/Not OK, Cleaned/Not Cleaned) ────────────────────
   if (field.type === 'boolean') {
-    const labels = field.boolLabels ?? ['Yes', 'No', 'N/A'];
+    const labels = field.boolLabels ?? ['Yes', 'No'];
     return (
-      <View style={styles.boolRow}>
+      <View style={[styles.boolContainer, { backgroundColor: theme.inputBg }]}>
         {labels.map((opt) => (
           <TouchableOpacity
             key={opt}
-            style={[styles.boolBtn, {
-              backgroundColor: value === opt ? theme.primary : theme.inputBg,
-              borderColor:     value === opt ? theme.primary : theme.inputBorder,
-            }]}
+            style={[
+              styles.boolBtn,
+              value === opt && styles.boolBtnActive,
+            ]}
             onPress={() => onChange(opt)}
+            activeOpacity={0.7}
           >
-            <Text style={[styles.boolBtnText, { color: value === opt ? '#fff' : theme.textSecondary }]}>
+            <Text style={[styles.boolBtnText, { color: value === opt ? theme.textPrimary : theme.textSecondary }]}>
               {opt}
             </Text>
           </TouchableOpacity>
@@ -401,6 +378,7 @@ export default function ChecklistEntryScreen() {
   const [loading,    setLoading]   = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [uploading,  setUploading]  = useState(false);
+  const [templateDesc, setTemplateDesc] = useState<string | null>(null);
 
   useEffect(() => {
     const type = templateType === 'logsheet' ? 'logsheet' : 'checklist';
@@ -411,6 +389,7 @@ export default function ChecklistEntryScreen() {
         const rawQuestions: any[] = Array.isArray(data?.questions) ? data.questions : [];
         const normalized = rawQuestions.map((q, idx) => normalizeField(q, idx));
         setFields(normalized);
+        setTemplateDesc(data?.description || null);
       })
       .catch(() => { /* empty state handles this */ })
       .finally(() => setLoading(false));
@@ -492,6 +471,13 @@ export default function ChecklistEntryScreen() {
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
           >
+            {/* Template header */}
+            <View style={styles.templateHeader}>
+              <Text style={[styles.templateTitle, { color: theme.textPrimary }]}>{templateName}</Text>
+              {templateDesc ? (
+                <Text style={[styles.templateDesc, { color: theme.textSecondary }]}>{templateDesc}</Text>
+              ) : null}
+            </View>
             {fields.length === 0 ? (
               <View style={styles.noFields}>
                 <MaterialCommunityIcons name="clipboard-alert-outline" size={48} color={theme.textMuted} />
@@ -512,9 +498,11 @@ export default function ChecklistEntryScreen() {
                         </Text>
                       </View>
                     ) : null}
-                    <View style={[styles.fieldCard, { backgroundColor: theme.surface, shadowColor: theme.cardShadow }]}>
+                    <View style={[styles.fieldCard, { backgroundColor: theme.surface, shadowColor: theme.cardShadow, borderColor: theme.inputBorder }]}>
                       <View style={styles.fieldHeader}>
-                        <Text style={[styles.fieldIdx, { color: theme.textMuted }]}>{idx + 1}</Text>
+                        <View style={[styles.fieldIdxBadge, { backgroundColor: theme.primaryBg }]}>
+                          <Text style={[styles.fieldIdxText, { color: theme.primary }]}>{idx + 1}</Text>
+                        </View>
                         <View style={{ flex: 1 }}>
                           <Text style={[styles.fieldLabel, { color: theme.textPrimary }]}>
                             {field.label}
@@ -524,14 +512,18 @@ export default function ChecklistEntryScreen() {
                             <Text style={[styles.fieldUnit, { color: theme.textMuted }]}>Unit: {field.unit}</Text>
                           ) : null}
                         </View>
-                        <View style={[styles.typeBadge, { backgroundColor: theme.primaryBg }]}>
-                          <Text style={[styles.typeBadgeText, { color: theme.primary }]}>
-                            {field.type === 'boolean'
-                              ? (field.boolLabels ? `${field.boolLabels[0]}/${field.boolLabels[1]}` : 'Yes/No')
-                              : field.type}
-                          </Text>
-                        </View>
                       </View>
+                      {/* Reference image (admin-uploaded for this question) */}
+                      {field.referenceImageUrl ? (
+                        <View style={styles.refImageWrap}>
+                          <Text style={[styles.refImageLabel, { color: theme.textMuted }]}>Reference</Text>
+                          <Image
+                            source={{ uri: field.referenceImageUrl }}
+                            style={styles.refImage}
+                            resizeMode="cover"
+                          />
+                        </View>
+                      ) : null}
                       <FieldInput
                         field={field}
                         value={answers[field.id]}
@@ -540,10 +532,6 @@ export default function ChecklistEntryScreen() {
                       {/* Optional photo attachment for every non-photo field */}
                       {field.type !== 'photo' && (
                         <View style={styles.attachPhotoSection}>
-                          <View style={styles.attachPhotoLabel}>
-                            <MaterialCommunityIcons name="camera-plus-outline" size={13} color={theme.textSecondary} />
-                            <Text style={[styles.attachPhotoText, { color: theme.textSecondary }]}>Attach Photo (optional)</Text>
-                          </View>
                           <PhotoInput
                             value={photos[String(field.id)] ?? null}
                             onChange={(v) => setPhotos((prev) => ({ ...prev, [String(field.id)]: v }))}
@@ -568,8 +556,8 @@ export default function ChecklistEntryScreen() {
                 <ActivityIndicator color="#fff" />
               ) : (
                 <>
-                  <MaterialCommunityIcons name="check-circle-outline" size={20} color="#fff" />
-                  <Text style={styles.submitText}>{isSoftRaise ? 'Submit Request' : 'Submit'}</Text>
+                  <Text style={styles.submitText}>{isSoftRaise ? 'Submit Request' : 'Submit Checklist'}</Text>
+                  <MaterialCommunityIcons name="send" size={18} color="#fff" />
                 </>
               )}
             </TouchableOpacity>
@@ -584,86 +572,102 @@ export default function ChecklistEntryScreen() {
 
 const styles = StyleSheet.create({
   safe:              { flex: 1 },
-  scroll:            { padding: Spacing.lg, gap: Spacing.md, paddingBottom: 120 },
+  scroll:            { padding: Spacing.md, gap: Spacing.xs, paddingBottom: 120 },
+
+  // Template name / description header
+  templateHeader:    { marginBottom: Spacing.sm },
+  templateTitle:     { fontSize: 22, fontWeight: '700' as const, lineHeight: 28 },
+  templateDesc:      { fontSize: 13, lineHeight: 20, marginTop: 4 },
 
   // Section headers (logsheets with multiple sections)
-  sectionHeader:     { marginTop: Spacing.md, marginBottom: -Spacing.xs, paddingHorizontal: Spacing.xs },
-  sectionHeaderText: { ...Typography.label, letterSpacing: 0.8 },
+  sectionHeader:     { marginTop: Spacing.sm, marginBottom: -Spacing.xs, paddingHorizontal: Spacing.xs },
+  sectionHeaderText: { ...Typography.micro, letterSpacing: 0.8, fontWeight: '700' as const },
 
   // Field card
   fieldCard:         {
     borderRadius: Radius.lg,
-    padding: Spacing.lg,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 1,
-    shadowRadius: 6,
-    elevation: 3,
+    padding: Spacing.md,
+    borderWidth: 1,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 1,
   },
-  fieldHeader:       { flexDirection: 'row', gap: Spacing.sm, marginBottom: Spacing.md, alignItems: 'flex-start' },
-  fieldIdx:          { ...Typography.label, width: 22, textAlign: 'center', marginTop: 2 },
-  fieldLabel:        { ...Typography.h4 },
-  fieldUnit:         { ...Typography.micro, marginTop: 2 },
+  fieldHeader:       { flexDirection: 'row', gap: Spacing.sm, marginBottom: Spacing.sm, alignItems: 'flex-start' },
+  fieldIdxBadge:     { width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginTop: 1 },
+  fieldIdxText:      { fontSize: 11, fontWeight: '700' as const, lineHeight: 14 },
+  fieldLabel:        { fontSize: 13, fontWeight: '500' as const, lineHeight: 19, flex: 1 },
+  fieldUnit:         { ...Typography.micro, marginTop: 1 },
 
   // Type badge (shows the input type in the card header)
-  typeBadge:         { paddingHorizontal: Spacing.sm, paddingVertical: 2, borderRadius: Radius.sm, alignSelf: 'flex-start' },
-  typeBadgeText:     { ...Typography.micro, textTransform: 'lowercase' },
+  typeBadge:         { paddingHorizontal: 6, paddingVertical: 1, borderRadius: Radius.sm, alignSelf: 'flex-start', opacity: 0.7 },
+  typeBadgeText:     { fontSize: 9, textTransform: 'lowercase' },
 
-  // Boolean row
-  boolRow:           { flexDirection: 'row', gap: Spacing.sm },
-  boolBtn:           { flex: 1, paddingVertical: Spacing.sm, borderRadius: Radius.md, alignItems: 'center', borderWidth: 1.5 },
-  boolBtnText:       { ...Typography.label },
+  // Boolean segmented control
+  boolContainer:     { flexDirection: 'row', gap: 4, padding: 4, borderRadius: Radius.md },
+  boolBtn:           { flex: 1, paddingVertical: 9, borderRadius: 6, alignItems: 'center' },
+  boolBtnActive:     { backgroundColor: '#fff', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.12, shadowRadius: 2, elevation: 2 },
+  boolBtnText:       { fontSize: 12, fontWeight: '500' as const, lineHeight: 16 },
 
   // Select chips (wrapping)
-  selectGrid:        { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
-  optBtn:            { paddingHorizontal: Spacing.md, paddingVertical: Spacing.xs + 2, borderRadius: Radius.full, borderWidth: 1.5 },
-  optBtnText:        { ...Typography.label },
+  selectGrid:        { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.xs },
+  optBtn:            { paddingHorizontal: Spacing.sm, paddingVertical: 3, borderRadius: Radius.full, borderWidth: 1 },
+  optBtnText:        { fontSize: 11, fontWeight: '400' as const, lineHeight: 16 },
 
   // Text / number inputs
-  inputWrap:         { borderWidth: 1.5, borderRadius: Radius.md, paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm, flexDirection: 'row', alignItems: 'center' },
-  inputIcon:         { marginRight: Spacing.sm },
-  input:             { ...Typography.body, flex: 1 },
-  textarea:          { height: 88, textAlignVertical: 'top' },
+  inputWrap:         { borderWidth: 1, borderRadius: Radius.md, paddingHorizontal: Spacing.sm, paddingVertical: Spacing.xs + 1, flexDirection: 'row', alignItems: 'center' },
+  inputIcon:         { marginRight: Spacing.xs },
+  input:             { fontSize: 12, fontWeight: '300' as const, lineHeight: 18, flex: 1 },
+  textarea:          { height: 72, textAlignVertical: 'top' },
 
-  // Photo picker
-  photoActions:      { flexDirection: 'column', gap: Spacing.sm },
-  photoBtn:          {
+  // Photo picker — compact icon buttons (right-aligned)
+  photoIconRow:      { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, justifyContent: 'flex-end' as const },
+  photoIconBtn:      {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.sm,
-    paddingVertical: Spacing.md,
-    borderRadius: Radius.md,
+    gap: 5,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 7,
+    borderRadius: Radius.full,
+    borderWidth: 1,
   },
-  photoBtnText:      { ...Typography.label },
-  photoPreviewWrap:  { gap: Spacing.sm },
+  photoIconLabel:    { fontSize: 12, fontWeight: '500' as const },
+
+  // Photo preview (thumbnail with overlapping X badge)
+  photoPreviewWrap:  { position: 'relative' as const, alignSelf: 'flex-start' as const },
   photoPreview:      {
-    width: '100%',
-    height: 200,
+    width: 90,
+    height: 90,
     borderRadius: Radius.md,
     backgroundColor: '#E2E8F0',
   },
-  removePhotoBtn:    {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.xs,
-    paddingVertical: Spacing.xs + 2,
-    borderRadius: Radius.md,
-    borderWidth: 1,
+  removePhotoOverlay: {
+    position: 'absolute' as const,
+    top: -6,
+    right: -6,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#EF4444',
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    elevation: 3,
   },
-  removePhotoText:   { ...Typography.label },
 
   // Empty state
   noFields:          { alignItems: 'center', gap: Spacing.lg, paddingVertical: Spacing.xxl },
   noFieldsText:      { ...Typography.body, textAlign: 'center' },
 
   // Optional photo attachment section (shown below every non-photo field)
-  attachPhotoSection: { marginTop: Spacing.md, paddingTop: Spacing.md, borderTopWidth: 1, borderTopColor: '#E2E8F0' },
-  attachPhotoLabel:   { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: Spacing.sm },
-  attachPhotoText:    { ...Typography.micro, fontWeight: '600' },
+  attachPhotoSection: { marginTop: Spacing.md, paddingTop: Spacing.sm, borderTopWidth: 1, borderTopColor: '#E2E8F0', gap: Spacing.sm },
 
   // Submit footer
-  footer:            { borderTopWidth: 1, padding: Spacing.lg },
-  submitBtn:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, height: 52, borderRadius: Radius.md },
-  submitText:        { ...Typography.h4, color: '#fff' },
+  footer:            { borderTopWidth: 1, padding: Spacing.md },
+  submitBtn:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, height: 52, borderRadius: Radius.lg },
+
+  // Reference image (shown above answer input when admin has set one)
+  refImageWrap:   { marginBottom: Spacing.sm },
+  refImageLabel:  { ...Typography.micro, marginBottom: 4 },
+  refImage:       { width: '100%', height: 160, borderRadius: Radius.md, backgroundColor: '#E2E8F0' },
+  submitText:        { fontSize: 14, fontWeight: '700' as const, color: '#fff' },
 });

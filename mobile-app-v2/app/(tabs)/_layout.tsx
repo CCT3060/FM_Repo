@@ -46,6 +46,15 @@ export default function TabsLayout() {
         }}
       />
 
+      {/* Dashboard — always visible */}
+      <Tabs.Screen
+        name="dashboard"
+        options={{
+          title: 'Dashboard',
+          tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="chart-donut" size={size} color={color} />,
+        }}
+      />
+
       {/* Checklists — tech roles only */}
       <Tabs.Screen
         name="checklists"

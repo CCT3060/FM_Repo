@@ -20,7 +20,7 @@ const INPUT_TYPES = [
   { value: "remark", label: "Remark Only" },
 ];
 
-const FREQUENCIES = ["Daily", "Weekly", "Monthly", "Custom"];
+const FREQUENCIES = ["Hourly", "Daily", "Weekly", "Monthly", "Custom"];
 
 const ASSET_CATEGORIES = [
   { value: "soft", label: "Soft Services" },
@@ -170,9 +170,32 @@ function ViewModal({ template, onClose }) {
 /* ─────────────────────────────────────────────────────────────────
    Question Row Editor
 ───────────────────────────────────────────────────────────────── */
-function QuestionRow({ q, idx, onChange, onRemove }) {
+function QuestionRow({ q, idx, onChange, onRemove, token, apiBase }) {
   const update = (field, val) => onChange(idx, { ...q, [field]: val });
   const updateRule = (field, val) => update("rule", { ...(q.rule || {}), [field]: val });
+  const [imgUploading, setImgUploading] = useState(false);
+
+  const handleRefImgUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !token) return;
+    setImgUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(`${apiBase}/api/company-portal/upload-image`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: fd,
+      });
+      if (!res.ok) throw new Error("Upload failed");
+      const data = await res.json();
+      update("referenceImageUrl", data.url);
+    } catch {
+      alert("Image upload failed. Please try again.");
+    } finally {
+      setImgUploading(false);
+    }
+  };
   const rule = q.rule || {};
   const hasRule = ["yes_no", "ok_not_ok", "cleaned_not_cleaned", "number", "dropdown"].includes(q.inputType);
 
@@ -312,6 +335,24 @@ function QuestionRow({ q, idx, onChange, onRemove }) {
           )}
         </div>
       )}
+
+      {/* Reference image upload */}
+      <div style={{ marginTop: "10px", borderTop: "1px dashed #e2e8f0", paddingTop: "10px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer", fontSize: "12.5px", color: "#475569", fontWeight: 600, border: "1px dashed #cbd5e1", borderRadius: "7px", padding: "5px 12px", background: "#f8fafc", opacity: imgUploading ? 0.6 : 1 }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            {imgUploading ? "Uploading…" : "Add Reference Photo"}
+            <input type="file" accept="image/*" style={{ display: "none" }} onChange={handleRefImgUpload} disabled={imgUploading} />
+          </label>
+          {q.referenceImageUrl && (
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <img src={q.referenceImageUrl.startsWith("http") ? q.referenceImageUrl : `${apiBase}${q.referenceImageUrl}`} alt="ref" style={{ width: 48, height: 48, borderRadius: "6px", objectFit: "cover", border: "1px solid #e2e8f0" }} />
+              <button type="button" onClick={() => update("referenceImageUrl", null)} style={{ background: "#fee2e2", border: "none", color: "#dc2626", borderRadius: "5px", padding: "3px 8px", fontSize: "11px", cursor: "pointer", fontWeight: 600 }}>Remove</button>
+            </div>
+          )}
+          <span style={{ fontSize: "11px", color: "#94a3b8" }}>Optional: upload a photo to guide the technician</span>
+        </div>
+      </div>
     </div>
   );
 }
@@ -364,6 +405,7 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
         isRequired: q.isRequired ?? q.is_required ?? true,
         options: q.options || [],
         _optionsText: Array.isArray(q.options) ? q.options.join(", ") : "",
+        referenceImageUrl: q.referenceImageUrl || q.reference_image_url || null,
         rule: q.rule
           ? { ...q.rule, _showRule: !!(q.rule.action || q.rule.minValue || q.rule.maxValue || q.rule.flagOn) }
           : { flagOn: "", minValue: "", maxValue: "", severity: "warning", action: "", _showRule: false },
@@ -460,6 +502,7 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
         inputType: q.inputType,
         isRequired: q.isRequired,
         orderIndex: idx,
+        referenceImageUrl: q.referenceImageUrl || undefined,
         options: (q.inputType === "dropdown" || q.inputType === "custom_options")
           ? (q._optionsText || "").split(",").map((s) => s.trim()).filter(Boolean)
           : undefined,
@@ -645,7 +688,7 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
       </div>
 
       {questions.map((q, idx) => (
-        <QuestionRow key={q._id} q={q} idx={idx} onChange={updateQuestion} onRemove={removeQuestion} />
+        <QuestionRow key={q._id} q={q} idx={idx} onChange={updateQuestion} onRemove={removeQuestion} token={token} apiBase={API_BASE} />
       ))}
 
       <div style={{ display: "flex", gap: "10px", marginTop: "8px" }}>

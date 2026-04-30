@@ -289,6 +289,18 @@ export const uploadOjtFile = async (token, file) => {
   return res.json();
 };
 
+export const uploadQuestionImage = async (token, file) => {
+  const fd = new FormData();
+  fd.append("file", file);
+  const res = await fetch(buildApiUrl("/api/company-portal/upload-image"), {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: fd,
+  });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.message || "Upload failed"); }
+  return res.json();
+};
+
 // ── Fleet Management ──────────────────────────────────────────────────────────
 export const getFleetAssets                = (token)           => request("GET",   `${cp}/fleet/assets`,                              undefined, { authToken: token });
 export const getFleetAssetDetails          = (token, id)        => request("GET",   `${cp}/fleet/assets/${id}`,                        undefined, { authToken: token });

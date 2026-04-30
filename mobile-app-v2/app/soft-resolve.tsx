@@ -48,23 +48,55 @@ function parseOptions(q: any): string[] {
   } catch { return []; }
 }
 
-function extractBeforeValue(entry: any): string | null {
-  if (!entry) return null;
+// Parses a raw answer value from the backend into { text, photoUrl }.
+// The backend stores answer_json = { value: <answer>, photoUrl?: <url> }.
+// Postgres extracts answer_json->>'value' as text, which for object answers
+// returns the inner JSON string (e.g. '{"value":null,"photoUrl":"http://..."}').
+function parseBeforeEntry(entry: any): { text: string | null; photoUrl: string | null } {
+  if (!entry) return { text: null, photoUrl: null };
+
   const raw = entry.answer ?? entry.optionSelected ?? entry.value ?? entry.answerValue ?? null;
-  if (raw === null || raw === undefined) return null;
-  if (typeof raw === 'object') {
-    const inner = raw.value ?? raw.label ?? raw.url ?? raw.uri ?? null;
-    return inner ? String(inner) : JSON.stringify(raw);
+
+  // Try to parse if raw looks like a JSON string
+  let parsed: any = raw;
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try { parsed = JSON.parse(trimmed); } catch { /* keep as string */ }
+    }
   }
-  const s = String(raw).trim();
-  return s.length > 0 ? s : null;
+
+  if (parsed === null || parsed === undefined) return { text: null, photoUrl: null };
+
+  // Parsed object — extract value + photoUrl
+  if (typeof parsed === 'object' && !Array.isArray(parsed)) {
+    const text     = parsed.value != null ? String(parsed.value).trim() : null;
+    const photoUrl = parsed.photoUrl ?? parsed.url ?? parsed.uri ?? null;
+    return { text: text || null, photoUrl };
+  }
+
+  // Plain string
+  const s = String(parsed).trim();
+  if (!s) return { text: null, photoUrl: null };
+  // Direct photo URL stored as plain string
+  if (s.startsWith('http') && /\.(jpe?g|png|gif|webp)/i.test(s)) {
+    return { text: null, photoUrl: s };
+  }
+  return { text: s, photoUrl: null };
 }
 
 // ─── Before section (read-only) ───────────────────────────────────────────────
 function BeforeSection({ q, beforeAnswers }: { q: any; beforeAnswers: any[] }) {
-  const entry = beforeAnswers.find((a: any) => String(a.questionId) === String(q.id));
-  const val   = extractBeforeValue(entry);
-  const isPhoto = val !== null && val.startsWith('http') && /\.(jpe?g|png|gif|webp)/i.test(val);
+  // Portal-created templates use string IDs (e.g. "1714464000000-abc12") which cannot
+  // be stored in the integer question_id column, so beforeAnswers always has questionId=null.
+  // Fall back to matching by question text (which IS stored as NOT NULL).
+  const qText = (q.questionText || q.text || '').trim().toLowerCase();
+  const entry =
+    beforeAnswers.find((a: any) => a.questionId != null && String(a.questionId) === String(q.id)) ??
+    beforeAnswers.find((a: any) => a.questionText && a.questionText.trim().toLowerCase() === qText);
+
+  const { text, photoUrl } = parseBeforeEntry(entry);
+  const hasContent = text || photoUrl;
 
   return (
     <View style={bStyles.wrap}>
@@ -72,12 +104,20 @@ function BeforeSection({ q, beforeAnswers }: { q: any; beforeAnswers: any[] }) {
         <MaterialCommunityIcons name="account-clock-outline" size={12} color="#92400E" />
         <Text style={bStyles.label}>Client's Answer</Text>
       </View>
-      {isPhoto
-        ? <Image source={{ uri: val! }} style={bStyles.photo} resizeMode="cover" />
-        : <Text style={[bStyles.value, { color: val ? '#78350F' : '#B45309' }]}>
-            {val ?? 'No answer provided'}
-          </Text>
-      }
+      {!hasContent ? (
+        <Text style={[bStyles.value, { color: '#B45309' }]}>No answer provided</Text>
+      ) : (
+        <>
+          {text ? (
+            <Text style={[bStyles.value, { color: '#78350F' }]}>{text}</Text>
+          ) : null}
+          {photoUrl ? (
+            <View style={text ? { marginTop: 8 } : undefined}>
+              <Image source={{ uri: photoUrl }} style={bStyles.photo} resizeMode="cover" />
+            </View>
+          ) : null}
+        </>
+      )}
     </View>
   );
 }
@@ -307,25 +347,60 @@ export default function SoftResolveScreen() {
     ? (request as any).beforeAnswers
     : [];
 
+  // Only keep answers where the client actually provided a non-empty value.
+  // The submission stores ALL questions (even unanswered ones with null), so we
+  // must exclude nulls before filtering the template question list.
+  const actuallyAnswered = beforeAnswers.filter((a: any) => {
+    const raw = a.answer ?? a.optionSelected ?? a.value ?? null;
+    if (raw === null || raw === undefined) return false;
+    const s = String(raw).trim();
+    return s !== '' && s !== 'null';
+  });
+
+  // Filter template questions to only those the client actually answered.
+  // This way, if the client filled 2 out of 10 questions, catalyst only sees those 2.
+  const answeredIds = new Set(
+    actuallyAnswered
+      .map((a: any) => (a.questionId != null ? String(a.questionId) : null))
+      .filter(Boolean)
+  );
+  const answeredTexts = new Set(
+    actuallyAnswered
+      .map((a: any) => a.questionText?.trim().toLowerCase())
+      .filter(Boolean)
+  );
+  const visibleQuestions = questions.filter((q) => {
+    const qId   = String(q.id ?? '');
+    const qText = (q.questionText || q.text || '').trim().toLowerCase();
+    return answeredIds.has(qId) || answeredTexts.has(qText);
+  });
+  // Fall back to all questions if no matching (e.g. template IDs changed)
+  const displayQuestions = visibleQuestions.length > 0 ? visibleQuestions : questions;
+
   const handleSubmit = async () => {
     setSubmitting(true);
     try {
-      const answerArray = questions.map((q) => {
-        const type     = getFieldType(q);
-        const mainVal  = answers[q.id] ?? null;
-        const photoUrl = photos[q.id] ?? null;
-        const finalVal = type === 'photo'
-          ? photoUrl
-          : (photoUrl ? { value: mainVal, photoUrl } : mainVal);
-        return { questionId: q.id, answer: finalVal };
-      });
+      let submissionId: number | undefined;
 
-      const submission: any = await submitChecklistAuth({
-        templateId: request!.templateId,
-        assetId:    request!.assetId,
-        answers:    answerArray,
-      });
-      const submissionId: number | undefined = submission?.submissionId ?? submission?.id ?? undefined;
+      if (displayQuestions.length > 0) {
+        const answerArray = displayQuestions.map((q) => {
+          const type     = getFieldType(q);
+          const mainVal  = answers[q.id] ?? null;
+          const photoUrl = photos[q.id] ?? null;
+          const finalVal = type === 'photo'
+            ? photoUrl
+            : (photoUrl ? { value: mainVal, photoUrl } : mainVal);
+          return { questionId: q.id, answer: finalVal };
+        });
+
+        const submission: any = await submitChecklistAuth({
+          templateId: request!.templateId,
+          assetId:    request!.assetId,
+          answers:    answerArray,
+        });
+        submissionId = submission?.submissionId ?? submission?.id ?? undefined;
+      }
+
       await resolveSoftRequest(Number(requestId), submissionId);
 
       Alert.alert('✓ Resolved', 'The issue has been marked as resolved.', [
@@ -387,15 +462,62 @@ export default function SoftResolveScreen() {
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
-        {questions.length === 0 ? (
-          <View style={[styles.emptyBox, { backgroundColor: theme.surface }]}>
-            <MaterialCommunityIcons name="clipboard-alert-outline" size={48} color={theme.textMuted} />
-            <Text style={[styles.emptyText, { color: theme.textSecondary }]}>
-              No questions found for this checklist.
-            </Text>
-          </View>
+        {displayQuestions.length === 0 ? (
+          actuallyAnswered.length > 0 ? (
+            // Client raised the request with answers but template questions unavailable —
+            // show their recent response as read-only cards so the catalyst can review it.
+            <>
+              <View style={[styles.clientResponseBanner, { backgroundColor: '#FFFBEB', borderColor: '#FDE68A' }]}>
+                <MaterialCommunityIcons name="account-clock-outline" size={18} color="#92400E" />
+                <Text style={[styles.clientResponseTitle, { color: '#92400E' }]}>
+                  Client's Recent Response
+                </Text>
+              </View>
+              {actuallyAnswered.map((ans: any, idx: number) => {
+                const { text, photoUrl } = parseBeforeEntry(ans);
+                const hasContent = text || photoUrl;
+                return (
+                  <View key={String(ans.questionId ?? idx)} style={[styles.qCard, { backgroundColor: theme.surface, shadowColor: theme.cardShadow }]}>
+                    <View style={styles.qLabelRow}>
+                      <View style={[styles.qNum, { backgroundColor: '#D97706' }]}>
+                        <Text style={styles.qNumTxt}>{idx + 1}</Text>
+                      </View>
+                      <Text style={[styles.qLabel, { color: theme.textPrimary }]}>
+                        {ans.questionText ?? `Question ${idx + 1}`}
+                      </Text>
+                    </View>
+                    <View style={bStyles.wrap}>
+                      <View style={bStyles.labelRow}>
+                        <MaterialCommunityIcons name="account-clock-outline" size={12} color="#92400E" />
+                        <Text style={bStyles.label}>Client's Answer</Text>
+                      </View>
+                      {!hasContent ? (
+                        <Text style={[bStyles.value, { color: '#B45309' }]}>No answer provided</Text>
+                      ) : (
+                        <>
+                          {text ? <Text style={[bStyles.value, { color: '#78350F' }]}>{text}</Text> : null}
+                          {photoUrl ? (
+                            <View style={text ? { marginTop: 8 } : undefined}>
+                              <Image source={{ uri: photoUrl }} style={bStyles.photo} resizeMode="cover" />
+                            </View>
+                          ) : null}
+                        </>
+                      )}
+                    </View>
+                  </View>
+                );
+              })}
+            </>
+          ) : (
+            <View style={[styles.emptyBox, { backgroundColor: theme.surface }]}>
+              <MaterialCommunityIcons name="clipboard-alert-outline" size={48} color={theme.textMuted} />
+              <Text style={[styles.emptyText, { color: theme.textSecondary }]}>
+                No questions found for this checklist.
+              </Text>
+            </View>
+          )
         ) : (
-          questions.map((q, idx) => {
+          displayQuestions.map((q, idx) => {
             const label = q.questionText || q.text || `Question ${idx + 1}`;
             return (
               <View key={String(q.id ?? idx)} style={[styles.qCard, { backgroundColor: theme.surface, shadowColor: theme.cardShadow }]}>
@@ -411,7 +533,7 @@ export default function SoftResolveScreen() {
                 </View>
 
                 {/* Client's answer (before) */}
-                <BeforeSection q={q} beforeAnswers={beforeAnswers} />
+                <BeforeSection q={q} beforeAnswers={actuallyAnswered} />
 
                 {/* Catalyst's response (after) */}
                 <AfterInput
@@ -465,9 +587,11 @@ const styles = StyleSheet.create({
   qLabelRow:     { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: 12 },
   qNum:          { width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center', marginTop: 1, flexShrink: 0 },
   qNumTxt:       { fontSize: 12, fontWeight: '800', color: '#fff' },
-  qLabel:        { fontSize: 15, fontWeight: '600', lineHeight: 22, flex: 1 },
-  emptyBox:      { borderRadius: Radius.xl, padding: Spacing.xxl, alignItems: 'center', gap: Spacing.md },
-  emptyText:     { fontSize: 14, textAlign: 'center' },
+  qLabel:        { fontSize: 13, fontWeight: '400', lineHeight: 20, flex: 1 },
+  emptyBox:               { borderRadius: Radius.xl, padding: Spacing.xxl, alignItems: 'center', gap: Spacing.md },
+  emptyText:              { fontSize: 14, textAlign: 'center' },
+  clientResponseBanner:   { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 12, borderRadius: Radius.lg, borderWidth: 1, marginBottom: 4 },
+  clientResponseTitle:    { fontSize: 13, fontWeight: '700' },
   footer:        { borderTopWidth: 1, padding: Spacing.md, paddingBottom: Spacing.lg },
   resolveBtn:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, height: 56, borderRadius: Radius.lg },
   resolveBtnTxt: { fontSize: 17, fontWeight: '800', color: '#fff' },

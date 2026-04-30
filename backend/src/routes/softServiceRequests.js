@@ -97,6 +97,49 @@ router.post("/requests", async (req, res, next) => {
     );
 
     const requestId = rows[0]?.id ?? rows.insertId;
+
+    // Notify users who can resolve soft issues
+    try {
+      const [[raiser]] = await pool.query(
+        `SELECT full_name FROM company_users WHERE id = ?`, [userId]
+      );
+      const raiserName = raiser?.full_name || 'A user';
+
+      const [[assetRow]] = await pool.query(
+        `SELECT asset_name FROM assets WHERE id = ?`, [assetId]
+      );
+      const assetLabel = assetRow?.asset_name || 'an asset';
+
+      const [resolvers] = await pool.query(
+        `SELECT cu.id, cu.push_token
+         FROM company_users cu
+         JOIN company_roles cr ON cr.company_id = cu.company_id AND cr.role_key = cu.role
+         WHERE cu.company_id = ?
+           AND cr.can_resolve_soft_issue = TRUE
+           AND cr.is_active = TRUE
+           AND cu.id != ?`,
+        [companyId, userId]
+      );
+
+      for (const resolver of resolvers) {
+        await createInAppNotification(
+          companyId, resolver.id,
+          'New Soft Request',
+          `${raiserName} raised a request for ${assetLabel}.`
+        );
+        if (resolver.push_token) {
+          await sendExpoPush(
+            resolver.push_token,
+            'New Soft Request',
+            `${raiserName} raised a request for ${assetLabel}.`,
+            { screen: '/(tabs)/soft-requests', requestId }
+          );
+        }
+      }
+    } catch {
+      // Non-fatal — don't fail the request creation
+    }
+
     res.status(201).json({ ok: true, requestId });
   } catch (err) {
     next(err);

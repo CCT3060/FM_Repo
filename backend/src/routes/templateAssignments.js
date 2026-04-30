@@ -172,7 +172,32 @@ router.get("/my-assignments", async (req, res, next) => {
          lta.asset_id AS "logsheetAssetId",
          a_lt.asset_name AS "logsheetAssetName",
          lt.shift_id AS "logsheetShiftId",
-         s_lt.name AS "logsheetShiftName"
+         s_lt.name AS "logsheetShiftName",
+         -- Check if completed in the current period (frequency-aware)
+         CASE
+           WHEN tua.template_type = 'checklist' THEN (
+             EXISTS (
+               SELECT 1 FROM checklist_submissions cs
+               WHERE cs.template_id = tua.template_id
+                 AND cs.company_user_id = tua.assigned_to
+                 AND (
+                   (ct.frequency = 'Hourly'  AND cs.submitted_at >= NOW() - INTERVAL '1 hour')
+                   OR (ct.frequency = 'Weekly'  AND cs.submitted_at >= date_trunc('week', NOW()))
+                   OR (ct.frequency = 'Monthly' AND cs.submitted_at >= date_trunc('month', NOW()))
+                   OR (ct.frequency NOT IN ('Hourly','Weekly','Monthly') AND cs.submitted_at >= CURRENT_DATE)
+                 )
+             )
+           )
+           WHEN tua.template_type = 'logsheet' THEN (
+             EXISTS (
+               SELECT 1 FROM logsheet_entries le
+               WHERE le.template_id = tua.template_id
+                 AND le.company_user_id = tua.assigned_to
+                 AND le.submitted_at >= CURRENT_DATE
+             )
+           )
+           ELSE false
+         END AS "completedToday"
        FROM template_user_assignments tua
        LEFT JOIN company_users cu_by ON tua.assigned_by = cu_by.id
        LEFT JOIN checklist_templates ct ON tua.template_type = 'checklist' AND tua.template_id = ct.id AND ct.company_id = tua.company_id
@@ -185,12 +210,17 @@ router.get("/my-assignments", async (req, res, next) => {
        WHERE tua.assigned_to = ?
          AND tua.company_id = ?
          AND (
-           -- Checklists: hide once submitted after the assignment date
-           (tua.template_type = 'checklist' AND NOT EXISTS (
+           -- Checklists: frequency-aware visibility
+           (tua.template_type = 'checklist' AND ct.id IS NOT NULL AND NOT EXISTS (
              SELECT 1 FROM checklist_submissions cs
              WHERE cs.template_id = tua.template_id
                AND cs.company_user_id = tua.assigned_to
-               AND cs.submitted_at >= tua.created_at
+               AND (
+                 (ct.frequency = 'Hourly'  AND cs.submitted_at >= NOW() - INTERVAL '1 hour')
+                 OR (ct.frequency = 'Weekly'  AND cs.submitted_at >= date_trunc('week', NOW()))
+                 OR (ct.frequency = 'Monthly' AND cs.submitted_at >= date_trunc('month', NOW()))
+                 OR (ct.frequency NOT IN ('Hourly','Weekly','Monthly') AND cs.submitted_at >= CURRENT_DATE)
+               )
            ))
            OR
            -- Logsheets are recurring so they are ALWAYS shown once assigned
@@ -240,6 +270,7 @@ router.get("/my-assignments", async (req, res, next) => {
       note: a.note,
       assignedAt: a.assignedAt,
       assignedBy: a.assignedByName,
+      completedToday: !!(a.completedToday),
     }));
 
     res.json(formatted);
@@ -346,32 +377,35 @@ router.get(
                     input_type     AS "inputType",
                     is_required    AS "isRequired",
                     options_json   AS "options",
-                    order_index    AS "orderIndex"
+                    order_index    AS "orderIndex",
+                    reference_image_url AS "referenceImageUrl"
              FROM checklist_template_questions
              WHERE template_id = ?
              ORDER BY order_index ASC, id ASC`,
             [id]
           );
           qs = tableQs.map(q => ({
-            id:          q.id,
-            questionText: q.questionText,
-            inputType:   q.inputType || 'text',
-            isRequired:  q.isRequired === 1 || q.isRequired === true,
-            options:     q.options
+            id:               q.id,
+            questionText:     q.questionText,
+            inputType:        q.inputType || 'text',
+            isRequired:       q.isRequired === 1 || q.isRequired === true,
+            options:          q.options
               ? (typeof q.options === 'string' ? JSON.parse(q.options) : q.options)
               : [],
-            orderIndex:  q.orderIndex,
+            orderIndex:       q.orderIndex,
+            referenceImageUrl: q.referenceImageUrl || null,
           }));
         }
 
         // Normalize for mobile app
         const questions = qs.map((q, idx) => ({
-          id:           q.id ?? idx,
-          questionText: q.questionText || q.text || '',
-          answerType:   normalizeInputType(q.inputType || q.answerType || 'text'),
-          isRequired:   q.isRequired ?? q.is_required ?? false,
-          options:      Array.isArray(q.options) ? q.options : [],
-          displayOrder: q.orderIndex ?? q.order ?? idx,
+          id:               q.id ?? idx,
+          questionText:     q.questionText || q.text || '',
+          answerType:       normalizeInputType(q.inputType || q.answerType || 'text'),
+          isRequired:       q.isRequired ?? q.is_required ?? false,
+          options:          Array.isArray(q.options) ? q.options : [],
+          displayOrder:     q.orderIndex ?? q.order ?? idx,
+          referenceImageUrl: q.referenceImageUrl || null,
         }));
 
         const { questions: _drop, ...templateData } = template;
@@ -935,6 +969,8 @@ router.post(
 router.get("/my-today-progress", async (req, res, next) => {
   try {
     const userId = req.companyUser.id;
+    const companyId = cid(req);
+
     const [[{ checklistsDone }]] = await pool.query(
       `SELECT COUNT(*) AS "checklistsDone"
        FROM checklist_submissions cs
@@ -953,10 +989,27 @@ router.get("/my-today-progress", async (req, res, next) => {
        AND le.submitted_at >= CURRENT_DATE`,
       [userId, userId]
     );
+
+    // Count total assigned templates for this user
+    const [[{ assignedCount }]] = await pool.query(
+      `SELECT COUNT(*) AS "assignedCount"
+       FROM template_user_assignments
+       WHERE assigned_to = ? AND company_id = ?`,
+      [userId, companyId]
+    );
+
+    const done = (Number(checklistsDone) || 0) + (Number(logsheetsDone) || 0);
+    const assigned = Number(assignedCount) || 0;
+    const pending = Math.max(0, assigned - done);
+
     res.json({
       checklistsDone: Number(checklistsDone) || 0,
       logsheetsDone: Number(logsheetsDone) || 0,
-      totalDone: (Number(checklistsDone) || 0) + (Number(logsheetsDone) || 0),
+      totalDone: done,
+      // Fields for the home screen stats row
+      assigned,
+      completed: done,
+      pending,
     });
   } catch (err) { next(err); }
 });
@@ -1651,5 +1704,102 @@ router.get(
     } catch (err) { next(err); }
   }
 );
+
+/* ────────────────────────────────────────────────────────────────────────────
+   GET /site-score  – company-wide checklist completion score for today
+   Returns: { total, filled, percentage, openRequests, totalChecklistTemplates, totalLogsheetTemplates, totalSubmissionsToday }
+   Score = (distinct templates filled today / total active templates) × 100
+──────────────────────────────────────────────────────────────────────────── */
+router.get("/site-score", async (req, res, next) => {
+  try {
+    const companyId = cid(req);
+
+    // Total active checklist templates for the company
+    const [[{ total }]] = await pool.query(
+      `SELECT COUNT(*) AS total
+       FROM checklist_templates
+       WHERE company_id = ? AND (is_active = 1 OR is_active IS TRUE)`,
+      [companyId]
+    );
+
+    // Distinct templates that have at least one submission today
+    const [[{ filled }]] = await pool.query(
+      `SELECT COUNT(DISTINCT cs.template_id) AS filled
+       FROM checklist_submissions cs
+       JOIN checklist_templates ct ON cs.template_id = ct.id
+       WHERE ct.company_id = ?
+         AND cs.submitted_at >= CURRENT_DATE`,
+      [companyId]
+    );
+
+    // Total submissions today (for display)
+    const [[{ totalFilled }]] = await pool.query(
+      `SELECT COUNT(*) AS "totalFilled"
+       FROM checklist_submissions cs
+       JOIN checklist_templates ct ON cs.template_id = ct.id
+       WHERE ct.company_id = ?
+         AND cs.submitted_at >= CURRENT_DATE`,
+      [companyId]
+    );
+
+    // Open soft-service requests
+    const [[{ openRequests }]] = await pool.query(
+      `SELECT COUNT(*) AS "openRequests"
+       FROM soft_service_requests
+       WHERE company_id = ? AND status = 'open'`,
+      [companyId]
+    );
+
+    // Total checklist templates (active) — for the dashboard stat card
+    const [[{ totalChecklistTemplates }]] = await pool.query(
+      `SELECT COUNT(*) AS "totalChecklistTemplates"
+       FROM checklist_templates
+       WHERE company_id = ? AND (is_active = 1 OR is_active IS TRUE)`,
+      [companyId]
+    );
+
+    // Total logsheet templates — for the dashboard stat card
+    const [[{ totalLogsheetTemplates }]] = await pool.query(
+      `SELECT COUNT(*) AS "totalLogsheetTemplates"
+       FROM logsheet_templates
+       WHERE company_id = ?`,
+      [companyId]
+    );
+
+    // Total submissions today (checklists + logsheets combined)
+    const [[{ totalSubmissionsToday }]] = await pool.query(
+      `SELECT (
+         (SELECT COUNT(*) FROM checklist_submissions cs
+          JOIN checklist_templates ct ON cs.template_id = ct.id
+          WHERE ct.company_id = ? AND cs.submitted_at >= CURRENT_DATE)
+         +
+         (SELECT COUNT(*) FROM logsheet_entries le
+          JOIN logsheet_templates lt ON le.template_id = lt.id
+          WHERE lt.company_id = ? AND le.submitted_at >= CURRENT_DATE)
+       ) AS "totalSubmissionsToday"`,
+      [companyId, companyId]
+    );
+
+    const totalN                  = Number(total)                   || 0;
+    const filledN                 = Math.min(Number(filled) || 0, totalN);
+    const totalFilledN            = Number(totalFilled)             || 0;
+    const openN                   = Number(openRequests)            || 0;
+    const checklistTemplatesN     = Number(totalChecklistTemplates) || 0;
+    const logsheetTemplatesN      = Number(totalLogsheetTemplates)  || 0;
+    const totalSubmissionsTodayN  = Number(totalSubmissionsToday)   || 0;
+    const percentage              = totalN > 0 ? Math.round((filledN / totalN) * 100) : 0;
+
+    res.json({
+      total:                   totalN,
+      filled:                  filledN,
+      totalFilled:             totalFilledN,
+      percentage,
+      openRequests:            openN,
+      totalChecklistTemplates: checklistTemplatesN,
+      totalLogsheetTemplates:  logsheetTemplatesN,
+      totalSubmissionsToday:   totalSubmissionsTodayN,
+    });
+  } catch (err) { next(err); }
+});
 
 export default router;

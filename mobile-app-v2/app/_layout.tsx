@@ -8,6 +8,7 @@ import { ThemeProvider, useTheme, Spacing, Radius, Typography } from '../utils/t
 import { AuthProvider, useAuth } from '../context/AuthContext';
 import { verifyToken } from '../utils/api';
 import { registerForPushNotifications } from '../utils/notifications';
+import { startNetworkMonitor } from '../utils/networkStatus';
 import OfflineBanner from '../components/OfflineBanner';
 
 // ─── Error Boundary ───────────────────────────────────────────────────────────
@@ -85,6 +86,9 @@ function RootLayoutInner() {
   useEffect(() => {
     void registerForPushNotifications();
 
+    // Start real device network monitoring (uses expo-network, not backend connectivity)
+    const stopNetworkMonitor = startNetworkMonitor();
+
     notifListener.current = Notifications.addNotificationReceivedListener(() => {});
 
     responseListener.current = Notifications.addNotificationResponseReceivedListener((response) => {
@@ -94,6 +98,7 @@ function RootLayoutInner() {
     });
 
     return () => {
+      stopNetworkMonitor();
       notifListener.current?.remove();
       responseListener.current?.remove();
     };

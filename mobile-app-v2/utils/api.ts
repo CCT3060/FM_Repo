@@ -6,6 +6,8 @@
  */
 
 import * as SecureStore from 'expo-secure-store';
+import * as ImageManipulator from 'expo-image-manipulator';
+import * as FileSystem from 'expo-file-system';
 import { cacheData, getCachedData, addToOfflineQueue, getOfflineQueue, removeFromOfflineQueue } from './offlineStorage';
 import { notifyNetworkStatus } from './networkStatus';
 import type { RoleCapabilities } from './permissions';
@@ -13,7 +15,7 @@ import type { RoleCapabilities } from './permissions';
 // ─── Config ───────────────────────────────────────────────────────────────────
 export const API_BASE: string =
   (process.env.EXPO_PUBLIC_API_URL as string | undefined) ??
-  'https://fm.catalystsolutions.eco';
+  'http://3.110.166.39';  // DNS still points to old IP; using new EC2 IP directly
 
 const TOKEN_KEY   = 'auth_token_v2';
 const USER_KEY    = 'user_data_v2';
@@ -102,10 +104,13 @@ export async function authenticatedFetch(
 
   try {
     const res = await fetch(`${API_BASE}${path}`, { ...opts, headers });
+    // Only mark online on success — marking offline is handled by the
+    // dedicated network monitor (expo-network), not by backend connectivity.
     notifyNetworkStatus(true);
     return res;
   } catch (err) {
-    notifyNetworkStatus(false);
+    // Do NOT call notifyNetworkStatus(false) here — a backend error or dropped
+    // tunnel does not mean the device has no internet.
     throw err;
   }
 }
@@ -247,6 +252,21 @@ export async function fetchMyAssignments() {
 
 export async function fetchMyTodayProgress() {
   return apiGet<unknown>('/api/template-assignments/my-today-progress');
+}
+
+export interface SiteScore {
+  total:                   number;
+  filled:                  number;
+  totalFilled:             number;
+  percentage:              number;
+  openRequests:            number;
+  totalChecklistTemplates: number;
+  totalLogsheetTemplates:  number;
+  totalSubmissionsToday:   number;
+}
+
+export async function fetchSiteScore(): Promise<SiteScore> {
+  return apiGet<SiteScore>('/api/template-assignments/site-score');
 }
 
 export async function fetchMySubmissionHistory() {
@@ -476,9 +496,43 @@ export async function fetchActiveShift() {
  * Returns the public URL of the uploaded file.
  * Does NOT set Content-Type — the native fetch will set it with the multipart boundary.
  */
+const MAX_PHOTO_BYTES = 5 * 1024 * 1024; // 5 MB
+
+/** Compress an image so it is under 5 MB. Returns the (possibly new) URI. */
+async function compressToUnder5MB(uri: string): Promise<string> {
+  try {
+    const info = await FileSystem.getInfoAsync(uri, { size: true });
+    const size = (info as any).size as number | undefined;
+    if (!size || size <= MAX_PHOTO_BYTES) return uri; // already fine
+
+    // Try progressively lower quality until under 5 MB
+    for (const quality of [0.7, 0.5, 0.35]) {
+      const result = await ImageManipulator.manipulateAsync(
+        uri, [], { compress: quality, format: ImageManipulator.SaveFormat.JPEG }
+      );
+      const info2 = await FileSystem.getInfoAsync(result.uri, { size: true });
+      if (!(info2 as any).size || (info2 as any).size <= MAX_PHOTO_BYTES) {
+        return result.uri;
+      }
+    }
+    // Last resort: scale to 1280px wide + compress
+    const result = await ImageManipulator.manipulateAsync(
+      uri,
+      [{ resize: { width: 1280 } }],
+      { compress: 0.5, format: ImageManipulator.SaveFormat.JPEG }
+    );
+    return result.uri;
+  } catch {
+    return uri; // if compression fails, upload original
+  }
+}
+
 export async function uploadFile(localUri: string): Promise<string> {
+  // Compress image to under 5 MB before uploading
+  const compressedUri = await compressToUnder5MB(localUri);
+
   const token    = await getToken();
-  const filename = localUri.split('/').pop() ?? 'photo.jpg';
+  const filename = compressedUri.split('/').pop() ?? 'photo.jpg';
   const ext      = (filename.split('.').pop() ?? 'jpg').toLowerCase();
   const mimeMap: Record<string, string> = {
     png: 'image/png', gif: 'image/gif', webp: 'image/webp',
@@ -487,7 +541,7 @@ export async function uploadFile(localUri: string): Promise<string> {
   const mimeType = mimeMap[ext] ?? 'image/jpeg';
 
   const formData = new FormData();
-  formData.append('file', { uri: localUri, name: filename, type: mimeType } as any);
+  formData.append('file', { uri: compressedUri, name: filename, type: mimeType } as any);
 
   const headers: Record<string, string> = {};
   if (token) headers['Authorization'] = `Bearer ${token}`;

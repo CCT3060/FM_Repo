@@ -72,6 +72,8 @@ const safeParse = (v) => {
 
 // Ensure questions column exists (safe to run on every start)
 pool.query("ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS questions JSONB NULL").catch(() => {});
+// Ensure reference_image_url column exists on checklist_template_questions
+pool.query("ALTER TABLE checklist_template_questions ADD COLUMN IF NOT EXISTS reference_image_url TEXT NULL").catch(() => {});
 
 // Ensure tabular-logsheet columns exist (migration 2026-03-02-tabular-logsheet)
 pool.query("ALTER TABLE logsheet_templates ADD COLUMN IF NOT EXISTS layout_type VARCHAR(20) NOT NULL DEFAULT 'standard'").catch(() => {});
@@ -3349,6 +3351,25 @@ router.delete("/fleet/maintenance/:id", async (req, res, next) => {
     if (!check) return res.status(404).json({ message: "Maintenance record not found" });
     await pool.query("DELETE FROM fleet_maintenance WHERE id = ?", [id]);
     res.json({ success: true });
+  } catch (err) { next(err); }
+});
+
+/* POST /upload-image – upload a reference image for checklist questions (admin only) */
+router.post("/upload-image", (req, res, next) => {
+  uploadOjt.single("file")(req, res, (err) => {
+    if (err instanceof multer.MulterError) {
+      return res.status(400).json({ message: err.message || "File too large" });
+    } else if (err) {
+      return res.status(400).json({ message: err.message || "File type not allowed" });
+    }
+    next();
+  });
+}, async (req, res, next) => {
+  try {
+    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!req.file) return res.status(400).json({ message: "No file provided" });
+    const url = `/uploads/${req.file.filename}`;
+    res.json({ url, filename: req.file.filename, size: req.file.size, mimetype: req.file.mimetype });
   } catch (err) { next(err); }
 });
 
