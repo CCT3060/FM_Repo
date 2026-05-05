@@ -4,14 +4,14 @@ import { getApiBaseUrl } from "../utils/runtimeConfig";
 const API_BASE = getApiBaseUrl();
 
 function formatAssetLocation(row) {
-  if (!row) return "—";
+  if (!row) return "ï¿½";
   const parts = [
     row.assetDepartment,
     row.assetBuilding,
     row.assetFloor,
     row.assetRoom,
   ].filter((p) => p && String(p).trim());
-  return parts.length ? parts.join(" • ") : "—";
+  return parts.length ? parts.join(" ï¿½ ") : "ï¿½";
 }
 
 /* --- CSV export ------------------------------------------------ */
@@ -20,12 +20,12 @@ function exportToCSV(rows, type, detail) {
     const allAnswers = getAllAnswers(detail);
     const csvRows = [
       ["Template", detail.templateName || ""],
-      ["Submitted By", detail.submittedBy || "—"],
-      ["Asset", detail.assetName || "—"],
-      ["Submitted At", detail.submittedAt ? new Date(detail.submittedAt).toLocaleString() : "—"],
+      ["Submitted By", detail.submittedBy || "ï¿½"],
+      ["Asset", detail.assetName || "ï¿½"],
+      ["Submitted At", detail.submittedAt ? new Date(detail.submittedAt).toLocaleString() : "ï¿½"],
       ["Status", detail.status || ""],
       ...(type === "logsheets" && detail.month
-        ? [["Period", `Month ${detail.month} / ${detail.year}`], ["Shift", detail.shift || "—"]]
+        ? [["Period", `Month ${detail.month} / ${detail.year}`], ["Shift", detail.shift || "ï¿½"]]
         : []),
       [],
       ["Question", "Answer"],
@@ -93,7 +93,7 @@ function PhotoAnswer({ src, alt = "Photo", caption }) {
             border: "1px solid #bfdbfe", borderRadius: "6px", fontSize: "12px",
             fontWeight: 600, cursor: "pointer" }}
         >
-          ?? View
+          &#128065; View
         </button>
       </div>
       {open && (
@@ -116,7 +116,7 @@ function PhotoAnswer({ src, alt = "Photo", caption }) {
                 display: "flex", alignItems: "center", justifyContent: "center",
                 boxShadow: "0 2px 10px rgba(0,0,0,0.3)", color: "#1e293b" }}
             >
-              ×
+              &times;
             </button>
           </div>
         </div>
@@ -143,9 +143,9 @@ function renderAnswerValue(val) {
         return <PhotoAnswer src={src} alt={name} caption={name} />;
       }
       return <a href={src} target="_blank" rel="noopener noreferrer"
-        style={{ color: "#2563eb", fontWeight: 600, fontSize: "13px" }}>?? {name}</a>;
+        style={{ color: "#2563eb", fontWeight: 600, fontSize: "13px" }}>&#128206; {name}</a>;
     }
-    return <span style={{ fontSize: "13px", color: "#64748b" }}>?? {name} (from device)</span>;
+    return <span style={{ fontSize: "13px", color: "#64748b" }}>&#128247; {name} (from device)</span>;
   }
   return <span style={{ fontWeight: 600, color: "#0f172a" }}>{String(val)}</span>;
 }
@@ -168,7 +168,7 @@ const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct"
 
 /* --- helpers --------------------------------------------------- */
 function fmt(d) {
-  if (!d) return "—";
+  if (!d) return "â€”";
   try { return new Date(d).toLocaleString(); } catch { return d; }
 }
 
@@ -183,7 +183,7 @@ function StatusBadge({ status }) {
   return (
     <span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600,
       background: s.bg, color: s.col, textTransform: "capitalize" }}>
-      {status || "—"}
+      {status || "â€”"}
     </span>
   );
 }
@@ -201,7 +201,7 @@ function DetailModal({ submission, type, onClose }) {
   const allAnswers = getAllAnswers(submission);
   const isTabular  = submission.layoutType === "tabular";
 
-  // Tabular grid display — handles ALL possible stored formats safely
+  // Tabular grid display ï¿½ handles ALL possible stored formats safely
   const TabularView = () => {
     // Always parse & validate first
     let raw = submission.tabularData;
@@ -210,9 +210,9 @@ function DetailModal({ submission, type, onClose }) {
     const d = typeof raw === "string" ? tryParse(raw) : raw;
     if (!d || typeof d !== "object") return <p style={{ color: "#94a3b8", fontSize: "14px" }}>No tabular data recorded.</p>;
 
-    // Safe value converter — NEVER returns a plain object/array as React child
+    // Safe value converter ï¿½ NEVER returns a plain object/array as React child
     const safeVal = (v) => {
-      if (v === null || v === undefined) return "—";
+      if (v === null || v === undefined) return "ï¿½";
       if (typeof v !== "object") return String(v);
       // {id, label} shape ? use label
       if (v.label !== undefined) return String(v.label);
@@ -343,7 +343,7 @@ function DetailModal({ submission, type, onClose }) {
             <div style={{ fontWeight: 800, fontSize: "17px", color: "#0f172a" }}>{submission.templateName}</div>
             <div style={{ color: "#64748b", fontSize: "13px", marginTop: "3px" }}>
               {type === "checklists" ? "Checklist" : `Logsheet (${submission.layoutType || "standard"})`}
-              {" · "}Submission #{submission.id}
+              {" ï¿½ "}Submission #{submission.id}
             </div>
           </div>
           <div style={{ display: "flex", gap: "8px", flexShrink: 0 }}>
@@ -365,16 +365,16 @@ function DetailModal({ submission, type, onClose }) {
         <div style={{ padding: "16px 24px", borderBottom: "1px solid #e2e8f0", display: "grid",
           gridTemplateColumns: "repeat(3, 1fr)", gap: "10px 24px", flexShrink: 0 }}>
           {[
-            { label: "Submitted By", value: submission.submittedBy || "—" },
-            { label: "Asset",        value: submission.assetName  || "—" },
+            { label: "Submitted By", value: submission.submittedBy || "ï¿½" },
+            { label: "Asset",        value: submission.assetName  || "ï¿½" },
             { label: "Location",     value: formatAssetLocation(submission) },
             { label: "Date / Time",  value: fmt(submission.submittedAt) },
             { label: "Status",       value: <StatusBadge status={submission.status} /> },
             ...(type === "logsheets" ? [
               { label: "Period", value: submission.month
                 ? `${MONTH_NAMES[(submission.month || 1) - 1]} ${submission.year}`
-                : "—" },
-              { label: "Shift", value: submission.shift || "—" },
+                : "ï¿½" },
+              { label: "Shift", value: submission.shift || "ï¿½" },
             ] : []),
           ].map(({ label, value }) => (
             <div key={label}>
@@ -393,7 +393,7 @@ function DetailModal({ submission, type, onClose }) {
             {Object.entries(submission.headerValues).map(([k, v]) => (
               <div key={k} style={{ fontSize: "12px" }}>
                 <span style={{ color: "#94a3b8", fontWeight: 600, textTransform: "capitalize" }}>{k}: </span>
-                <span style={{ color: "#0f172a", fontWeight: 600 }}>{v || "—"}</span>
+                <span style={{ color: "#0f172a", fontWeight: 600 }}>{v || "ï¿½"}</span>
               </div>
             ))}
           </div>
@@ -457,7 +457,7 @@ function Chip({ label, onRemove }) {
       <button onClick={onRemove} style={{ background: "none", border: "none", cursor: "pointer",
         color: "#2563eb", padding: "0 0 0 2px", fontSize: "14px", lineHeight: 1,
         display: "flex", alignItems: "center" }}>
-        ×
+        ï¿½
       </button>
     </span>
   );
@@ -536,7 +536,7 @@ function ConsolidatedGridView({ userName, templateId, templateName, assetName, c
       dateTime: new Date(d.submittedAt).toLocaleString(undefined,
         { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }),
       indexMap: Object.fromEntries(
-        getAllAnswers(d).map((a) => [(a.questionText || "").trim(), a.answerValue || a.answer || "—"])
+        getAllAnswers(d).map((a) => [(a.questionText || "").trim(), a.answerValue || a.answer || "ï¿½"])
       ),
     }));
     return { questions: qSet, columns: cols };
@@ -573,8 +573,8 @@ function ConsolidatedGridView({ userName, templateId, templateName, assetName, c
   };
   const vCell = (val) => ({
     padding: "7px 10px", textAlign: "center", fontSize: "12.5px",
-    border: "1px solid #e2e8f0", background: val && val !== "—" ? "#fff" : "#f8fafc",
-    color: val && val !== "—" ? "#0f172a" : "#94a3b8", fontWeight: val && val !== "—" ? 600 : 400,
+    border: "1px solid #e2e8f0", background: val && val !== "ï¿½" ? "#fff" : "#f8fafc",
+    color: val && val !== "ï¿½" ? "#0f172a" : "#94a3b8", fontWeight: val && val !== "ï¿½" ? 600 : 400,
     minWidth: "80px",
   });
 
@@ -583,15 +583,15 @@ function ConsolidatedGridView({ userName, templateId, templateName, assetName, c
       {/* - Header Card (matches logsheet style) - */}
       <div style={{ background: "#1e3a5f", color: "#fff", borderRadius: "12px 12px 0 0", padding: "20px 28px", textAlign: "center" }}>
         <div style={{ fontSize: "22px", fontWeight: 800, letterSpacing: "-0.5px" }}>
-          {templateName} — {assetName || "All Assets"}
+          {templateName} ï¿½ {assetName || "All Assets"}
         </div>
       </div>
       <div style={{ background: "#2563eb", color: "#fff", padding: "10px 28px", textAlign: "center",
         display: "flex", alignItems: "center", justifyContent: "center", gap: "24px" }}>
         <div style={{ fontSize: "14px", fontWeight: 700 }}>
           {columns.length > 0
-            ? `${new Date(details[0]?.submittedAt).toLocaleDateString(undefined, { month: "long", year: "numeric" })} – ${new Date(details[details.length - 1]?.submittedAt).toLocaleDateString(undefined, { month: "long", year: "numeric" })}`
-            : "—"}
+            ? `${new Date(details[0]?.submittedAt).toLocaleDateString(undefined, { month: "long", year: "numeric" })} ï¿½ ${new Date(details[details.length - 1]?.submittedAt).toLocaleDateString(undefined, { month: "long", year: "numeric" })}`
+            : "ï¿½"}
         </div>
         <span style={{ opacity: 0.5 }}>|</span>
         <div style={{ fontSize: "14px", fontWeight: 700 }}>{type === "checklists" ? "Checklist" : "Logsheet"}</div>
@@ -603,7 +603,7 @@ function ConsolidatedGridView({ userName, templateId, templateName, assetName, c
         <button onClick={onBack}
           style={{ padding: "7px 14px", border: "1px solid #e2e8f0", borderRadius: "8px",
             background: "#f8fafc", color: "#475569", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>
-          ? Back
+          &#8592; Back
         </button>
         <div style={{ width: "40px", height: "40px", borderRadius: "50%", background: "#eff6ff",
           color: "#2563eb", fontWeight: 800, fontSize: "15px",
@@ -613,19 +613,19 @@ function ConsolidatedGridView({ userName, templateId, templateName, assetName, c
         <div>
           <div style={{ fontWeight: 800, fontSize: "16px", color: "#0f172a" }}>{userName}</div>
           <div style={{ fontSize: "12px", color: "#64748b" }}>
-            {columns.length} submission{columns.length !== 1 ? "s" : ""} · {questions.length} parameter{questions.length !== 1 ? "s" : ""}
+            {columns.length} submission{columns.length !== 1 ? "s" : ""} &middot; {questions.length} parameter{questions.length !== 1 ? "s" : ""}
           </div>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: "8px" }}>
           <button onClick={() => window.print()}
             style={{ padding: "7px 14px", border: "1px solid #e2e8f0", borderRadius: "8px",
               background: "#f8fafc", color: "#475569", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>
-            ?? Print
+            &#128424; Print
           </button>
           <button onClick={exportGrid}
             style={{ padding: "7px 14px", border: "1px solid #bbf7d0", borderRadius: "8px",
               background: "#f0fdf4", color: "#16a34a", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>
-            ? Export CSV
+            &#8595; Export CSV
           </button>
         </div>
       </div>
@@ -635,7 +635,7 @@ function ConsolidatedGridView({ userName, templateId, templateName, assetName, c
         borderRadius: "0 0 12px 12px", overflow: "hidden" }}>
         {loading ? (
           <div style={{ padding: "60px", textAlign: "center", color: "#64748b", fontSize: "14px" }}>
-            ? Loading submissions…
+            Loading submissionsâ€¦
           </div>
         ) : error ? (
           <div style={{ padding: "40px", textAlign: "center", color: "#dc2626" }}>{error}</div>
@@ -677,7 +677,7 @@ function ConsolidatedGridView({ userName, templateId, templateName, assetName, c
                       const val = c.indexMap[q] ?? "";
                       return (
                         <td key={ci} style={vCell(val)}>
-                          {renderAnswerValue(val || "") || "—"}
+                          {renderAnswerValue(val || "") || "â€”"}
                         </td>
                       );
                     })}
@@ -877,7 +877,7 @@ function UserDrilldown({ userName, companyId, type, token, onBack }) {
         </div>
 
         {loading ? (
-          <div style={{ padding: "60px", textAlign: "center", color: "#94a3b8" }}>Loading…</div>
+          <div style={{ padding: "60px", textAlign: "center", color: "#94a3b8" }}>Loadingï¿½</div>
         ) : rows.length === 0 ? (
           <div style={{ padding: "60px", textAlign: "center" }}>
             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" strokeWidth="1.5"
@@ -927,14 +927,14 @@ function UserDrilldown({ userName, companyId, type, token, onBack }) {
                         </span>
                       </td>
                     )}
-                    <td style={{ padding: "10px 14px", color: "#475569" }}>{r.assetName || "—"}</td>
+                    <td style={{ padding: "10px 14px", color: "#475569" }}>{r.assetName || "ï¿½"}</td>
                     <td style={{ padding: "10px 14px", color: "#64748b", fontSize: "12px" }}>{formatAssetLocation(r)}</td>
                     {type === "logsheets" && (
                       <>
                         <td style={{ padding: "10px 14px", color: "#475569", whiteSpace: "nowrap" }}>
-                          {r.month && r.year ? `${MONTH_NAMES[(r.month || 1) - 1]} ${r.year}` : "—"}
+                          {r.month && r.year ? `${MONTH_NAMES[(r.month || 1) - 1]} ${r.year}` : "ï¿½"}
                         </td>
-                        <td style={{ padding: "10px 14px", color: "#64748b" }}>{r.shift || "—"}</td>
+                        <td style={{ padding: "10px 14px", color: "#64748b" }}>{r.shift || "ï¿½"}</td>
                       </>
                     )}
                     <td style={{ padding: "10px 14px", color: "#0f172a", fontWeight: 600, whiteSpace: "nowrap" }}>
@@ -1335,7 +1335,7 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
               <input
                 value={fSearch}
                 onChange={(e) => setFSearch(e.target.value)}
-                placeholder="Template / asset / name…"
+                placeholder="Template / asset / nameï¿½"
                 style={inputStyle}
                 onKeyDown={(e) => e.key === "Enter" && handleManualRefresh()}
               />
@@ -1409,7 +1409,7 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
 
         {/* Table */}
         {loading ? (
-          <div style={{ padding: "60px", textAlign: "center", color: "#94a3b8" }}>Loading…</div>
+          <div style={{ padding: "60px", textAlign: "center", color: "#94a3b8" }}>Loadingï¿½</div>
         ) : error ? (
           <div style={{ padding: "40px", textAlign: "center", color: "#dc2626" }}>? {error}</div>
         ) : sorted.length === 0 ? (
@@ -1473,17 +1473,17 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
                           </span>
                           {r.submittedBy}
                         </span>
-                      ) : "—"}
+                      ) : "ï¿½"}
                     </td>
-                    <td style={{ padding: "10px 14px", color: "#475569" }}>{r.assetName || "—"}</td>
+                    <td style={{ padding: "10px 14px", color: "#475569" }}>{r.assetName || "ï¿½"}</td>
                     <td style={{ padding: "10px 14px", color: "#64748b", fontSize: "12px" }}>{formatAssetLocation(r)}</td>
-                    <td style={{ padding: "10px 14px", color: "#475569", fontSize: "12px" }}>{r.companyName || "—"}</td>
+                    <td style={{ padding: "10px 14px", color: "#475569", fontSize: "12px" }}>{r.companyName || "ï¿½"}</td>
                     {type === "logsheets" && (
                       <>
                         <td style={{ padding: "10px 14px", color: "#475569", whiteSpace: "nowrap" }}>
-                          {r.month && r.year ? `${MONTH_NAMES[(r.month || 1) - 1]} ${r.year}` : "—"}
+                          {r.month && r.year ? `${MONTH_NAMES[(r.month || 1) - 1]} ${r.year}` : "ï¿½"}
                         </td>
-                        <td style={{ padding: "10px 14px", color: "#64748b" }}>{r.shift || "—"}</td>
+                        <td style={{ padding: "10px 14px", color: "#64748b" }}>{r.shift || "ï¿½"}</td>
                       </>
                     )}
                     <td style={{ padding: "10px 14px", color: "#64748b", whiteSpace: "nowrap" }}>

@@ -13,6 +13,7 @@ import {
   submitLogsheetAuth,
   uploadFile,
   raiseSoftRequest,
+  API_BASE,
 } from '../utils/api';
 import { useTheme, Typography, Spacing, Radius } from '../utils/theme';
 import Header from '../components/Header';
@@ -127,12 +128,20 @@ function normalizeField(q: any, idx: number): Field {
     options,
     unit:              q.unit,
     sectionName:       q.sectionName,
-    referenceImageUrl: q.referenceImageUrl || q.reference_image_url || null,
-    questionImageUrl:  q.questionImageUrl  || q.question_image_url  || null,
+    referenceImageUrl: resolveUrl(q.referenceImageUrl || q.reference_image_url),
+    questionImageUrl:  resolveUrl(q.questionImageUrl  || q.question_image_url),
   };
 }
 
+// Resolve relative /uploads/ URLs to full URL for mobile display
+function resolveUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  if (url.startsWith('http')) return url;
+  return `${API_BASE}${url.startsWith('/') ? '' : '/'}${url}`;
+}
+
 // ─── PhotoInput component ─────────────────────────────────────────────────────
+
 // value is either null (no photo) or the server URL of the uploaded image.
 
 function PhotoInput({
@@ -686,7 +695,7 @@ const styles = StyleSheet.create({
   refImageWrap:   { marginBottom: Spacing.sm },
   refImageLabel:  { ...Typography.micro, marginBottom: 4 },
   refImage:       { width: '100%', height: 160, borderRadius: Radius.md, backgroundColor: '#E2E8F0' },
-  // Question image (photo used as the question itself)
-  questionImage:  { width: '100%', height: 200, borderRadius: Radius.md, backgroundColor: '#E2E8F0', marginBottom: Spacing.sm },
+  // Question image (photo used as the question itself — shown as small icon)
+  questionImage:  { width: 56, height: 56, borderRadius: Radius.md, backgroundColor: '#E2E8F0', marginBottom: Spacing.sm },
   submitText:        { fontSize: 14, fontWeight: '700' as const, color: '#fff' },
 });

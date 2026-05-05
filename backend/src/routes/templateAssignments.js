@@ -273,7 +273,61 @@ router.get("/my-assignments", async (req, res, next) => {
       completedToday: !!(a.completedToday),
     }));
 
-    res.json(formatted);
+    // ── Auto-include soft-service checklists for all users ──────────────────
+    // Templates with asset_type = 'soft service' (case-insensitive) are shown
+    // to every user without needing an explicit assignment.
+    const [softTemplates] = await pool.query(
+      `SELECT
+         ct.id AS "templateId",
+         ct.template_name AS "templateName",
+         ct.description,
+         ct.asset_type AS "assetType",
+         ct.asset_id AS "assetId",
+         a.asset_name AS "assetName",
+         ct.frequency,
+         ct.shift_id AS "shiftId",
+         s.name AS "shiftName",
+         EXISTS (
+           SELECT 1 FROM checklist_submissions cs
+           WHERE cs.template_id = ct.id
+             AND cs.company_user_id = ?
+             AND cs.submitted_at >= CURRENT_DATE
+         ) AS "completedToday"
+       FROM checklist_templates ct
+       LEFT JOIN assets a ON a.id = ct.asset_id
+       LEFT JOIN shifts s ON s.id = ct.shift_id
+       WHERE ct.company_id = ?
+         AND ct.is_active = 1
+         AND LOWER(TRIM(ct.asset_type)) = 'soft service'`,
+      [req.companyUser.id, cid(req)]
+    );
+
+    // Merge: skip any soft-service templates already in the assigned list
+    const assignedTemplateIds = new Set(
+      formatted.filter(f => f.templateType === 'checklist').map(f => f.templateId)
+    );
+    const softFormatted = softTemplates
+      .filter(t => !assignedTemplateIds.has(t.templateId))
+      .map(t => ({
+        assignmentId:  null,
+        templateType:  'checklist',
+        templateId:    t.templateId,
+        templateName:  t.templateName,
+        description:   t.description,
+        assetType:     t.assetType,
+        frequency:     t.frequency || null,
+        assetId:       t.assetId   || null,
+        assetName:     t.assetName || null,
+        shiftId:       t.shiftId   || null,
+        shiftName:     t.shiftName || null,
+        note:          null,
+        assignedAt:    null,
+        assignedBy:    null,
+        completedToday: !!(t.completedToday),
+        autoIncluded:  true, // flag so the mobile UI can show differently if needed
+      }));
+
+    res.json([...formatted, ...softFormatted]);
   } catch (err) {
     next(err);
   }
@@ -1721,7 +1775,7 @@ router.get("/site-score", async (req, res, next) => {
     const [[{ total }]] = await pool.query(
       `SELECT COUNT(*) AS total
        FROM checklist_templates
-       WHERE company_id = ? AND (is_active = 1 OR is_active IS TRUE)`,
+       WHERE company_id = ? AND is_active = 1`,
       [companyId]
     );
 
@@ -1757,7 +1811,7 @@ router.get("/site-score", async (req, res, next) => {
     const [[{ totalChecklistTemplates }]] = await pool.query(
       `SELECT COUNT(*) AS "totalChecklistTemplates"
        FROM checklist_templates
-       WHERE company_id = ? AND (is_active = 1 OR is_active IS TRUE)`,
+       WHERE company_id = ? AND is_active = 1`,
       [companyId]
     );
 
