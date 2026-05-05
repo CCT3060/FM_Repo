@@ -3,24 +3,23 @@
 # Run from FM_Repo root:  .\start-dev.ps1
 #
 # What this does:
-#   1. Opens SSH tunnel  localhost:5432  →  EC2 PostgreSQL (13.203.194.93:5432)
+#   1. Opens SSH tunnel  localhost:5432  →  EC2 PostgreSQL (3.110.166.39:5432)
+#      and auto-reconnects if it drops
 #   2. Starts backend    on  localhost:4000
 #   3. Starts frontend   on  localhost:5173
 #
 # Mobile app (Expo Go via tunnel QR) must be started separately:
-#   cd mobile-app && npm run start
+#   cd mobile-app-v2 && npx expo start
 # =============================================================================
 
-$EC2_IP    = "13.203.194.93"
+$EC2_IP    = "3.110.166.39"
 $EC2_USER  = "ec2-user"
-# Key.pem copied here with correct permissions during first-time setup
-$PEM_FILE  = "$env:USERPROFILE\fm-ec2.pem"
+$PEM_FILE  = "$env:USERPROFILE\.ssh\Key.pem"
 
 # ── Validate PEM file ─────────────────────────────────────────────────────────
 if (-not (Test-Path $PEM_FILE)) {
     Write-Error "PEM file not found: $PEM_FILE"
-    Write-Error "Run once: copy your EC2 Key.pem to $PEM_FILE with user-only read permissions."
-    Write-Error "  Get-Content 'C:\path\to\Key.pem' | Set-Content '$PEM_FILE'"
+    Write-Error "Expected key at: $PEM_FILE"
     exit 1
 }
 
@@ -30,21 +29,28 @@ Write-Host "  FM App — Local Dev Environment" -ForegroundColor Cyan
 Write-Host "===================================================" -ForegroundColor Cyan
 Write-Host ""
 
-# ── 1. SSH Tunnel ─────────────────────────────────────────────────────────────
+# ── 1. SSH Tunnel (auto-reconnect loop) ───────────────────────────────────────
 Write-Host "[1/3] Opening SSH tunnel  localhost:5432 → EC2 PostgreSQL..." -ForegroundColor Yellow
 
 $tunnelJob = Start-Job -ScriptBlock {
     param($pem, $user, $ip)
-    ssh -i $pem `
-        -L 5432:localhost:5432 `
-        -o StrictHostKeyChecking=no `
-        -o ServerAliveInterval=60 `
-        -N `
-        "$user@$ip"
+    while ($true) {
+        & ssh -i $pem `
+            -L 5432:localhost:5432 `
+            -o StrictHostKeyChecking=no `
+            -o ServerAliveInterval=20 `
+            -o ServerAliveCountMax=3 `
+            -o TCPKeepAlive=yes `
+            -o ExitOnForwardFailure=yes `
+            -N `
+            "$user@$ip"
+        # Tunnel dropped — wait 2s then reconnect automatically
+        Start-Sleep -Seconds 2
+    }
 } -ArgumentList $PEM_FILE, $EC2_USER, $EC2_IP
 
 # Give the tunnel a moment to establish
-Start-Sleep -Seconds 3
+Start-Sleep -Seconds 4
 
 if ($tunnelJob.State -eq "Failed") {
     Write-Error "SSH tunnel failed to start. Check your PEM file and EC2 IP."

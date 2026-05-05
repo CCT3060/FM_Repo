@@ -38,6 +38,7 @@ const emptyQuestion = () => ({
   isRequired: true,
   options: [],
   _optionsText: "",
+  questionImageUrl: null,
   rule: { flagOn: "", minValue: "", maxValue: "", severity: "warning", action: "" },
 });
 
@@ -174,11 +175,11 @@ function QuestionRow({ q, idx, onChange, onRemove, token, apiBase }) {
   const update = (field, val) => onChange(idx, { ...q, [field]: val });
   const updateRule = (field, val) => update("rule", { ...(q.rule || {}), [field]: val });
   const [imgUploading, setImgUploading] = useState(false);
+  const [qImgUploading, setQImgUploading] = useState(false);
 
-  const handleRefImgUpload = async (e) => {
-    const file = e.target.files?.[0];
+  const uploadImage = async (file, onDone, setUploading) => {
     if (!file || !token) return;
-    setImgUploading(true);
+    setUploading(true);
     try {
       const fd = new FormData();
       fd.append("file", file);
@@ -189,12 +190,22 @@ function QuestionRow({ q, idx, onChange, onRemove, token, apiBase }) {
       });
       if (!res.ok) throw new Error("Upload failed");
       const data = await res.json();
-      update("referenceImageUrl", data.url);
+      onDone(data.url);
     } catch {
       alert("Image upload failed. Please try again.");
     } finally {
-      setImgUploading(false);
+      setUploading(false);
     }
+  };
+
+  const handleRefImgUpload = (e) => {
+    const file = e.target.files?.[0];
+    uploadImage(file, (url) => update("referenceImageUrl", url), setImgUploading);
+  };
+
+  const handleQImgUpload = (e) => {
+    const file = e.target.files?.[0];
+    uploadImage(file, (url) => update("questionImageUrl", url), setQImgUploading);
   };
   const rule = q.rule || {};
   const hasRule = ["yes_no", "ok_not_ok", "cleaned_not_cleaned", "number", "dropdown"].includes(q.inputType);
@@ -213,8 +224,27 @@ function QuestionRow({ q, idx, onChange, onRemove, token, apiBase }) {
       {/* Main row */}
       <div style={{ display: "grid", gridTemplateColumns: "3fr 1.4fr 60px 32px", gap: "10px", alignItems: "flex-start" }}>
         <div>
-          <Label required>Question</Label>
-          <Inp value={q.questionText} onChange={(e) => update("questionText", e.target.value)} placeholder="e.g. Check oil level" />
+          <Label required={!q.questionImageUrl}>Question {q.questionImageUrl ? <span style={{ fontWeight: 400, color: "#94a3b8", fontSize: "11px" }}>(optional when photo is set)</span> : null}</Label>
+          <Inp
+            value={q.questionText}
+            onChange={(e) => update("questionText", e.target.value)}
+            placeholder={q.questionImageUrl ? "Optional — photo is the question" : "e.g. Check oil level"}
+            style={q.questionImageUrl ? { background: "#f1f5f9", color: "#94a3b8" } : {}}
+          />
+          {/* Question image upload */}
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "6px", flexWrap: "wrap" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: "5px", cursor: qImgUploading ? "not-allowed" : "pointer", fontSize: "12px", color: q.questionImageUrl ? "#dc2626" : "#2563eb", fontWeight: 600, border: `1px solid ${q.questionImageUrl ? "#fecaca" : "#bfdbfe"}`, borderRadius: "6px", padding: "4px 10px", background: q.questionImageUrl ? "#fef2f2" : "#eff6ff", opacity: qImgUploading ? 0.6 : 1 }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+              {qImgUploading ? "Uploading…" : q.questionImageUrl ? "Change photo" : "Use photo as question"}
+              <input type="file" accept="image/*" style={{ display: "none" }} onChange={handleQImgUpload} disabled={qImgUploading} />
+            </label>
+            {q.questionImageUrl && (
+              <>
+                <img src={q.questionImageUrl.startsWith("http") ? q.questionImageUrl : `${apiBase}${q.questionImageUrl}`} alt="question" style={{ width: 40, height: 40, borderRadius: "5px", objectFit: "cover", border: "1px solid #e2e8f0" }} />
+                <button type="button" onClick={() => update("questionImageUrl", null)} style={{ background: "#fee2e2", border: "none", color: "#dc2626", borderRadius: "5px", padding: "3px 8px", fontSize: "11px", cursor: "pointer", fontWeight: 600 }}>Remove</button>
+              </>
+            )}
+          </div>
         </div>
         <div>
           <Label>Input Type</Label>
@@ -406,6 +436,7 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
         options: q.options || [],
         _optionsText: Array.isArray(q.options) ? q.options.join(", ") : "",
         referenceImageUrl: q.referenceImageUrl || q.reference_image_url || null,
+        questionImageUrl: q.questionImageUrl || q.question_image_url || null,
         rule: q.rule
           ? { ...q.rule, _showRule: !!(q.rule.action || q.rule.minValue || q.rule.maxValue || q.rule.flagOn) }
           : { flagOn: "", minValue: "", maxValue: "", severity: "warning", action: "", _showRule: false },
@@ -484,7 +515,7 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
     if (!form.assetType.trim()) return setError("Asset type is required");
     if (!form.assetId) return setError("Please select an asset to link this checklist to");
     for (const [i, q] of questions.entries()) {
-      if (!q.questionText.trim()) return setError(`Question ${i + 1} text is required`);
+      if (!q.questionText.trim() && !q.questionImageUrl) return setError(`Question ${i + 1}: provide either question text or a photo`);
     }
 
     const payload = {
@@ -498,11 +529,12 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
       shiftId: form.shiftId ? Number(form.shiftId) : undefined,
       status: form.status,
       questions: questions.map((q, idx) => ({
-        questionText: q.questionText.trim(),
+        questionText: q.questionText.trim() || (q.questionImageUrl ? "[Photo Question]" : ""),
         inputType: q.inputType,
         isRequired: q.isRequired,
         orderIndex: idx,
         referenceImageUrl: q.referenceImageUrl || undefined,
+        questionImageUrl: q.questionImageUrl || undefined,
         options: (q.inputType === "dropdown" || q.inputType === "custom_options")
           ? (q._optionsText || "").split(",").map((s) => s.trim()).filter(Boolean)
           : undefined,

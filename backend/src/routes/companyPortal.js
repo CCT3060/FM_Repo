@@ -30,6 +30,17 @@ const uploadOjt = multer({
   },
 });
 
+// Separate multer instance for image uploads (reference photos, question photos)
+const uploadImage = multer({
+  storage: ojtStorage,
+  limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB
+  fileFilter: (_req, file, cb) => {
+    const allowed = /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i;
+    if (allowed.test(file.originalname) || file.mimetype.startsWith("image/")) cb(null, true);
+    else cb(new Error("Only image files are allowed"));
+  },
+});
+
 const router = Router();
 router.use(requireCompanyAuth);
 
@@ -74,6 +85,8 @@ const safeParse = (v) => {
 pool.query("ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS questions JSONB NULL").catch(() => {});
 // Ensure reference_image_url column exists on checklist_template_questions
 pool.query("ALTER TABLE checklist_template_questions ADD COLUMN IF NOT EXISTS reference_image_url TEXT NULL").catch(() => {});
+// Ensure question_image_url column exists (photo-as-question feature)
+pool.query("ALTER TABLE checklist_template_questions ADD COLUMN IF NOT EXISTS question_image_url TEXT NULL").catch(() => {});
 
 // Ensure tabular-logsheet columns exist (migration 2026-03-02-tabular-logsheet)
 pool.query("ALTER TABLE logsheet_templates ADD COLUMN IF NOT EXISTS layout_type VARCHAR(20) NOT NULL DEFAULT 'standard'").catch(() => {});
@@ -3356,11 +3369,11 @@ router.delete("/fleet/maintenance/:id", async (req, res, next) => {
 
 /* POST /upload-image – upload a reference image for checklist questions (admin only) */
 router.post("/upload-image", (req, res, next) => {
-  uploadOjt.single("file")(req, res, (err) => {
+  uploadImage.single("file")(req, res, (err) => {
     if (err instanceof multer.MulterError) {
       return res.status(400).json({ message: err.message || "File too large" });
     } else if (err) {
-      return res.status(400).json({ message: err.message || "File type not allowed" });
+      return res.status(400).json({ message: err.message || "Only image files are allowed" });
     }
     next();
   });

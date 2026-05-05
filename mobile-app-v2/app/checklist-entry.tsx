@@ -39,6 +39,7 @@ interface Field {
   boolLabels?:       [string, string]; // e.g. Yes/No  or  OK/Not OK  or  Cleaned/Not Cleaned
   sectionName?:      string;
   referenceImageUrl?: string | null;
+  questionImageUrl?:  string | null;
 }
 
 // ─── Field normalizer ─────────────────────────────────────────────────────────
@@ -127,6 +128,7 @@ function normalizeField(q: any, idx: number): Field {
     unit:              q.unit,
     sectionName:       q.sectionName,
     referenceImageUrl: q.referenceImageUrl || q.reference_image_url || null,
+    questionImageUrl:  q.questionImageUrl  || q.question_image_url  || null,
   };
 }
 
@@ -504,15 +506,30 @@ export default function ChecklistEntryScreen() {
                           <Text style={[styles.fieldIdxText, { color: theme.primary }]}>{idx + 1}</Text>
                         </View>
                         <View style={{ flex: 1 }}>
-                          <Text style={[styles.fieldLabel, { color: theme.textPrimary }]}>
-                            {field.label}
-                            {field.required ? <Text style={{ color: theme.danger }}> *</Text> : null}
-                          </Text>
+                          {/* Show question text only if it's not the photo-question placeholder */}
+                          {field.label && field.label !== '[Photo Question]' ? (
+                            <Text style={[styles.fieldLabel, { color: theme.textPrimary }]}>
+                              {field.label}
+                              {field.required ? <Text style={{ color: theme.danger }}> *</Text> : null}
+                            </Text>
+                          ) : field.required ? (
+                            <Text style={[styles.fieldLabel, { color: theme.textMuted }]}>
+                              (Required) <Text style={{ color: theme.danger }}>*</Text>
+                            </Text>
+                          ) : null}
                           {field.unit ? (
                             <Text style={[styles.fieldUnit, { color: theme.textMuted }]}>Unit: {field.unit}</Text>
                           ) : null}
                         </View>
                       </View>
+                      {/* Question image (photo-as-question) */}
+                      {field.questionImageUrl ? (
+                        <Image
+                          source={{ uri: field.questionImageUrl }}
+                          style={styles.questionImage}
+                          resizeMode="cover"
+                        />
+                      ) : null}
                       {/* Reference image (admin-uploaded for this question) */}
                       {field.referenceImageUrl ? (
                         <View style={styles.refImageWrap}>
@@ -669,5 +686,7 @@ const styles = StyleSheet.create({
   refImageWrap:   { marginBottom: Spacing.sm },
   refImageLabel:  { ...Typography.micro, marginBottom: 4 },
   refImage:       { width: '100%', height: 160, borderRadius: Radius.md, backgroundColor: '#E2E8F0' },
+  // Question image (photo used as the question itself)
+  questionImage:  { width: '100%', height: 200, borderRadius: Radius.md, backgroundColor: '#E2E8F0', marginBottom: Spacing.sm },
   submitText:        { fontSize: 14, fontWeight: '700' as const, color: '#fff' },
 });

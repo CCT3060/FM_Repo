@@ -378,7 +378,8 @@ router.get(
                     is_required    AS "isRequired",
                     options_json   AS "options",
                     order_index    AS "orderIndex",
-                    reference_image_url AS "referenceImageUrl"
+                    reference_image_url AS "referenceImageUrl",
+                    question_image_url  AS "questionImageUrl"
              FROM checklist_template_questions
              WHERE template_id = ?
              ORDER BY order_index ASC, id ASC`,
@@ -392,8 +393,9 @@ router.get(
             options:          q.options
               ? (typeof q.options === 'string' ? JSON.parse(q.options) : q.options)
               : [],
-            orderIndex:       q.orderIndex,
+            orderIndex:        q.orderIndex,
             referenceImageUrl: q.referenceImageUrl || null,
+            questionImageUrl:  q.questionImageUrl || null,
           }));
         }
 
@@ -406,6 +408,7 @@ router.get(
           options:          Array.isArray(q.options) ? q.options : [],
           displayOrder:     q.orderIndex ?? q.order ?? idx,
           referenceImageUrl: q.referenceImageUrl || null,
+          questionImageUrl:  q.questionImageUrl || null,
         }));
 
         const { questions: _drop, ...templateData } = template;

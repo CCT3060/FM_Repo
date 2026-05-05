@@ -1,31 +1,31 @@
-﻿import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, memo } from "react";
 import { getApiBaseUrl } from "../utils/runtimeConfig";
 
 const API_BASE = getApiBaseUrl();
 
 function formatAssetLocation(row) {
-  if (!row) return "—";
+  if (!row) return "�";
   const parts = [
     row.assetDepartment,
     row.assetBuilding,
     row.assetFloor,
     row.assetRoom,
   ].filter((p) => p && String(p).trim());
-  return parts.length ? parts.join(" • ") : "—";
+  return parts.length ? parts.join(" � ") : "�";
 }
 
-/* ─── CSV export ──────────────────────────────────────────────── */
+/* --- CSV export ------------------------------------------------ */
 function exportToCSV(rows, type, detail) {
   if (detail) {
     const allAnswers = getAllAnswers(detail);
     const csvRows = [
       ["Template", detail.templateName || ""],
-      ["Submitted By", detail.submittedBy || "—"],
-      ["Asset", detail.assetName || "—"],
-      ["Submitted At", detail.submittedAt ? new Date(detail.submittedAt).toLocaleString() : "—"],
+      ["Submitted By", detail.submittedBy || "�"],
+      ["Asset", detail.assetName || "�"],
+      ["Submitted At", detail.submittedAt ? new Date(detail.submittedAt).toLocaleString() : "�"],
       ["Status", detail.status || ""],
       ...(type === "logsheets" && detail.month
-        ? [["Period", `Month ${detail.month} / ${detail.year}`], ["Shift", detail.shift || "—"]]
+        ? [["Period", `Month ${detail.month} / ${detail.year}`], ["Shift", detail.shift || "�"]]
         : []),
       [],
       ["Question", "Answer"],
@@ -74,7 +74,7 @@ function tryParse(s) {
   try { return JSON.parse(s); } catch { return null; }
 }
 
-/* ─── Photo thumbnail + full-screen lightbox ──────────────────── */
+/* --- Photo thumbnail + full-screen lightbox -------------------- */
 function PhotoAnswer({ src, alt = "Photo", caption }) {
   const [open, setOpen] = useState(false);
   return (
@@ -93,7 +93,7 @@ function PhotoAnswer({ src, alt = "Photo", caption }) {
             border: "1px solid #bfdbfe", borderRadius: "6px", fontSize: "12px",
             fontWeight: 600, cursor: "pointer" }}
         >
-          🔍 View
+          ?? View
         </button>
       </div>
       {open && (
@@ -116,7 +116,7 @@ function PhotoAnswer({ src, alt = "Photo", caption }) {
                 display: "flex", alignItems: "center", justifyContent: "center",
                 boxShadow: "0 2px 10px rgba(0,0,0,0.3)", color: "#1e293b" }}
             >
-              ×
+              �
             </button>
           </div>
         </div>
@@ -143,9 +143,9 @@ function renderAnswerValue(val) {
         return <PhotoAnswer src={src} alt={name} caption={name} />;
       }
       return <a href={src} target="_blank" rel="noopener noreferrer"
-        style={{ color: "#2563eb", fontWeight: 600, fontSize: "13px" }}>📎 {name}</a>;
+        style={{ color: "#2563eb", fontWeight: 600, fontSize: "13px" }}>?? {name}</a>;
     }
-    return <span style={{ fontSize: "13px", color: "#64748b" }}>📷 {name} (from device)</span>;
+    return <span style={{ fontSize: "13px", color: "#64748b" }}>?? {name} (from device)</span>;
   }
   return <span style={{ fontWeight: 600, color: "#0f172a" }}>{String(val)}</span>;
 }
@@ -166,9 +166,9 @@ function downloadCSV(rows, filename) {
 
 const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
-/* ─── helpers ─────────────────────────────────────────────────── */
+/* --- helpers --------------------------------------------------- */
 function fmt(d) {
-  if (!d) return "—";
+  if (!d) return "�";
   try { return new Date(d).toLocaleString(); } catch { return d; }
 }
 
@@ -183,7 +183,7 @@ function StatusBadge({ status }) {
   return (
     <span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600,
       background: s.bg, color: s.col, textTransform: "capitalize" }}>
-      {status || "—"}
+      {status || "�"}
     </span>
   );
 }
@@ -195,13 +195,13 @@ const thStyle = {
 };
 const tdStyle = { padding: "8px 10px", fontSize: "12.5px", color: "#0f172a", border: "1px solid #f1f5f9" };
 
-/* ─── Detail Modal ─────────────────────────────────────────────── */
+/* --- Detail Modal ----------------------------------------------- */
 function DetailModal({ submission, type, onClose }) {
   if (!submission) return null;
   const allAnswers = getAllAnswers(submission);
   const isTabular  = submission.layoutType === "tabular";
 
-  // Tabular grid display — handles ALL possible stored formats safely
+  // Tabular grid display � handles ALL possible stored formats safely
   const TabularView = () => {
     // Always parse & validate first
     let raw = submission.tabularData;
@@ -210,11 +210,11 @@ function DetailModal({ submission, type, onClose }) {
     const d = typeof raw === "string" ? tryParse(raw) : raw;
     if (!d || typeof d !== "object") return <p style={{ color: "#94a3b8", fontSize: "14px" }}>No tabular data recorded.</p>;
 
-    // Safe value converter — NEVER returns a plain object/array as React child
+    // Safe value converter � NEVER returns a plain object/array as React child
     const safeVal = (v) => {
-      if (v === null || v === undefined) return "—";
+      if (v === null || v === undefined) return "�";
       if (typeof v !== "object") return String(v);
-      // {id, label} shape → use label
+      // {id, label} shape ? use label
       if (v.label !== undefined) return String(v.label);
       if (v.id   !== undefined) return String(v.id);
       return JSON.stringify(v);
@@ -222,7 +222,7 @@ function DetailModal({ submission, type, onClose }) {
     const safeLabel = (x) => (x && typeof x === "object") ? String(x.label ?? x.id ?? JSON.stringify(x)) : String(x ?? "");
     const safeKey   = (x) => (x && typeof x === "object") ? (x.id ?? String(x)) : String(x ?? "");
 
-    // ── Format 1: { rows:[...], columns:[...], cells:{} } ──────────────────
+    // -- Format 1: { rows:[...], columns:[...], cells:{} } ------------------
     if (Array.isArray(d.rows) && Array.isArray(d.columns)) {
       const { rows, columns, cells = {} } = d;
       return (
@@ -251,7 +251,7 @@ function DetailModal({ submission, type, onClose }) {
       );
     }
 
-    // ── Format 2: { readings:{rowId:{groupId__colId:val}}, summary:{}, footer:{} } ──
+    // -- Format 2: { readings:{rowId:{groupId__colId:val}}, summary:{}, footer:{} } --
     if (d.readings && typeof d.readings === "object") {
       const readingEntries = Object.entries(d.readings);
       if (readingEntries.length === 0) {
@@ -316,7 +316,7 @@ function DetailModal({ submission, type, onClose }) {
       );
     }
 
-    // ── Format 3: flat key-value / unknown structure ────────────────────────
+    // -- Format 3: flat key-value / unknown structure ------------------------
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
         {Object.entries(d).map(([k, v]) => (
@@ -343,14 +343,14 @@ function DetailModal({ submission, type, onClose }) {
             <div style={{ fontWeight: 800, fontSize: "17px", color: "#0f172a" }}>{submission.templateName}</div>
             <div style={{ color: "#64748b", fontSize: "13px", marginTop: "3px" }}>
               {type === "checklists" ? "Checklist" : `Logsheet (${submission.layoutType || "standard"})`}
-              {" · "}Submission #{submission.id}
+              {" � "}Submission #{submission.id}
             </div>
           </div>
           <div style={{ display: "flex", gap: "8px", flexShrink: 0 }}>
             <button onClick={() => exportToCSV([], type, submission)}
               style={{ padding: "7px 14px", background: "#f0fdf4", color: "#16a34a",
                 border: "1px solid #bbf7d0", borderRadius: "8px", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>
-              ⬇ Export CSV
+              ? Export CSV
             </button>
             <button onClick={onClose} style={{ background: "#f1f5f9", border: "none", borderRadius: "8px",
               width: "32px", height: "32px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -365,16 +365,16 @@ function DetailModal({ submission, type, onClose }) {
         <div style={{ padding: "16px 24px", borderBottom: "1px solid #e2e8f0", display: "grid",
           gridTemplateColumns: "repeat(3, 1fr)", gap: "10px 24px", flexShrink: 0 }}>
           {[
-            { label: "Submitted By", value: submission.submittedBy || "—" },
-            { label: "Asset",        value: submission.assetName  || "—" },
+            { label: "Submitted By", value: submission.submittedBy || "�" },
+            { label: "Asset",        value: submission.assetName  || "�" },
             { label: "Location",     value: formatAssetLocation(submission) },
             { label: "Date / Time",  value: fmt(submission.submittedAt) },
             { label: "Status",       value: <StatusBadge status={submission.status} /> },
             ...(type === "logsheets" ? [
               { label: "Period", value: submission.month
                 ? `${MONTH_NAMES[(submission.month || 1) - 1]} ${submission.year}`
-                : "—" },
-              { label: "Shift", value: submission.shift || "—" },
+                : "�" },
+              { label: "Shift", value: submission.shift || "�" },
             ] : []),
           ].map(({ label, value }) => (
             <div key={label}>
@@ -393,7 +393,7 @@ function DetailModal({ submission, type, onClose }) {
             {Object.entries(submission.headerValues).map(([k, v]) => (
               <div key={k} style={{ fontSize: "12px" }}>
                 <span style={{ color: "#94a3b8", fontWeight: 600, textTransform: "capitalize" }}>{k}: </span>
-                <span style={{ color: "#0f172a", fontWeight: 600 }}>{v || "—"}</span>
+                <span style={{ color: "#0f172a", fontWeight: 600 }}>{v || "�"}</span>
               </div>
             ))}
           </div>
@@ -425,7 +425,7 @@ function DetailModal({ submission, type, onClose }) {
                       <div style={{ fontSize: "14px", color: a.isIssue ? "#dc2626" : "#0f172a" }}>
                         {renderAnswerValue(val)}
                         {a.isIssue && <span style={{ marginLeft: "6px", fontSize: "11px", background: "#fee2e2",
-                          color: "#dc2626", padding: "2px 7px", borderRadius: "9px" }}>⚠ Issue</span>}
+                          color: "#dc2626", padding: "2px 7px", borderRadius: "9px" }}>? Issue</span>}
                       </div>
                       {a.specification && (
                         <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "2px" }}>
@@ -448,7 +448,7 @@ function DetailModal({ submission, type, onClose }) {
   );
 }
 
-/* ─── Chip ─────────────────────────────────────────────────────── */
+/* --- Chip ------------------------------------------------------- */
 function Chip({ label, onRemove }) {
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: "5px", padding: "3px 10px",
@@ -457,13 +457,13 @@ function Chip({ label, onRemove }) {
       <button onClick={onRemove} style={{ background: "none", border: "none", cursor: "pointer",
         color: "#2563eb", padding: "0 0 0 2px", fontSize: "14px", lineHeight: 1,
         display: "flex", alignItems: "center" }}>
-        ×
+        �
       </button>
     </span>
   );
 }
 
-/* ─── Constants ────────────────────────────────────────────────── */
+/* --- Constants -------------------------------------------------- */
 const PERIODS = [
   { key: "all",    label: "All Time" },
   { key: "week",   label: "This Week" },
@@ -489,7 +489,7 @@ const DRILLDOWN_PERIODS = [
   { key: "custom", label: "Custom Range" },
 ];
 
-/* ─── Consolidated Date-Wise Grid Report ───────────────────────── */
+/* --- Consolidated Date-Wise Grid Report ------------------------- */
 function ConsolidatedGridView({ userName, templateId, templateName, assetName, companyId, type, token, submissionRows, onBack }) {
   const [details,  setDetails]  = useState([]);   // [{id, submittedAt, answers:[]}]
   const [loading,  setLoading]  = useState(true);
@@ -536,7 +536,7 @@ function ConsolidatedGridView({ userName, templateId, templateName, assetName, c
       dateTime: new Date(d.submittedAt).toLocaleString(undefined,
         { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }),
       indexMap: Object.fromEntries(
-        getAllAnswers(d).map((a) => [(a.questionText || "").trim(), a.answerValue || a.answer || "—"])
+        getAllAnswers(d).map((a) => [(a.questionText || "").trim(), a.answerValue || a.answer || "�"])
       ),
     }));
     return { questions: qSet, columns: cols };
@@ -573,37 +573,37 @@ function ConsolidatedGridView({ userName, templateId, templateName, assetName, c
   };
   const vCell = (val) => ({
     padding: "7px 10px", textAlign: "center", fontSize: "12.5px",
-    border: "1px solid #e2e8f0", background: val && val !== "—" ? "#fff" : "#f8fafc",
-    color: val && val !== "—" ? "#0f172a" : "#94a3b8", fontWeight: val && val !== "—" ? 600 : 400,
+    border: "1px solid #e2e8f0", background: val && val !== "�" ? "#fff" : "#f8fafc",
+    color: val && val !== "�" ? "#0f172a" : "#94a3b8", fontWeight: val && val !== "�" ? 600 : 400,
     minWidth: "80px",
   });
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "0", fontFamily: "inherit" }}>
-      {/* ─ Header Card (matches logsheet style) ─ */}
+      {/* - Header Card (matches logsheet style) - */}
       <div style={{ background: "#1e3a5f", color: "#fff", borderRadius: "12px 12px 0 0", padding: "20px 28px", textAlign: "center" }}>
         <div style={{ fontSize: "22px", fontWeight: 800, letterSpacing: "-0.5px" }}>
-          {templateName} — {assetName || "All Assets"}
+          {templateName} � {assetName || "All Assets"}
         </div>
       </div>
       <div style={{ background: "#2563eb", color: "#fff", padding: "10px 28px", textAlign: "center",
         display: "flex", alignItems: "center", justifyContent: "center", gap: "24px" }}>
         <div style={{ fontSize: "14px", fontWeight: 700 }}>
           {columns.length > 0
-            ? `${new Date(details[0]?.submittedAt).toLocaleDateString(undefined, { month: "long", year: "numeric" })} – ${new Date(details[details.length - 1]?.submittedAt).toLocaleDateString(undefined, { month: "long", year: "numeric" })}`
-            : "—"}
+            ? `${new Date(details[0]?.submittedAt).toLocaleDateString(undefined, { month: "long", year: "numeric" })} � ${new Date(details[details.length - 1]?.submittedAt).toLocaleDateString(undefined, { month: "long", year: "numeric" })}`
+            : "�"}
         </div>
         <span style={{ opacity: 0.5 }}>|</span>
         <div style={{ fontSize: "14px", fontWeight: 700 }}>{type === "checklists" ? "Checklist" : "Logsheet"}</div>
       </div>
 
-      {/* ─ Person info bar ─ */}
+      {/* - Person info bar - */}
       <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderTop: "none",
         padding: "14px 24px", display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap" }}>
         <button onClick={onBack}
           style={{ padding: "7px 14px", border: "1px solid #e2e8f0", borderRadius: "8px",
             background: "#f8fafc", color: "#475569", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>
-          ← Back
+          ? Back
         </button>
         <div style={{ width: "40px", height: "40px", borderRadius: "50%", background: "#eff6ff",
           color: "#2563eb", fontWeight: 800, fontSize: "15px",
@@ -613,29 +613,29 @@ function ConsolidatedGridView({ userName, templateId, templateName, assetName, c
         <div>
           <div style={{ fontWeight: 800, fontSize: "16px", color: "#0f172a" }}>{userName}</div>
           <div style={{ fontSize: "12px", color: "#64748b" }}>
-            {columns.length} submission{columns.length !== 1 ? "s" : ""} · {questions.length} parameter{questions.length !== 1 ? "s" : ""}
+            {columns.length} submission{columns.length !== 1 ? "s" : ""} � {questions.length} parameter{questions.length !== 1 ? "s" : ""}
           </div>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: "8px" }}>
           <button onClick={() => window.print()}
             style={{ padding: "7px 14px", border: "1px solid #e2e8f0", borderRadius: "8px",
               background: "#f8fafc", color: "#475569", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>
-            🖨 Print
+            ?? Print
           </button>
           <button onClick={exportGrid}
             style={{ padding: "7px 14px", border: "1px solid #bbf7d0", borderRadius: "8px",
               background: "#f0fdf4", color: "#16a34a", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>
-            ⬇ Export CSV
+            ? Export CSV
           </button>
         </div>
       </div>
 
-      {/* ─ Grid ─ */}
+      {/* - Grid - */}
       <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderTop: "none",
         borderRadius: "0 0 12px 12px", overflow: "hidden" }}>
         {loading ? (
           <div style={{ padding: "60px", textAlign: "center", color: "#64748b", fontSize: "14px" }}>
-            ⏳ Loading submissions…
+            ? Loading submissions�
           </div>
         ) : error ? (
           <div style={{ padding: "40px", textAlign: "center", color: "#dc2626" }}>{error}</div>
@@ -677,7 +677,7 @@ function ConsolidatedGridView({ userName, templateId, templateName, assetName, c
                       const val = c.indexMap[q] ?? "";
                       return (
                         <td key={ci} style={vCell(val)}>
-                          {renderAnswerValue(val || "") || "—"}
+                          {renderAnswerValue(val || "") || "�"}
                         </td>
                       );
                     })}
@@ -708,7 +708,7 @@ function ConsolidatedGridView({ userName, templateId, templateName, assetName, c
   );
 }
 
-/* ─── User Drilldown View ──────────────────────────────────────── */
+/* --- User Drilldown View ---------------------------------------- */
 function UserDrilldown({ userName, companyId, type, token, onBack }) {
   const [period,   setPeriod]   = useState("today");
   const [dateFrom, setDateFrom] = useState("");
@@ -760,7 +760,7 @@ function UserDrilldown({ userName, companyId, type, token, onBack }) {
   const initials = (userName || "?").split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 2);
   const panelLabel = type === "checklists" ? "Checklist Submissions" : "Logsheet Entries";
 
-  /* ── show consolidated grid if selected ── */
+  /* -- show consolidated grid if selected -- */
   if (consolidated) {
     const submissionRows = rows.filter((r) => r.templateId === consolidated.templateId);
     return (
@@ -782,14 +782,14 @@ function UserDrilldown({ userName, companyId, type, token, onBack }) {
     <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
       {detail && <DetailModal submission={detail} type={type} onClose={() => setDetail(null)} />}
 
-      {/* ─ Back + User Header ─ */}
+      {/* - Back + User Header - */}
       <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0",
         padding: "16px 20px", display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap" }}>
         <button onClick={onBack}
           style={{ display: "flex", alignItems: "center", gap: "6px", padding: "7px 14px",
             border: "1px solid #e2e8f0", borderRadius: "8px", background: "#f8fafc",
             color: "#475569", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>
-          ← Back to List
+          ? Back to List
         </button>
         <div style={{ width: "42px", height: "42px", borderRadius: "50%", background: "#eff6ff",
           color: "#2563eb", fontWeight: 700, fontSize: "16px", flexShrink: 0,
@@ -804,15 +804,15 @@ function UserDrilldown({ userName, companyId, type, token, onBack }) {
               borderRadius: "20px", padding: "1px 8px", fontWeight: 700 }}>{rows.length}</span>}
           </div>
         </div>
-        <button onClick={load}
+        <button onClick={() => handleManualRefresh()}
           style={{ marginLeft: "auto", padding: "7px 14px", border: "1px solid #e2e8f0",
             borderRadius: "8px", background: "#f8fafc", cursor: "pointer",
             fontSize: "13px", fontWeight: 600, color: "#475569" }}>
-          ↻ Refresh
+          ? Refresh
         </button>
       </div>
 
-      {/* ─ Period Filter ─ */}
+      {/* - Period Filter - */}
       <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
         <div style={{ padding: "14px 20px",
           borderBottom: period === "custom" ? "1px solid #e2e8f0" : "none",
@@ -847,7 +847,7 @@ function UserDrilldown({ userName, companyId, type, token, onBack }) {
               <label style={{ fontSize: "11px", fontWeight: 600, color: "#64748b", display: "block", marginBottom: "4px" }}>To</label>
               <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} style={inputStyle} />
             </div>
-            <button onClick={load}
+            <button onClick={() => handleManualRefresh()}
               style={{ padding: "7px 18px", background: "#2563eb", color: "#fff", border: "none",
                 borderRadius: "8px", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>
               Apply
@@ -856,7 +856,7 @@ function UserDrilldown({ userName, companyId, type, token, onBack }) {
         )}
       </div>
 
-      {/* ─ Results ─ */}
+      {/* - Results - */}
       <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
         <div style={{ padding: "14px 20px", borderBottom: "1px solid #e2e8f0", display: "flex",
           alignItems: "center", justifyContent: "space-between", gap: "12px", flexWrap: "wrap" }}>
@@ -877,7 +877,7 @@ function UserDrilldown({ userName, companyId, type, token, onBack }) {
         </div>
 
         {loading ? (
-          <div style={{ padding: "60px", textAlign: "center", color: "#94a3b8" }}>Loading…</div>
+          <div style={{ padding: "60px", textAlign: "center", color: "#94a3b8" }}>Loading�</div>
         ) : rows.length === 0 ? (
           <div style={{ padding: "60px", textAlign: "center" }}>
             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" strokeWidth="1.5"
@@ -923,18 +923,18 @@ function UserDrilldown({ userName, companyId, type, token, onBack }) {
                         <span style={{ padding: "2px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: 600,
                           background: r.layoutType === "tabular" ? "#f3e8ff" : "#eff6ff",
                           color: r.layoutType === "tabular" ? "#7c3aed" : "#2563eb" }}>
-                          {r.layoutType === "tabular" ? "📊 Tabular" : "📋 Standard"}
+                          {r.layoutType === "tabular" ? "?? Tabular" : "?? Standard"}
                         </span>
                       </td>
                     )}
-                    <td style={{ padding: "10px 14px", color: "#475569" }}>{r.assetName || "—"}</td>
+                    <td style={{ padding: "10px 14px", color: "#475569" }}>{r.assetName || "�"}</td>
                     <td style={{ padding: "10px 14px", color: "#64748b", fontSize: "12px" }}>{formatAssetLocation(r)}</td>
                     {type === "logsheets" && (
                       <>
                         <td style={{ padding: "10px 14px", color: "#475569", whiteSpace: "nowrap" }}>
-                          {r.month && r.year ? `${MONTH_NAMES[(r.month || 1) - 1]} ${r.year}` : "—"}
+                          {r.month && r.year ? `${MONTH_NAMES[(r.month || 1) - 1]} ${r.year}` : "�"}
                         </td>
-                        <td style={{ padding: "10px 14px", color: "#64748b" }}>{r.shift || "—"}</td>
+                        <td style={{ padding: "10px 14px", color: "#64748b" }}>{r.shift || "�"}</td>
                       </>
                     )}
                     <td style={{ padding: "10px 14px", color: "#0f172a", fontWeight: 600, whiteSpace: "nowrap" }}>
@@ -951,7 +951,7 @@ function UserDrilldown({ userName, companyId, type, token, onBack }) {
                         }
                           style={{ padding: "5px 12px", background: "#eff6ff", color: "#2563eb",
                             border: "1px solid #bfdbfe", borderRadius: "7px", fontSize: "12px", fontWeight: 700, cursor: "pointer" }}>
-                          📊 View Report
+                          ?? View Report
                         </button>
                         <button onClick={() => openDetail(r.id)}
                           style={{ padding: "5px 12px", background: "#f8fafc", color: "#475569",
@@ -993,31 +993,31 @@ function UserDrilldown({ userName, companyId, type, token, onBack }) {
   );
 }
 
-/* ─── Main SubmissionsPanel ────────────────────────────────────── */
-export default function SubmissionsPanel({ token: tokenProp, type = "checklists", companyId }) {
+/* --- Main SubmissionsPanel -------------------------------------- */
+const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type = "checklists", companyId }) {
   const token = tokenProp
     || sessionStorage.getItem("cp_token")
     || localStorage.getItem("companyAuthToken")
     || localStorage.getItem("authToken");
 
-  /* ── Data ── */
+  /* -- Data -- */
   const [rows,    setRows]    = useState([]);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState(null);
   const [detail,  setDetail]  = useState(null);
 
-  /* ── User drilldown ── */
+  /* -- User drilldown -- */
   const [userView, setUserView] = useState({ active: false, userName: "", submittedById: null });
 
-  /* ── Filter meta (loaded when advanced panel is opened) ── */
+  /* -- Filter meta (loaded when advanced panel is opened) -- */
   const [filterMeta, setFilterMeta] = useState({ templates: [], employees: [], assets: [], shifts: [] });
 
-  /* ── Period ── */
+  /* -- Period -- */
   const [period,   setPeriod]   = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo,   setDateTo]   = useState("");
 
-  /* ── Advanced filters ── */
+  /* -- Advanced filters -- */
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [fTemplate, setFTemplate] = useState("");
   const [fAsset,    setFAsset]    = useState("");
@@ -1026,11 +1026,11 @@ export default function SubmissionsPanel({ token: tokenProp, type = "checklists"
   const [fShift,    setFShift]    = useState("");
   const [fSearch,   setFSearch]   = useState("");
 
-  /* ── Sorting ── */
+  /* -- Sorting -- */
   const [sortField, setSortField] = useState("submittedAt");
   const [sortDir,   setSortDir]   = useState("desc");
 
-  /* ── Load filter meta whenever advanced panel is opened ── */
+  /* -- Load filter meta whenever advanced panel is opened -- */
   useEffect(() => {
     if (!showAdvanced) return;
     const qs = companyId ? `?companyId=${companyId}` : "";
@@ -1042,7 +1042,7 @@ export default function SubmissionsPanel({ token: tokenProp, type = "checklists"
       .catch(() => {});
   }, [companyId, token, type, showAdvanced]);
 
-  /* ── Build URL ── */
+  /* -- Build URL -- */
   const buildUrl = useCallback(() => {
     const base = `${API_BASE}/api/template-assignments/submissions/${type}`;
     const p = new URLSearchParams();
@@ -1062,11 +1062,18 @@ export default function SubmissionsPanel({ token: tokenProp, type = "checklists"
     return qs ? `${base}?${qs}` : base;
   }, [type, period, dateFrom, dateTo, fTemplate, fAsset, fEmployee, fStatus, fShift, fSearch, companyId]);
 
-  /* ── Load submissions ── */
-  const load = useCallback(async () => {
+  /* -- Load submissions -- */
+  // Stable ref so load() identity doesn't change when parent re-renders with same prop values
+  const lastLoadedUrl = useRef(null);
+
+  const load = useCallback(async (force = false) => {
+    const url = buildUrl();
+    // Skip if same URL was already loaded (prevents blink on parent re-render)
+    if (!force && lastLoadedUrl.current === url) return;
+    lastLoadedUrl.current = url;
     setLoading(true); setError(null);
     try {
-      const res = await fetch(buildUrl(), {
+      const res = await fetch(url, {
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1088,7 +1095,7 @@ export default function SubmissionsPanel({ token: tokenProp, type = "checklists"
     load();
   }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /* ── Detail modal ── */
+  /* -- Detail modal -- */
   const openDetail = async (id) => {
     try {
       const qs = companyId ? `?companyId=${companyId}` : "";
@@ -1101,7 +1108,7 @@ export default function SubmissionsPanel({ token: tokenProp, type = "checklists"
     } catch (e) { alert(e.message || "Failed to load details"); }
   };
 
-  /* ── Sorting ── */
+  /* -- Sorting -- */
   const sorted = [...rows].sort((a, b) => {
     const av = a[sortField] ?? "";
     const bv = b[sortField] ?? "";
@@ -1115,11 +1122,11 @@ export default function SubmissionsPanel({ token: tokenProp, type = "checklists"
   };
 
   const SortIcon = ({ field }) => {
-    if (sortField !== field) return <span style={{ color: "#cbd5e1", marginLeft: "4px" }}>↕</span>;
-    return <span style={{ color: "#2563eb", marginLeft: "4px" }}>{sortDir === "asc" ? "↑" : "↓"}</span>;
+    if (sortField !== field) return <span style={{ color: "#cbd5e1", marginLeft: "4px" }}>?</span>;
+    return <span style={{ color: "#2563eb", marginLeft: "4px" }}>{sortDir === "asc" ? "?" : "?"}</span>;
   };
 
-  /* ── Active filter chips ── */
+  /* -- Active filter chips -- */
   const activeFilters = [
     fTemplate && {
       key: "template",
@@ -1144,13 +1151,15 @@ export default function SubmissionsPanel({ token: tokenProp, type = "checklists"
   };
 
   const panelLabel = type === "checklists" ? "Checklist Submissions" : "Logsheet Entries";
+  // Expose manual refresh to the Refresh button (force=true bypasses URL sameness check)
+  const handleManualRefresh = () => { lastLoadedUrl.current = null; load(true); };
 
   const inputStyle = {
     padding: "7px 10px", border: "1px solid #e2e8f0", borderRadius: "8px",
     fontSize: "13px", outline: "none", background: "#fff", width: "100%", boxSizing: "border-box",
   };
 
-  /* ── Column config ── */
+  /* -- Column config -- */
   const cols = type === "checklists"
     ? [
         { key: "#",            label: "#",            sortable: false },
@@ -1178,7 +1187,7 @@ export default function SubmissionsPanel({ token: tokenProp, type = "checklists"
         { key: "action",       label: "",             sortable: false },
       ];
 
-  /* ── If user drilldown is active, show it ── */
+  /* -- If user drilldown is active, show it -- */
   if (userView.active) {
     return (
       <UserDrilldown
@@ -1195,7 +1204,7 @@ export default function SubmissionsPanel({ token: tokenProp, type = "checklists"
     <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
       {detail && <DetailModal submission={detail} type={type} onClose={() => setDetail(null)} />}
 
-      {/* ── Period + Advanced Filters ── */}
+      {/* -- Period + Advanced Filters -- */}
       <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
 
         {/* Period tabs */}
@@ -1248,7 +1257,7 @@ export default function SubmissionsPanel({ token: tokenProp, type = "checklists"
                 display: "block", marginBottom: "4px" }}>To Date</label>
               <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} style={inputStyle} />
             </div>
-            <button onClick={load}
+            <button onClick={() => handleManualRefresh()}
               style={{ padding: "7px 18px", background: "#2563eb", color: "#fff", border: "none",
                 borderRadius: "8px", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>
               Apply
@@ -1326,14 +1335,14 @@ export default function SubmissionsPanel({ token: tokenProp, type = "checklists"
               <input
                 value={fSearch}
                 onChange={(e) => setFSearch(e.target.value)}
-                placeholder="Template / asset / name…"
+                placeholder="Template / asset / name�"
                 style={inputStyle}
-                onKeyDown={(e) => e.key === "Enter" && load()}
+                onKeyDown={(e) => e.key === "Enter" && handleManualRefresh()}
               />
             </div>
 
             <div style={{ display: "flex", gap: "8px", alignItems: "flex-end" }}>
-              <button onClick={load}
+              <button onClick={() => handleManualRefresh()}
                 style={{ flex: 1, padding: "7px 0", background: "#2563eb", color: "#fff",
                   border: "none", borderRadius: "8px", fontSize: "13px", fontWeight: 700, cursor: "pointer" }}>
                 Apply
@@ -1365,7 +1374,7 @@ export default function SubmissionsPanel({ token: tokenProp, type = "checklists"
         )}
       </div>
 
-      {/* ── Results panel ── */}
+      {/* -- Results panel -- */}
       <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
 
         {/* Panel header */}
@@ -1379,10 +1388,10 @@ export default function SubmissionsPanel({ token: tokenProp, type = "checklists"
             </span>
           </div>
           <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-            <button onClick={load}
+            <button onClick={() => handleManualRefresh()}
               style={{ padding: "7px 14px", border: "1px solid #e2e8f0", borderRadius: "8px",
                 background: "#f8fafc", cursor: "pointer", fontSize: "13px", fontWeight: 600, color: "#475569" }}>
-              ↻ Refresh
+              ? Refresh
             </button>
             <button onClick={() => exportToCSV(sorted, type)}
               style={{ padding: "7px 14px", border: "1px solid #bbf7d0", borderRadius: "8px",
@@ -1400,9 +1409,9 @@ export default function SubmissionsPanel({ token: tokenProp, type = "checklists"
 
         {/* Table */}
         {loading ? (
-          <div style={{ padding: "60px", textAlign: "center", color: "#94a3b8" }}>Loading…</div>
+          <div style={{ padding: "60px", textAlign: "center", color: "#94a3b8" }}>Loading�</div>
         ) : error ? (
-          <div style={{ padding: "40px", textAlign: "center", color: "#dc2626" }}>⚠ {error}</div>
+          <div style={{ padding: "40px", textAlign: "center", color: "#dc2626" }}>? {error}</div>
         ) : sorted.length === 0 ? (
           <div style={{ padding: "60px", textAlign: "center" }}>
             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" strokeWidth="1.5"
@@ -1450,7 +1459,7 @@ export default function SubmissionsPanel({ token: tokenProp, type = "checklists"
                         <span style={{ padding: "2px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: 600,
                           background: r.layoutType === "tabular" ? "#f3e8ff" : "#eff6ff",
                           color: r.layoutType === "tabular" ? "#7c3aed" : "#2563eb" }}>
-                          {r.layoutType === "tabular" ? "📊 Tabular" : "📋 Standard"}
+                          {r.layoutType === "tabular" ? "?? Tabular" : "?? Standard"}
                         </span>
                       </td>
                     )}
@@ -1464,17 +1473,17 @@ export default function SubmissionsPanel({ token: tokenProp, type = "checklists"
                           </span>
                           {r.submittedBy}
                         </span>
-                      ) : "—"}
+                      ) : "�"}
                     </td>
-                    <td style={{ padding: "10px 14px", color: "#475569" }}>{r.assetName || "—"}</td>
+                    <td style={{ padding: "10px 14px", color: "#475569" }}>{r.assetName || "�"}</td>
                     <td style={{ padding: "10px 14px", color: "#64748b", fontSize: "12px" }}>{formatAssetLocation(r)}</td>
-                    <td style={{ padding: "10px 14px", color: "#475569", fontSize: "12px" }}>{r.companyName || "—"}</td>
+                    <td style={{ padding: "10px 14px", color: "#475569", fontSize: "12px" }}>{r.companyName || "�"}</td>
                     {type === "logsheets" && (
                       <>
                         <td style={{ padding: "10px 14px", color: "#475569", whiteSpace: "nowrap" }}>
-                          {r.month && r.year ? `${MONTH_NAMES[(r.month || 1) - 1]} ${r.year}` : "—"}
+                          {r.month && r.year ? `${MONTH_NAMES[(r.month || 1) - 1]} ${r.year}` : "�"}
                         </td>
-                        <td style={{ padding: "10px 14px", color: "#64748b" }}>{r.shift || "—"}</td>
+                        <td style={{ padding: "10px 14px", color: "#64748b" }}>{r.shift || "�"}</td>
                       </>
                     )}
                     <td style={{ padding: "10px 14px", color: "#64748b", whiteSpace: "nowrap" }}>
@@ -1486,7 +1495,7 @@ export default function SubmissionsPanel({ token: tokenProp, type = "checklists"
                         onClick={() => setUserView({ active: true, userName: r.submittedBy || "Unknown", submittedById: r.submittedById || null })}
                         style={{ padding: "5px 14px", background: "#eff6ff", color: "#2563eb",
                           border: "none", borderRadius: "7px", fontSize: "12.5px", fontWeight: 600, cursor: "pointer" }}>
-                        View →
+                        View ?
                       </button>
                     </td>
                   </tr>
@@ -1524,4 +1533,6 @@ export default function SubmissionsPanel({ token: tokenProp, type = "checklists"
       </div>
     </div>
   );
-}
+});
+
+export default SubmissionsPanel;
