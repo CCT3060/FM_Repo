@@ -152,7 +152,7 @@ router.post("/login", async (req, res, next) => {
         type: "company_user",
       },
       JWT_SECRET,
-      { expiresIn: "30d" }
+      { expiresIn: "90d" }
     );
 
     // Fetch dynamic role capabilities

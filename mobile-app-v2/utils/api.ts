@@ -17,6 +17,14 @@ export const API_BASE: string =
   (process.env.EXPO_PUBLIC_API_URL as string | undefined) ??
   'http://3.110.166.39';  // DNS still points to old IP; using new EC2 IP directly
 
+// ─── Error class ──────────────────────────────────────────────────────────────
+export class ApiError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
 const TOKEN_KEY   = 'auth_token_v2';
 const USER_KEY    = 'user_data_v2';
 const COMPANY_KEY = 'company_data_v2';
@@ -123,7 +131,7 @@ async function apiGet<T>(path: string, useCache = false): Promise<T> {
   const res = await authenticatedFetch(path);
   if (!res.ok) {
     const msg = await res.text().catch(() => 'Request failed');
-    throw new Error(msg || `HTTP ${res.status}`);
+    throw new ApiError(res.status, msg || `HTTP ${res.status}`);
   }
   const data = await res.json() as T;
   if (useCache) await cacheData(path, data);
@@ -137,7 +145,7 @@ async function apiPost<T>(path: string, body: unknown): Promise<T> {
   });
   if (!res.ok) {
     const msg = await res.text().catch(() => 'Request failed');
-    throw new Error(msg || `HTTP ${res.status}`);
+    throw new ApiError(res.status, msg || `HTTP ${res.status}`);
   }
   return res.json() as Promise<T>;
 }
@@ -149,7 +157,7 @@ async function apiPut<T>(path: string, body: unknown): Promise<T> {
   });
   if (!res.ok) {
     const msg = await res.text().catch(() => 'Request failed');
-    throw new Error(msg || `HTTP ${res.status}`);
+    throw new ApiError(res.status, msg || `HTTP ${res.status}`);
   }
   return res.json() as Promise<T>;
 }
@@ -161,7 +169,7 @@ async function apiPatch<T>(path: string, body: unknown): Promise<T> {
   });
   if (!res.ok) {
     const msg = await res.text().catch(() => 'Request failed');
-    throw new Error(msg || `HTTP ${res.status}`);
+    throw new ApiError(res.status, msg || `HTTP ${res.status}`);
   }
   return res.json() as Promise<T>;
 }

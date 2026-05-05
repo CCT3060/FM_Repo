@@ -7,7 +7,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
-import { fetchSiteScore, type SiteScore } from '../../utils/api';
+import { fetchSiteScore, logout, type SiteScore, ApiError } from '../../utils/api';
 import { useTheme, Spacing, Radius, Typography } from '../../utils/theme';
 
 // ─── Animated arc progress (works without SVG) ────────────────────────────────
@@ -85,12 +85,23 @@ export default function DashboardScreen() {
   const [score,      setScore]      = useState<SiteScore | null>(null);
   const [loading,    setLoading]    = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [error,      setError]      = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
+      setError(null);
       const data = await fetchSiteScore();
       setScore(data);
-    } catch { /* silent */ } finally {
+    } catch (e: unknown) {
+      if (e instanceof ApiError && e.status === 401) {
+        // Session expired — clear credentials and go back to company code entry
+        await logout();
+        router.replace('/');
+        return;
+      }
+      const msg = e instanceof Error ? e.message : 'Unknown error';
+      setError(msg);
+    } finally {
       setLoading(false);
       setRefreshing(false);
     }
@@ -123,6 +134,15 @@ export default function DashboardScreen() {
         {loading ? (
           <View style={styles.loadWrap}>
             <ActivityIndicator size="large" color={theme.primary} />
+          </View>
+        ) : error ? (
+          <View style={styles.loadWrap}>
+            <MaterialCommunityIcons name="wifi-alert" size={48} color="#EF4444" />
+            <Text style={[styles.errorTitle, { color: theme.textPrimary }]}>Failed to Load Dashboard</Text>
+            <Text style={[styles.errorBody, { color: theme.textSecondary }]}>{error}</Text>
+            <TouchableOpacity style={[styles.retryBtn, { backgroundColor: theme.primary }]} onPress={onRefresh}>
+              <Text style={styles.retryText}>Retry</Text>
+            </TouchableOpacity>
           </View>
         ) : (
           <>
@@ -236,7 +256,11 @@ export default function DashboardScreen() {
 const styles = StyleSheet.create({
   safe:         { flex: 1 },
   scroll:       { padding: Spacing.lg, paddingBottom: 40, gap: Spacing.md },
-  loadWrap:     { alignItems: 'center', justifyContent: 'center', paddingVertical: 80 },
+  loadWrap:     { alignItems: 'center', justifyContent: 'center', paddingVertical: 80, gap: Spacing.md },
+  errorTitle:   { fontSize: 16, fontWeight: '700', textAlign: 'center' },
+  errorBody:    { fontSize: 12, textAlign: 'center', paddingHorizontal: Spacing.xl },
+  retryBtn:     { marginTop: Spacing.sm, paddingHorizontal: Spacing.xl, paddingVertical: Spacing.sm, borderRadius: Radius.lg },
+  retryText:    { color: '#fff', fontWeight: '700', fontSize: 14 },
 
   header:       { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   title:        { fontSize: 20, fontWeight: '700' },
