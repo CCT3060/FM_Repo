@@ -77,6 +77,7 @@ export default function AssetDetailsScreen() {
   const [loading,      setLoading]      = useState(true);
   const [openRequests, setOpenRequests] = useState<SoftRequest[]>([]);
   const [userCaps,     setUserCaps]     = useState<{ canRaiseSoftIssue: boolean; canResolveSoftIssue: boolean } | null>(null);
+  const [recentSubmission, setRecentSubmission] = useState<any>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -85,6 +86,7 @@ export default function AssetDetailsScreen() {
         getStoredUser(),
       ]);
       setData(assetData);
+      setRecentSubmission(assetData?.recentSubmission ?? null);
 
       const caps = user?.roleCapabilities ?? null;
       setUserCaps(caps ? { canRaiseSoftIssue: !!caps.canRaiseSoftIssue, canResolveSoftIssue: !!caps.canResolveSoftIssue } : null);
@@ -185,30 +187,85 @@ export default function AssetDetailsScreen() {
 
   // ── Role-aware view: client supervisor (raise issue) ─────────────────────
   if (userCaps?.canRaiseSoftIssue) {
+    const recent = recentSubmission;
+    const recentDate = recent?.submittedAt
+      ? new Date(recent.submittedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+      : null;
+
     return (
       <SafeAreaView style={[styles.safe, { backgroundColor: theme.background }]} edges={['top']}>
         <Header title={assetName} showBack />
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-          {/* Hero */}
-          <View style={[styles.hero, { backgroundColor: theme.primary }]}>
-            <MaterialCommunityIcons name="package-variant" size={48} color="rgba(255,255,255,0.9)" />
-            <Text style={styles.heroId}>{asset.assetUniqueId ?? asset.uniqueId}</Text>
+
+          {/* Slim asset identity bar */}
+          <View style={[styles.identityBar, { backgroundColor: theme.surface, borderBottomColor: theme.borderLight }]}>
+            <View style={[styles.identityIcon, { backgroundColor: theme.primaryBg }]}>
+              <MaterialCommunityIcons name="package-variant-closed" size={20} color={theme.primary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.identityName, { color: theme.textPrimary }]} numberOfLines={1}>{assetName}</Text>
+              <Text style={[styles.identityId, { color: theme.textMuted }]}>{asset.assetUniqueId ?? asset.uniqueId}</Text>
+            </View>
+            <View style={[styles.identityMeta, { backgroundColor: '#F0FDF4', borderColor: '#86EFAC' }]}>
+              <Text style={[styles.identityMetaText, { color: '#166534' }]}>{asset.assetType ?? 'Asset'}</Text>
+            </View>
           </View>
 
-          {/* Info */}
-          <View style={[styles.card, { backgroundColor: theme.surface, shadowColor: theme.cardShadow }]}>
-            <InfoRow label="Name"       value={assetName} />
-            <InfoRow label="Type"       value={asset.assetType ?? asset.typeName} />
-            <InfoRow label="Location"   value={[asset.building, asset.floor, asset.room].filter(Boolean).join(' · ')} />
-            <InfoRow label="Department" value={asset.departmentName ?? asset.department} />
-          </View>
+          {/* Location chip row */}
+          {[asset.building, asset.floor, asset.room, asset.departmentName ?? asset.department].filter(Boolean).length > 0 && (
+            <View style={styles.chipRow}>
+              {[asset.building, asset.floor, asset.room, asset.departmentName ?? asset.department].filter(Boolean).map((val, i) => (
+                <View key={i} style={[styles.chip, { backgroundColor: theme.surface, borderColor: theme.borderLight }]}>
+                  <Text style={[styles.chipText, { color: theme.textSecondary }]}>{val}</Text>
+                </View>
+              ))}
+            </View>
+          )}
 
-          <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>REPORT AN ISSUE</Text>
+          {/* Recent submission card */}
+          <View style={styles.sectionHeader}>
+            <Text style={[styles.sectionLabel, { color: theme.textMuted }]}>LAST INSPECTION</Text>
+          </View>
+          {recent ? (
+            <View style={[styles.recentCard, { backgroundColor: theme.surface, borderColor: theme.borderLight }]}>
+              <View style={styles.recentCardTop}>
+                <View style={[styles.recentStatusDot, { backgroundColor: recent.status === 'submitted' || recent.status === 'approved' ? '#10B981' : '#F59E0B' }]} />
+                <Text style={[styles.recentTemplateName, { color: theme.textPrimary }]} numberOfLines={1}>
+                  {recent.templateName}
+                </Text>
+              </View>
+              <View style={styles.recentCardMeta}>
+                <Text style={[styles.recentMetaText, { color: theme.textMuted }]}>
+                  <MaterialCommunityIcons name="calendar-outline" size={12} /> {recentDate}
+                </Text>
+                {recent.submittedByName ? (
+                  <Text style={[styles.recentMetaText, { color: theme.textMuted }]}>
+                    <MaterialCommunityIcons name="account-outline" size={12} /> {recent.submittedByName}
+                  </Text>
+                ) : null}
+                <View style={[styles.recentPctBadge, { backgroundColor: recent.completionPct >= 80 ? '#D1FAE5' : '#FEF3C7' }]}>
+                  <Text style={[styles.recentPctText, { color: recent.completionPct >= 80 ? '#065F46' : '#92400E' }]}>
+                    {recent.completionPct}%
+                  </Text>
+                </View>
+              </View>
+            </View>
+          ) : (
+            <View style={[styles.recentEmpty, { backgroundColor: theme.surface, borderColor: theme.borderLight }]}>
+              <MaterialCommunityIcons name="clipboard-text-outline" size={20} color={theme.textMuted} />
+              <Text style={[styles.recentEmptyText, { color: theme.textMuted }]}>No inspection recorded yet</Text>
+            </View>
+          )}
+
+          {/* Raise Issue section */}
+          <View style={styles.sectionHeader}>
+            <Text style={[styles.sectionLabel, { color: theme.textMuted }]}>RAISE AN ISSUE</Text>
+          </View>
           {checklists.length > 0 ? (
             checklists.map((tpl) => (
               <TouchableOpacity
                 key={`cl-${tpl.id}`}
-                style={[styles.tplCard, { backgroundColor: theme.surface, shadowColor: theme.cardShadow }]}
+                style={[styles.issueCard, { backgroundColor: theme.surface, borderColor: '#FED7AA' }]}
                 onPress={() =>
                   router.push({
                     pathname: '/checklist-entry',
@@ -222,24 +279,21 @@ export default function AssetDetailsScreen() {
                     },
                   })
                 }
-                activeOpacity={0.8}
+                activeOpacity={0.85}
               >
-                <View style={[styles.tplIcon, { backgroundColor: '#FEF3C7' }]}>
-                  <MaterialCommunityIcons name="alert-circle-outline" size={22} color="#D97706" />
+                <View style={[styles.issueIcon, { backgroundColor: '#FFF7ED' }]}>
+                  <MaterialCommunityIcons name="alert-circle-outline" size={20} color="#EA580C" />
                 </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.tplName, { color: theme.textPrimary }]} numberOfLines={2}>
-                    {tpl.templateName ?? tpl.name}
-                  </Text>
-                  <Text style={[styles.tplType, { color: theme.textSecondary }]}>Fill checklist to report issue</Text>
-                </View>
-                <MaterialCommunityIcons name="chevron-right" size={20} color={theme.textMuted} />
+                <Text style={[styles.issueTitle, { color: theme.textPrimary }]} numberOfLines={2}>
+                  {tpl.templateName ?? tpl.name}
+                </Text>
+                <MaterialCommunityIcons name="chevron-right" size={18} color={theme.textMuted} />
               </TouchableOpacity>
             ))
           ) : (
-            <View style={[styles.emptyBox, { backgroundColor: theme.surface }]}>
-              <MaterialCommunityIcons name="clipboard-text-outline" size={36} color={theme.textMuted} />
-              <Text style={[styles.emptyText, { color: theme.textSecondary }]}>No issue templates assigned to this asset.</Text>
+            <View style={[styles.recentEmpty, { backgroundColor: theme.surface, borderColor: theme.borderLight }]}>
+              <MaterialCommunityIcons name="clipboard-remove-outline" size={20} color={theme.textMuted} />
+              <Text style={[styles.recentEmptyText, { color: theme.textMuted }]}>No issue templates available</Text>
             </View>
           )}
         </ScrollView>
@@ -353,4 +407,30 @@ const styles = StyleSheet.create({
   reqSub:       { ...Typography.bodyS },
   reqBadge:     { paddingHorizontal: Spacing.sm, paddingVertical: 4, borderRadius: Radius.sm },
   reqBadgeText: { ...Typography.label, fontWeight: '700' },
+
+  // Client supervisor (canRaiseSoftIssue) slim styles
+  identityBar:      { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md, borderBottomWidth: 1 },
+  identityIcon:     { width: 36, height: 36, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },
+  identityName:     { ...Typography.h4, marginBottom: 1 },
+  identityId:       { ...Typography.bodyS, fontWeight: '500' },
+  identityMeta:     { paddingHorizontal: Spacing.sm, paddingVertical: 3, borderRadius: Radius.sm, borderWidth: 1 },
+  identityMetaText: { ...Typography.label, fontWeight: '600', fontSize: 10 },
+  chipRow:          { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.xs, paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm },
+  chip:             { paddingHorizontal: Spacing.sm, paddingVertical: 3, borderRadius: Radius.sm, borderWidth: 1 },
+  chipText:         { ...Typography.bodyS, fontSize: 11 },
+  sectionHeader:    { paddingHorizontal: Spacing.lg, paddingTop: Spacing.lg, paddingBottom: Spacing.xs },
+  sectionLabel:     { ...Typography.label, fontSize: 10, letterSpacing: 1.2, fontWeight: '700' },
+  recentCard:       { marginHorizontal: Spacing.lg, borderRadius: Radius.lg, borderWidth: 1, padding: Spacing.md, gap: Spacing.xs },
+  recentCardTop:    { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  recentStatusDot:  { width: 8, height: 8, borderRadius: 4 },
+  recentTemplateName: { ...Typography.h4, flex: 1 },
+  recentCardMeta:   { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, flexWrap: 'wrap' },
+  recentMetaText:   { ...Typography.bodyS, fontSize: 11 },
+  recentPctBadge:   { paddingHorizontal: 8, paddingVertical: 2, borderRadius: Radius.sm },
+  recentPctText:    { ...Typography.label, fontSize: 11, fontWeight: '700' },
+  recentEmpty:      { marginHorizontal: Spacing.lg, borderRadius: Radius.lg, borderWidth: 1, padding: Spacing.md, flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  recentEmptyText:  { ...Typography.bodyS },
+  issueCard:        { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, marginHorizontal: Spacing.lg, marginBottom: Spacing.sm, borderRadius: Radius.lg, padding: Spacing.md, borderWidth: 1 },
+  issueIcon:        { width: 36, height: 36, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },
+  issueTitle:       { ...Typography.body, flex: 1, fontWeight: '500' },
 });

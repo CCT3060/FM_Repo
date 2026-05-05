@@ -50,7 +50,7 @@ function ScoreArc({ pct, color }: { pct: number; color: string }) {
 
       {/* Center */}
       <View style={{ alignItems: 'center' }}>
-        <Text style={{ fontSize: 32, fontWeight: '800', color, lineHeight: 38 }}>{pct}%</Text>
+        <Text style={{ fontSize: 28, fontWeight: '800', color, lineHeight: 34 }}>{pct.toFixed(1)}%</Text>
         <Text style={{ fontSize: 10, fontWeight: '600', color: '#9CA3AF', letterSpacing: 0.5, textTransform: 'uppercase' }}>Site Score</Text>
       </View>
     </View>
@@ -185,7 +185,7 @@ export default function DashboardScreen() {
                 color={score && score.openRequests > 0 ? '#EF4444' : '#6B7280'}
                 onPress={() => router.push('/(tabs)/soft-requests')}
               />
-              <StatCard icon="percent-outline" label="Score" value={`${pct}%`} color={ring} />
+              <StatCard icon="percent-outline" label="Score" value={`${pct.toFixed(1)}%`} color={ring} />
             </View>
 
             {/* Template counts */}
@@ -212,7 +212,7 @@ export default function DashboardScreen() {
                 color="#D97706"
                 onPress={() => router.push('/history')}
               />
-              <StatCard icon="chart-line" label="Completion" value={`${pct}%`} color={ring} />
+              <StatCard icon="chart-line" label="Completion" value={`${pct.toFixed(1)}%`} color={ring} />
             </View>
 
             {/* Alert banner */}

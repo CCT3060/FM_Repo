@@ -75,18 +75,31 @@ function tryParse(s) {
 }
 
 /* --- Photo thumbnail + full-screen lightbox -------------------- */
-function PhotoAnswer({ src, alt = "Photo", caption }) {
+function PhotoAnswer({ src, alt = "Photo", caption, sizeKB }) {
   const [open, setOpen] = useState(false);
+  const [imgSize, setImgSize] = useState(null);
+
+  const handleLoad = (e) => {
+    // Get natural dimensions from the img element
+    const el = e?.target ?? e?.nativeEvent?.target;
+    if (el) setImgSize({ w: el.naturalWidth, h: el.naturalHeight });
+  };
+
   return (
     <>
       <div style={{ marginTop: "6px" }}>
         <img
           src={src} alt={alt}
           onClick={() => setOpen(true)}
+          onLoad={handleLoad}
           style={{ maxWidth: "160px", maxHeight: "120px", borderRadius: "8px", objectFit: "cover",
             display: "block", border: "1px solid #e2e8f0", cursor: "pointer" }}
         />
-        {caption && <div style={{ fontSize: "11px", color: "#64748b", marginTop: "3px" }}>{caption}</div>}
+        <div style={{ fontSize: "11px", color: "#64748b", marginTop: "3px", display: "flex", gap: "8px" }}>
+          {caption && <span>{caption}</span>}
+          {imgSize && <span>{imgSize.w}&times;{imgSize.h}px</span>}
+          {sizeKB && <span>{sizeKB &lt; 1024 ? `${sizeKB}KB` : `${(sizeKB / 1024).toFixed(1)}MB`}</span>}
+        </div>
         <button
           onClick={() => setOpen(true)}
           style={{ marginTop: "5px", padding: "3px 12px", background: "#eff6ff", color: "#2563eb",
@@ -137,13 +150,14 @@ function renderAnswerValue(val) {
   if (parsed && typeof parsed === "object" && (parsed.uri || parsed.url || parsed.name)) {
     const src = parsed.url || parsed.uri || "";
     const name = parsed.name || "Photo";
+    const sizeKB = parsed.size ? Math.round(parsed.size / 1024) : undefined;
     if (src.startsWith("http")) {
       const isImage = /\.(jpe?g|png|gif|webp)$/i.test(src) || (parsed.mimeType || "").startsWith("image/");
       if (isImage) {
-        return <PhotoAnswer src={src} alt={name} caption={name} />;
+        return <PhotoAnswer src={src} alt={name} caption={name} sizeKB={sizeKB} />;
       }
       return <a href={src} target="_blank" rel="noopener noreferrer"
-        style={{ color: "#2563eb", fontWeight: 600, fontSize: "13px" }}>&#128206; {name}</a>;
+        style={{ color: "#2563eb", fontWeight: 600, fontSize: "13px" }}>&#128206; {name}{sizeKB ? ` (${sizeKB < 1024 ? sizeKB + "KB" : (sizeKB / 1024).toFixed(1) + "MB"})` : ""}</a>;
     }
     return <span style={{ fontSize: "13px", color: "#64748b" }}>&#128247; {name} (from device)</span>;
   }

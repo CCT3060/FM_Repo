@@ -133,12 +133,33 @@ router.get("/:assetId", async (req, res, next) => {
     );
 
     res.set('Cache-Control', 'no-store');
+
+    // Recent checklist submission for this asset (for client supervisor view)
+    let recentSubmission = null;
+    if (companyUser) {
+      const [[recent]] = await pool.query(
+        `SELECT cs.id, cs.status, cs.completion_pct AS "completionPct",
+                COALESCE(cs.submitted_at, cs.created_at) AS "submittedAt",
+                ct.template_name AS "templateName",
+                cu.full_name AS "submittedByName"
+         FROM checklist_submissions cs
+         JOIN checklist_templates ct ON ct.id = cs.template_id
+         LEFT JOIN company_users cu ON cu.id = cs.company_user_id
+         WHERE cs.asset_id = ?
+         ORDER BY COALESCE(cs.submitted_at, cs.created_at) DESC
+         LIMIT 1`,
+        [assetId]
+      );
+      recentSubmission = recent || null;
+    }
+
     res.json({
       asset,
       ojtTrainings,
       logsheetTemplates: normalizedLS,
       checklistTemplates: normalizedCL,
       userAuthenticated: !!companyUser,
+      recentSubmission,
     });
   } catch (err) {
     next(err);

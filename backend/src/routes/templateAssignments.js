@@ -1844,7 +1844,7 @@ router.get("/site-score", async (req, res, next) => {
     const checklistTemplatesN     = Number(totalChecklistTemplates) || 0;
     const logsheetTemplatesN      = Number(totalLogsheetTemplates)  || 0;
     const totalSubmissionsTodayN  = Number(totalSubmissionsToday)   || 0;
-    const percentage              = totalN > 0 ? Math.round((filledN / totalN) * 100) : 0;
+    const percentage              = totalN > 0 ? Math.round((filledN / totalN) * 1000) / 10 : 0;
 
     res.json({
       total:                   totalN,

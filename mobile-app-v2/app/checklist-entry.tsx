@@ -140,6 +140,20 @@ function resolveUrl(url: string | null | undefined): string | null {
   return `${API_BASE}${url.startsWith('/') ? '' : '/'}${url}`;
 }
 
+// Image that hides itself gracefully on error (avoids blank gray boxes)
+function QuestionImage({ uri, style }: { uri: string; style?: any }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return null;
+  return (
+    <Image
+      source={{ uri }}
+      style={[styles.questionImage, style]}
+      resizeMode="contain"
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
 // ─── PhotoInput component ─────────────────────────────────────────────────────
 
 // value is either null (no photo) or the server URL of the uploaded image.
@@ -533,21 +547,13 @@ export default function ChecklistEntryScreen() {
                       </View>
                       {/* Question image (photo-as-question) */}
                       {field.questionImageUrl ? (
-                        <Image
-                          source={{ uri: field.questionImageUrl }}
-                          style={styles.questionImage}
-                          resizeMode="cover"
-                        />
+                        <QuestionImage uri={field.questionImageUrl} />
                       ) : null}
                       {/* Reference image (admin-uploaded for this question) */}
                       {field.referenceImageUrl ? (
                         <View style={styles.refImageWrap}>
                           <Text style={[styles.refImageLabel, { color: theme.textMuted }]}>Reference</Text>
-                          <Image
-                            source={{ uri: field.referenceImageUrl }}
-                            style={styles.refImage}
-                            resizeMode="cover"
-                          />
+                          <QuestionImage uri={field.referenceImageUrl} style={styles.refImage} />
                         </View>
                       ) : null}
                       <FieldInput
