@@ -140,10 +140,18 @@ function resolveUrl(url: string | null | undefined): string | null {
   return `${API_BASE}${url.startsWith('/') ? '' : '/'}${url}`;
 }
 
-// Image that hides itself gracefully on error (avoids blank gray boxes)
+// Image that shows a placeholder when missing (avoids silent blank gray boxes)
 function QuestionImage({ uri, style }: { uri: string; style?: any }) {
+  const { theme } = useTheme();
   const [failed, setFailed] = useState(false);
-  if (failed) return null;
+  if (failed) {
+    return (
+      <View style={[styles.questionImage, style, { backgroundColor: theme.inputBg, alignItems: 'center', justifyContent: 'center', gap: 4 }]}>
+        <MaterialCommunityIcons name="image-broken-variant" size={28} color={theme.textMuted} />
+        <Text style={{ fontSize: 10, color: theme.textMuted, textAlign: 'center' }}>Image unavailable{'\n'}(re-upload in portal)</Text>
+      </View>
+    );
+  }
   return (
     <Image
       source={{ uri }}
@@ -191,16 +199,22 @@ function PhotoInput({
     if (result.canceled || !result.assets?.[0]?.uri) return;
 
     const asset = result.assets[0];
+    const MAX_BYTES = 5 * 1024 * 1024; // 5 MB
+    const fileBytes = asset.fileSize ?? 0;
+    if (fileBytes > MAX_BYTES) {
+      const sizeMB = (fileBytes / (1024 * 1024)).toFixed(1);
+      Alert.alert('Image Too Large', `This image is ${sizeMB} MB. Please choose an image smaller than 5 MB.`);
+      return;
+    }
+
     setUploading(true);
     try {
       const url = await uploadFile(asset.uri);
       onChange(url);
-      // Estimate size from fileSize field or fall back to a rough estimate
-      const bytes = asset.fileSize ?? 0;
-      if (bytes > 0) {
-        setFileSize(bytes > 1024 * 1024
-          ? `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-          : `${Math.round(bytes / 1024)} KB`);
+      if (fileBytes > 0) {
+        setFileSize(fileBytes > 1024 * 1024
+          ? `${(fileBytes / (1024 * 1024)).toFixed(1)} MB`
+          : `${Math.round(fileBytes / 1024)} KB`);
       }
     } catch (err: any) {
       Alert.alert('Upload Failed', err.message ?? 'Could not upload the image.');
@@ -702,6 +716,6 @@ const styles = StyleSheet.create({
   refImageLabel:  { ...Typography.micro, marginBottom: 4 },
   refImage:       { width: '100%', height: 160, borderRadius: Radius.md, backgroundColor: '#E2E8F0' },
   // Question image (photo used as the question itself — shown as small icon)
-  questionImage:  { width: 56, height: 56, borderRadius: Radius.md, backgroundColor: '#E2E8F0', marginBottom: Spacing.sm },
+  questionImage:  { width: 72, height: 72, borderRadius: Radius.md, backgroundColor: '#E2E8F0', marginBottom: Spacing.sm },
   submitText:        { fontSize: 14, fontWeight: '700' as const, color: '#fff' },
 });

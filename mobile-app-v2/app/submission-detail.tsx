@@ -1,11 +1,31 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View, ActivityIndicator } from 'react-native';
+import { Image, ScrollView, StyleSheet, Text, TouchableOpacity, View, ActivityIndicator, Linking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { fetchMySubmissionDetail } from '../utils/api';
 import { useTheme, Typography, Spacing, Radius } from '../utils/theme';
 import Header from '../components/Header';
 import StatusBadge from '../components/StatusBadge';
+
+function AnswerValue({ answer }: { answer: any }) {
+  const { theme } = useTheme();
+  const val = answer.value ?? answer.answer;
+  const str = val != null ? String(val) : '—';
+  const isPhoto = typeof str === 'string' && str.startsWith('http') && /\.(jpe?g|png|gif|webp)(\?|$)/i.test(str);
+  if (isPhoto) {
+    return (
+      <TouchableOpacity onPress={() => Linking.openURL(str)} activeOpacity={0.85}>
+        <Image source={{ uri: str }} style={styles.photoThumb} resizeMode="cover" />
+        <Text style={[styles.photoCaption, { color: theme.textMuted }]}>Tap to open full image</Text>
+      </TouchableOpacity>
+    );
+  }
+  return (
+    <Text style={[styles.answer, { color: answer.flagged ? theme.warning : theme.textPrimary }]}>
+      {str || '—'}
+    </Text>
+  );
+}
 
 export default function SubmissionDetailScreen() {
   const { theme } = useTheme();
@@ -61,11 +81,9 @@ export default function SubmissionDetailScreen() {
         {/* Answers */}
         <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>RESPONSES</Text>
         {answers.map((a, idx) => (
-          <View key={a.questionId ?? idx} style={[styles.answerCard, { backgroundColor: theme.surface, shadowColor: theme.cardShadow, borderLeftColor: a.flagged ? theme.warning : theme.border, borderLeftWidth: a.flagged ? 4 : 1 }]}>
-            <Text style={[styles.question, { color: theme.textSecondary }]}>{a.label ?? a.question}</Text>
-            <Text style={[styles.answer, { color: a.flagged ? theme.warning : theme.textPrimary }]}>
-              {String(a.value ?? '—')}
-            </Text>
+          <View key={a.questionId ?? a.question ?? idx} style={[styles.answerCard, { backgroundColor: theme.surface, shadowColor: theme.cardShadow, borderLeftColor: a.flagged ? theme.warning : theme.border, borderLeftWidth: a.flagged ? 4 : 1 }]}>
+            <Text style={[styles.question, { color: theme.textSecondary }]}>{a.label ?? a.question ?? a.questionText}</Text>
+            <AnswerValue answer={a} />
             {a.flagged ? (
               <Text style={[styles.flagNote, { color: theme.warning }]}>⚠ Value out of range</Text>
             ) : null}
@@ -89,4 +107,6 @@ const styles = StyleSheet.create({
   answer:       { ...Typography.h4 },
   flagNote:     { ...Typography.micro },
   error:        { ...Typography.body, textAlign: 'center', marginTop: Spacing.xxl },
+  photoThumb:   { width: '100%', height: 160, borderRadius: Radius.md, marginTop: 4 },
+  photoCaption: { ...Typography.micro, marginTop: 4, textAlign: 'center' },
 });
