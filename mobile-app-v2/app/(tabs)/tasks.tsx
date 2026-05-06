@@ -178,7 +178,10 @@ export default function TasksTab() {
       ]);
 
       if (tplResult.status  === 'fulfilled') setTemplates(tplResult.value   as any[]);
-      if (woResult.status   === 'fulfilled') setWorkOrders(woResult.value   as any[]);
+      if (woResult.status   === 'fulfilled') {
+        const woVal = woResult.value as any;
+        setWorkOrders(Array.isArray(woVal) ? woVal : (woVal?.data ?? []));
+      }
       if (reqResult.status  === 'fulfilled') setRequests(reqResult.value    as any[]);
     } catch { /* silent */ } finally {
       setLoading(false);

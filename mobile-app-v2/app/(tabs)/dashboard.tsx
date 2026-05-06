@@ -8,6 +8,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
 import { fetchSiteScore, logout, type SiteScore, ApiError } from '../../utils/api';
+import { hasSoftAccess } from '../../utils/permissions';
 import { useTheme, Spacing, Radius, Typography } from '../../utils/theme';
 
 // ─── Animated arc progress (works without SVG) ────────────────────────────────
@@ -81,7 +82,8 @@ function StatCard({ icon, label, value, color, onPress }: {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function DashboardScreen() {
   const { theme }  = useTheme();
-  const { user }   = useAuth();
+  const { user, capabilities }   = useAuth();
+  const showSoft = hasSoftAccess(capabilities);
   const [score,      setScore]      = useState<SiteScore | null>(null);
   const [loading,    setLoading]    = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -178,13 +180,15 @@ export default function DashboardScreen() {
                 color={theme.primary}
                 onPress={() => router.push('/(tabs)/checklists')}
               />
-              <StatCard
-                icon="wrench-outline"
-                label="Open Requests"
-                value={score?.openRequests ?? 0}
-                color={score && score.openRequests > 0 ? '#EF4444' : '#6B7280'}
-                onPress={() => router.push('/(tabs)/soft-requests')}
-              />
+              {showSoft ? (
+                <StatCard
+                  icon="wrench-outline"
+                  label="Open Requests"
+                  value={score?.openRequests ?? 0}
+                  color={score && score.openRequests > 0 ? '#EF4444' : '#6B7280'}
+                  onPress={() => router.push('/(tabs)/soft-requests')}
+                />
+              ) : null}
               <StatCard icon="percent-outline" label="Score" value={`${pct.toFixed(1)}%`} color={ring} />
             </View>
 
@@ -215,8 +219,8 @@ export default function DashboardScreen() {
               <StatCard icon="chart-line" label="Completion" value={`${pct.toFixed(1)}%`} color={ring} />
             </View>
 
-            {/* Alert banner */}
-            {score && score.openRequests > 0 ? (
+            {/* Alert banner — only for soft service users */}
+            {showSoft && score && score.openRequests > 0 ? (
               <TouchableOpacity
                 style={[styles.alertBanner, { backgroundColor: '#FEF2F2', borderColor: '#FECACA' }]}
                 onPress={() => router.push('/(tabs)/soft-requests')}
