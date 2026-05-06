@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, memo } from "react";
+import * as XLSX from "xlsx";
 import { getApiBaseUrl } from "../utils/runtimeConfig";
 
 const API_BASE = getApiBaseUrl();
@@ -20,12 +21,12 @@ function exportToCSV(rows, type, detail) {
     const allAnswers = getAllAnswers(detail);
     const csvRows = [
       ["Template", detail.templateName || ""],
-      ["Submitted By", detail.submittedBy || "�"],
-      ["Asset", detail.assetName || "�"],
-      ["Submitted At", detail.submittedAt ? new Date(detail.submittedAt).toLocaleString() : "�"],
+      ["Submitted By", detail.submittedBy || "—"],
+      ["Asset", detail.assetName || "—"],
+      ["Submitted At", detail.submittedAt ? new Date(detail.submittedAt).toLocaleString() : "—"],
       ["Status", detail.status || ""],
       ...(type === "logsheets" && detail.month
-        ? [["Period", `Month ${detail.month} / ${detail.year}`], ["Shift", detail.shift || "�"]]
+        ? [["Period", `Month ${detail.month} / ${detail.year}`], ["Shift", detail.shift || "—"]]
         : []),
       [],
       ["Question", "Answer"],
@@ -34,18 +35,60 @@ function exportToCSV(rows, type, detail) {
     downloadCSV(csvRows, `${type}-submission-${detail.id}`);
     return;
   }
-  const baseH = ["#", "Template", "Submitted By", "Asset", "Date", "Status"];
-  const logH  = ["#", "Template", "Layout", "Submitted By", "Asset", "Period", "Shift", "Date", "Status"];
+  const baseH = ["#", "Template", "Submitted By", "Asset", "Location", "Device IP", "Date", "Status"];
+  const logH  = ["#", "Template", "Layout", "Submitted By", "Asset", "Location", "Device IP", "Period", "Shift", "Date", "Status"];
   const headers = type === "checklists" ? baseH : logH;
   const dataRows = rows.map((r, i) =>
     type === "checklists"
       ? [i + 1, r.templateName, r.submittedBy || "", r.assetName || "",
+         r.locationAddress || (r.latitude ? `${r.latitude},${r.longitude}` : ""),
+         r.deviceIp || "",
          r.submittedAt ? new Date(r.submittedAt).toLocaleDateString() : "", r.status || ""]
       : [i + 1, r.templateName, r.layoutType || "standard", r.submittedBy || "", r.assetName || "",
+         r.locationAddress || (r.latitude ? `${r.latitude},${r.longitude}` : ""),
+         r.deviceIp || "",
          r.month && r.year ? `${MONTH_NAMES[r.month - 1]} ${r.year}` : "",
          r.shift || "", r.submittedAt ? new Date(r.submittedAt).toLocaleDateString() : "", r.status || ""]
   );
   downloadCSV([headers, ...dataRows], `${type}-report-${new Date().toISOString().slice(0, 10)}`);
+}
+
+/* --- Excel export --------------------------------------------- */
+function exportToExcel(rows, type, filename) {
+  const baseH = ["#", "Template", "Submitted By", "Asset", "Location", "GPS (Lat,Lng)", "Device IP", "Date", "Status"];
+  const logH  = ["#", "Template", "Layout", "Submitted By", "Asset", "Location", "GPS (Lat,Lng)", "Device IP", "Period", "Shift", "Date", "Status"];
+  const headers = type === "checklists" ? baseH : logH;
+
+  const dataRows = rows.map((r, i) => {
+    const gps = r.latitude ? `${Number(r.latitude).toFixed(6)}, ${Number(r.longitude).toFixed(6)}` : "";
+    const loc = r.locationAddress || "";
+    if (type === "checklists") {
+      return [
+        i + 1, r.templateName || "", r.submittedBy || "", r.assetName || "",
+        loc, gps, r.deviceIp || "",
+        r.submittedAt ? new Date(r.submittedAt).toLocaleString() : "", r.status || "",
+      ];
+    }
+    return [
+      i + 1, r.templateName || "", r.layoutType || "standard", r.submittedBy || "", r.assetName || "",
+      loc, gps, r.deviceIp || "",
+      r.month && r.year ? `${MONTH_NAMES[r.month - 1]} ${r.year}` : "",
+      r.shift || "", r.submittedAt ? new Date(r.submittedAt).toLocaleString() : "", r.status || "",
+    ];
+  });
+
+  const wsData = [headers, ...dataRows];
+  const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+  // Auto-width columns
+  const colWidths = headers.map((h, ci) => ({
+    wch: Math.max(h.length, ...dataRows.map((r) => String(r[ci] ?? "").length), 10),
+  }));
+  ws["!cols"] = colWidths;
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, type === "checklists" ? "Checklists" : "Logsheets");
+  XLSX.writeFile(wb, `${filename || type + "-report"}-${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
 
 function getAllAnswers(detail) {
@@ -98,7 +141,7 @@ function PhotoAnswer({ src, alt = "Photo", caption, sizeKB }) {
         <div style={{ fontSize: "11px", color: "#64748b", marginTop: "3px", display: "flex", gap: "8px" }}>
           {caption && <span>{caption}</span>}
           {imgSize && <span>{imgSize.w}&times;{imgSize.h}px</span>}
-          {sizeKB && <span>{sizeKB &lt; 1024 ? `${sizeKB}KB` : `${(sizeKB / 1024).toFixed(1)}MB`}</span>}
+          {sizeKB && <span>{sizeKB < 1024 ? `${sizeKB}KB` : `${(sizeKB / 1024).toFixed(1)}MB`}</span>}
         </div>
         <button
           onClick={() => setOpen(true)}
@@ -379,16 +422,23 @@ function DetailModal({ submission, type, onClose }) {
         <div style={{ padding: "16px 24px", borderBottom: "1px solid #e2e8f0", display: "grid",
           gridTemplateColumns: "repeat(3, 1fr)", gap: "10px 24px", flexShrink: 0 }}>
           {[
-            { label: "Submitted By", value: submission.submittedBy || "�" },
-            { label: "Asset",        value: submission.assetName  || "�" },
-            { label: "Location",     value: formatAssetLocation(submission) },
+            { label: "Submitted By", value: submission.submittedBy || "—" },
+            { label: "Asset",        value: submission.assetName  || "—" },
+            { label: "Asset Location", value: formatAssetLocation(submission) },
             { label: "Date / Time",  value: fmt(submission.submittedAt) },
             { label: "Status",       value: <StatusBadge status={submission.status} /> },
+            ...(submission.locationAddress || (submission.latitude && submission.longitude) ? [
+              { label: "Device Location", value: submission.locationAddress
+                  || `${Number(submission.latitude).toFixed(5)}, ${Number(submission.longitude).toFixed(5)}` },
+            ] : []),
+            ...(submission.deviceIp ? [
+              { label: "Device IP", value: submission.deviceIp },
+            ] : []),
             ...(type === "logsheets" ? [
               { label: "Period", value: submission.month
                 ? `${MONTH_NAMES[(submission.month || 1) - 1]} ${submission.year}`
-                : "�" },
-              { label: "Shift", value: submission.shift || "�" },
+                : "—" },
+              { label: "Shift", value: submission.shift || "—" },
             ] : []),
           ].map(({ label, value }) => (
             <div key={label}>
@@ -1405,7 +1455,7 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
             <button onClick={() => handleManualRefresh()}
               style={{ padding: "7px 14px", border: "1px solid #e2e8f0", borderRadius: "8px",
                 background: "#f8fafc", cursor: "pointer", fontSize: "13px", fontWeight: 600, color: "#475569" }}>
-              ? Refresh
+              ↻ Refresh
             </button>
             <button onClick={() => exportToCSV(sorted, type)}
               style={{ padding: "7px 14px", border: "1px solid #bbf7d0", borderRadius: "8px",
@@ -1416,7 +1466,18 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
                 <polyline points="7 10 12 15 17 10"/>
                 <line x1="12" y1="15" x2="12" y2="3"/>
               </svg>
-              Export
+              CSV
+            </button>
+            <button onClick={() => exportToExcel(sorted, type)}
+              style={{ padding: "7px 14px", border: "1px solid #bbf7d0", borderRadius: "8px",
+                background: "#f0fdf4", cursor: "pointer", fontSize: "13px", fontWeight: 600,
+                color: "#16a34a", display: "flex", alignItems: "center", gap: "5px" }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              Excel
             </button>
           </div>
         </div>

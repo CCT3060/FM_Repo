@@ -76,6 +76,22 @@ export default function SubmissionDetailScreen() {
               <StatusBadge label="Has Flags" variant="warning" />
             </View>
           ) : null}
+          {(detail.locationAddress || (detail.latitude && detail.longitude)) ? (
+            <View style={styles.metaRow}>
+              <Text style={[styles.metaLabel, { color: theme.textSecondary }]}>Location</Text>
+              <Text style={[styles.metaValue, { color: theme.textPrimary }]} numberOfLines={2}>
+                {detail.locationAddress
+                  ? detail.locationAddress
+                  : `${Number(detail.latitude).toFixed(5)}, ${Number(detail.longitude).toFixed(5)}`}
+              </Text>
+            </View>
+          ) : null}
+          {detail.deviceIp ? (
+            <View style={styles.metaRow}>
+              <Text style={[styles.metaLabel, { color: theme.textSecondary }]}>Device IP</Text>
+              <Text style={[styles.metaValue, { color: theme.textPrimary }]}>{detail.deviceIp}</Text>
+            </View>
+          ) : null}
         </View>
 
         {/* Answers */}

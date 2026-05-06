@@ -325,6 +325,9 @@ export async function submitChecklistAuth(payload: {
   templateId: number;
   assetId?: number | null;
   answers: Array<{ questionId: number | string; answer: any }>;
+  latitude?: number | null;
+  longitude?: number | null;
+  locationAddress?: string | null;
 }): Promise<unknown> {
   return apiPost<unknown>('/api/template-assignments/submit-checklist', payload);
 }
@@ -334,6 +337,9 @@ export async function submitLogsheetAuth(payload: {
   templateId: number;
   assetId?: number | null;
   answers: Array<{ questionId: number | string; answer: any }>;
+  latitude?: number | null;
+  longitude?: number | null;
+  locationAddress?: string | null;
 }): Promise<unknown> {
   return apiPost<unknown>('/api/template-assignments/submit-logsheet', payload);
 }

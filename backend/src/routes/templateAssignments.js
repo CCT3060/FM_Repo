@@ -57,6 +57,16 @@ const normalizeInputType = (value) => {
   const migrations = [
     `ALTER TABLE checklist_submissions ADD COLUMN IF NOT EXISTS company_user_id BIGINT REFERENCES company_users(id) ON DELETE SET NULL`,
     `ALTER TABLE logsheet_entries ADD COLUMN IF NOT EXISTS company_user_id BIGINT REFERENCES company_users(id) ON DELETE SET NULL`,
+    // Location + IP columns for checklist submissions
+    `ALTER TABLE checklist_submissions ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION DEFAULT NULL`,
+    `ALTER TABLE checklist_submissions ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION DEFAULT NULL`,
+    `ALTER TABLE checklist_submissions ADD COLUMN IF NOT EXISTS device_ip VARCHAR(64) DEFAULT NULL`,
+    `ALTER TABLE checklist_submissions ADD COLUMN IF NOT EXISTS location_address TEXT DEFAULT NULL`,
+    // Location + IP columns for logsheet entries
+    `ALTER TABLE logsheet_entries ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION DEFAULT NULL`,
+    `ALTER TABLE logsheet_entries ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION DEFAULT NULL`,
+    `ALTER TABLE logsheet_entries ADD COLUMN IF NOT EXISTS device_ip VARCHAR(64) DEFAULT NULL`,
+    `ALTER TABLE logsheet_entries ADD COLUMN IF NOT EXISTS location_address TEXT DEFAULT NULL`,
   ];
   for (const sql of migrations) {
     try { await pool.query(sql); } catch (_) { /* ignore if already exists */ }
@@ -578,7 +588,9 @@ router.post(
   ]),
   async (req, res, next) => {
     try {
-      const { templateId, assetId, answers } = req.body;
+      const { templateId, assetId, answers, latitude, longitude, locationAddress } = req.body;
+      // Capture device IP from request headers (proxied through nginx)
+      const deviceIp = (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').split(',')[0].trim() || null;
 
       // Supervisors, admins, and users with any soft-service capability can fill
       // any company checklist directly; regular employees need an explicit assignment.
@@ -677,24 +689,25 @@ router.post(
         // Update existing submission and clear old answers
         submissionId = existingChecklistSub.id;
         await pool.query(
-          `UPDATE checklist_submissions SET asset_id = ?, status = 'submitted', completion_pct = 100, submitted_at = NOW() WHERE id = ?`,
-          [effectiveAssetId, submissionId]
+          `UPDATE checklist_submissions SET asset_id = ?, status = 'submitted', completion_pct = 100, submitted_at = NOW(),
+           latitude = ?, longitude = ?, device_ip = ?, location_address = ? WHERE id = ?`,
+          [effectiveAssetId, latitude ?? null, longitude ?? null, deviceIp, locationAddress ?? null, submissionId]
         );
         await pool.query(`DELETE FROM checklist_submission_answers WHERE submission_id = ?`, [submissionId]);
       } else {
         const [csResult] = await pool.query(
           `INSERT INTO checklist_submissions
-           (template_id, asset_id, submitted_by, company_user_id, status, completion_pct, submitted_at)
-           VALUES (?, ?, NULL, ?, 'submitted', 100, NOW())
+           (template_id, asset_id, submitted_by, company_user_id, status, completion_pct, submitted_at, latitude, longitude, device_ip, location_address)
+           VALUES (?, ?, NULL, ?, 'submitted', 100, NOW(), ?, ?, ?, ?)
            RETURNING id`,
-          [templateId, effectiveAssetId, req.companyUser.id]
+          [templateId, effectiveAssetId, req.companyUser.id, latitude ?? null, longitude ?? null, deviceIp, locationAddress ?? null]
         ).catch(() =>
           pool.query(
             `INSERT INTO checklist_submissions
-             (template_id, asset_id, submitted_by, status, completion_pct, submitted_at)
-             VALUES (?, ?, NULL, 'submitted', 100, NOW())
+             (template_id, asset_id, submitted_by, status, completion_pct, submitted_at, latitude, longitude, device_ip, location_address)
+             VALUES (?, ?, NULL, 'submitted', 100, NOW(), ?, ?, ?, ?)
              RETURNING id`,
-            [templateId, effectiveAssetId]
+            [templateId, effectiveAssetId, latitude ?? null, longitude ?? null, deviceIp, locationAddress ?? null]
           )
         );
         submissionId = csResult.insertId || csResult[0]?.id;
@@ -847,7 +860,8 @@ router.post(
   ]),
   async (req, res, next) => {
     try {
-      const { templateId, assetId, answers } = req.body;
+      const { templateId, assetId, answers, latitude, longitude, locationAddress } = req.body;
+      const deviceIp = (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').split(',')[0].trim() || null;
 
       // Supervisors, admins, and users with any soft-service capability can fill
       // any company logsheet directly; regular employees need an explicit assignment.
@@ -925,17 +939,18 @@ router.post(
         // Update existing entry and clear old answers
         entryId = existingEntry.id;
         await pool.query(
-          `UPDATE logsheet_entries SET asset_id = ?, data = ?, submitted_at = NOW(), entry_date = CURRENT_DATE WHERE id = ?`,
-          [assetId || null, JSON.stringify(answers || []), entryId]
+          `UPDATE logsheet_entries SET asset_id = ?, data = ?, submitted_at = NOW(), entry_date = CURRENT_DATE,
+           latitude = ?, longitude = ?, device_ip = ?, location_address = ? WHERE id = ?`,
+          [assetId || null, JSON.stringify(answers || []), latitude ?? null, longitude ?? null, deviceIp, locationAddress ?? null, entryId]
         );
         await pool.query(`DELETE FROM logsheet_answers WHERE entry_id = ?`, [entryId]);
       } else {
         const [leResult] = await pool.query(
           `INSERT INTO logsheet_entries
-           (template_id, asset_id, submitted_by, company_user_id, entry_date, month, year, status, data, submitted_at)
-           VALUES (?, ?, NULL, ?, CURRENT_DATE, ?, ?, 'submitted', ?, NOW())
+           (template_id, asset_id, submitted_by, company_user_id, entry_date, month, year, status, data, submitted_at, latitude, longitude, device_ip, location_address)
+           VALUES (?, ?, NULL, ?, CURRENT_DATE, ?, ?, 'submitted', ?, NOW(), ?, ?, ?, ?)
            RETURNING id`,
-          [templateId, assetId || null, req.companyUser.id, currentMonth, currentYear, JSON.stringify(answers || [])]
+          [templateId, assetId || null, req.companyUser.id, currentMonth, currentYear, JSON.stringify(answers || []), latitude ?? null, longitude ?? null, deviceIp, locationAddress ?? null]
         );
         entryId = leResult.insertId || leResult[0]?.id;
       }

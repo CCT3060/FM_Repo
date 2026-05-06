@@ -1,6 +1,7 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
-import React, { useEffect, useState } from 'react';
+import * as Location from 'expo-location';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Alert, Image, ScrollView, StyleSheet, Text, TextInput,
   TouchableOpacity, View, ActivityIndicator,
@@ -53,7 +54,7 @@ function normalizeField(q: any, idx: number): Field {
     .trim();
 
   let type: FieldType;
-  let boolLabels: [string, string, string] | undefined;
+  let boolLabels: [string, string] | undefined;
 
   switch (rawType) {
     case 'yes_no':
@@ -419,6 +420,31 @@ export default function ChecklistEntryScreen() {
   const [uploading,  setUploading]  = useState(false);
   const [templateDesc, setTemplateDesc] = useState<string | null>(null);
 
+  // Location captured silently in background
+  const locationRef = useRef<{ latitude: number; longitude: number; address?: string } | null>(null);
+
+  useEffect(() => {
+    // Request location permission and capture silently — failure is non-blocking
+    (async () => {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status === 'granted') {
+          const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+          const { latitude, longitude } = pos.coords;
+          let address: string | undefined;
+          try {
+            const geo = await Location.reverseGeocodeAsync({ latitude, longitude });
+            if (geo?.[0]) {
+              const g = geo[0];
+              address = [g.name, g.street, g.city, g.region, g.country].filter(Boolean).join(', ');
+            }
+          } catch { /* address is optional */ }
+          locationRef.current = { latitude, longitude, address };
+        }
+      } catch { /* location is optional — never block submission */ }
+    })();
+  }, []);
+
   useEffect(() => {
     const type = templateType === 'logsheet' ? 'logsheet' : 'checklist';
     const tid  = Number(templateId);
@@ -461,10 +487,15 @@ export default function ChecklistEntryScreen() {
 
       const tid = Number(templateId);
       const aid = assetId && Number(assetId) > 0 ? Number(assetId) : null;
+      const loc = locationRef.current;
 
       if (isSoftRaise) {
         // Submit checklist AND raise a soft service request in one step
-        const submission = await submitChecklistAuth({ templateId: tid, assetId: aid, answers: answerArray });
+        const submission = await submitChecklistAuth({
+          templateId: tid, assetId: aid, answers: answerArray,
+          latitude: loc?.latitude ?? null, longitude: loc?.longitude ?? null,
+          locationAddress: loc?.address ?? null,
+        });
         const submissionId = (submission as any)?.submissionId ?? (submission as any)?.id ?? undefined;
         await raiseSoftRequest({
           assetId: aid ?? 0,
@@ -476,12 +507,20 @@ export default function ChecklistEntryScreen() {
           { text: 'Done', onPress: () => router.back() },
         ]);
       } else if (templateType === 'logsheet') {
-        await submitLogsheetAuth({ templateId: tid, assetId: aid, answers: answerArray });
+        await submitLogsheetAuth({
+          templateId: tid, assetId: aid, answers: answerArray,
+          latitude: loc?.latitude ?? null, longitude: loc?.longitude ?? null,
+          locationAddress: loc?.address ?? null,
+        });
         Alert.alert('Submitted!', 'Your response has been recorded.', [
           { text: 'Done', onPress: () => router.back() },
         ]);
       } else {
-        await submitChecklistAuth({ templateId: tid, assetId: aid, answers: answerArray });
+        await submitChecklistAuth({
+          templateId: tid, assetId: aid, answers: answerArray,
+          latitude: loc?.latitude ?? null, longitude: loc?.longitude ?? null,
+          locationAddress: loc?.address ?? null,
+        });
         Alert.alert('Submitted!', 'Your response has been recorded.', [
           { text: 'Done', onPress: () => router.back() },
         ]);

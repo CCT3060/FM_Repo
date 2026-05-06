@@ -158,7 +158,9 @@ router.get(
            cs.status,
            cs.submitted_at         AS "submittedAt",
            cu.full_name            AS "submittedBy",
-           cu.id                   AS "submittedById"
+           cu.id                   AS "submittedById",
+           cs.latitude, cs.longitude, cs.device_ip AS "deviceIp",
+           cs.location_address     AS "locationAddress"
          FROM checklist_submissions cs
          JOIN checklist_templates ct ON cs.template_id = ct.id
          JOIN companies co           ON co.id = ct.company_id
@@ -233,7 +235,9 @@ router.get(
            le.month,
            le.year,
            cu.full_name                 AS "submittedBy",
-           cu.id                        AS "submittedById"
+           cu.id                        AS "submittedById",
+           le.latitude, le.longitude, le.device_ip AS "deviceIp",
+           le.location_address          AS "locationAddress"
          FROM logsheet_entries le
          JOIN logsheet_templates lt      ON lt.id = le.template_id
          JOIN companies co               ON co.id = lt.company_id
@@ -280,7 +284,9 @@ router.get(
            d.name    AS "assetDepartment",
            cs.status,
            cs.submitted_at      AS "submittedAt",
-           cu.full_name         AS "submittedBy"
+           cu.full_name         AS "submittedBy",
+           cs.latitude, cs.longitude, cs.device_ip AS "deviceIp",
+           cs.location_address  AS "locationAddress"
          FROM checklist_submissions cs
          JOIN checklist_templates ct  ON ct.id = cs.template_id
          JOIN companies co            ON co.id = ct.company_id
@@ -345,7 +351,9 @@ router.get(
            COALESCE(le.submitted_at, le.entry_date) AS "submittedAt",
            le.data,
            le.header_values            AS "headerValues",
-           cu.full_name                AS "submittedBy"
+           cu.full_name                AS "submittedBy",
+           le.latitude, le.longitude, le.device_ip AS "deviceIp",
+           le.location_address         AS "locationAddress"
          FROM logsheet_entries le
          JOIN logsheet_templates lt     ON lt.id = le.template_id
          JOIN companies co              ON co.id = lt.company_id

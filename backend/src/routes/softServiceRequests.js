@@ -7,6 +7,8 @@
  * GET   /requests/my               – Client supervisor's own requests
  * GET   /requests/all              – Manager: all requests (with filters)
  * PUT   /requests/:id/resolve      – Resolve a request
+ * PUT   /escalation-settings       – Set company escalation cutoff (hours)
+ * GET   /escalation-settings       – Get company escalation cutoff
  */
 
 import { Router } from "express";
@@ -15,6 +17,116 @@ import { requireCompanyAuth } from "../middleware/companyAuth.js";
 
 const router = Router();
 router.use(requireCompanyAuth);
+
+/* ── DB migration: add escalation columns if missing ─────────────────────── */
+(async () => {
+  try {
+    await pool.query(`ALTER TABLE soft_service_requests
+      ADD COLUMN IF NOT EXISTS escalated_at TIMESTAMPTZ DEFAULT NULL`);
+    await pool.query(`ALTER TABLE soft_service_requests
+      ADD COLUMN IF NOT EXISTS escalation_level INTEGER NOT NULL DEFAULT 0`);
+    // Per-company escalation cutoff table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS soft_escalation_settings (
+        company_id       INTEGER PRIMARY KEY,
+        cutoff_hours     INTEGER NOT NULL DEFAULT 24,
+        updated_at       TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+  } catch (e) {
+    console.warn('[soft-service] migration warning:', e.message);
+  }
+})();
+
+/* ── Background escalation checker (runs every 5 minutes) ───────────────── */
+async function runEscalationCheck() {
+  try {
+    // Load all companies' open unresolved requests
+    const [openRequests] = await pool.query(
+      `SELECT ssr.id, ssr.company_id AS "companyId", ssr.asset_id AS "assetId",
+              ssr.raised_by_user_id AS "raisedByUserId",
+              ssr.raised_at AS "raisedAt", ssr.escalation_level AS "escalationLevel",
+              COALESCE(ses.cutoff_hours, 24) AS "cutoffHours",
+              a.asset_name AS "assetName"
+       FROM soft_service_requests ssr
+       LEFT JOIN soft_escalation_settings ses ON ses.company_id = ssr.company_id
+       JOIN assets a ON a.id = ssr.asset_id
+       WHERE ssr.status = 'open'
+         AND ssr.escalation_level < 2`  /* max 2 escalations */
+    );
+
+    for (const req of openRequests) {
+      const ageHours = (Date.now() - new Date(req.raisedAt).getTime()) / 3_600_000;
+      const cutoff = req.cutoffHours * (req.escalationLevel + 1); // each level adds one cutoff period
+      if (ageHours < cutoff) continue;
+
+      const newLevel = req.escalationLevel + 1;
+
+      // Update escalation level and timestamp
+      await pool.query(
+        `UPDATE soft_service_requests
+           SET escalation_level = ?, escalated_at = NOW()
+         WHERE id = ?`,
+        [newLevel, req.id]
+      );
+
+      // Notify soft managers (level 1) or admins (level 2)
+      const targetCapability = newLevel === 1 ? 'is_soft_manager' : null;
+      let notifyUsers;
+      if (targetCapability) {
+        [notifyUsers] = await pool.query(
+          `SELECT cu.id, cu.full_name, cu.push_token
+           FROM company_users cu
+           JOIN company_roles cr ON cr.company_id = cu.company_id AND cr.role_key = cu.role
+           WHERE cu.company_id = ?
+             AND cr.${targetCapability} = TRUE
+             AND cr.is_active = TRUE`,
+          [req.companyId]
+        );
+      } else {
+        // Level 2: notify anyone who can resolve
+        [notifyUsers] = await pool.query(
+          `SELECT cu.id, cu.full_name, cu.push_token
+           FROM company_users cu
+           JOIN company_roles cr ON cr.company_id = cu.company_id AND cr.role_key = cu.role
+           WHERE cu.company_id = ?
+             AND cr.can_resolve_soft_issue = TRUE
+             AND cr.is_active = TRUE`,
+          [req.companyId]
+        );
+      }
+
+      const ageLabel = ageHours < 48
+        ? `${Math.round(ageHours)}h`
+        : `${Math.round(ageHours / 24)}d`;
+
+      for (const u of notifyUsers) {
+        await createInAppNotification(
+          req.companyId, u.id,
+          `⚠️ Escalated Request (Level ${newLevel})`,
+          `Request for ${req.assetName} has been open for ${ageLabel}. Immediate attention required.`
+        );
+        if (u.push_token) {
+          await sendExpoPush(
+            u.push_token,
+            `⚠️ Escalated Request (Level ${newLevel})`,
+            `Request for ${req.assetName} open ${ageLabel}. Needs resolution.`,
+            { screen: '/(tabs)/soft-requests', requestId: req.id }
+          );
+        }
+      }
+
+      console.log(`[escalation] Request ${req.id} escalated to level ${newLevel} after ${ageLabel}`);
+    }
+  } catch (e) {
+    console.error('[escalation] check failed:', e.message);
+  }
+}
+
+// Run every 5 minutes
+setInterval(runEscalationCheck, 5 * 60 * 1000);
+// Also run once after 30s of startup
+setTimeout(runEscalationCheck, 30_000);
 
 /* ── Helper: send Expo push notification ─────────────────────────────────── */
 async function sendExpoPush(pushToken, title, body, data = {}) {
@@ -264,11 +376,15 @@ router.get("/requests/all", async (req, res, next) => {
          ssr.raised_at             AS "raisedAt",
          raiser.full_name          AS "raisedByName",
          ssr.resolved_at           AS "resolvedAt",
-         resolver.full_name        AS "resolvedByName"
+         resolver.full_name        AS "resolvedByName",
+         ssr.escalation_level      AS "escalationLevel",
+         ssr.escalated_at          AS "escalatedAt",
+         COALESCE(ses.cutoff_hours, 24) AS "cutoffHours"
        FROM soft_service_requests ssr
        JOIN assets a ON a.id = ssr.asset_id
        JOIN company_users raiser ON raiser.id = ssr.raised_by_user_id
        LEFT JOIN company_users resolver ON resolver.id = ssr.resolved_by_user_id
+       LEFT JOIN soft_escalation_settings ses ON ses.company_id = ssr.company_id
        WHERE ssr.company_id = ?${where}
        ORDER BY ssr.raised_at DESC
        LIMIT 200`,
@@ -394,5 +510,38 @@ router.put("/requests/:id/resolve", async (req, res, next) => {
     next(err);
   }
 });
+
+/* ── GET /escalation-settings ─────────────────────────────────────────────── */
+router.get("/escalation-settings", async (req, res, next) => {
+  try {
+    const companyId = req.companyUser.companyId;
+    const [[row]] = await pool.query(
+      `SELECT cutoff_hours AS "cutoffHours" FROM soft_escalation_settings WHERE company_id = ?`,
+      [companyId]
+    );
+    res.json({ cutoffHours: row?.cutoffHours ?? 24 });
+  } catch (err) { next(err); }
+});
+
+/* ── PUT /escalation-settings ─────────────────────────────────────────────── */
+router.put("/escalation-settings", async (req, res, next) => {
+  try {
+    const companyId = req.companyUser.companyId;
+    const { cutoffHours } = req.body;
+    if (!Number.isFinite(Number(cutoffHours)) || Number(cutoffHours) < 1) {
+      return res.status(400).json({ message: "cutoffHours must be a positive number" });
+    }
+    await pool.query(
+      `INSERT INTO soft_escalation_settings (company_id, cutoff_hours, updated_at)
+       VALUES (?, ?, NOW())
+       ON CONFLICT (company_id)
+       DO UPDATE SET cutoff_hours = EXCLUDED.cutoff_hours, updated_at = NOW()`,
+      [companyId, Number(cutoffHours)]
+    );
+    res.json({ ok: true, cutoffHours: Number(cutoffHours) });
+  } catch (err) { next(err); }
+});
+
+/* ── GET /requests/all — also returns escalation info ─────────────────────── */
 
 export default router;
