@@ -9,20 +9,43 @@ import StatusBadge from '../components/StatusBadge';
 
 function AnswerValue({ answer }: { answer: any }) {
   const { theme } = useTheme();
-  const val = answer.value ?? answer.answer;
-  const str = val != null ? String(val) : '—';
-  const isPhoto = typeof str === 'string' && str.startsWith('http') && /\.(jpe?g|png|gif|webp)(\?|$)/i.test(str);
-  if (isPhoto) {
+
+  // Backend stores answers as { value: <answer>, photoUrl?: <url> } JSON objects.
+  // These arrive as either a parsed object or a raw JSON string — handle both.
+  let raw = answer.value ?? answer.answer ?? null;
+  let photoUrl: string | null = null;
+
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (trimmed.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        raw      = parsed.value ?? parsed.answer ?? null;
+        photoUrl = parsed.photoUrl ?? parsed.url ?? null;
+      } catch { /* keep raw as-is */ }
+    }
+  } else if (raw && typeof raw === 'object') {
+    photoUrl = raw.photoUrl ?? raw.url ?? null;
+    raw      = raw.value ?? raw.answer ?? null;
+  }
+
+  const str = raw != null && raw !== '' ? String(raw) : null;
+
+  // Detect photo URLs in value itself
+  const valIsPhoto = str && /^https?:\/\/.+\.(jpe?g|png|gif|webp)/i.test(str);
+  const displayPhoto = photoUrl ?? (valIsPhoto ? str : null);
+
+  if (displayPhoto) {
     return (
-      <TouchableOpacity onPress={() => Linking.openURL(str)} activeOpacity={0.85}>
-        <Image source={{ uri: str }} style={styles.photoThumb} resizeMode="cover" />
+      <TouchableOpacity onPress={() => Linking.openURL(displayPhoto)} activeOpacity={0.85}>
+        <Image source={{ uri: displayPhoto }} style={styles.photoThumb} resizeMode="cover" />
         <Text style={[styles.photoCaption, { color: theme.textMuted }]}>Tap to open full image</Text>
       </TouchableOpacity>
     );
   }
   return (
     <Text style={[styles.answer, { color: answer.flagged ? theme.warning : theme.textPrimary }]}>
-      {str || '—'}
+      {valIsPhoto ? null : (str || '—')}
     </Text>
   );
 }

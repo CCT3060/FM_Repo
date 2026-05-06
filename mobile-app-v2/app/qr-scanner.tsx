@@ -57,7 +57,7 @@ export default function QRScannerScreen() {
       }
 
       const asset = await fetchAssetByQR(Number(assetId));
-      router.replace({ pathname: '/asset-details', params: { assetId } });
+      router.replace({ pathname: '/asset-details', params: { assetId, fromQR: '1' } });
     } catch {
       Alert.alert('Not Found', 'Could not find an asset for this QR code.', [
         { text: 'Scan Again', onPress: () => setScanned(false) },

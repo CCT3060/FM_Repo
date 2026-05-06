@@ -72,7 +72,8 @@ function TemplateCard({
 
 export default function AssetDetailsScreen() {
   const { theme } = useTheme();
-  const { assetId } = useLocalSearchParams<{ assetId: string }>();
+  const { assetId, fromQR } = useLocalSearchParams<{ assetId: string; fromQR?: string }>();
+  const scannedViaQR = fromQR === '1';
   const [data,         setData]         = useState<any>(null);
   const [loading,      setLoading]      = useState(true);
   const [openRequests, setOpenRequests] = useState<SoftRequest[]>([]);
@@ -180,6 +181,46 @@ export default function AssetDetailsScreen() {
               </View>
             </TouchableOpacity>
           ))}
+
+          {/* Checklists — only after QR scan */}
+          {scannedViaQR ? (
+            hasTemplates ? (
+              <>
+                {checklists.length > 0 && (
+                  <>
+                    <Text style={[styles.sectionTitle, { color: theme.textSecondary, marginTop: Spacing.md }]}>CHECKLISTS</Text>
+                    {checklists.map((tpl) => (
+                      <TemplateCard key={`cl-${tpl.id}`} template={tpl} type="checklist" assetId={String(assetId)} assetName={assetName} />
+                    ))}
+                  </>
+                )}
+                {logsheets.length > 0 && (
+                  <>
+                    <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>LOG SHEETS</Text>
+                    {logsheets.map((tpl) => (
+                      <TemplateCard key={`ls-${tpl.id}`} template={tpl} type="logsheet" assetId={String(assetId)} assetName={assetName} />
+                    ))}
+                  </>
+                )}
+              </>
+            ) : null
+          ) : (
+            <View style={[styles.qrPromptBox, { backgroundColor: theme.surface, borderColor: theme.borderLight }]}>
+              <MaterialCommunityIcons name="qrcode-scan" size={48} color={theme.primary} />
+              <Text style={[styles.qrPromptTitle, { color: theme.textPrimary }]}>Scan to Fill Checklist</Text>
+              <Text style={[styles.qrPromptSub, { color: theme.textSecondary }]}>
+                Scan the QR code on this asset to access and fill its checklists.
+              </Text>
+              <TouchableOpacity
+                style={[styles.qrPromptBtn, { backgroundColor: theme.primary }]}
+                onPress={() => router.push('/qr-scanner')}
+                activeOpacity={0.85}
+              >
+                <MaterialCommunityIcons name="qrcode-scan" size={18} color="#fff" />
+                <Text style={styles.qrPromptBtnText}>Open Scanner</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </ScrollView>
       </SafeAreaView>
     );
@@ -257,43 +298,64 @@ export default function AssetDetailsScreen() {
             </View>
           )}
 
-          {/* Raise Issue section */}
-          <View style={styles.sectionHeader}>
-            <Text style={[styles.sectionLabel, { color: theme.textMuted }]}>RAISE AN ISSUE</Text>
-          </View>
-          {checklists.length > 0 ? (
-            checklists.map((tpl) => (
+          {/* Raise Issue section — only after QR scan */}
+          {scannedViaQR ? (
+            <>
+              <View style={styles.sectionHeader}>
+                <Text style={[styles.sectionLabel, { color: theme.textMuted }]}>RAISE AN ISSUE</Text>
+              </View>
+              {checklists.length > 0 ? (
+                checklists.map((tpl) => (
+                  <TouchableOpacity
+                    key={`cl-${tpl.id}`}
+                    style={[styles.issueCard, { backgroundColor: theme.surface, borderColor: '#FED7AA' }]}
+                    onPress={() =>
+                      router.push({
+                        pathname: '/checklist-entry',
+                        params: {
+                          assetId,
+                          templateId: String(tpl.id),
+                          templateType: 'checklist',
+                          templateName: tpl.templateName ?? tpl.name,
+                          assetName,
+                          softRaise: '1',
+                        },
+                      })
+                    }
+                    activeOpacity={0.85}
+                  >
+                    <View style={[styles.issueIcon, { backgroundColor: '#FFF7ED' }]}>
+                      <MaterialCommunityIcons name="alert-circle-outline" size={20} color="#EA580C" />
+                    </View>
+                    <Text style={[styles.issueTitle, { color: theme.textPrimary }]} numberOfLines={2}>
+                      {tpl.templateName ?? tpl.name}
+                    </Text>
+                    <MaterialCommunityIcons name="chevron-right" size={18} color={theme.textMuted} />
+                  </TouchableOpacity>
+                ))
+              ) : (
+                <View style={[styles.recentEmpty, { backgroundColor: theme.surface, borderColor: theme.borderLight }]}>
+                  <MaterialCommunityIcons name="clipboard-remove-outline" size={20} color={theme.textMuted} />
+                  <Text style={[styles.recentEmptyText, { color: theme.textMuted }]}>No issue templates available</Text>
+                </View>
+              )}
+            </>
+          ) : (
+            /* Not scanned via QR — prompt to scan */
+            <View style={[styles.qrPromptBox, { backgroundColor: theme.surface, borderColor: theme.borderLight }]}>
+              <MaterialCommunityIcons name="qrcode-scan" size={48} color={theme.primary} />
+              <Text style={[styles.qrPromptTitle, { color: theme.textPrimary }]}>Scan to Raise an Issue</Text>
+              <Text style={[styles.qrPromptSub, { color: theme.textSecondary }]}>
+                Scan the QR code on this asset to report a problem or service request.
+              </Text>
               <TouchableOpacity
-                key={`cl-${tpl.id}`}
-                style={[styles.issueCard, { backgroundColor: theme.surface, borderColor: '#FED7AA' }]}
-                onPress={() =>
-                  router.push({
-                    pathname: '/checklist-entry',
-                    params: {
-                      assetId,
-                      templateId: String(tpl.id),
-                      templateType: 'checklist',
-                      templateName: tpl.templateName ?? tpl.name,
-                      assetName,
-                      softRaise: '1',
-                    },
-                  })
-                }
+                style={[styles.qrPromptBtn, { backgroundColor: theme.primary }]}
+                onPress={() => router.push('/qr-scanner')}
                 activeOpacity={0.85}
               >
-                <View style={[styles.issueIcon, { backgroundColor: '#FFF7ED' }]}>
-                  <MaterialCommunityIcons name="alert-circle-outline" size={20} color="#EA580C" />
-                </View>
-                <Text style={[styles.issueTitle, { color: theme.textPrimary }]} numberOfLines={2}>
-                  {tpl.templateName ?? tpl.name}
-                </Text>
-                <MaterialCommunityIcons name="chevron-right" size={18} color={theme.textMuted} />
+                <MaterialCommunityIcons name="qrcode-scan" size={18} color="#fff" />
+                <Text style={styles.qrPromptBtnText}>Open Scanner</Text>
               </TouchableOpacity>
-            ))
-          ) : (
-            <View style={[styles.recentEmpty, { backgroundColor: theme.surface, borderColor: theme.borderLight }]}>
-              <MaterialCommunityIcons name="clipboard-remove-outline" size={20} color={theme.textMuted} />
-              <Text style={[styles.recentEmptyText, { color: theme.textMuted }]}>No issue templates available</Text>
             </View>
           )}
         </ScrollView>
@@ -319,18 +381,56 @@ export default function AssetDetailsScreen() {
             <Text style={[styles.alertText, { color: '#065F46' }]}>All clear — no open issues for this asset</Text>
           </View>
 
-          {/* Normal checklist / logsheet list */}
-          {hasTemplates ? (
-            <>
-              <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>ASSIGNED TASKS</Text>
-              {checklists.map((tpl) => (
-                <TemplateCard key={`cl-${tpl.id}`} template={tpl} type="checklist" assetId={assetId} assetName={assetName} />
-              ))}
-              {logsheets.map((tpl) => (
-                <TemplateCard key={`ls-${tpl.id}`} template={tpl} type="logsheet" assetId={assetId} assetName={assetName} />
-              ))}
-            </>
-          ) : null}
+          {/* Asset info */}
+          <View style={[styles.card, { backgroundColor: theme.surface, shadowColor: theme.cardShadow }]}>
+            <InfoRow label="Name"       value={assetName} />
+            <InfoRow label="Type"       value={asset.assetType ?? asset.typeName} />
+            <InfoRow label="Building"   value={asset.building} />
+            <InfoRow label="Floor"      value={asset.floor} />
+            <InfoRow label="Room"       value={asset.room} />
+            <InfoRow label="Department" value={asset.departmentName ?? asset.department} />
+            <InfoRow label="Status"     value={asset.status} />
+          </View>
+
+          {/* Checklists — only after QR scan */}
+          {scannedViaQR ? (
+            hasTemplates ? (
+              <>
+                {checklists.length > 0 && (
+                  <>
+                    <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>CHECKLISTS</Text>
+                    {checklists.map((tpl) => (
+                      <TemplateCard key={`cl-${tpl.id}`} template={tpl} type="checklist" assetId={String(assetId)} assetName={assetName} />
+                    ))}
+                  </>
+                )}
+                {logsheets.length > 0 && (
+                  <>
+                    <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>LOG SHEETS</Text>
+                    {logsheets.map((tpl) => (
+                      <TemplateCard key={`ls-${tpl.id}`} template={tpl} type="logsheet" assetId={String(assetId)} assetName={assetName} />
+                    ))}
+                  </>
+                )}
+              </>
+            ) : null
+          ) : (
+            <View style={[styles.qrPromptBox, { backgroundColor: theme.surface, borderColor: theme.borderLight }]}>
+              <MaterialCommunityIcons name="qrcode-scan" size={48} color={theme.primary} />
+              <Text style={[styles.qrPromptTitle, { color: theme.textPrimary }]}>Scan to Fill Checklist</Text>
+              <Text style={[styles.qrPromptSub, { color: theme.textSecondary }]}>
+                Scan the QR code on this asset to access and fill its checklists.
+              </Text>
+              <TouchableOpacity
+                style={[styles.qrPromptBtn, { backgroundColor: theme.primary }]}
+                onPress={() => router.push('/qr-scanner')}
+                activeOpacity={0.85}
+              >
+                <MaterialCommunityIcons name="qrcode-scan" size={18} color="#fff" />
+                <Text style={styles.qrPromptBtnText}>Open Scanner</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </ScrollView>
       </SafeAreaView>
     );
@@ -360,21 +460,61 @@ export default function AssetDetailsScreen() {
           <InfoRow label="Company"    value={asset.companyName} />
         </View>
 
-        {/* Templates */}
-        {hasTemplates ? (
-          <>
-            <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>ASSIGNED TASKS</Text>
-            {checklists.map((tpl) => (
-              <TemplateCard key={`cl-${tpl.id}`} template={tpl} type="checklist" assetId={assetId} assetName={assetName} />
-            ))}
-            {logsheets.map((tpl) => (
-              <TemplateCard key={`ls-${tpl.id}`} template={tpl} type="logsheet" assetId={assetId} assetName={assetName} />
-            ))}
-          </>
+        {/* Checklists / logsheets — only unlocked after QR scan */}
+        {scannedViaQR ? (
+          hasTemplates ? (
+            <>
+              {checklists.length > 0 && (
+                <>
+                  <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>CHECKLISTS</Text>
+                  {checklists.map((tpl) => (
+                    <TemplateCard
+                      key={`cl-${tpl.id}`}
+                      template={tpl}
+                      type="checklist"
+                      assetId={String(assetId)}
+                      assetName={assetName}
+                    />
+                  ))}
+                </>
+              )}
+              {logsheets.length > 0 && (
+                <>
+                  <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>LOG SHEETS</Text>
+                  {logsheets.map((tpl) => (
+                    <TemplateCard
+                      key={`ls-${tpl.id}`}
+                      template={tpl}
+                      type="logsheet"
+                      assetId={String(assetId)}
+                      assetName={assetName}
+                    />
+                  ))}
+                </>
+              )}
+            </>
+          ) : (
+            <View style={[styles.emptyBox, { backgroundColor: theme.surface }]}>
+              <MaterialCommunityIcons name="clipboard-text-outline" size={36} color={theme.textMuted} />
+              <Text style={[styles.emptyText, { color: theme.textSecondary }]}>No checklists assigned to this asset.</Text>
+            </View>
+          )
         ) : (
-          <View style={[styles.emptyBox, { backgroundColor: theme.surface }]}>
-            <MaterialCommunityIcons name="clipboard-text-outline" size={36} color={theme.textMuted} />
-            <Text style={[styles.emptyText, { color: theme.textSecondary }]}>No checklists or logsheets assigned to this asset.</Text>
+          /* Not scanned via QR — prompt employee to scan */
+          <View style={[styles.qrPromptBox, { backgroundColor: theme.surface, borderColor: theme.borderLight }]}>
+            <MaterialCommunityIcons name="qrcode-scan" size={48} color={theme.primary} />
+            <Text style={[styles.qrPromptTitle, { color: theme.textPrimary }]}>Scan to Fill Checklist</Text>
+            <Text style={[styles.qrPromptSub, { color: theme.textSecondary }]}>
+              Scan the QR code on this asset to access and fill its checklists.
+            </Text>
+            <TouchableOpacity
+              style={[styles.qrPromptBtn, { backgroundColor: theme.primary }]}
+              onPress={() => router.push('/qr-scanner')}
+              activeOpacity={0.85}
+            >
+              <MaterialCommunityIcons name="qrcode-scan" size={18} color="#fff" />
+              <Text style={styles.qrPromptBtnText}>Open Scanner</Text>
+            </TouchableOpacity>
           </View>
         )}
       </ScrollView>
@@ -430,6 +570,12 @@ const styles = StyleSheet.create({
   recentPctText:    { ...Typography.label, fontSize: 11, fontWeight: '700' },
   recentEmpty:      { marginHorizontal: Spacing.lg, borderRadius: Radius.lg, borderWidth: 1, padding: Spacing.md, flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
   recentEmptyText:  { ...Typography.bodyS },
+  // QR scan prompt (shown when employee browses asset without scanning)
+  qrPromptBox:      { margin: Spacing.lg, borderRadius: Radius.xl, borderWidth: 1, padding: Spacing.xxl, alignItems: 'center', gap: Spacing.md },
+  qrPromptTitle:    { ...Typography.h3, textAlign: 'center' },
+  qrPromptSub:      { ...Typography.body, textAlign: 'center', lineHeight: 20 },
+  qrPromptBtn:      { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, paddingHorizontal: Spacing.xl, paddingVertical: Spacing.md, borderRadius: Radius.lg, marginTop: Spacing.sm },
+  qrPromptBtnText:  { fontSize: 15, fontWeight: '700', color: '#fff' },
   issueCard:        { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, marginHorizontal: Spacing.lg, marginBottom: Spacing.sm, borderRadius: Radius.lg, padding: Spacing.md, borderWidth: 1 },
   issueIcon:        { width: 36, height: 36, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },
   issueTitle:       { ...Typography.body, flex: 1, fontWeight: '500' },

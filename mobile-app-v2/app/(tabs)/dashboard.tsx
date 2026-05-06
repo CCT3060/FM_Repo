@@ -148,24 +148,24 @@ export default function DashboardScreen() {
           </View>
         ) : (
           <>
-            {/* Score card */}
+            {/* Score card — horizontal: arc left, progress right */}
             <View style={[styles.scoreCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
               <ScoreArc pct={pct} color={ring} />
-              <View style={styles.scoreMeta}>
-                <Text style={[styles.scoreTitle, { color: theme.textPrimary }]}>Checklist Completion</Text>
+              <View style={styles.scoreSide}>
+                <Text style={[styles.scoreTitle, { color: theme.textPrimary }]}>Today's Progress</Text>
                 <Text style={[styles.scoreBody, { color: theme.textSecondary }]}>
-                  {score?.filled ?? 0} of {score?.total ?? 0} templates filled today
+                  {score?.filled ?? 0} of {score?.total ?? 0} templates filled
                 </Text>
-                {/* Progress bar */}
                 <View style={[styles.barTrack, { backgroundColor: ring + '22' }]}>
-                  <View style={[styles.barFill, { backgroundColor: ring, width: `${pct}%` as any }]} />
+                  <View style={[styles.barFill, { backgroundColor: ring, width: `${Math.min(pct, 100)}%` as any }]} />
                 </View>
+                <Text style={[styles.pctLabel, { color: ring }]}>{pct.toFixed(0)}% complete</Text>
               </View>
             </View>
 
-            {/* Stats grid */}
+            {/* Key stats — 3-up row */}
             <Text style={[styles.sectionTitle, { color: theme.textMuted }]}>TODAY'S OVERVIEW</Text>
-            <View style={styles.statsGrid}>
+            <View style={styles.statsRow}>
               <StatCard
                 icon="clipboard-check-outline"
                 label="Filled"
@@ -183,43 +183,22 @@ export default function DashboardScreen() {
               {showSoft ? (
                 <StatCard
                   icon="wrench-outline"
-                  label="Open Requests"
+                  label="Open Issues"
                   value={score?.openRequests ?? 0}
                   color={score && score.openRequests > 0 ? '#EF4444' : '#6B7280'}
                   onPress={() => router.push('/(tabs)/soft-requests')}
                 />
-              ) : null}
-              <StatCard icon="percent-outline" label="Score" value={`${pct.toFixed(1)}%`} color={ring} />
+              ) : (
+                <StatCard
+                  icon="percent-outline"
+                  label="Score"
+                  value={`${pct.toFixed(0)}%`}
+                  color={ring}
+                />
+              )}
             </View>
 
-            {/* Template counts */}
-            <Text style={[styles.sectionTitle, { color: theme.textMuted }]}>TEMPLATES</Text>
-            <View style={styles.statsGrid}>
-              <StatCard
-                icon="clipboard-text-outline"
-                label="Checklists"
-                value={score?.totalChecklistTemplates ?? 0}
-                color="#7C3AED"
-                onPress={() => router.push('/(tabs)/checklists')}
-              />
-              <StatCard
-                icon="table-large"
-                label="Log Sheets"
-                value={score?.totalLogsheetTemplates ?? 0}
-                color="#0891B2"
-                onPress={() => router.push('/(tabs)/checklists')}
-              />
-              <StatCard
-                icon="send-check-outline"
-                label="Submissions Today"
-                value={score?.totalSubmissionsToday ?? 0}
-                color="#D97706"
-                onPress={() => router.push('/history')}
-              />
-              <StatCard icon="chart-line" label="Completion" value={`${pct.toFixed(1)}%`} color={ring} />
-            </View>
-
-            {/* Alert banner — only for soft service users */}
+            {/* Alert banner — only for soft service users with open requests */}
             {showSoft && score && score.openRequests > 0 ? (
               <TouchableOpacity
                 style={[styles.alertBanner, { backgroundColor: '#FEF2F2', borderColor: '#FECACA' }]}
@@ -234,22 +213,6 @@ export default function DashboardScreen() {
                 <MaterialCommunityIcons name="chevron-right" size={16} color="#EF4444" />
               </TouchableOpacity>
             ) : null}
-
-            {/* Score legend */}
-            <View style={[styles.legendCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-              <Text style={[styles.sectionTitle, { color: theme.textMuted }]}>SCORE GUIDE</Text>
-              {[
-                { range: '75 – 100%', label: 'Excellent',  color: '#059669' },
-                { range: '40 – 74%',  label: 'Good',       color: '#D97706' },
-                { range: '0 – 39%',   label: 'Needs Work', color: '#EF4444' },
-              ].map(({ range, label, color }) => (
-                <View key={range} style={styles.legendRow}>
-                  <View style={[styles.legendDot, { backgroundColor: color }]} />
-                  <Text style={[styles.legendRange, { color: theme.textPrimary }]}>{range}</Text>
-                  <Text style={[styles.legendLabel, { color: theme.textSecondary }]}>{label}</Text>
-                </View>
-              ))}
-            </View>
           </>
         )}
       </ScrollView>
@@ -271,27 +234,22 @@ const styles = StyleSheet.create({
   subtitle:     { fontSize: 12, marginTop: 2 },
   refreshBtn:   { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
 
-  scoreCard:    { borderRadius: Radius.xl, padding: Spacing.xl, alignItems: 'center', gap: Spacing.lg, borderWidth: 1 },
-  scoreMeta:    { width: '100%', alignItems: 'center', gap: Spacing.xs },
-  scoreTitle:   { fontSize: 15, fontWeight: '600', textAlign: 'center' },
-  scoreBody:    { fontSize: 12, textAlign: 'center' },
-  barTrack:     { width: '75%', height: 5, borderRadius: 3, marginTop: Spacing.sm, overflow: 'hidden' },
+  scoreCard:    { borderRadius: Radius.xl, padding: Spacing.xl, flexDirection: 'row', alignItems: 'center', gap: Spacing.lg, borderWidth: 1 },
+  scoreSide:    { flex: 1, gap: Spacing.xs },
+  scoreTitle:   { fontSize: 14, fontWeight: '700' },
+  scoreBody:    { fontSize: 12 },
+  pctLabel:     { fontSize: 13, fontWeight: '700', marginTop: 2 },
+  barTrack:     { width: '100%', height: 6, borderRadius: 3, marginTop: 4, overflow: 'hidden' },
   barFill:      { height: '100%', borderRadius: 3 },
 
   sectionTitle: { fontSize: 11, fontWeight: '700', letterSpacing: 1 },
-  statsGrid:    { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
-  statCard:     { width: '47.5%', borderRadius: Radius.lg, padding: Spacing.md, alignItems: 'center', gap: 4, borderWidth: 1 },
-  statIcon:     { width: 40, height: 40, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
-  statValue:    { fontSize: 22, fontWeight: '700' },
-  statLabel:    { fontSize: 11, textAlign: 'center' },
+  statsRow:     { flexDirection: 'row', gap: Spacing.sm },
+  statCard:     { flex: 1, borderRadius: Radius.lg, padding: Spacing.md, alignItems: 'center', gap: 4, borderWidth: 1 },
+  statIcon:     { width: 36, height: 36, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
+  statValue:    { fontSize: 20, fontWeight: '700' },
+  statLabel:    { fontSize: 10, textAlign: 'center' },
 
   alertBanner:  { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, padding: Spacing.md, borderRadius: Radius.lg, borderWidth: 1 },
   alertTitle:   { fontSize: 13, fontWeight: '700', color: '#B91C1C' },
   alertSub:     { fontSize: 11, color: '#EF4444', marginTop: 1 },
-
-  legendCard:   { borderRadius: Radius.lg, padding: Spacing.lg, gap: Spacing.sm, borderWidth: 1 },
-  legendRow:    { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
-  legendDot:    { width: 9, height: 9, borderRadius: 5 },
-  legendRange:  { fontSize: 13, fontWeight: '600', width: 80 },
-  legendLabel:  { fontSize: 13 },
 });

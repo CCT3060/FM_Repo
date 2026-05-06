@@ -237,10 +237,11 @@ export async function registerPushToken(token: string, platform: string): Promis
 }
 
 // ─── Assets ───────────────────────────────────────────────────────────────────
-export async function fetchAssets(params?: { search?: string; type?: string }) {
+export async function fetchAssets(params?: { search?: string; type?: string; assignedOnly?: boolean }) {
   const q = new URLSearchParams();
-  if (params?.search) q.set('search', params.search);
-  if (params?.type)   q.set('type', params.type);
+  if (params?.search)       q.set('search', params.search);
+  if (params?.type)         q.set('type', params.type);
+  if (params?.assignedOnly) q.set('assignedOnly', 'true');
   const qs = q.toString() ? `?${q}` : '';
   return apiGet<unknown[]>(`/api/company-portal/assets${qs}`, true);
 }

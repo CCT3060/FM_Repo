@@ -520,13 +520,26 @@ router.get("/assets", async (req, res, next) => {
       ? ''
       : `AND LOWER(TRIM(a.asset_type)) != 'soft service'`;
 
-    const { search, type } = req.query;
+    const { search, type, assignedOnly } = req.query;
     const params = [cid(req)];
     let extraFilters = softFilter;
     if (type) { extraFilters += ` AND a.asset_type = ?`; params.push(type); }
     if (search) {
       extraFilters += ` AND (a.asset_name ILIKE ? OR a.asset_unique_id ILIKE ?)`;
       params.push(`%${search}%`, `%${search}%`);
+    }
+    if (assignedOnly === 'true' && req.companyUser?.id) {
+      extraFilters += `
+        AND a.id IN (
+          SELECT COALESCE(ct.asset_id, lta.asset_id)
+          FROM template_user_assignments tua
+          LEFT JOIN checklist_templates ct
+            ON tua.template_type = 'checklist' AND tua.template_id = ct.id AND ct.company_id = tua.company_id
+          LEFT JOIN logsheet_template_assignments lta
+            ON tua.template_type = 'logsheet' AND lta.template_id = tua.template_id
+          WHERE tua.assigned_to = ? AND tua.company_id = ?
+        )`;
+      params.push(req.companyUser.id, cid(req));
     }
 
     const [rows] = await pool.query(

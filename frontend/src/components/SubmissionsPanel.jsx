@@ -1,18 +1,18 @@
-import { useState, useEffect, useCallback, useRef, useMemo, memo } from "react";
+﻿import { useState, useEffect, useCallback, useRef, useMemo, memo } from "react";
 import * as XLSX from "xlsx";
 import { getApiBaseUrl } from "../utils/runtimeConfig";
 
 const API_BASE = getApiBaseUrl();
 
 function formatAssetLocation(row) {
-  if (!row) return "�";
+  if (!row) return "—";
   const parts = [
     row.assetDepartment,
     row.assetBuilding,
     row.assetFloor,
     row.assetRoom,
   ].filter((p) => p && String(p).trim());
-  return parts.length ? parts.join(" � ") : "�";
+  return parts.length ? parts.join(" / ") : "—";
 }
 
 /* --- CSV export ------------------------------------------------ */
@@ -258,7 +258,7 @@ function DetailModal({ submission, type, onClose }) {
   const allAnswers = getAllAnswers(submission);
   const isTabular  = submission.layoutType === "tabular";
 
-  // Tabular grid display � handles ALL possible stored formats safely
+  // Tabular grid display / handles ALL possible stored formats safely
   const TabularView = () => {
     // Always parse & validate first
     let raw = submission.tabularData;
@@ -267,9 +267,9 @@ function DetailModal({ submission, type, onClose }) {
     const d = typeof raw === "string" ? tryParse(raw) : raw;
     if (!d || typeof d !== "object") return <p style={{ color: "#94a3b8", fontSize: "14px" }}>No tabular data recorded.</p>;
 
-    // Safe value converter � NEVER returns a plain object/array as React child
+    // Safe value converter / NEVER returns a plain object/array as React child
     const safeVal = (v) => {
-      if (v === null || v === undefined) return "�";
+      if (v === null || v === undefined) return "—";
       if (typeof v !== "object") return String(v);
       // {id, label} shape ? use label
       if (v.label !== undefined) return String(v.label);
@@ -400,7 +400,7 @@ function DetailModal({ submission, type, onClose }) {
             <div style={{ fontWeight: 800, fontSize: "17px", color: "#0f172a" }}>{submission.templateName}</div>
             <div style={{ color: "#64748b", fontSize: "13px", marginTop: "3px" }}>
               {type === "checklists" ? "Checklist" : `Logsheet (${submission.layoutType || "standard"})`}
-              {" � "}Submission #{submission.id}
+              {" / "}Submission #{submission.id}
             </div>
           </div>
           <div style={{ display: "flex", gap: "8px", flexShrink: 0 }}>
@@ -457,7 +457,7 @@ function DetailModal({ submission, type, onClose }) {
             {Object.entries(submission.headerValues).map(([k, v]) => (
               <div key={k} style={{ fontSize: "12px" }}>
                 <span style={{ color: "#94a3b8", fontWeight: 600, textTransform: "capitalize" }}>{k}: </span>
-                <span style={{ color: "#0f172a", fontWeight: 600 }}>{v || "�"}</span>
+                <span style={{ color: "#0f172a", fontWeight: 600 }}>{v || "—"}</span>
               </div>
             ))}
           </div>
@@ -521,7 +521,7 @@ function Chip({ label, onRemove }) {
       <button onClick={onRemove} style={{ background: "none", border: "none", cursor: "pointer",
         color: "#2563eb", padding: "0 0 0 2px", fontSize: "14px", lineHeight: 1,
         display: "flex", alignItems: "center" }}>
-        �
+        ×
       </button>
     </span>
   );
@@ -600,7 +600,7 @@ function ConsolidatedGridView({ userName, templateId, templateName, assetName, c
       dateTime: new Date(d.submittedAt).toLocaleString(undefined,
         { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }),
       indexMap: Object.fromEntries(
-        getAllAnswers(d).map((a) => [(a.questionText || "").trim(), a.answerValue || a.answer || "�"])
+        getAllAnswers(d).map((a) => [(a.questionText || "").trim(), a.answerValue || a.answer || "—"])
       ),
     }));
     return { questions: qSet, columns: cols };
@@ -637,8 +637,8 @@ function ConsolidatedGridView({ userName, templateId, templateName, assetName, c
   };
   const vCell = (val) => ({
     padding: "7px 10px", textAlign: "center", fontSize: "12.5px",
-    border: "1px solid #e2e8f0", background: val && val !== "�" ? "#fff" : "#f8fafc",
-    color: val && val !== "�" ? "#0f172a" : "#94a3b8", fontWeight: val && val !== "�" ? 600 : 400,
+    border: "1px solid #e2e8f0", background: val && val !== "—" ? "#fff" : "#f8fafc",
+    color: val && val !== "—" ? "#0f172a" : "#94a3b8", fontWeight: val && val !== "—" ? 600 : 400,
     minWidth: "80px",
   });
 
@@ -647,15 +647,15 @@ function ConsolidatedGridView({ userName, templateId, templateName, assetName, c
       {/* - Header Card (matches logsheet style) - */}
       <div style={{ background: "#1e3a5f", color: "#fff", borderRadius: "12px 12px 0 0", padding: "20px 28px", textAlign: "center" }}>
         <div style={{ fontSize: "22px", fontWeight: 800, letterSpacing: "-0.5px" }}>
-          {templateName} � {assetName || "All Assets"}
+          {templateName} / {assetName || "All Assets"}
         </div>
       </div>
       <div style={{ background: "#2563eb", color: "#fff", padding: "10px 28px", textAlign: "center",
         display: "flex", alignItems: "center", justifyContent: "center", gap: "24px" }}>
         <div style={{ fontSize: "14px", fontWeight: 700 }}>
           {columns.length > 0
-            ? `${new Date(details[0]?.submittedAt).toLocaleDateString(undefined, { month: "long", year: "numeric" })} � ${new Date(details[details.length - 1]?.submittedAt).toLocaleDateString(undefined, { month: "long", year: "numeric" })}`
-            : "�"}
+            ? `${new Date(details[0]?.submittedAt).toLocaleDateString(undefined, { month: "long", year: "numeric" })} / ${new Date(details[details.length - 1]?.submittedAt).toLocaleDateString(undefined, { month: "long", year: "numeric" })}`
+            : "—"}
         </div>
         <span style={{ opacity: 0.5 }}>|</span>
         <div style={{ fontSize: "14px", fontWeight: 700 }}>{type === "checklists" ? "Checklist" : "Logsheet"}</div>
@@ -941,7 +941,7 @@ function UserDrilldown({ userName, companyId, type, token, onBack }) {
         </div>
 
         {loading ? (
-          <div style={{ padding: "60px", textAlign: "center", color: "#94a3b8" }}>Loading�</div>
+          <div style={{ padding: "60px", textAlign: "center", color: "#94a3b8" }}>Loading…</div>
         ) : rows.length === 0 ? (
           <div style={{ padding: "60px", textAlign: "center" }}>
             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" strokeWidth="1.5"
@@ -991,14 +991,14 @@ function UserDrilldown({ userName, companyId, type, token, onBack }) {
                         </span>
                       </td>
                     )}
-                    <td style={{ padding: "10px 14px", color: "#475569" }}>{r.assetName || "�"}</td>
+                    <td style={{ padding: "10px 14px", color: "#475569" }}>{r.assetName || "—"}</td>
                     <td style={{ padding: "10px 14px", color: "#64748b", fontSize: "12px" }}>{formatAssetLocation(r)}</td>
                     {type === "logsheets" && (
                       <>
                         <td style={{ padding: "10px 14px", color: "#475569", whiteSpace: "nowrap" }}>
-                          {r.month && r.year ? `${MONTH_NAMES[(r.month || 1) - 1]} ${r.year}` : "�"}
+                          {r.month && r.year ? `${MONTH_NAMES[(r.month || 1) - 1]} ${r.year}` : "—"}
                         </td>
-                        <td style={{ padding: "10px 14px", color: "#64748b" }}>{r.shift || "�"}</td>
+                        <td style={{ padding: "10px 14px", color: "#64748b" }}>{r.shift || "—"}</td>
                       </>
                     )}
                     <td style={{ padding: "10px 14px", color: "#0f172a", fontWeight: 600, whiteSpace: "nowrap" }}>
@@ -1057,6 +1057,243 @@ function UserDrilldown({ userName, companyId, type, token, onBack }) {
   );
 }
 
+/* --- Asset Drilldown View --------------------------------------- */
+function AssetDrilldown({ assetId, assetName, companyId, type, token, onBack }) {
+  const [period,   setPeriod]   = useState("today");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo,   setDateTo]   = useState("");
+  const [rows,     setRows]     = useState([]);
+  const [loading,  setLoading]  = useState(true);
+  const [detail,   setDetail]   = useState(null);
+
+  const inputStyle = {
+    padding: "7px 10px", border: "1px solid #e2e8f0", borderRadius: "8px",
+    fontSize: "13px", outline: "none", background: "#fff", boxSizing: "border-box",
+  };
+
+  const load = useCallback(async () => {
+    if (period === "custom" && !(dateFrom && dateTo)) return;
+    setLoading(true);
+    try {
+      const p = new URLSearchParams();
+      if (companyId) p.set("companyId", companyId);
+      if (assetId)   p.set("assetId", String(assetId));
+      if (period !== "all" && period !== "custom") p.set("period", period);
+      if (period === "custom") {
+        if (dateFrom) p.set("dateFrom", dateFrom);
+        if (dateTo)   p.set("dateTo",   dateTo);
+      }
+      const res = await fetch(
+        `${API_BASE}/api/template-assignments/submissions/${type}?${p}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (res.ok) setRows(await res.json());
+    } catch (_) { /* silent */ }
+    finally { setLoading(false); }
+  }, [assetId, companyId, type, token, period, dateFrom, dateTo]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const openDetail = async (id) => {
+    try {
+      const qs = companyId ? `?companyId=${companyId}` : "";
+      const res = await fetch(
+        `${API_BASE}/api/template-assignments/submissions/${type}/${id}${qs}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (res.ok) setDetail(await res.json());
+    } catch (e) { alert(e.message || "Failed to load"); }
+  };
+
+  const panelLabel = type === "checklists" ? "Checklist Submissions" : "Logsheet Entries";
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+      {detail && <DetailModal submission={detail} type={type} onClose={() => setDetail(null)} />}
+
+      {/* Back + Asset Header */}
+      <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0",
+        padding: "16px 20px", display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap" }}>
+        <button onClick={onBack}
+          style={{ display: "flex", alignItems: "center", gap: "6px", padding: "7px 14px",
+            border: "1px solid #e2e8f0", borderRadius: "8px", background: "#f8fafc",
+            color: "#475569", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>
+          ← Back to Assets
+        </button>
+        <div style={{ width: "42px", height: "42px", borderRadius: "10px", background: "#eff6ff",
+          color: "#2563eb", fontWeight: 700, fontSize: "20px", flexShrink: 0,
+          display: "flex", alignItems: "center", justifyContent: "center" }}>
+          ◈
+        </div>
+        <div>
+          <div style={{ fontWeight: 800, fontSize: "17px", color: "#0f172a" }}>{assetName}</div>
+          <div style={{ fontSize: "12px", color: "#64748b", marginTop: "2px" }}>
+            {panelLabel}
+            {!loading && (
+              <span style={{ marginLeft: "6px", background: "#eff6ff", color: "#2563eb",
+                borderRadius: "20px", padding: "1px 8px", fontWeight: 700 }}>
+                {rows.length}
+              </span>
+            )}
+          </div>
+        </div>
+        <button onClick={load}
+          style={{ marginLeft: "auto", padding: "7px 14px", border: "1px solid #e2e8f0",
+            borderRadius: "8px", background: "#f8fafc", cursor: "pointer",
+            fontSize: "13px", fontWeight: 600, color: "#475569" }}>
+          ↻ Refresh
+        </button>
+      </div>
+
+      {/* Period Filter */}
+      <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
+        <div style={{ padding: "14px 20px",
+          borderBottom: period === "custom" ? "1px solid #e2e8f0" : "none",
+          display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center" }}>
+          {DRILLDOWN_PERIODS.map(({ key, label: pl }) => (
+            <button key={key} onClick={() => setPeriod(key)}
+              style={{ padding: "6px 16px", borderRadius: "8px", fontSize: "13px", fontWeight: 600,
+                cursor: "pointer",
+                border: period === key ? "none" : "1px solid #e2e8f0",
+                background: period === key ? "#2563eb" : "#f8fafc",
+                color: period === key ? "#fff" : "#475569" }}>
+              {pl}
+            </button>
+          ))}
+        </div>
+        {period === "custom" && (
+          <div style={{ padding: "12px 20px", display: "flex", gap: "12px", alignItems: "flex-end", flexWrap: "wrap" }}>
+            <div style={{ flex: "0 0 160px" }}>
+              <label style={{ fontSize: "11px", fontWeight: 600, color: "#64748b", display: "block", marginBottom: "4px" }}>From</label>
+              <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} style={inputStyle} />
+            </div>
+            <div style={{ flex: "0 0 160px" }}>
+              <label style={{ fontSize: "11px", fontWeight: 600, color: "#64748b", display: "block", marginBottom: "4px" }}>To</label>
+              <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} style={inputStyle} />
+            </div>
+            <button onClick={load}
+              style={{ padding: "7px 18px", background: "#2563eb", color: "#fff", border: "none",
+                borderRadius: "8px", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>
+              Apply
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Results */}
+      <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
+        <div style={{ padding: "14px 20px", borderBottom: "1px solid #e2e8f0", display: "flex",
+          alignItems: "center", justifyContent: "space-between", gap: "12px", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <span style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a" }}>Submissions</span>
+            {!loading && (
+              <span style={{ background: "#eff6ff", color: "#2563eb", borderRadius: "20px",
+                padding: "2px 10px", fontSize: "12px", fontWeight: 700 }}>{rows.length}</span>
+            )}
+          </div>
+          <button onClick={() => exportToCSV(rows, type)}
+            style={{ padding: "7px 14px", border: "1px solid #bbf7d0", borderRadius: "8px",
+              background: "#f0fdf4", cursor: "pointer", fontSize: "13px", fontWeight: 600, color: "#16a34a" }}>
+            ↓ Export CSV
+          </button>
+        </div>
+
+        {loading ? (
+          <div style={{ padding: "60px", textAlign: "center", color: "#94a3b8" }}>Loading…</div>
+        ) : rows.length === 0 ? (
+          <div style={{ padding: "60px", textAlign: "center" }}>
+            <p style={{ color: "#94a3b8", fontSize: "14px", margin: 0 }}>No submissions found for this period</p>
+          </div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13.5px" }}>
+              <thead>
+                <tr>
+                  {["#", "Template",
+                    ...(type === "logsheets" ? ["Type"] : []),
+                    "Submitted By",
+                    ...(type === "logsheets" ? ["Period", "Shift"] : []),
+                    "Date & Time", "Status", ""].map((h, hi) => (
+                    <th key={hi} style={{ padding: "11px 14px", textAlign: "left", background: "#f8fafc",
+                      color: "#475569", fontWeight: 600, fontSize: "11.5px", textTransform: "uppercase",
+                      letterSpacing: "0.05em", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={r.id}
+                    onMouseEnter={(e) => e.currentTarget.style.background = "#f8fafc"}
+                    onMouseLeave={(e) => e.currentTarget.style.background = ""}
+                    style={{ borderBottom: "1px solid #f1f5f9", transition: "background 0.1s" }}>
+                    <td style={{ padding: "10px 14px", color: "#94a3b8", fontSize: "12px", fontWeight: 600 }}>{i + 1}</td>
+                    <td style={{ padding: "10px 14px", fontWeight: 700, color: "#0f172a" }}>{r.templateName}</td>
+                    {type === "logsheets" && (
+                      <td style={{ padding: "10px 14px" }}>
+                        <span style={{ padding: "2px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: 600,
+                          background: r.layoutType === "tabular" ? "#f3e8ff" : "#eff6ff",
+                          color: r.layoutType === "tabular" ? "#7c3aed" : "#2563eb" }}>
+                          {r.layoutType === "tabular" ? "Tabular" : "Standard"}
+                        </span>
+                      </td>
+                    )}
+                    <td style={{ padding: "10px 14px", color: "#475569" }}>
+                      {r.submittedBy ? (
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                          <span style={{ width: "28px", height: "28px", borderRadius: "50%",
+                            background: "#eff6ff", color: "#2563eb", fontSize: "11px", fontWeight: 700,
+                            display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                            {r.submittedBy.charAt(0).toUpperCase()}
+                          </span>
+                          {r.submittedBy}
+                        </span>
+                      ) : "—"}
+                    </td>
+                    {type === "logsheets" && (
+                      <>
+                        <td style={{ padding: "10px 14px", color: "#475569", whiteSpace: "nowrap" }}>
+                          {r.month && r.year ? `${MONTH_NAMES[(r.month || 1) - 1]} ${r.year}` : "—"}
+                        </td>
+                        <td style={{ padding: "10px 14px", color: "#64748b" }}>{r.shift || "—"}</td>
+                      </>
+                    )}
+                    <td style={{ padding: "10px 14px", color: "#0f172a", fontWeight: 600, whiteSpace: "nowrap" }}>
+                      <div>{new Date(r.submittedAt).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" })}</div>
+                      <div style={{ fontSize: "11px", color: "#94a3b8", fontWeight: 400 }}>
+                        {new Date(r.submittedAt).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+                      </div>
+                    </td>
+                    <td style={{ padding: "10px 14px" }}><StatusBadge status={r.status} /></td>
+                    <td style={{ padding: "10px 14px" }}>
+                      <button onClick={() => openDetail(r.id)}
+                        style={{ padding: "5px 14px", background: "#eff6ff", color: "#2563eb",
+                          border: "none", borderRadius: "7px", fontSize: "12.5px", fontWeight: 600, cursor: "pointer" }}>
+                        View →
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {!loading && rows.length > 0 && (
+          <div style={{ padding: "10px 20px", borderTop: "1px solid #f1f5f9", display: "flex",
+            gap: "24px", fontSize: "12px", color: "#94a3b8", background: "#f8fafc", flexWrap: "wrap" }}>
+            <span>Total: <strong style={{ color: "#475569" }}>{rows.length}</strong></span>
+            <span>Unique submitters: <strong style={{ color: "#475569" }}>
+              {new Set(rows.map((r) => r.submittedBy).filter(Boolean)).size}
+            </strong></span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* --- Main SubmissionsPanel -------------------------------------- */
 const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type = "checklists", companyId }) {
   const token = tokenProp
@@ -1072,6 +1309,9 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
 
   /* -- User drilldown -- */
   const [userView, setUserView] = useState({ active: false, userName: "", submittedById: null });
+
+  /* -- Asset drilldown -- */
+  const [assetView, setAssetView] = useState({ active: false, assetId: null, assetName: "" });
 
   /* -- Filter meta (loaded when advanced panel is opened) -- */
   const [filterMeta, setFilterMeta] = useState({ templates: [], employees: [], assets: [], shifts: [] });
@@ -1180,6 +1420,30 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
     return sortDir === "asc" ? cmp : -cmp;
   });
 
+  /* -- Group submissions by asset -- */
+  const assetGroups = useMemo(() => {
+    const map = new Map();
+    for (const r of sorted) {
+      const key = r.assetId ?? r.assetName ?? "unknown";
+      if (!map.has(key)) {
+        map.set(key, {
+          assetId: r.assetId,
+          assetName: r.assetName || "Unknown Asset",
+          location: formatAssetLocation(r),
+          companyName: r.companyName,
+          submissions: [],
+        });
+      }
+      map.get(key).submissions.push(r);
+    }
+    return [...map.values()].map((g) => ({
+      ...g,
+      count: g.submissions.length,
+      lastSubmittedAt: g.submissions[0]?.submittedAt,
+      submitters: [...new Set(g.submissions.map((s) => s.submittedBy).filter(Boolean))],
+    }));
+  }, [sorted]);
+
   const toggleSort = (field) => {
     if (sortField === field) setSortDir((d) => d === "asc" ? "desc" : "asc");
     else { setSortField(field); setSortDir("asc"); }
@@ -1223,37 +1487,21 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
     fontSize: "13px", outline: "none", background: "#fff", width: "100%", boxSizing: "border-box",
   };
 
-  /* -- Column config -- */
-  const cols = type === "checklists"
-    ? [
-        { key: "#",              label: "#",             sortable: false },
-        { key: "templateName",   label: "Template",      sortable: true },
-        { key: "submittedBy",    label: "Submitted By",  sortable: true },
-        { key: "assetName",      label: "Asset",         sortable: true },
-        { key: "assetLocation",  label: "Asset Location",sortable: false },
-        { key: "companyName",    label: "Company",       sortable: true },
-        { key: "deviceLocation", label: "Device Location",sortable: false },
-        { key: "deviceIp",       label: "Device IP",     sortable: false },
-        { key: "submittedAt",    label: "Submitted At",  sortable: true },
-        { key: "status",         label: "Status",        sortable: true },
-        { key: "action",         label: "",              sortable: false },
-      ]
-    : [
-        { key: "#",              label: "#",             sortable: false },
-        { key: "templateName",   label: "Template",      sortable: true },
-        { key: "layoutType",     label: "Type",          sortable: true },
-        { key: "submittedBy",    label: "Submitted By",  sortable: true },
-        { key: "assetName",      label: "Asset",         sortable: true },
-        { key: "assetLocation",  label: "Asset Location",sortable: false },
-        { key: "companyName",    label: "Company",       sortable: true },
-        { key: "deviceLocation", label: "Device Location",sortable: false },
-        { key: "deviceIp",       label: "Device IP",     sortable: false },
-        { key: "period",         label: "Period",        sortable: false },
-        { key: "shift",          label: "Shift",         sortable: true },
-        { key: "submittedAt",    label: "Date",          sortable: true },
-        { key: "status",         label: "Status",        sortable: true },
-        { key: "action",         label: "",              sortable: false },
-      ];
+  /* -- Column config (kept for CSV/Excel export compatibility) -- */
+
+  /* -- If asset drilldown is active, show it -- */
+  if (assetView.active) {
+    return (
+      <AssetDrilldown
+        assetId={assetView.assetId}
+        assetName={assetView.assetName}
+        companyId={companyId}
+        type={type}
+        token={token}
+        onBack={() => setAssetView({ active: false, assetId: null, assetName: "" })}
+      />
+    );
+  }
 
   /* -- If user drilldown is active, show it -- */
   if (userView.active) {
@@ -1403,7 +1651,7 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
               <input
                 value={fSearch}
                 onChange={(e) => setFSearch(e.target.value)}
-                placeholder="Template / asset / name�"
+                placeholder="Template / asset / name…"
                 style={inputStyle}
                 onKeyDown={(e) => e.key === "Enter" && handleManualRefresh()}
               />
@@ -1452,7 +1700,7 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
             <span style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a" }}>{panelLabel}</span>
             <span style={{ background: "#eff6ff", color: "#2563eb", borderRadius: "20px",
               padding: "2px 10px", fontSize: "12px", fontWeight: 700 }}>
-              {sorted.length}
+              {assetGroups.length} assets
             </span>
           </div>
           <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
@@ -1488,9 +1736,9 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
 
         {/* Table */}
         {loading ? (
-          <div style={{ padding: "60px", textAlign: "center", color: "#94a3b8" }}>Loading�</div>
+          <div style={{ padding: "60px", textAlign: "center", color: "#94a3b8" }}>Loading…</div>
         ) : error ? (
-          <div style={{ padding: "40px", textAlign: "center", color: "#dc2626" }}>? {error}</div>
+          <div style={{ padding: "40px", textAlign: "center", color: "#dc2626" }}>⚠ {error}</div>
         ) : sorted.length === 0 ? (
           <div style={{ padding: "60px", textAlign: "center" }}>
             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" strokeWidth="1.5"
@@ -1509,21 +1757,18 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13.5px" }}>
               <thead>
                 <tr>
-                  {cols.map((c) => (
-                    <th key={c.key}
-                      onClick={c.sortable ? () => toggleSort(c.key) : undefined}
-                      style={{ padding: "11px 14px", textAlign: "left", background: "#f8fafc",
-                        color: "#475569", fontWeight: 600, fontSize: "11.5px", textTransform: "uppercase",
-                        letterSpacing: "0.05em", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap",
-                        cursor: c.sortable ? "pointer" : "default", userSelect: "none" }}>
-                      {c.label}{c.sortable && <SortIcon field={c.key} />}
+                  {["#", "Asset", "Location", "Company", "Submissions", "Last Submitted", "Submitted By", ""].map((h, hi) => (
+                    <th key={hi} style={{ padding: "11px 14px", textAlign: "left", background: "#f8fafc",
+                      color: "#475569", fontWeight: 600, fontSize: "11.5px", textTransform: "uppercase",
+                      letterSpacing: "0.05em", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>
+                      {h}
                     </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {sorted.map((r, i) => (
-                  <tr key={r.id}
+                {assetGroups.map((g, i) => (
+                  <tr key={g.assetId ?? g.assetName ?? i}
                     onMouseEnter={(e) => e.currentTarget.style.background = "#f8fafc"}
                     onMouseLeave={(e) => e.currentTarget.style.background = ""}
                     style={{ borderBottom: "1px solid #f1f5f9", transition: "background 0.1s" }}>
@@ -1531,69 +1776,47 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
                       {i + 1}
                     </td>
                     <td style={{ padding: "10px 14px", fontWeight: 700, color: "#0f172a" }}>
-                      {r.templateName}
+                      {g.assetName}
                     </td>
-                    {type === "logsheets" && (
-                      <td style={{ padding: "10px 14px" }}>
-                        <span style={{ padding: "2px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: 600,
-                          background: r.layoutType === "tabular" ? "#f3e8ff" : "#eff6ff",
-                          color: r.layoutType === "tabular" ? "#7c3aed" : "#2563eb" }}>
-                          {r.layoutType === "tabular" ? "?? Tabular" : "?? Standard"}
-                        </span>
-                      </td>
-                    )}
-                    <td style={{ padding: "10px 14px", color: "#475569" }}>
-                      {r.submittedBy ? (
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
-                          <span style={{ width: "24px", height: "24px", borderRadius: "50%",
-                            background: "#eff6ff", color: "#2563eb", fontSize: "10px", fontWeight: 700,
-                            display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
-                            {r.submittedBy.charAt(0).toUpperCase()}
-                          </span>
-                          {r.submittedBy}
-                        </span>
-                      ) : "�"}
+                    <td style={{ padding: "10px 14px", color: "#64748b", fontSize: "12px" }}>
+                      {g.location}
                     </td>
-                    <td style={{ padding: "10px 14px", color: "#475569" }}>{r.assetName || "—"}</td>
-                    <td style={{ padding: "10px 14px", color: "#64748b", fontSize: "12px" }}>{formatAssetLocation(r)}</td>
-                    <td style={{ padding: "10px 14px", color: "#475569", fontSize: "12px" }}>{r.companyName || "—"}</td>
-                    {/* Device location from GPS/reverse geocode */}
-                    <td style={{ padding: "10px 14px", fontSize: "12px", maxWidth: "180px" }}>
-                      {r.locationAddress ? (
-                        <span style={{ color: "#0f172a" }} title={r.locationAddress}>
-                          📍 {r.locationAddress.length > 38 ? r.locationAddress.slice(0, 38) + "…" : r.locationAddress}
-                        </span>
-                      ) : r.latitude && r.longitude ? (
-                        <a
-                          href={`https://maps.google.com/?q=${r.latitude},${r.longitude}`}
-                          target="_blank" rel="noopener noreferrer"
-                          style={{ color: "#2563eb", fontSize: "11.5px", textDecoration: "none" }}
-                        >
-                          📍 {Number(r.latitude).toFixed(5)}, {Number(r.longitude).toFixed(5)}
-                        </a>
-                      ) : (
-                        <span style={{ color: "#cbd5e1" }}>—</span>
-                      )}
+                    <td style={{ padding: "10px 14px", color: "#475569", fontSize: "12px" }}>
+                      {g.companyName || "—"}
                     </td>
-                    {/* Device IP */}
-                    <td style={{ padding: "10px 14px", fontSize: "11.5px", color: "#64748b", whiteSpace: "nowrap" }}>
-                      {r.deviceIp || <span style={{ color: "#cbd5e1" }}>—</span>}
+                    <td style={{ padding: "10px 14px" }}>
+                      <span style={{ background: "#eff6ff", color: "#2563eb", borderRadius: "20px",
+                        padding: "2px 10px", fontSize: "12px", fontWeight: 700 }}>
+                        {g.count}
+                      </span>
                     </td>
-                    {type === "logsheets" && (
-                      <>
-                        <td style={{ padding: "10px 14px", color: "#475569", whiteSpace: "nowrap" }}>
-                          {r.month && r.year ? `${MONTH_NAMES[(r.month || 1) - 1]} ${r.year}` : "—"}
-                        </td>
-                        <td style={{ padding: "10px 14px", color: "#64748b" }}>{r.shift || "—"}</td>
-                      </>
-                    )}
                     <td style={{ padding: "10px 14px", color: "#64748b", whiteSpace: "nowrap" }}>
-                      {fmt(r.submittedAt)}
+                      {fmt(g.lastSubmittedAt)}
                     </td>
-                    <td style={{ padding: "10px 14px" }}><StatusBadge status={r.status} /></td>
+                    <td style={{ padding: "10px 14px" }}>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", alignItems: "center" }}>
+                        {g.submitters.slice(0, 3).map((s) => (
+                          <span key={s} style={{ display: "inline-flex", alignItems: "center", gap: "4px",
+                            background: "#f1f5f9", borderRadius: "20px", padding: "2px 8px",
+                            fontSize: "11.5px", color: "#475569", fontWeight: 500 }}>
+                            <span style={{ width: "18px", height: "18px", borderRadius: "50%",
+                              background: "#e0e7ff", color: "#4338ca", fontSize: "9px", fontWeight: 700,
+                              display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                              {s.charAt(0).toUpperCase()}
+                            </span>
+                            {s}
+                          </span>
+                        ))}
+                        {g.submitters.length > 3 && (
+                          <span style={{ fontSize: "11px", color: "#94a3b8" }}>
+                            +{g.submitters.length - 3} more
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td style={{ padding: "10px 14px" }}>
                       <button
-                        onClick={() => setUserView({ active: true, userName: r.submittedBy || "Unknown", submittedById: r.submittedById || null })}
+                        onClick={() => setAssetView({ active: true, assetId: g.assetId, assetName: g.assetName })}
                         style={{ padding: "5px 14px", background: "#eff6ff", color: "#2563eb",
                           border: "none", borderRadius: "7px", fontSize: "12.5px", fontWeight: 600, cursor: "pointer" }}>
                         View →
@@ -1610,25 +1833,11 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
         {!loading && !error && sorted.length > 0 && (
           <div style={{ padding: "10px 20px", borderTop: "1px solid #f1f5f9", display: "flex",
             gap: "24px", fontSize: "12px", color: "#94a3b8", background: "#f8fafc", flexWrap: "wrap" }}>
-            <span>Showing <strong style={{ color: "#475569" }}>{sorted.length}</strong> entries</span>
+            <span>Assets: <strong style={{ color: "#475569" }}>{assetGroups.length}</strong></span>
+            <span>Total submissions: <strong style={{ color: "#475569" }}>{sorted.length}</strong></span>
             <span>Unique submitters: <strong style={{ color: "#475569" }}>
               {new Set(sorted.map((r) => r.submittedBy).filter(Boolean)).size}
             </strong></span>
-            {type === "checklists" && (
-              <span>Submitted: <strong style={{ color: "#2563eb" }}>
-                {sorted.filter((r) => (r.status || "").toLowerCase() === "submitted").length}
-              </strong></span>
-            )}
-            {type === "logsheets" && (
-              <>
-                <span>Standard: <strong style={{ color: "#2563eb" }}>
-                  {sorted.filter((r) => !r.layoutType || r.layoutType === "standard").length}
-                </strong></span>
-                <span>Tabular: <strong style={{ color: "#7c3aed" }}>
-                  {sorted.filter((r) => r.layoutType === "tabular").length}
-                </strong></span>
-              </>
-            )}
           </div>
         )}
       </div>

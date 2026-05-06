@@ -240,31 +240,18 @@ function PhotoInput({
     );
   }
 
-  // ── Icon buttons (compact, right-aligned) ──────────────────────────────────
+  // ── Camera-only icon button ──────────────────────────────────────────────
   return (
-    <View style={styles.photoIconRow}>
-      <TouchableOpacity
-        style={[styles.photoIconBtn, { borderColor: theme.inputBorder, opacity: uploading ? 0.6 : 1 }]}
-        onPress={() => pick(true)}
-        disabled={uploading}
-        activeOpacity={0.7}
-      >
-        {uploading
-          ? <ActivityIndicator size="small" color={theme.textSecondary} style={{ width: 16, height: 16 }} />
-          : <MaterialCommunityIcons name="camera-outline" size={16} color={theme.textSecondary} />}
-        <Text style={[styles.photoIconLabel, { color: theme.textSecondary }]}>Camera</Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        style={[styles.photoIconBtn, { borderColor: theme.inputBorder, opacity: uploading ? 0.6 : 1 }]}
-        onPress={() => pick(false)}
-        disabled={uploading}
-        activeOpacity={0.7}
-      >
-        <MaterialCommunityIcons name="image-outline" size={16} color={theme.textSecondary} />
-        <Text style={[styles.photoIconLabel, { color: theme.textSecondary }]}>Gallery</Text>
-      </TouchableOpacity>
-    </View>
+    <TouchableOpacity
+      style={[styles.cameraIconBtn, { backgroundColor: theme.primaryBg, opacity: uploading ? 0.6 : 1 }]}
+      onPress={() => pick(true)}
+      disabled={uploading}
+      activeOpacity={0.7}
+    >
+      {uploading
+        ? <ActivityIndicator size="small" color={theme.primary} style={{ width: 18, height: 18 }} />
+        : <MaterialCommunityIcons name="camera-outline" size={18} color={theme.primary} />}
+    </TouchableOpacity>
   );
 }
 
@@ -597,6 +584,13 @@ export default function ChecklistEntryScreen() {
                             <Text style={[styles.fieldUnit, { color: theme.textMuted }]}>Unit: {field.unit}</Text>
                           ) : null}
                         </View>
+                        {/* Camera icon — top-right of every question */}
+                        {field.type !== 'photo' && (
+                          <PhotoInput
+                            value={photos[String(field.id)] ?? null}
+                            onChange={(v) => setPhotos((prev) => ({ ...prev, [String(field.id)]: v }))}
+                          />
+                        )}
                       </View>
                       {/* Question image (photo-as-question) */}
                       {field.questionImageUrl ? (
@@ -614,8 +608,8 @@ export default function ChecklistEntryScreen() {
                         value={answers[field.id]}
                         onChange={(v) => setAnswer(field.id, v)}
                       />
-                      {/* Optional photo attachment for every non-photo field */}
-                      {field.type !== 'photo' && (
+                      {/* Photo preview below answer when a photo has been taken */}
+                      {field.type !== 'photo' && photos[String(field.id)] && (
                         <View style={styles.attachPhotoSection}>
                           <PhotoInput
                             value={photos[String(field.id)] ?? null}
@@ -705,18 +699,15 @@ const styles = StyleSheet.create({
   input:             { fontSize: 12, fontWeight: '300' as const, lineHeight: 18, flex: 1 },
   textarea:          { height: 72, textAlignVertical: 'top' },
 
-  // Photo picker — compact icon buttons (right-aligned)
-  photoIconRow:      { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, justifyContent: 'flex-end' as const },
-  photoIconBtn:      {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: 7,
-    borderRadius: Radius.full,
-    borderWidth: 1,
+  // Camera icon button (top-right of field header)
+  cameraIconBtn:     {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    flexShrink: 0,
   },
-  photoIconLabel:    { fontSize: 12, fontWeight: '500' as const },
 
   // Photo preview (thumbnail with overlapping X badge)
   photoPreviewWrap:  { position: 'relative' as const, alignSelf: 'flex-start' as const },
@@ -755,6 +746,6 @@ const styles = StyleSheet.create({
   refImageLabel:  { ...Typography.micro, marginBottom: 4 },
   refImage:       { width: '100%', height: 160, borderRadius: Radius.md, backgroundColor: '#E2E8F0' },
   // Question image (photo used as the question itself — shown as small icon)
-  questionImage:  { width: 72, height: 72, borderRadius: Radius.md, backgroundColor: '#E2E8F0', marginBottom: Spacing.sm },
+  questionImage:  { width: '100%', height: 160, borderRadius: Radius.md, backgroundColor: '#E2E8F0', marginBottom: Spacing.sm },
   submitText:        { fontSize: 14, fontWeight: '700' as const, color: '#fff' },
 });
