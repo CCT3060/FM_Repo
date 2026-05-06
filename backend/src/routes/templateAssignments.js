@@ -339,7 +339,12 @@ router.get("/my-assignments", async (req, res, next) => {
         }));
     }
 
-    res.json([...formatted, ...softFormatted]);
+    // For technical users (no soft access), also strip any directly-assigned soft service templates
+    const visibleFormatted = canRaiseSoftIssue
+      ? formatted
+      : formatted.filter(f => (f.assetType || '').toLowerCase().trim() !== 'soft service');
+
+    res.json([...visibleFormatted, ...softFormatted]);
   } catch (err) {
     next(err);
   }

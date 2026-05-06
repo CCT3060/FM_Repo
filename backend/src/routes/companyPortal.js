@@ -503,6 +503,32 @@ router.delete("/departments/:id", async (req, res, next) => {
 /* ── Assets ─────────────────────────────────────────────────────────────────── */
 router.get("/assets", async (req, res, next) => {
   try {
+    // Check if user's role has soft-service access; if not, exclude soft service assets
+    let canRaiseSoftIssue = false;
+    try {
+      const [[roleRow]] = await pool.query(
+        `SELECT can_raise_soft_issue AS "canRaiseSoftIssue"
+         FROM company_roles
+         WHERE company_id = ? AND role_key = ? AND is_active = TRUE
+         LIMIT 1`,
+        [cid(req), req.companyUser.role]
+      );
+      canRaiseSoftIssue = Boolean(roleRow?.canRaiseSoftIssue);
+    } catch { /* default false — technical-only access */ }
+
+    const softFilter = canRaiseSoftIssue
+      ? ''
+      : `AND LOWER(TRIM(a.asset_type)) != 'soft service'`;
+
+    const { search, type } = req.query;
+    const params = [cid(req)];
+    let extraFilters = softFilter;
+    if (type) { extraFilters += ` AND a.asset_type = ?`; params.push(type); }
+    if (search) {
+      extraFilters += ` AND (a.asset_name ILIKE ? OR a.asset_unique_id ILIKE ?)`;
+      params.push(`%${search}%`, `%${search}%`);
+    }
+
     const [rows] = await pool.query(
       `SELECT a.id, a.asset_name AS "assetName", a.asset_unique_id AS "assetUniqueId",
               a.asset_type AS "assetType", a.status, a.building, a.floor, a.room,
@@ -512,9 +538,9 @@ router.get("/assets", async (req, res, next) => {
        FROM assets a
        LEFT JOIN departments d ON d.id = a.department_id
        LEFT JOIN asset_details ad ON ad.asset_id = a.id
-       WHERE a.company_id = ?
+       WHERE a.company_id = ? ${extraFilters}
        ORDER BY a.asset_name`,
-      [cid(req)]
+      params
     );
     const normalized = rows.map((r) => {
       const meta = r.metadata == null ? {} : (typeof r.metadata === "string" ? JSON.parse(r.metadata) : r.metadata);
