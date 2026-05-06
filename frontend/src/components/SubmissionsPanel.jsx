@@ -1226,29 +1226,33 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
   /* -- Column config -- */
   const cols = type === "checklists"
     ? [
-        { key: "#",            label: "#",            sortable: false },
-        { key: "templateName", label: "Template",     sortable: true },
-        { key: "submittedBy",  label: "Submitted By", sortable: true },
-        { key: "assetName",    label: "Asset",        sortable: true },
-        { key: "assetLocation", label: "Location",    sortable: false },
-        { key: "companyName",  label: "Company",      sortable: true },
-        { key: "submittedAt",  label: "Submitted At", sortable: true },
-        { key: "status",       label: "Status",       sortable: true },
-        { key: "action",       label: "",             sortable: false },
+        { key: "#",              label: "#",             sortable: false },
+        { key: "templateName",   label: "Template",      sortable: true },
+        { key: "submittedBy",    label: "Submitted By",  sortable: true },
+        { key: "assetName",      label: "Asset",         sortable: true },
+        { key: "assetLocation",  label: "Asset Location",sortable: false },
+        { key: "companyName",    label: "Company",       sortable: true },
+        { key: "deviceLocation", label: "Device Location",sortable: false },
+        { key: "deviceIp",       label: "Device IP",     sortable: false },
+        { key: "submittedAt",    label: "Submitted At",  sortable: true },
+        { key: "status",         label: "Status",        sortable: true },
+        { key: "action",         label: "",              sortable: false },
       ]
     : [
-        { key: "#",            label: "#",            sortable: false },
-        { key: "templateName", label: "Template",     sortable: true },
-        { key: "layoutType",   label: "Type",         sortable: true },
-        { key: "submittedBy",  label: "Submitted By", sortable: true },
-        { key: "assetName",    label: "Asset",        sortable: true },
-        { key: "assetLocation", label: "Location",    sortable: false },
-        { key: "companyName",  label: "Company",      sortable: true },
-        { key: "period",       label: "Period",       sortable: false },
-        { key: "shift",        label: "Shift",        sortable: true },
-        { key: "submittedAt",  label: "Date",         sortable: true },
-        { key: "status",       label: "Status",       sortable: true },
-        { key: "action",       label: "",             sortable: false },
+        { key: "#",              label: "#",             sortable: false },
+        { key: "templateName",   label: "Template",      sortable: true },
+        { key: "layoutType",     label: "Type",          sortable: true },
+        { key: "submittedBy",    label: "Submitted By",  sortable: true },
+        { key: "assetName",      label: "Asset",         sortable: true },
+        { key: "assetLocation",  label: "Asset Location",sortable: false },
+        { key: "companyName",    label: "Company",       sortable: true },
+        { key: "deviceLocation", label: "Device Location",sortable: false },
+        { key: "deviceIp",       label: "Device IP",     sortable: false },
+        { key: "period",         label: "Period",        sortable: false },
+        { key: "shift",          label: "Shift",         sortable: true },
+        { key: "submittedAt",    label: "Date",          sortable: true },
+        { key: "status",         label: "Status",        sortable: true },
+        { key: "action",         label: "",              sortable: false },
       ];
 
   /* -- If user drilldown is active, show it -- */
@@ -1550,15 +1554,37 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
                         </span>
                       ) : "�"}
                     </td>
-                    <td style={{ padding: "10px 14px", color: "#475569" }}>{r.assetName || "�"}</td>
+                    <td style={{ padding: "10px 14px", color: "#475569" }}>{r.assetName || "—"}</td>
                     <td style={{ padding: "10px 14px", color: "#64748b", fontSize: "12px" }}>{formatAssetLocation(r)}</td>
-                    <td style={{ padding: "10px 14px", color: "#475569", fontSize: "12px" }}>{r.companyName || "�"}</td>
+                    <td style={{ padding: "10px 14px", color: "#475569", fontSize: "12px" }}>{r.companyName || "—"}</td>
+                    {/* Device location from GPS/reverse geocode */}
+                    <td style={{ padding: "10px 14px", fontSize: "12px", maxWidth: "180px" }}>
+                      {r.locationAddress ? (
+                        <span style={{ color: "#0f172a" }} title={r.locationAddress}>
+                          📍 {r.locationAddress.length > 38 ? r.locationAddress.slice(0, 38) + "…" : r.locationAddress}
+                        </span>
+                      ) : r.latitude && r.longitude ? (
+                        <a
+                          href={`https://maps.google.com/?q=${r.latitude},${r.longitude}`}
+                          target="_blank" rel="noopener noreferrer"
+                          style={{ color: "#2563eb", fontSize: "11.5px", textDecoration: "none" }}
+                        >
+                          📍 {Number(r.latitude).toFixed(5)}, {Number(r.longitude).toFixed(5)}
+                        </a>
+                      ) : (
+                        <span style={{ color: "#cbd5e1" }}>—</span>
+                      )}
+                    </td>
+                    {/* Device IP */}
+                    <td style={{ padding: "10px 14px", fontSize: "11.5px", color: "#64748b", whiteSpace: "nowrap" }}>
+                      {r.deviceIp || <span style={{ color: "#cbd5e1" }}>—</span>}
+                    </td>
                     {type === "logsheets" && (
                       <>
                         <td style={{ padding: "10px 14px", color: "#475569", whiteSpace: "nowrap" }}>
-                          {r.month && r.year ? `${MONTH_NAMES[(r.month || 1) - 1]} ${r.year}` : "�"}
+                          {r.month && r.year ? `${MONTH_NAMES[(r.month || 1) - 1]} ${r.year}` : "—"}
                         </td>
-                        <td style={{ padding: "10px 14px", color: "#64748b" }}>{r.shift || "�"}</td>
+                        <td style={{ padding: "10px 14px", color: "#64748b" }}>{r.shift || "—"}</td>
                       </>
                     )}
                     <td style={{ padding: "10px 14px", color: "#64748b", whiteSpace: "nowrap" }}>
@@ -1570,7 +1596,7 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
                         onClick={() => setUserView({ active: true, userName: r.submittedBy || "Unknown", submittedById: r.submittedById || null })}
                         style={{ padding: "5px 14px", background: "#eff6ff", color: "#2563eb",
                           border: "none", borderRadius: "7px", fontSize: "12.5px", fontWeight: 600, cursor: "pointer" }}>
-                        View ?
+                        View →
                       </button>
                     </td>
                   </tr>

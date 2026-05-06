@@ -7,7 +7,7 @@ if (!connectionString) {
   throw new Error("Missing DATABASE_URL environment variable");
 }
 
-const sslMode = (process.env.DB_SSL || "disable").toLowerCase();
+const sslMode = (process.env.DB_SSL || process.env.SUPABASE_DB_SSL || "disable").toLowerCase();
 const sslConfig = sslMode === "disable" ? false : { rejectUnauthorized: false };
 
 const poolInstance = new Pool({
@@ -15,6 +15,8 @@ const poolInstance = new Pool({
   ssl: sslConfig,
   max: Number(process.env.DB_POOL_SIZE || 10),
   idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: Number(process.env.DB_CONNECT_TIMEOUT_MS || 10000),
+  query_timeout: Number(process.env.DB_QUERY_TIMEOUT_MS || 30000),
 });
 
 const RETRY_ATTEMPTS = Number(process.env.DB_RETRY_ATTEMPTS || 3);
