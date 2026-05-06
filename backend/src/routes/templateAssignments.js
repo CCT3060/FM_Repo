@@ -1783,11 +1783,33 @@ router.get("/site-score", async (req, res, next) => {
   try {
     const companyId = cid(req);
 
-    // Total active checklist templates for the company
+    // Check if this user has soft-service access (can raise/resolve soft issues)
+    // If not (pure technical role), exclude 'soft service' asset type from score
+    let canRaiseSoftIssue = false;
+    const legacyRole = (req.companyUser.role || '').toLowerCase();
+    if (legacyRole === 'technician' || legacyRole === 'supervisor' || legacyRole === 'admin' || legacyRole === 'technical_lead') {
+      canRaiseSoftIssue = false; // legacy technical roles have no soft access
+    } else {
+      try {
+        const [[roleRow]] = await pool.query(
+          `SELECT can_raise_soft_issue AS "canRaiseSoftIssue"
+           FROM company_roles
+           WHERE company_id = ? AND role_key = ? AND is_active = TRUE
+           LIMIT 1`,
+          [companyId, req.companyUser.role]
+        );
+        canRaiseSoftIssue = Boolean(roleRow?.canRaiseSoftIssue);
+      } catch { /* default false */ }
+    }
+    const softFilter = canRaiseSoftIssue
+      ? ''
+      : `AND LOWER(TRIM(COALESCE(ct.asset_type, ''))) != 'soft service'`;
+
+    // Total active checklist templates for the company (exclude soft service for tech users)
     const [[{ total }]] = await pool.query(
       `SELECT COUNT(*) AS total
-       FROM checklist_templates
-       WHERE company_id = ? AND is_active = 1`,
+       FROM checklist_templates ct
+       WHERE ct.company_id = ? AND ct.is_active = 1 ${softFilter}`,
       [companyId]
     );
 
@@ -1797,7 +1819,7 @@ router.get("/site-score", async (req, res, next) => {
        FROM checklist_submissions cs
        JOIN checklist_templates ct ON cs.template_id = ct.id
        WHERE ct.company_id = ?
-         AND cs.submitted_at >= CURRENT_DATE`,
+         AND cs.submitted_at >= CURRENT_DATE ${softFilter}`,
       [companyId]
     );
 
@@ -1807,27 +1829,31 @@ router.get("/site-score", async (req, res, next) => {
        FROM checklist_submissions cs
        JOIN checklist_templates ct ON cs.template_id = ct.id
        WHERE ct.company_id = ?
-         AND cs.submitted_at >= CURRENT_DATE`,
+         AND cs.submitted_at >= CURRENT_DATE ${softFilter}`,
       [companyId]
     );
 
-    // Open soft-service requests
-    const [[{ openRequests }]] = await pool.query(
-      `SELECT COUNT(*) AS "openRequests"
-       FROM soft_service_requests
-       WHERE company_id = ? AND status = 'open'`,
-      [companyId]
-    );
+    // Open soft-service requests (only relevant if user has soft access)
+    let openN = 0;
+    if (canRaiseSoftIssue) {
+      const [[{ openRequests }]] = await pool.query(
+        `SELECT COUNT(*) AS "openRequests"
+         FROM soft_service_requests
+         WHERE company_id = ? AND status = 'open'`,
+        [companyId]
+      );
+      openN = Number(openRequests) || 0;
+    }
 
-    // Total checklist templates (active) — for the dashboard stat card
+    // Total checklist templates (active, filtered)
     const [[{ totalChecklistTemplates }]] = await pool.query(
       `SELECT COUNT(*) AS "totalChecklistTemplates"
-       FROM checklist_templates
-       WHERE company_id = ? AND is_active = 1`,
+       FROM checklist_templates ct
+       WHERE ct.company_id = ? AND ct.is_active = 1 ${softFilter}`,
       [companyId]
     );
 
-    // Total logsheet templates — for the dashboard stat card
+    // Total logsheet templates
     const [[{ totalLogsheetTemplates }]] = await pool.query(
       `SELECT COUNT(*) AS "totalLogsheetTemplates"
        FROM logsheet_templates
@@ -1840,7 +1866,7 @@ router.get("/site-score", async (req, res, next) => {
       `SELECT (
          (SELECT COUNT(*) FROM checklist_submissions cs
           JOIN checklist_templates ct ON cs.template_id = ct.id
-          WHERE ct.company_id = ? AND cs.submitted_at >= CURRENT_DATE)
+          WHERE ct.company_id = ? AND cs.submitted_at >= CURRENT_DATE ${softFilter})
          +
          (SELECT COUNT(*) FROM logsheet_entries le
           JOIN logsheet_templates lt ON le.template_id = lt.id
@@ -1852,7 +1878,6 @@ router.get("/site-score", async (req, res, next) => {
     const totalN                  = Number(total)                   || 0;
     const filledN                 = Math.min(Number(filled) || 0, totalN);
     const totalFilledN            = Number(totalFilled)             || 0;
-    const openN                   = Number(openRequests)            || 0;
     const checklistTemplatesN     = Number(totalChecklistTemplates) || 0;
     const logsheetTemplatesN      = Number(totalLogsheetTemplates)  || 0;
     const totalSubmissionsTodayN  = Number(totalSubmissionsToday)   || 0;

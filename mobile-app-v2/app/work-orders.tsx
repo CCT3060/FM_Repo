@@ -22,7 +22,8 @@ export default function WorkOrdersScreen() {
 
   const load = useCallback(async () => {
     try {
-      const data = await fetchWorkOrders(filter !== 'all' ? { status: filter } : undefined);
+      const raw = await fetchWorkOrders(filter !== 'all' ? { status: filter } : undefined);
+      const data = Array.isArray(raw) ? raw : (raw as any)?.data ?? [];
       setOrders(data as any[]);
     } catch { /* silent */ } finally { setLoading(false); setRefreshing(false); }
   }, [filter]);
