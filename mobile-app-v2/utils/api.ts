@@ -226,6 +226,18 @@ export async function logout() {
   await clearSession();
 }
 
+/**
+ * logoutUser — clears only the auth token and user record, keeping the stored
+ * company so the app can navigate directly back to the login screen for the
+ * same company rather than the company-code entry screen.
+ */
+export async function logoutUser() {
+  await Promise.all([
+    SecureStore.deleteItemAsync(TOKEN_KEY),
+    SecureStore.deleteItemAsync(USER_KEY),
+  ]);
+}
+
 // ─── Push token ───────────────────────────────────────────────────────────────
 export async function registerPushToken(token: string, platform: string): Promise<void> {
   try {
@@ -314,6 +326,11 @@ export async function assignTemplate(payload: {
 // ─── Checklists ───────────────────────────────────────────────────────────────
 export async function fetchMyChecklists() {
   return apiGet<unknown[]>('/api/template-assignments/my-assignments');
+}
+
+/** Fetch ALL active templates for this company (checklists + logsheets). */
+export async function fetchAllTemplates() {
+  return apiGet<unknown[]>('/api/template-assignments/all-templates');
 }
 
 /** Fetch a single template (checklist or logsheet) with fully-normalised questions. */

@@ -7,7 +7,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
-import { logout } from '../../utils/api';
+import { logout, logoutUser, getStoredCompany } from '../../utils/api';
 import { useTheme, Typography, Spacing, Radius } from '../../utils/theme';
 import type { RoleCapabilities } from '../../utils/permissions';
 
@@ -37,9 +37,20 @@ export default function ProfileTab() {
     Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Sign Out', style: 'destructive', onPress: async () => {
-        await logout();
+        // Keep company in storage so app returns to login, not company-code entry
+        const company = await getStoredCompany();
+        await logoutUser();
         clearUser();
-        router.replace('/');
+        if (company) {
+          router.replace({
+            pathname: '/login',
+            params: { companyId: String(company.companyId), companyName: company.companyName },
+          });
+        } else {
+          // Fallback: full clear, go to company code screen
+          await logout();
+          router.replace('/');
+        }
       }},
     ]);
   };

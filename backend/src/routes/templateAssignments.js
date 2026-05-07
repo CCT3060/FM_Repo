@@ -1916,4 +1916,75 @@ router.get("/site-score", async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+/* ────────────────────────────────────────────────────────────────────────────
+   GET /all-templates  – all active templates for the company (mobile: browse all)
+   Returns checklists + logsheet templates with completion status for today.
+──────────────────────────────────────────────────────────────────────────── */
+router.get("/all-templates", async (req, res, next) => {
+  try {
+    const companyId = cid(req);
+
+    // Determine soft service access (same logic as site-score)
+    let canRaiseSoftIssue = false;
+    const legacyRole = (req.companyUser.role || '').toLowerCase();
+    if (!['technician', 'supervisor', 'admin', 'technical_lead'].includes(legacyRole)) {
+      try {
+        const [[roleRow]] = await pool.query(
+          `SELECT can_raise_soft_issue AS "canRaiseSoftIssue"
+           FROM company_roles
+           WHERE company_id = ? AND role_key = ? AND is_active = TRUE LIMIT 1`,
+          [companyId, req.companyUser.role]
+        );
+        canRaiseSoftIssue = Boolean(roleRow?.canRaiseSoftIssue);
+      } catch { /* default false */ }
+    }
+    const softFilter = canRaiseSoftIssue ? '' : `AND LOWER(TRIM(COALESCE(ct.asset_type, ''))) != 'soft service'`;
+
+    // All active checklist templates
+    const [checklists] = await pool.query(
+      `SELECT
+         ct.id,
+         ct.template_name  AS "templateName",
+         ct.asset_type     AS "assetType",
+         ct.frequency,
+         ct.is_active      AS "isActive",
+         'checklist'       AS "templateType",
+         EXISTS (
+           SELECT 1 FROM checklist_submissions cs
+           WHERE cs.template_id = ct.id AND cs.submitted_at >= CURRENT_DATE
+         ) AS "completedToday"
+       FROM checklist_templates ct
+       WHERE ct.company_id = ? AND ct.is_active = 1 ${softFilter}
+       ORDER BY ct.template_name`,
+      [companyId]
+    );
+
+    // All active logsheet templates
+    const [logsheets] = await pool.query(
+      `SELECT
+         lt.id,
+         lt.template_name  AS "templateName",
+         lt.asset_type     AS "assetType",
+         lt.frequency,
+         TRUE              AS "isActive",
+         'logsheet'        AS "templateType",
+         EXISTS (
+           SELECT 1 FROM logsheet_entries le
+           WHERE le.template_id = lt.id AND le.submitted_at >= CURRENT_DATE
+         ) AS "completedToday"
+       FROM logsheet_templates lt
+       WHERE lt.company_id = ?
+       ORDER BY lt.template_name`,
+      [companyId]
+    );
+
+    const all = [...checklists, ...logsheets].map(t => ({
+      ...t,
+      completedToday: Boolean(t.completedToday),
+    }));
+
+    res.json(all);
+  } catch (err) { next(err); }
+});
+
 export default router;

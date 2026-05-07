@@ -260,6 +260,20 @@ function normalizePerms(p) {
 
 function EmployeeModal({ existing, token, employees = [], customRoles = [], currentUserRole = "admin", onClose, onSaved }) {
   const isEdit = !!existing;
+
+  // Derive service domain from existing employee's custom role capabilities
+  const deriveServiceDomain = () => {
+    if (!isEdit || !existing?.role) return "technical";
+    const matched = customRoles.find((r) => r.roleKey === existing.role);
+    if (matched) {
+      const hasSoft = matched.canRaiseSoftIssue || matched.isSoftManager;
+      const hasTech = matched.isTechnician || matched.isTechnicalSupervisor;
+      if (hasSoft && hasTech) return "both";
+      if (hasSoft) return "soft";
+    }
+    return "technical";
+  };
+
   const def = {
     fullName: "", email: "", phone: "", designation: "", role: "technician",
     shift: "", status: "Active", password: "", username: "", supervisorId: "",
@@ -274,6 +288,7 @@ function EmployeeModal({ existing, token, employees = [], customRoles = [], curr
     permissions: normalizePerms(existing.permissions),
     moduleAccess: Array.isArray(existing.moduleAccess) ? existing.moduleAccess : def.moduleAccess,
   } : def);
+  const [serviceDomain, setServiceDomain] = useState(deriveServiceDomain);
   const [saving, setSaving] = useState(false);
   const [error, setError]   = useState(null);
 
@@ -344,6 +359,48 @@ function EmployeeModal({ existing, token, employees = [], customRoles = [], curr
         <div style={{ padding: "20px 24px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
           {error && <div style={{ gridColumn: "span 2" }}><Alert>{error}</Alert></div>}
 
+          {/* ── Service Domain ── */}
+          <div style={{ gridColumn: "span 2" }}>
+            <label style={{ display: "block", fontSize: "12.5px", fontWeight: 700, color: "#0f172a", marginBottom: "8px" }}>
+              Service Domain <span style={{ fontWeight: 400, color: "#64748b" }}>(determines asset access)</span>
+            </label>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "8px" }}>
+              {[
+                { key: "technical", label: "🔧 Technical",     desc: "Handles technical checklists, work orders & maintenance assets" },
+                { key: "soft",      label: "🧹 Soft Service",  desc: "Handles soft service requests & soft service asset types" },
+                { key: "both",      label: "⚙️ Both",          desc: "Full access to technical and soft service functionality" },
+              ].map(({ key, label, desc }) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setServiceDomain(key)}
+                  style={{
+                    padding: "10px 12px",
+                    borderRadius: "10px",
+                    border: `2px solid ${serviceDomain === key ? "#2563eb" : "#e2e8f0"}`,
+                    background: serviceDomain === key ? "#eff6ff" : "#fff",
+                    cursor: "pointer",
+                    textAlign: "left",
+                    transition: "all 0.12s",
+                  }}
+                >
+                  <div style={{ fontSize: "13px", fontWeight: 700, color: serviceDomain === key ? "#2563eb" : "#1e293b", marginBottom: "3px" }}>{label}</div>
+                  <div style={{ fontSize: "11px", color: "#64748b", lineHeight: "1.4" }}>{desc}</div>
+                </button>
+              ))}
+            </div>
+            {serviceDomain === "soft" && (
+              <div style={{ marginTop: "8px", padding: "8px 12px", background: "#fef9c3", border: "1px solid #fde68a", borderRadius: "8px", fontSize: "12px", color: "#92400e" }}>
+                ⚠ Soft service employees do not require checklist assignments — they handle service requests and soft service assets only.
+              </div>
+            )}
+            {serviceDomain === "technical" && (
+              <div style={{ marginTop: "8px", padding: "8px 12px", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "8px", fontSize: "12px", color: "#166534" }}>
+                ✓ Technical employees will see only technical asset types. Soft service templates and assets will be hidden.
+              </div>
+            )}
+          </div>
+
           {/* Basic info */}
           <div style={{ gridColumn: "span 2" }}>
             <FInput label="Full Name" required value={form.fullName} onChange={(e) => change("fullName", e.target.value)} placeholder="e.g. Ahmed Hassan" />
@@ -360,6 +417,11 @@ function EmployeeModal({ existing, token, employees = [], customRoles = [], curr
           <div style={{ gridColumn: "span 2" }}>
             <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "8px" }}>
               Role <span style={{ color: "#ef4444" }}>*</span>
+              {serviceDomain !== "both" && (
+                <span style={{ marginLeft: "8px", fontSize: "11px", color: "#64748b", fontWeight: 400 }}>
+                  — showing {serviceDomain === "soft" ? "soft service" : "technical"} roles
+                </span>
+              )}
             </label>
             {/* Hierarchy roles visual selector */}
             <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "10px", padding: "10px", marginBottom: "10px" }}>
@@ -389,24 +451,43 @@ function EmployeeModal({ existing, token, employees = [], customRoles = [], curr
               <div style={{ marginTop: "10px" }}>
                 <p style={{ fontSize: "11px", fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "8px" }}>Custom Roles</p>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-                  {customRoles.map((r) => {
-                    const selected = form.role === r.roleKey;
-                    const badges = [
-                      r.isTechnicalSupervisor && "Tech Supervisor",
-                      r.isTechnician && "Technician",
-                      r.canResolveSoftIssue && "Resolves Issues",
-                      r.canRaiseSoftIssue && "Raises Issues",
-                      r.isSoftManager && "Manager View",
-                    ].filter(Boolean);
-                    return (
-                      <button key={r.roleKey} type="button" onClick={() => changeRole(r.roleKey)}
-                        style={{ padding: "5px 12px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: `1.5px solid ${selected ? (r.color || "#6366f1") : "#e2e8f0"}`, background: selected ? (r.bgColor || "#eef2ff") : "#fff", color: selected ? (r.color || "#6366f1") : "#64748b", display: "flex", alignItems: "center", gap: "5px" }}>
-                        {r.label}
-                        {badges[0] && <span style={{ fontSize: "10px", opacity: 0.7 }}>· {badges[0]}</span>}
-                      </button>
-                    );
-                  })}
+                  {customRoles
+                    .filter((r) => {
+                      if (serviceDomain === "both") return true;
+                      const hasSoft = r.canRaiseSoftIssue || r.isSoftManager || r.canResolveSoftIssue;
+                      const hasTech = r.isTechnician || r.isTechnicalSupervisor;
+                      if (serviceDomain === "soft") return hasSoft;
+                      if (serviceDomain === "technical") return hasTech || (!hasSoft && !hasTech);
+                      return true;
+                    })
+                    .map((r) => {
+                      const selected = form.role === r.roleKey;
+                      const domainTag = (r.canRaiseSoftIssue || r.isSoftManager)
+                        ? "🧹 Soft"
+                        : (r.isTechnician || r.isTechnicalSupervisor)
+                          ? "🔧 Tech"
+                          : null;
+                      return (
+                        <button key={r.roleKey} type="button" onClick={() => changeRole(r.roleKey)}
+                          style={{ padding: "6px 14px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: `1.5px solid ${selected ? (r.color || "#6366f1") : "#e2e8f0"}`, background: selected ? (r.bgColor || "#eef2ff") : "#fff", color: selected ? (r.color || "#6366f1") : "#64748b", display: "flex", alignItems: "center", gap: "5px" }}>
+                          {r.label}
+                          {domainTag && <span style={{ fontSize: "10px", opacity: 0.65 }}>{domainTag}</span>}
+                        </button>
+                      );
+                    })}
                 </div>
+                {customRoles.filter((r) => {
+                  if (serviceDomain === "both") return false;
+                  const hasSoft = r.canRaiseSoftIssue || r.isSoftManager || r.canResolveSoftIssue;
+                  const hasTech = r.isTechnician || r.isTechnicalSupervisor;
+                  if (serviceDomain === "soft") return !hasSoft;
+                  if (serviceDomain === "technical") return hasSoft && !hasTech;
+                  return false;
+                }).length > 0 && (
+                  <p style={{ marginTop: "6px", fontSize: "11px", color: "#94a3b8" }}>
+                    Some roles are hidden based on the selected service domain. Switch to "Both" to see all.
+                  </p>
+                )}
               </div>
             )}
           </div>

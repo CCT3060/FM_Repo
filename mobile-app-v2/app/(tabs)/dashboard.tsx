@@ -7,7 +7,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
-import { fetchSiteScore, logout, type SiteScore, ApiError } from '../../utils/api';
+import { fetchSiteScore, logoutUser, getStoredCompany, type SiteScore, ApiError } from '../../utils/api';
 import { hasSoftAccess } from '../../utils/permissions';
 import { useTheme, Spacing, Radius, Typography } from '../../utils/theme';
 
@@ -96,9 +96,14 @@ export default function DashboardScreen() {
       setScore(data);
     } catch (e: unknown) {
       if (e instanceof ApiError && e.status === 401) {
-        // Session expired — clear credentials and go back to company code entry
-        await logout();
-        router.replace('/');
+        // Session expired — keep company, return to login screen
+        const company = await getStoredCompany();
+        await logoutUser();
+        if (company) {
+          router.replace({ pathname: '/login', params: { companyId: String(company.companyId), companyName: company.companyName } });
+        } else {
+          router.replace('/');
+        }
         return;
       }
       const msg = e instanceof Error ? e.message : 'Unknown error';
@@ -178,7 +183,7 @@ export default function DashboardScreen() {
                 label="Templates"
                 value={score?.total ?? 0}
                 color={theme.primary}
-                onPress={() => router.push('/(tabs)/checklists')}
+                onPress={() => router.push('/all-templates')}
               />
               {showSoft ? (
                 <StatCard

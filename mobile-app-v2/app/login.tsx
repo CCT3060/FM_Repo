@@ -1,8 +1,8 @@
 import { router, useLocalSearchParams } from 'expo-router';
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
-  Alert, KeyboardAvoidingView, Platform, StyleSheet,
-  Text, TextInput, TouchableOpacity, View, ActivityIndicator,
+  Alert, Dimensions, Image, KeyboardAvoidingView, Platform, ScrollView,
+  StyleSheet, Text, TextInput, TouchableOpacity, View, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -10,6 +10,9 @@ import { loginEmployee } from '../utils/api';
 import { registerForPushNotifications } from '../utils/notifications';
 import { useAuth } from '../context/AuthContext';
 import { useTheme, Typography, Spacing, Radius } from '../utils/theme';
+
+const { width: SCREEN_W } = Dimensions.get('window');
+const CARD_MAX = Math.min(SCREEN_W - Spacing.xl * 2, 440);
 
 export default function LoginScreen() {
   const { theme } = useTheme();
@@ -20,6 +23,8 @@ export default function LoginScreen() {
   const [password,   setPassword]   = useState('');
   const [showPwd,    setShowPwd]    = useState(false);
   const [loading,    setLoading]    = useState(false);
+
+  const pwdRef = useRef<TextInput>(null);
 
   const handleLogin = async () => {
     if (!employeeId.trim() || !password) {
@@ -41,12 +46,30 @@ export default function LoginScreen() {
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.background }]}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>
-        <View style={styles.container}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.flex}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 24}
+      >
+        <ScrollView
+          contentContainerStyle={styles.scroll}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          bounces={false}
+        >
+          {/* Catalyst Logo */}
+          <View style={styles.logoWrap}>
+            <Image
+              source={require('../assets/images/catalyst-logo.png')}
+              style={styles.logo}
+              resizeMode="contain"
+              accessibilityLabel="Catalyst Solutions logo"
+            />
+          </View>
 
-          {/* Back */}
+          {/* Change Company */}
           <TouchableOpacity onPress={() => router.replace('/')} style={styles.backRow}>
-            <MaterialCommunityIcons name="arrow-left" size={22} color={theme.textSecondary} />
+            <MaterialCommunityIcons name="arrow-left" size={20} color={theme.textSecondary} />
             <Text style={[styles.backText, { color: theme.textSecondary }]}>Change Company</Text>
           </TouchableOpacity>
 
@@ -61,8 +84,8 @@ export default function LoginScreen() {
           <Text style={[styles.title, { color: theme.textPrimary }]}>Welcome back</Text>
           <Text style={[styles.sub, { color: theme.textSecondary }]}>Sign in with your employee credentials</Text>
 
-          {/* Form */}
-          <View style={[styles.card, { backgroundColor: theme.surface, shadowColor: theme.cardShadow }]}>
+          {/* Form card */}
+          <View style={[styles.card, { backgroundColor: theme.surface, shadowColor: theme.cardShadow, width: CARD_MAX }]}>
             {/* Employee ID */}
             <Text style={[styles.label, { color: theme.textSecondary }]}>Employee ID</Text>
             <View style={[styles.inputWrap, { backgroundColor: theme.inputBg, borderColor: theme.inputBorder }]}>
@@ -76,6 +99,8 @@ export default function LoginScreen() {
                 autoCapitalize="none"
                 autoCorrect={false}
                 returnKeyType="next"
+                onSubmitEditing={() => pwdRef.current?.focus()}
+                blurOnSubmit={false}
               />
             </View>
 
@@ -84,6 +109,7 @@ export default function LoginScreen() {
             <View style={[styles.inputWrap, { backgroundColor: theme.inputBg, borderColor: theme.inputBorder }]}>
               <MaterialCommunityIcons name="lock-outline" size={20} color={theme.textMuted} style={styles.inputIcon} />
               <TextInput
+                ref={pwdRef}
                 style={[styles.input, { color: theme.inputText }]}
                 value={password}
                 onChangeText={setPassword}
@@ -114,27 +140,34 @@ export default function LoginScreen() {
               }
             </TouchableOpacity>
           </View>
-        </View>
+
+          <Text style={[styles.footer, { color: theme.textMuted }]}>
+            Powered by Catalyst Solutions
+          </Text>
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safe:        { flex: 1 },
-  flex:        { flex: 1 },
-  container:   { flex: 1, padding: Spacing.xl, justifyContent: 'center' },
-  backRow:     { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginBottom: Spacing.xl },
-  backText:    { ...Typography.body },
-  companyBadge:{ flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, alignSelf: 'flex-start', paddingHorizontal: Spacing.md, paddingVertical: Spacing.xs, borderRadius: Radius.full, marginBottom: Spacing.md },
-  companyName: { ...Typography.label, flexShrink: 1 },
-  title:       { ...Typography.h2, marginBottom: Spacing.sm },
-  sub:         { ...Typography.body, marginBottom: Spacing.xl },
-  card:        { borderRadius: Radius.xl, padding: Spacing.xl, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 1, shadowRadius: 16, elevation: 8 },
-  label:       { ...Typography.label, marginBottom: Spacing.xs },
-  inputWrap:   { flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderRadius: Radius.md, paddingHorizontal: Spacing.md, marginBottom: Spacing.lg, height: 52 },
-  inputIcon:   { marginRight: Spacing.sm },
-  input:       { flex: 1, ...Typography.body },
-  btn:         { height: 52, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center', marginTop: Spacing.sm },
-  btnText:     { ...Typography.h4, color: '#fff' },
+  safe:         { flex: 1 },
+  flex:         { flex: 1 },
+  scroll:       { flexGrow: 1, alignItems: 'center', justifyContent: 'center', padding: Spacing.xl, paddingBottom: Spacing.xxl },
+  logoWrap:     { marginBottom: Spacing.lg, alignItems: 'center' },
+  logo:         { width: 160, height: 70 },
+  backRow:      { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginBottom: Spacing.lg, alignSelf: 'flex-start' },
+  backText:     { ...Typography.body },
+  companyBadge: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, alignSelf: 'flex-start', paddingHorizontal: Spacing.md, paddingVertical: Spacing.xs, borderRadius: Radius.full, marginBottom: Spacing.md },
+  companyName:  { ...Typography.label, flexShrink: 1 },
+  title:        { ...Typography.h2, marginBottom: Spacing.sm, alignSelf: 'flex-start' },
+  sub:          { ...Typography.body, marginBottom: Spacing.xl, alignSelf: 'flex-start' },
+  card:         { alignSelf: 'center', borderRadius: Radius.xl, padding: Spacing.xl, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.08, shadowRadius: 16, elevation: 8, marginBottom: Spacing.xl },
+  label:        { ...Typography.label, marginBottom: Spacing.xs },
+  inputWrap:    { flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderRadius: Radius.md, paddingHorizontal: Spacing.md, marginBottom: Spacing.lg, height: 52 },
+  inputIcon:    { marginRight: Spacing.sm },
+  input:        { flex: 1, ...Typography.body },
+  btn:          { height: 52, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center', marginTop: Spacing.sm },
+  btnText:      { ...Typography.h4, color: '#fff' },
+  footer:       { ...Typography.micro, textAlign: 'center' },
 });
