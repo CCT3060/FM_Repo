@@ -14,6 +14,10 @@ function isLocalHostname(hostname) {
   return hostname === "localhost" || hostname === "127.0.0.1";
 }
 
+function isIpAddress(hostname) {
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname);
+}
+
 function normalizeProxyTarget(value) {
   if (!value) return DEV_API_FALLBACK;
 
@@ -31,7 +35,7 @@ function normalizeProxyTarget(value) {
       url = mappedUrl;
     }
 
-    if (url.protocol === "http:" && !isLocalHostname(url.hostname)) {
+    if (url.protocol === "http:" && !isLocalHostname(url.hostname) && !isIpAddress(url.hostname)) {
       url.protocol = "https:";
     }
 
@@ -53,17 +57,14 @@ export default defineConfig(({ mode }) => {
         "/api": {
           target: apiTarget,
           changeOrigin: true,
-          headers: { host: "fm.catalystsolutions.eco" },
         },
         "/health": {
           target: apiTarget,
           changeOrigin: true,
-          headers: { host: "fm.catalystsolutions.eco" },
         },
         "/uploads": {
           target: apiTarget,
           changeOrigin: true,
-          headers: { host: "fm.catalystsolutions.eco" },
         },
       },
     },
