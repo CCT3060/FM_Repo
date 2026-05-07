@@ -238,6 +238,14 @@ export async function logoutUser() {
   ]);
 }
 
+/**
+ * clearStoredCompany — removes the stored company without touching auth tokens.
+ * Use when the user explicitly wants to change company.
+ */
+export async function clearStoredCompany() {
+  await SecureStore.deleteItemAsync(COMPANY_KEY);
+}
+
 // ─── Push token ───────────────────────────────────────────────────────────────
 export async function registerPushToken(token: string, platform: string): Promise<void> {
   try {

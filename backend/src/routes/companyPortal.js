@@ -503,22 +503,23 @@ router.delete("/departments/:id", async (req, res, next) => {
 /* ── Assets ─────────────────────────────────────────────────────────────────── */
 router.get("/assets", async (req, res, next) => {
   try {
-    // Check if user's role has soft-service access; if not, exclude soft service assets
-    let canRaiseSoftIssue = false;
-    try {
-      const [[roleRow]] = await pool.query(
-        `SELECT can_raise_soft_issue AS "canRaiseSoftIssue"
-         FROM company_roles
-         WHERE company_id = ? AND role_key = ? AND is_active = TRUE
-         LIMIT 1`,
-        [cid(req), req.companyUser.role]
-      );
-      canRaiseSoftIssue = Boolean(roleRow?.canRaiseSoftIssue);
-    } catch { /* default false — technical-only access */ }
+    // Use service_domain from the authenticated company user record.
+    // technical → exclude soft service assets
+    // soft      → only soft service assets
+    // both      → no filter
+    const [[cuRow]] = await pool.query(
+      `SELECT service_domain AS "serviceDomain" FROM company_users WHERE id = ? LIMIT 1`,
+      [req.companyUser.id]
+    );
+    const serviceDomain = (cuRow?.serviceDomain || 'technical').toLowerCase();
 
-    const softFilter = canRaiseSoftIssue
-      ? ''
-      : `AND LOWER(TRIM(a.asset_type)) != 'soft service'`;
+    let softFilter = '';
+    if (serviceDomain === 'technical') {
+      softFilter = `AND LOWER(TRIM(COALESCE(a.asset_type,''))) != 'soft service'`;
+    } else if (serviceDomain === 'soft') {
+      softFilter = `AND LOWER(TRIM(COALESCE(a.asset_type,''))) = 'soft service'`;
+    }
+    // 'both' → no filter
 
     const { search, type, assignedOnly } = req.query;
     const params = [cid(req)];
@@ -1438,6 +1439,7 @@ router.get("/employees", async (req, res, next) => {
               cu.full_name AS "fullName", cu.email, cu.phone,
               cu.designation, cu.role, cu.shift, cu.status, cu.username,
               cu.supervisor_id AS "supervisorId",
+              COALESCE(cu.service_domain, 'technical') AS "serviceDomain",
               s.full_name AS "supervisorName",
               s.role AS "supervisorRole",
               cu.created_at AS "createdAt"
@@ -1511,32 +1513,34 @@ router.get("/my-team", async (req, res, next) => {
 
 router.post("/employees", async (req, res, next) => {
   try {
-    const { fullName, email, phone, designation, role = "employee", status = "Active", password, username, supervisorId, shift } = req.body;
+    const { fullName, email, phone, designation, role = "employee", status = "Active", password, username, supervisorId, shift, serviceDomain = "technical" } = req.body;
     if (!fullName || !email) return res.status(400).json({ message: "fullName and email are required" });
 
-    // Only admin role can add employees; supervisors can add helpers under themselves
     if (req.companyUser.role !== "admin" && req.companyUser.role !== "supervisor") {
       return res.status(403).json({ message: "Only admin or supervisor can add employees" });
     }
 
-    // Supervisors can only set themselves as the supervisor
     const resolvedSupervisorId = req.companyUser.role === "supervisor"
       ? req.companyUser.id
       : (supervisorId || null);
+
+    const validDomains = ['technical', 'soft', 'both'];
+    const resolvedDomain = validDomains.includes(serviceDomain) ? serviceDomain : 'technical';
 
     let passwordHash = null;
     if (password) passwordHash = await bcrypt.hash(password, 10);
 
     const [rows] = await pool.query(
-      `INSERT INTO company_users (company_id, full_name, email, phone, designation, role, shift, status, password_hash, username, supervisor_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO company_users (company_id, full_name, email, phone, designation, role, shift, status, password_hash, username, supervisor_id, service_domain)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        RETURNING id,
-                 company_id    AS "companyId",
-                 full_name     AS "fullName",
+                 company_id     AS "companyId",
+                 full_name      AS "fullName",
                  email, phone, designation, role, shift, status, username,
-                 supervisor_id AS "supervisorId",
-                 created_at    AS "createdAt"`,
-      [cid(req), fullName, email, phone || null, designation || null, role, shift || null, status, passwordHash, username || null, resolvedSupervisorId]
+                 supervisor_id  AS "supervisorId",
+                 service_domain AS "serviceDomain",
+                 created_at     AS "createdAt"`,
+      [cid(req), fullName, email, phone || null, designation || null, role, shift || null, status, passwordHash, username || null, resolvedSupervisorId, resolvedDomain]
     );
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -1551,7 +1555,7 @@ router.post("/employees", async (req, res, next) => {
 router.put("/employees/:id", async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { fullName, email, phone, designation, role, status, password, username, supervisorId, shift } = req.body;
+    const { fullName, email, phone, designation, role, status, password, username, supervisorId, shift, serviceDomain } = req.body;
 
     if (req.companyUser.role !== "admin" && req.companyUser.role !== "supervisor") {
       return res.status(403).json({ message: "Not authorised" });
@@ -1563,7 +1567,6 @@ router.put("/employees/:id", async (req, res, next) => {
     );
     if (!check) return res.status(404).json({ message: "Employee not found" });
 
-    // Supervisors can only manage employees under themselves
     if (req.companyUser.role === "supervisor") {
       const [[emp]] = await pool.query(
         "SELECT supervisor_id FROM company_users WHERE id = ?", [id]
@@ -1577,14 +1580,21 @@ router.put("/employees/:id", async (req, res, next) => {
       ? req.companyUser.id
       : (supervisorId !== undefined ? (supervisorId || null) : undefined);
 
+    const validDomains = ['technical', 'soft', 'both'];
+    let serviceDomainClause = "";
+
     let passwordClause = "";
     let usernameClause = username !== undefined ? ", username = ?" : "";
     let supervisorClause = resolvedSupervisorId !== undefined ? ", supervisor_id = ?" : "";
     let shiftClause = shift !== undefined ? ", shift = ?" : "";
+    if (serviceDomain !== undefined && validDomains.includes(serviceDomain)) {
+      serviceDomainClause = ", service_domain = ?";
+    }
     const params = [fullName, email, phone || null, designation || null, role || "employee", status || "Active"];
     if (username !== undefined) params.push(username || null);
     if (resolvedSupervisorId !== undefined) params.push(resolvedSupervisorId);
     if (shift !== undefined) params.push(shift || null);
+    if (serviceDomainClause) params.push(serviceDomain);
     if (password) {
       const hash = await bcrypt.hash(password, 10);
       passwordClause = ", password_hash = ?";
@@ -1594,12 +1604,13 @@ router.put("/employees/:id", async (req, res, next) => {
 
     const [rows] = await pool.query(
       `UPDATE company_users
-       SET full_name = ?, email = ?, phone = ?, designation = ?, role = ?, status = ?${usernameClause}${supervisorClause}${shiftClause}${passwordClause}, updated_at = NOW()
+       SET full_name = ?, email = ?, phone = ?, designation = ?, role = ?, status = ?${usernameClause}${supervisorClause}${shiftClause}${serviceDomainClause}${passwordClause}, updated_at = NOW()
        WHERE id = ?
        RETURNING id,
-                 full_name     AS "fullName",
+                 full_name      AS "fullName",
                  email, phone, designation, role, shift, status, username,
-                 supervisor_id AS "supervisorId"`,
+                 supervisor_id  AS "supervisorId",
+                 service_domain AS "serviceDomain"`,
       params
     );
     res.json(rows[0]);
@@ -3751,6 +3762,93 @@ router.get("/ojt/mobile/test-attempts/:trainingId", async (req, res, next) => {
       [trainingId, userId]
     );
     res.json(rows);
+  } catch (err) { next(err); }
+});
+
+/* ── Asset Types CRUD ────────────────────────────────────────────────────── */
+// Auto-migrate: create company_asset_types table if not exists
+;(async () => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS company_asset_types (
+        id          SERIAL PRIMARY KEY,
+        company_id  INT NOT NULL,
+        name        VARCHAR(100) NOT NULL,
+        service_domain VARCHAR(20) NOT NULL DEFAULT 'both',
+        notes       TEXT,
+        is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+  } catch (e) {
+    console.error('[startup] company_asset_types migration failed:', e.message);
+  }
+})();
+
+router.get('/asset-types', async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT id, company_id AS "companyId", name,
+              service_domain AS "serviceDomain", notes, is_active AS "isActive",
+              created_at AS "createdAt"
+       FROM company_asset_types
+       WHERE company_id = ? AND is_active = TRUE
+       ORDER BY name ASC`,
+      [cid(req)]
+    );
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
+router.post('/asset-types', async (req, res, next) => {
+  try {
+    if (req.companyUser.role !== 'admin') return res.status(403).json({ message: 'Admin only' });
+    const { name, serviceDomain = 'both', notes } = req.body;
+    if (!name?.trim()) return res.status(400).json({ message: 'name is required' });
+    const validDomains = ['technical', 'soft', 'both'];
+    const domain = validDomains.includes(serviceDomain) ? serviceDomain : 'both';
+    const [rows] = await pool.query(
+      `INSERT INTO company_asset_types (company_id, name, service_domain, notes)
+       VALUES (?, ?, ?, ?)
+       RETURNING id, company_id AS "companyId", name, service_domain AS "serviceDomain", notes, is_active AS "isActive", created_at AS "createdAt"`,
+      [cid(req), name.trim(), domain, notes || null]
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) { next(err); }
+});
+
+router.put('/asset-types/:id', async (req, res, next) => {
+  try {
+    if (req.companyUser.role !== 'admin') return res.status(403).json({ message: 'Admin only' });
+    const { id } = req.params;
+    const { name, serviceDomain, notes } = req.body;
+    if (!name?.trim()) return res.status(400).json({ message: 'name is required' });
+    const validDomains = ['technical', 'soft', 'both'];
+    const domain = validDomains.includes(serviceDomain) ? serviceDomain : 'both';
+    const [rows] = await pool.query(
+      `UPDATE company_asset_types
+       SET name = ?, service_domain = ?, notes = ?, updated_at = NOW()
+       WHERE id = ? AND company_id = ?
+       RETURNING id, company_id AS "companyId", name, service_domain AS "serviceDomain", notes, is_active AS "isActive"`,
+      [name.trim(), domain, notes || null, id, cid(req)]
+    );
+    if (!rows.length) return res.status(404).json({ message: 'Not found' });
+    res.json(rows[0]);
+  } catch (err) { next(err); }
+});
+
+router.delete('/asset-types/:id', async (req, res, next) => {
+  try {
+    if (req.companyUser.role !== 'admin') return res.status(403).json({ message: 'Admin only' });
+    const { id } = req.params;
+    const [[check]] = await pool.query(
+      'SELECT id FROM company_asset_types WHERE id = ? AND company_id = ?',
+      [id, cid(req)]
+    );
+    if (!check) return res.status(404).json({ message: 'Not found' });
+    await pool.query('UPDATE company_asset_types SET is_active = FALSE WHERE id = ?', [id]);
+    res.json({ success: true });
   } catch (err) { next(err); }
 });
 

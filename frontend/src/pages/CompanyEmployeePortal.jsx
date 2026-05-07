@@ -151,6 +151,7 @@ const NAV_ALL = [
   { key: "workorders", label: "Work Orders", roles: ["admin","supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-4 0v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg> },
   { key: "shifts", label: "Shifts", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> },
   { key: "roles", label: "Manage Roles", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 7h18M3 12h18M3 17h18"/></svg> },
+  { key: "asset-types", label: "Asset Types", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg> },
   { key: "ojt", label: "OJT Management", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg> },
   { key: "fleet", label: "Fleet Management", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="1" y="3" width="15" height="13" rx="2"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg> },
   { key: "mytasks", label: "My Tasks", roles: ["supervisor","*"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg> },
@@ -325,6 +326,7 @@ function EmployeeModal({ existing, token, employees = [], customRoles = [], curr
     try {
       const payload = {
         ...form,
+        serviceDomain,
         supervisorId: form.supervisorId ? Number(form.supervisorId) : null,
         shift: form.shift || null,
       };
@@ -2641,6 +2643,195 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false }) {
     </div>
   );
 }
+
+/* ─── Asset Types Panel ──────────────────────────────────────────── */
+function AssetTypesPanel({ token }) {
+  const API = import.meta.env.VITE_API_BASE || "";
+  const [types, setTypes] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState(null); // null = create
+  const [form, setForm] = useState({ name: "", serviceDomain: "both", notes: "" });
+  const [saving, setSaving] = useState(false);
+  const [deleteId, setDeleteId] = useState(null);
+
+  const load = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const r = await fetch(`${API}/api/portal/asset-types`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) throw new Error("Failed to load asset types");
+      setTypes(await r.json());
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const openCreate = () => {
+    setEditing(null);
+    setForm({ name: "", serviceDomain: "both", notes: "" });
+    setShowForm(true);
+  };
+  const openEdit = (t) => {
+    setEditing(t);
+    setForm({ name: t.name, serviceDomain: t.serviceDomain || "both", notes: t.notes || "" });
+    setShowForm(true);
+  };
+  const closeForm = () => setShowForm(false);
+
+  const handleSave = async () => {
+    if (!form.name.trim()) return;
+    setSaving(true);
+    try {
+      const url = editing
+        ? `${API}/api/portal/asset-types/${editing.id}`
+        : `${API}/api/portal/asset-types`;
+      const method = editing ? "PUT" : "POST";
+      const r = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ name: form.name.trim(), serviceDomain: form.serviceDomain, notes: form.notes }),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err.message || "Save failed");
+      }
+      setShowForm(false);
+      load();
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm("Delete this asset type?")) return;
+    setDeleteId(id);
+    try {
+      const r = await fetch(`${API}/api/portal/asset-types/${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) throw new Error("Delete failed");
+      load();
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setDeleteId(null);
+    }
+  };
+
+  const domainLabel = (d) => ({ technical: "Technical 🔧", soft: "Soft Service 🧹", both: "Both ⚙️" }[d] || d);
+  const domainColor = (d) => ({ technical: "#dbeafe", soft: "#d1fae5", both: "#ede9fe" }[d] || "#f1f5f9");
+
+  return (
+    <div style={{ padding: "24px", maxWidth: "900px", margin: "0 auto" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: "1.3rem", fontWeight: 700, color: "#1e293b" }}>Asset Types</h2>
+          <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: "0.875rem" }}>
+            Manage asset type categories. These filter what assets employees see based on their service domain.
+          </p>
+        </div>
+        <button
+          onClick={openCreate}
+          style={{ background: "#2563eb", color: "#fff", border: "none", borderRadius: "8px", padding: "10px 18px", fontWeight: 600, cursor: "pointer", fontSize: "0.9rem" }}
+        >
+          + Add Asset Type
+        </button>
+      </div>
+
+      {loading && <div style={{ textAlign: "center", padding: "40px", color: "#94a3b8" }}>Loading…</div>}
+      {error && <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: "8px", padding: "16px", color: "#dc2626" }}>{error}</div>}
+
+      {!loading && !error && types.length === 0 && (
+        <div style={{ textAlign: "center", padding: "60px 20px", color: "#94a3b8" }}>
+          <div style={{ fontSize: "2rem", marginBottom: "8px" }}>📋</div>
+          <p>No asset types yet. Add your first one.</p>
+        </div>
+      )}
+
+      {!loading && types.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+          {types.map((t) => (
+            <div key={t.id} style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: "10px", padding: "14px 18px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, color: "#1e293b", marginBottom: "4px" }}>{t.name}</div>
+                {t.notes && <div style={{ fontSize: "0.8rem", color: "#64748b", marginBottom: "4px" }}>{t.notes}</div>}
+                <span style={{ background: domainColor(t.serviceDomain), color: "#374151", fontSize: "0.75rem", fontWeight: 600, borderRadius: "999px", padding: "2px 10px" }}>
+                  {domainLabel(t.serviceDomain)}
+                </span>
+              </div>
+              <div style={{ display: "flex", gap: "8px", marginLeft: "16px" }}>
+                <button onClick={() => openEdit(t)} style={{ background: "#f1f5f9", border: "1px solid #e2e8f0", borderRadius: "6px", padding: "6px 14px", cursor: "pointer", fontWeight: 500, color: "#374151" }}>Edit</button>
+                <button
+                  onClick={() => handleDelete(t.id)}
+                  disabled={deleteId === t.id}
+                  style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: "6px", padding: "6px 14px", cursor: "pointer", fontWeight: 500, color: "#dc2626" }}
+                >
+                  {deleteId === t.id ? "…" : "Delete"}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── Create / Edit Modal ── */}
+      {showForm && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 9000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ background: "#fff", borderRadius: "12px", padding: "28px", width: "440px", maxWidth: "95vw", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
+            <h3 style={{ margin: "0 0 20px", fontSize: "1.1rem", fontWeight: 700 }}>{editing ? "Edit Asset Type" : "New Asset Type"}</h3>
+            <label style={{ display: "block", marginBottom: "4px", fontWeight: 600, fontSize: "0.875rem", color: "#374151" }}>Name *</label>
+            <input
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              placeholder="e.g. HVAC, Electrical, Soft Service"
+              style={{ width: "100%", border: "1px solid #d1d5db", borderRadius: "8px", padding: "9px 12px", marginBottom: "14px", fontSize: "0.9rem", boxSizing: "border-box" }}
+            />
+            <label style={{ display: "block", marginBottom: "4px", fontWeight: 600, fontSize: "0.875rem", color: "#374151" }}>Service Domain</label>
+            <select
+              value={form.serviceDomain}
+              onChange={(e) => setForm({ ...form, serviceDomain: e.target.value })}
+              style={{ width: "100%", border: "1px solid #d1d5db", borderRadius: "8px", padding: "9px 12px", marginBottom: "14px", fontSize: "0.9rem", background: "#fff" }}
+            >
+              <option value="technical">Technical 🔧</option>
+              <option value="soft">Soft Service 🧹</option>
+              <option value="both">Both ⚙️</option>
+            </select>
+            <label style={{ display: "block", marginBottom: "4px", fontWeight: 600, fontSize: "0.875rem", color: "#374151" }}>Notes</label>
+            <textarea
+              value={form.notes}
+              onChange={(e) => setForm({ ...form, notes: e.target.value })}
+              placeholder="Optional description…"
+              rows={2}
+              style={{ width: "100%", border: "1px solid #d1d5db", borderRadius: "8px", padding: "9px 12px", marginBottom: "20px", fontSize: "0.9rem", resize: "vertical", boxSizing: "border-box" }}
+            />
+            <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
+              <button onClick={closeForm} style={{ padding: "9px 20px", borderRadius: "8px", border: "1px solid #d1d5db", background: "#f8fafc", cursor: "pointer", fontWeight: 500 }}>Cancel</button>
+              <button
+                onClick={handleSave}
+                disabled={saving || !form.name.trim()}
+                style={{ padding: "9px 20px", borderRadius: "8px", border: "none", background: saving ? "#93c5fd" : "#2563eb", color: "#fff", cursor: saving ? "default" : "pointer", fontWeight: 600 }}
+              >
+                {saving ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ─── Main Portal ────────────────────────────────────────────────── */
 export default function CompanyEmployeePortal() {
   const navigate = useNavigate();
@@ -4670,6 +4861,11 @@ export default function CompanyEmployeePortal() {
               setRoleRefreshKey((k) => k + 1);
             }}
           />
+        )}
+
+        {/* ── Asset Types ────────────────────────────────────────── */}
+        {nav === "asset-types" && (
+          <AssetTypesPanel token={token} />
         )}
 
         {/* ── Shifts ────────────────────────────────────────────── */}

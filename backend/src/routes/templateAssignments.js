@@ -283,22 +283,23 @@ router.get("/my-assignments", async (req, res, next) => {
       completedToday: !!(a.completedToday),
     }));
 
-    // ── Auto-include soft-service checklists only for users who can raise soft issues ──
-    // Look up the role capability from DB; technical users should only see their assigned templates.
-    let canRaiseSoftIssue = false;
+    // ── Filter / auto-include templates based on service_domain ──────────────
+    // service_domain: 'technical' (default) | 'soft' | 'both'
+    let serviceDomain = 'technical';
     try {
-      const [[roleRow]] = await pool.query(
-        `SELECT can_raise_soft_issue AS "canRaiseSoftIssue"
-         FROM company_roles
-         WHERE company_id = ? AND role_key = ? AND is_active = TRUE
-         LIMIT 1`,
-        [cid(req), req.companyUser.role]
+      const [[cuRow]] = await pool.query(
+        `SELECT service_domain AS "serviceDomain" FROM company_users WHERE id = ? LIMIT 1`,
+        [req.companyUser.id]
       );
-      canRaiseSoftIssue = Boolean(roleRow?.canRaiseSoftIssue);
-    } catch { /* legacy roles default to false */ }
+      serviceDomain = (cuRow?.serviceDomain || 'technical').toLowerCase();
+    } catch { /* default technical */ }
+
+    const isSoftUser = serviceDomain === 'soft' || serviceDomain === 'both';
+    const isTechUser = serviceDomain === 'technical' || serviceDomain === 'both';
 
     let softFormatted = [];
-    if (canRaiseSoftIssue) {
+    if (isSoftUser) {
+      // Soft service users automatically see all soft service templates — no assignment needed
       const [softTemplates] = await pool.query(
         `SELECT
            ct.id AS "templateId",
@@ -321,7 +322,7 @@ router.get("/my-assignments", async (req, res, next) => {
          LEFT JOIN shifts s ON s.id = ct.shift_id
          WHERE ct.company_id = ?
            AND ct.is_active = 1
-           AND LOWER(TRIM(ct.asset_type)) = 'soft service'`,
+           AND LOWER(TRIM(COALESCE(ct.asset_type,''))) = 'soft service'`,
         [req.companyUser.id, cid(req)]
       );
       const assignedTemplateIds = new Set(
@@ -349,10 +350,14 @@ router.get("/my-assignments", async (req, res, next) => {
         }));
     }
 
-    // For technical users (no soft access), also strip any directly-assigned soft service templates
-    const visibleFormatted = canRaiseSoftIssue
-      ? formatted
-      : formatted.filter(f => (f.assetType || '').toLowerCase().trim() !== 'soft service');
+    // Strip soft service templates from technical-only users (even if directly assigned)
+    // Strip technical templates from soft-only users
+    let visibleFormatted = formatted;
+    if (serviceDomain === 'technical') {
+      visibleFormatted = formatted.filter(f => (f.assetType || '').toLowerCase().trim() !== 'soft service');
+    } else if (serviceDomain === 'soft') {
+      visibleFormatted = formatted.filter(f => (f.assetType || '').toLowerCase().trim() === 'soft service' || !f.assetType);
+    }
 
     res.json([...visibleFormatted, ...softFormatted]);
   } catch (err) {
@@ -1803,27 +1808,26 @@ router.get("/site-score", async (req, res, next) => {
   try {
     const companyId = cid(req);
 
-    // Check if this user has soft-service access (can raise/resolve soft issues)
-    // If not (pure technical role), exclude 'soft service' asset type from score
-    let canRaiseSoftIssue = false;
-    const legacyRole = (req.companyUser.role || '').toLowerCase();
-    if (legacyRole === 'technician' || legacyRole === 'supervisor' || legacyRole === 'admin' || legacyRole === 'technical_lead') {
-      canRaiseSoftIssue = false; // legacy technical roles have no soft access
-    } else {
-      try {
-        const [[roleRow]] = await pool.query(
-          `SELECT can_raise_soft_issue AS "canRaiseSoftIssue"
-           FROM company_roles
-           WHERE company_id = ? AND role_key = ? AND is_active = TRUE
-           LIMIT 1`,
-          [companyId, req.companyUser.role]
-        );
-        canRaiseSoftIssue = Boolean(roleRow?.canRaiseSoftIssue);
-      } catch { /* default false */ }
+    // Use service_domain from company_users to determine what the user can see
+    let serviceDomain = 'technical';
+    try {
+      const [[cuRow]] = await pool.query(
+        `SELECT service_domain AS "serviceDomain" FROM company_users WHERE id = ? LIMIT 1`,
+        [req.companyUser.id]
+      );
+      serviceDomain = (cuRow?.serviceDomain || 'technical').toLowerCase();
+    } catch { /* default technical */ }
+
+    // Build SQL filter based on domain
+    let softFilter = '';
+    if (serviceDomain === 'technical') {
+      softFilter = `AND LOWER(TRIM(COALESCE(ct.asset_type, ''))) != 'soft service'`;
+    } else if (serviceDomain === 'soft') {
+      softFilter = `AND LOWER(TRIM(COALESCE(ct.asset_type, ''))) = 'soft service'`;
     }
-    const softFilter = canRaiseSoftIssue
-      ? ''
-      : `AND LOWER(TRIM(COALESCE(ct.asset_type, ''))) != 'soft service'`;
+    // 'both' → no filter
+
+    const isSoftUser = serviceDomain === 'soft' || serviceDomain === 'both';
 
     // Total active checklist templates for the company (exclude soft service for tech users)
     const [[{ total }]] = await pool.query(
@@ -1855,7 +1859,7 @@ router.get("/site-score", async (req, res, next) => {
 
     // Open soft-service requests (only relevant if user has soft access)
     let openN = 0;
-    if (canRaiseSoftIssue) {
+    if (isSoftUser) {
       const [[{ openRequests }]] = await pool.query(
         `SELECT COUNT(*) AS "openRequests"
          FROM soft_service_requests
@@ -1924,21 +1928,22 @@ router.get("/all-templates", async (req, res, next) => {
   try {
     const companyId = cid(req);
 
-    // Determine soft service access (same logic as site-score)
-    let canRaiseSoftIssue = false;
-    const legacyRole = (req.companyUser.role || '').toLowerCase();
-    if (!['technician', 'supervisor', 'admin', 'technical_lead'].includes(legacyRole)) {
-      try {
-        const [[roleRow]] = await pool.query(
-          `SELECT can_raise_soft_issue AS "canRaiseSoftIssue"
-           FROM company_roles
-           WHERE company_id = ? AND role_key = ? AND is_active = TRUE LIMIT 1`,
-          [companyId, req.companyUser.role]
-        );
-        canRaiseSoftIssue = Boolean(roleRow?.canRaiseSoftIssue);
-      } catch { /* default false */ }
+    // Determine service domain from company_users record
+    let serviceDomain = 'technical';
+    try {
+      const [[cuRow]] = await pool.query(
+        `SELECT service_domain AS "serviceDomain" FROM company_users WHERE id = ? LIMIT 1`,
+        [req.companyUser.id]
+      );
+      serviceDomain = (cuRow?.serviceDomain || 'technical').toLowerCase();
+    } catch { /* default technical */ }
+
+    let softFilter = '';
+    if (serviceDomain === 'technical') {
+      softFilter = `AND LOWER(TRIM(COALESCE(ct.asset_type, ''))) != 'soft service'`;
+    } else if (serviceDomain === 'soft') {
+      softFilter = `AND LOWER(TRIM(COALESCE(ct.asset_type, ''))) = 'soft service'`;
     }
-    const softFilter = canRaiseSoftIssue ? '' : `AND LOWER(TRIM(COALESCE(ct.asset_type, ''))) != 'soft service'`;
 
     // All active checklist templates
     const [checklists] = await pool.query(

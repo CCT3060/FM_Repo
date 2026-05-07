@@ -28,6 +28,7 @@ const router = Router();
     await pool.query(`ALTER TABLE company_users ADD COLUMN IF NOT EXISTS username VARCHAR(100) NULL`);
     await pool.query(`ALTER TABLE company_users ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '{}'::jsonb`);
     await pool.query(`ALTER TABLE company_users ADD COLUMN IF NOT EXISTS module_access JSONB NOT NULL DEFAULT '[]'::jsonb`);
+    await pool.query(`ALTER TABLE company_users ADD COLUMN IF NOT EXISTS service_domain VARCHAR(20) NOT NULL DEFAULT 'technical'`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_company_users_email ON company_users(email)`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_company_users_username ON company_users(LOWER(username)) WHERE username IS NOT NULL`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_company_users_company ON company_users(company_id)`);
