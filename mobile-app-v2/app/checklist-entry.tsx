@@ -272,7 +272,7 @@ function FieldInput({ field, value, onChange }: { field: Field; value: any; onCh
               styles.boolBtn,
               value === opt && styles.boolBtnActive,
             ]}
-            onPress={() => onChange(opt)}
+            onPress={() => onChange(value === opt ? null : opt)}
             activeOpacity={0.7}
           >
             <Text style={[styles.boolBtnText, { color: value === opt ? theme.textPrimary : theme.textSecondary }]}>
@@ -295,7 +295,7 @@ function FieldInput({ field, value, onChange }: { field: Field; value: any; onCh
               backgroundColor: value === opt ? theme.primary : theme.inputBg,
               borderColor:     value === opt ? theme.primary : theme.inputBorder,
             }]}
-            onPress={() => onChange(opt)}
+            onPress={() => onChange(value === opt ? null : opt)}
           >
             <Text style={[styles.optBtnText, { color: value === opt ? '#fff' : theme.textSecondary }]}>
               {opt}
@@ -608,15 +608,6 @@ export default function ChecklistEntryScreen() {
                         value={answers[field.id]}
                         onChange={(v) => setAnswer(field.id, v)}
                       />
-                      {/* Photo preview below answer when a photo has been taken */}
-                      {field.type !== 'photo' && photos[String(field.id)] && (
-                        <View style={styles.attachPhotoSection}>
-                          <PhotoInput
-                            value={photos[String(field.id)] ?? null}
-                            onChange={(v) => setPhotos((prev) => ({ ...prev, [String(field.id)]: v }))}
-                          />
-                        </View>
-                      )}
                     </View>
                   </React.Fragment>
                 );

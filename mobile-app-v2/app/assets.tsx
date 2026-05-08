@@ -20,7 +20,7 @@ export default function AssetsScreen() {
 
   const load = useCallback(async (q?: string) => {
     try {
-      const data = await fetchAssets({ assignedOnly: true, ...(q ? { search: q } : {}) });
+      const data = await fetchAssets({ ...(q ? { search: q } : {}) });
       setAssets(data as any[]);
     } catch { /* silent */ } finally { setLoading(false); setRefreshing(false); }
   }, []);

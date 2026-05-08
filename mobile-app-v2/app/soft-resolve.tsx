@@ -268,6 +268,19 @@ export default function SoftResolveScreen() {
             const selOpts  = parseOptions(q);
             const photoVal = photos[q.id] ?? null;
 
+            // Find client's "before" answer for this question
+            const beforeEntry = actuallyAnswered.find((a: any) => {
+              const matchId   = a.questionId != null && String(a.questionId) === String(q.id ?? '');
+              const matchText = a.questionText?.trim().toLowerCase() === (q.questionText || q.text || '').trim().toLowerCase();
+              return matchId || matchText;
+            });
+            const beforeValue = beforeEntry
+              ? (beforeEntry.answer ?? beforeEntry.optionSelected ?? beforeEntry.value ?? null)
+              : null;
+            const beforeDisplay = beforeValue !== null && beforeValue !== undefined && String(beforeValue).trim() !== ''
+              ? String(beforeValue)
+              : null;
+
             return (
               <View key={String(q.id ?? idx)} style={[styles.fieldCard, { backgroundColor: theme.surface, shadowColor: theme.cardShadow, borderColor: theme.border }]}>
                 {/* Header row: number + label + camera icon */}
@@ -301,14 +314,25 @@ export default function SoftResolveScreen() {
                   )}
                 </View>
 
-                {/* Answer input */}
+                {/* BEFORE — client's original answer (read-only) */}
+                {beforeDisplay !== null && (
+                  <View style={[styles.beforeBox, { backgroundColor: theme.inputBg, borderColor: theme.inputBorder }]}>
+                    <Text style={[styles.beforeLabel, { color: theme.textMuted }]}>CLIENT RESPONSE (BEFORE)</Text>
+                    <Text style={[styles.beforeValue, { color: theme.textSecondary }]}>{beforeDisplay}</Text>
+                  </View>
+                )}
+
+                {/* AFTER label */}
+                <Text style={[styles.afterLabel, { color: theme.textMuted }]}>YOUR RESPONSE (AFTER)</Text>
+
+                {/* After — catalyst's answer input */}
                 {type === 'boolean' && (
                   <View style={[styles.boolContainer, { backgroundColor: theme.inputBg }]}>
                     {boolOpts.map((opt) => (
                       <TouchableOpacity
                         key={opt}
                         style={[styles.boolBtn, answers[q.id] === opt && styles.boolBtnActive]}
-                        onPress={() => setAnswers((prev) => ({ ...prev, [q.id]: opt }))}
+                        onPress={() => setAnswers((prev) => ({ ...prev, [q.id]: prev[q.id] === opt ? null : opt }))}
                         activeOpacity={0.7}
                       >
                         <Text style={[styles.boolBtnText, { color: answers[q.id] === opt ? theme.textPrimary : theme.textSecondary }]}>{opt}</Text>
@@ -322,7 +346,7 @@ export default function SoftResolveScreen() {
                       <TouchableOpacity
                         key={opt}
                         style={[styles.optBtn, { backgroundColor: answers[q.id] === opt ? theme.primary : theme.inputBg, borderColor: answers[q.id] === opt ? theme.primary : theme.inputBorder }]}
-                        onPress={() => setAnswers((prev) => ({ ...prev, [q.id]: opt }))}
+                        onPress={() => setAnswers((prev) => ({ ...prev, [q.id]: prev[q.id] === opt ? null : opt }))}
                       >
                         <Text style={[styles.optBtnText, { color: answers[q.id] === opt ? '#fff' : theme.textSecondary }]}>{opt}</Text>
                       </TouchableOpacity>
@@ -408,6 +432,11 @@ const styles = StyleSheet.create({
   fieldIdxBadge: { width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginTop: 1 },
   fieldIdxText:  { fontSize: 11, fontWeight: '700' as const, lineHeight: 14 },
   fieldLabel:    { fontSize: 13, fontWeight: '500' as const, lineHeight: 19, flex: 1 },
+  // Before / After column styles
+  beforeBox:     { borderRadius: Radius.md, padding: Spacing.sm, marginBottom: Spacing.sm, borderWidth: 1 },
+  beforeLabel:   { fontSize: 9, fontWeight: '700' as const, letterSpacing: 0.8, marginBottom: 4 },
+  beforeValue:   { fontSize: 13, fontWeight: '500' as const, lineHeight: 19 },
+  afterLabel:    { fontSize: 9, fontWeight: '700' as const, letterSpacing: 0.8, marginBottom: 4 },
   // Camera icon button (top-right)
   cameraIconBtn: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   // Boolean

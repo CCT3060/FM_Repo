@@ -1,13 +1,12 @@
 import { router, Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import * as Notifications from 'expo-notifications';
+import Constants from 'expo-constants';
 import React, { Component, useEffect, useRef } from 'react';
 import { Text, TouchableOpacity, View, StyleSheet } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ThemeProvider, useTheme, Spacing, Radius, Typography } from '../utils/theme';
 import { AuthProvider, useAuth } from '../context/AuthContext';
 import { verifyToken } from '../utils/api';
-import { registerForPushNotifications } from '../utils/notifications';
 import { startNetworkMonitor } from '../utils/networkStatus';
 import OfflineBanner from '../components/OfflineBanner';
 
@@ -80,22 +79,29 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
 // ─── Inner layout ─────────────────────────────────────────────────────────────
 function RootLayoutInner() {
   const { theme } = useTheme();
-  const notifListener = useRef<Notifications.EventSubscription | null>(null);
-  const responseListener = useRef<Notifications.EventSubscription | null>(null);
+  const notifListener = useRef<any>(null);
+  const responseListener = useRef<any>(null);
 
   useEffect(() => {
-    void registerForPushNotifications();
+    // Push notifications are unavailable in Expo Go since SDK 53.
+    // Dynamically import so the module-level side effects only run in
+    // standalone / development builds, never in Expo Go.
+    if (Constants.appOwnership !== 'expo') {
+      void import('../utils/notifications').then(({ registerForPushNotifications }) => {
+        void registerForPushNotifications();
+      });
+      void import('expo-notifications').then((Notifications) => {
+        notifListener.current = Notifications.addNotificationReceivedListener(() => {});
+        responseListener.current = Notifications.addNotificationResponseReceivedListener((response) => {
+          const data = response.notification.request.content.data;
+          if (data?.screen) router.push(data.screen as any);
+          else router.push('/notifications');
+        });
+      });
+    }
 
     // Start real device network monitoring (uses expo-network, not backend connectivity)
     const stopNetworkMonitor = startNetworkMonitor();
-
-    notifListener.current = Notifications.addNotificationReceivedListener(() => {});
-
-    responseListener.current = Notifications.addNotificationResponseReceivedListener((response) => {
-      const data = response.notification.request.content.data;
-      if (data?.screen) router.push(data.screen as any);
-      else router.push('/notifications');
-    });
 
     return () => {
       stopNetworkMonitor();

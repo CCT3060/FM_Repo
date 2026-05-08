@@ -35,17 +35,20 @@ function ScoreArc({ pct, color }: { pct: number; color: string }) {
       {/* Track */}
       <View style={{ position: 'absolute', width: SIZE, height: SIZE, borderRadius: half, borderWidth: BORDER, borderColor: color + '22' }} />
 
-      {/* Right half clip */}
-      <View style={{ position: 'absolute', width: SIZE, height: SIZE, overflow: 'hidden' }}>
-        <View style={{ position: 'absolute', right: 0, width: half, height: SIZE, overflow: 'hidden' }}>
-          <Animated.View style={{ position: 'absolute', left: -half, width: SIZE, height: SIZE, borderRadius: half, borderWidth: BORDER, borderColor: color, borderLeftColor: 'transparent', borderBottomColor: 'transparent', transform: [{ rotate: rightRot }], opacity: rightOpacity }} />
+      {/* Fills — rotated 180° so arc starts at 12 o'clock and fills clockwise */}
+      <View style={{ position: 'absolute', width: SIZE, height: SIZE, transform: [{ rotate: '180deg' }] }}>
+        {/* Right half clip */}
+        <View style={{ position: 'absolute', width: SIZE, height: SIZE, overflow: 'hidden' }}>
+          <View style={{ position: 'absolute', right: 0, width: half, height: SIZE, overflow: 'hidden' }}>
+            <Animated.View style={{ position: 'absolute', left: -half, width: SIZE, height: SIZE, borderRadius: half, borderWidth: BORDER, borderColor: color, borderLeftColor: 'transparent', borderBottomColor: 'transparent', transform: [{ rotate: rightRot }], opacity: rightOpacity }} />
+          </View>
         </View>
-      </View>
 
-      {/* Left half clip */}
-      <View style={{ position: 'absolute', width: SIZE, height: SIZE, overflow: 'hidden' }}>
-        <View style={{ position: 'absolute', left: 0, width: half, height: SIZE, overflow: 'hidden' }}>
-          <Animated.View style={{ position: 'absolute', right: -half, width: SIZE, height: SIZE, borderRadius: half, borderWidth: BORDER, borderColor: color, borderRightColor: 'transparent', borderTopColor: 'transparent', transform: [{ rotate: leftRot }] }} />
+        {/* Left half clip */}
+        <View style={{ position: 'absolute', width: SIZE, height: SIZE, overflow: 'hidden' }}>
+          <View style={{ position: 'absolute', left: 0, width: half, height: SIZE, overflow: 'hidden' }}>
+            <Animated.View style={{ position: 'absolute', right: -half, width: SIZE, height: SIZE, borderRadius: half, borderWidth: BORDER, borderColor: color, borderRightColor: 'transparent', borderTopColor: 'transparent', transform: [{ rotate: leftRot }] }} />
+          </View>
         </View>
       </View>
 
@@ -174,7 +177,7 @@ export default function DashboardScreen() {
               <StatCard
                 icon="clipboard-check-outline"
                 label="Filled"
-                value={score?.totalFilled ?? 0}
+                value={score?.filled ?? 0}
                 color="#059669"
                 onPress={() => router.push('/history')}
               />

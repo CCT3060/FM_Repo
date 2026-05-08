@@ -44,13 +44,16 @@ export default function WarningsScreen() {
             >
               <View style={styles.cardTop}>
                 <MaterialCommunityIcons name="alert" size={20} color={theme.warning} />
-                <Text style={[styles.cardTitle, { color: theme.textPrimary }]} numberOfLines={2}>{w.message ?? w.warning}</Text>
+                <Text style={[styles.cardTitle, { color: theme.textPrimary }]} numberOfLines={2}>{w.description ?? w.message ?? w.warning ?? 'Warning'}</Text>
               </View>
-              <Text style={[styles.cardMeta, { color: theme.textSecondary }]}>
-                {w.templateName} · {w.assetName}
-              </Text>
+              {(w.assetName || w.assetCode) && (
+                <Text style={[styles.cardMeta, { color: theme.textSecondary }]}>
+                  {[w.assetName, w.assetCode].filter(Boolean).join(' · ')}
+                  {w.severity ? ` · ${w.severity.toUpperCase()}` : ''}
+                </Text>
+              )}
               <Text style={[styles.cardDate, { color: theme.textMuted }]}>
-                {new Date(w.createdAt ?? w.raisedAt).toLocaleString()}
+                {new Date(w.createdAt).toLocaleString()}
               </Text>
             </View>
           ))}

@@ -1857,17 +1857,14 @@ router.get("/site-score", async (req, res, next) => {
       [companyId]
     );
 
-    // Open soft-service requests (only relevant if user has soft access)
-    let openN = 0;
-    if (isSoftUser) {
-      const [[{ openRequests }]] = await pool.query(
-        `SELECT COUNT(*) AS "openRequests"
-         FROM soft_service_requests
-         WHERE company_id = ? AND status = 'open'`,
-        [companyId]
-      );
-      openN = Number(openRequests) || 0;
-    }
+    // Open soft-service requests — always compute so any role with soft access sees the count
+    const [[{ openRequests }]] = await pool.query(
+      `SELECT COUNT(*) AS "openRequests"
+       FROM soft_service_requests
+       WHERE company_id = ? AND status = 'open'`,
+      [companyId]
+    );
+    const openN = Number(openRequests) || 0;
 
     // Total checklist templates (active, filtered)
     const [[{ totalChecklistTemplates }]] = await pool.query(
