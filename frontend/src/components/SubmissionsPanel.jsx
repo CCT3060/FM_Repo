@@ -184,6 +184,14 @@ function PhotoAnswer({ src, alt = "Photo", caption, sizeKB }) {
 function renderAnswerValue(val) {
   if (!val) return <span style={{ color: "#94a3b8", fontWeight: 400 }}>No answer</span>;
 
+  // Handle already-parsed objects (JSONB from PostgreSQL arrives as object, not string)
+  if (val !== null && typeof val === "object" && !Array.isArray(val)) {
+    if ("value" in val) {
+      return renderAnswerValue(val.value ?? "");
+    }
+    // Object with uri/url/name handled below
+  }
+
   // Unwrap { value: ... } wrapper that the backend stores in answer_json
   if (typeof val === "string") {
     const trimmed = val.trim();

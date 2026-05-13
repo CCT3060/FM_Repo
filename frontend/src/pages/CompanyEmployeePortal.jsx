@@ -2647,90 +2647,73 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false }) {
 /* ─── Asset Types Panel ──────────────────────────────────────────── */
 function AssetTypesPanel({ token }) {
   const API = import.meta.env.VITE_API_BASE || "";
+  const emptyDraft = { code: "", label: "", category: "", workflowType: "standard", fieldLayout: { fields: [] } };
   const [types, setTypes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showForm, setShowForm] = useState(false);
-  const [editing, setEditing] = useState(null); // null = create
-  const [form, setForm] = useState({ name: "", serviceDomain: "both", notes: "" });
+  const [editingId, setEditingId] = useState(null);
+  const [draft, setDraft] = useState(emptyDraft);
   const [saving, setSaving] = useState(false);
   const [deleteId, setDeleteId] = useState(null);
 
   const load = async () => {
-    setLoading(true);
-    setError(null);
+    setLoading(true); setError(null);
     try {
-      const r = await fetch(`${API}/api/portal/asset-types`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const r = await fetch(`${API}/api/company-portal/asset-types`, { headers: { Authorization: `Bearer ${token}` } });
       if (!r.ok) throw new Error("Failed to load asset types");
       setTypes(await r.json());
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
   };
-
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const openCreate = () => {
-    setEditing(null);
-    setForm({ name: "", serviceDomain: "both", notes: "" });
-    setShowForm(true);
-  };
+  const openCreate = () => { setEditingId(null); setDraft(emptyDraft); setShowForm(true); };
   const openEdit = (t) => {
-    setEditing(t);
-    setForm({ name: t.name, serviceDomain: t.serviceDomain || "both", notes: t.notes || "" });
+    setEditingId(t.id);
+    setDraft({ code: t.code, label: t.label, category: t.category || "", workflowType: t.workflowType || "standard", fieldLayout: t.fieldLayout || { fields: [] } });
     setShowForm(true);
   };
   const closeForm = () => setShowForm(false);
 
+  const addField = () => setDraft(p => ({ ...p, fieldLayout: { fields: [...(p.fieldLayout?.fields || []), { key: "", label: "", type: "text", required: false, placeholder: "" }] } }));
+  const updateField = (idx, changes) => setDraft(p => {
+    const fields = [...(p.fieldLayout?.fields || [])];
+    fields[idx] = { ...fields[idx], ...changes };
+    if (changes.label !== undefined) fields[idx].key = changes.label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/(^_|_$)/g, "");
+    return { ...p, fieldLayout: { fields } };
+  });
+  const removeField = (idx) => setDraft(p => ({ ...p, fieldLayout: { fields: p.fieldLayout.fields.filter((_, i) => i !== idx) } }));
+
   const handleSave = async () => {
-    if (!form.name.trim()) return;
+    if (!draft.code.trim() || !draft.label.trim()) return alert("Code and label are required");
     setSaving(true);
     try {
-      const url = editing
-        ? `${API}/api/portal/asset-types/${editing.id}`
-        : `${API}/api/portal/asset-types`;
-      const method = editing ? "PUT" : "POST";
+      const url = editingId ? `${API}/api/company-portal/asset-types/${editingId}` : `${API}/api/company-portal/asset-types`;
       const r = await fetch(url, {
-        method,
+        method: editingId ? "PUT" : "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ name: form.name.trim(), serviceDomain: form.serviceDomain, notes: form.notes }),
+        body: JSON.stringify({ code: draft.code.trim().toLowerCase(), label: draft.label.trim(), category: draft.category.trim() || undefined, workflowType: draft.workflowType, fieldLayout: draft.fieldLayout?.fields?.length ? draft.fieldLayout : undefined }),
       });
-      if (!r.ok) {
-        const err = await r.json().catch(() => ({}));
-        throw new Error(err.message || "Save failed");
-      }
+      if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.message || "Save failed"); }
       setShowForm(false);
       load();
-    } catch (e) {
-      alert(e.message);
-    } finally {
-      setSaving(false);
-    }
+    } catch (e) { alert(e.message); }
+    finally { setSaving(false); }
   };
 
   const handleDelete = async (id) => {
     if (!window.confirm("Delete this asset type?")) return;
     setDeleteId(id);
     try {
-      const r = await fetch(`${API}/api/portal/asset-types/${id}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const r = await fetch(`${API}/api/company-portal/asset-types/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
       if (!r.ok) throw new Error("Delete failed");
       load();
-    } catch (e) {
-      alert(e.message);
-    } finally {
-      setDeleteId(null);
-    }
+    } catch (e) { alert(e.message); }
+    finally { setDeleteId(null); }
   };
 
-  const domainLabel = (d) => ({ technical: "Technical 🔧", soft: "Soft Service 🧹", both: "Both ⚙️" }[d] || d);
-  const domainColor = (d) => ({ technical: "#dbeafe", soft: "#d1fae5", both: "#ede9fe" }[d] || "#f1f5f9");
+  const wfColor = (w) => ({ soft: "#d1fae5", technical: "#dbeafe", fleet: "#ede9fe" }[w] || "#f1f5f9");
 
   return (
     <div style={{ padding: "24px", maxWidth: "900px", margin: "0 auto" }}>
@@ -2764,19 +2747,22 @@ function AssetTypesPanel({ token }) {
           {types.map((t) => (
             <div key={t.id} style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: "10px", padding: "14px 18px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600, color: "#1e293b", marginBottom: "4px" }}>{t.name}</div>
-                {t.notes && <div style={{ fontSize: "0.8rem", color: "#64748b", marginBottom: "4px" }}>{t.notes}</div>}
-                <span style={{ background: domainColor(t.serviceDomain), color: "#374151", fontSize: "0.75rem", fontWeight: 600, borderRadius: "999px", padding: "2px 10px" }}>
-                  {domainLabel(t.serviceDomain)}
-                </span>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
+                  <span style={{ fontWeight: 700, color: "#1e293b" }}>{t.label}</span>
+                  <span style={{ fontSize: "11px", color: "#94a3b8" }}>({t.code})</span>
+                  {t.workflowType && t.workflowType !== "standard" && (
+                    <span style={{ background: wfColor(t.workflowType), color: "#374151", fontSize: "0.72rem", fontWeight: 600, borderRadius: "999px", padding: "2px 9px" }}>{t.workflowType}</span>
+                  )}
+                  {t.fieldLayout?.fields?.length > 0 && (
+                    <span style={{ background: "#fffbeb", color: "#92400e", fontSize: "0.72rem", fontWeight: 600, borderRadius: "999px", padding: "2px 9px" }}>{t.fieldLayout.fields.length} custom fields</span>
+                  )}
+                </div>
+                {t.category && <div style={{ fontSize: "0.8rem", color: "#64748b" }}>{t.category}</div>}
               </div>
               <div style={{ display: "flex", gap: "8px", marginLeft: "16px" }}>
                 <button onClick={() => openEdit(t)} style={{ background: "#f1f5f9", border: "1px solid #e2e8f0", borderRadius: "6px", padding: "6px 14px", cursor: "pointer", fontWeight: 500, color: "#374151" }}>Edit</button>
-                <button
-                  onClick={() => handleDelete(t.id)}
-                  disabled={deleteId === t.id}
-                  style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: "6px", padding: "6px 14px", cursor: "pointer", fontWeight: 500, color: "#dc2626" }}
-                >
+                <button onClick={() => handleDelete(t.id)} disabled={deleteId === t.id}
+                  style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: "6px", padding: "6px 14px", cursor: "pointer", fontWeight: 500, color: "#dc2626" }}>
                   {deleteId === t.id ? "…" : "Delete"}
                 </button>
               </div>
@@ -2787,42 +2773,79 @@ function AssetTypesPanel({ token }) {
 
       {/* ── Create / Edit Modal ── */}
       {showForm && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 9000, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div style={{ background: "#fff", borderRadius: "12px", padding: "28px", width: "440px", maxWidth: "95vw", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
-            <h3 style={{ margin: "0 0 20px", fontSize: "1.1rem", fontWeight: 700 }}>{editing ? "Edit Asset Type" : "New Asset Type"}</h3>
-            <label style={{ display: "block", marginBottom: "4px", fontWeight: 600, fontSize: "0.875rem", color: "#374151" }}>Name *</label>
-            <input
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-              placeholder="e.g. HVAC, Electrical, Soft Service"
-              style={{ width: "100%", border: "1px solid #d1d5db", borderRadius: "8px", padding: "9px 12px", marginBottom: "14px", fontSize: "0.9rem", boxSizing: "border-box" }}
-            />
-            <label style={{ display: "block", marginBottom: "4px", fontWeight: 600, fontSize: "0.875rem", color: "#374151" }}>Service Domain</label>
-            <select
-              value={form.serviceDomain}
-              onChange={(e) => setForm({ ...form, serviceDomain: e.target.value })}
-              style={{ width: "100%", border: "1px solid #d1d5db", borderRadius: "8px", padding: "9px 12px", marginBottom: "14px", fontSize: "0.9rem", background: "#fff" }}
-            >
-              <option value="technical">Technical 🔧</option>
-              <option value="soft">Soft Service 🧹</option>
-              <option value="both">Both ⚙️</option>
-            </select>
-            <label style={{ display: "block", marginBottom: "4px", fontWeight: 600, fontSize: "0.875rem", color: "#374151" }}>Notes</label>
-            <textarea
-              value={form.notes}
-              onChange={(e) => setForm({ ...form, notes: e.target.value })}
-              placeholder="Optional description…"
-              rows={2}
-              style={{ width: "100%", border: "1px solid #d1d5db", borderRadius: "8px", padding: "9px 12px", marginBottom: "20px", fontSize: "0.9rem", resize: "vertical", boxSizing: "border-box" }}
-            />
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 9000, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+          <div style={{ background: "#fff", borderRadius: "12px", padding: "28px", width: "560px", maxWidth: "95vw", maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
+            <h3 style={{ margin: "0 0 20px", fontSize: "1.1rem", fontWeight: 700 }}>{editingId ? "Edit Asset Type" : "New Asset Type"}</h3>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "12px" }}>
+              <div>
+                <label style={{ display: "block", marginBottom: "4px", fontWeight: 600, fontSize: "0.875rem", color: "#374151" }}>Type Code *</label>
+                <input value={draft.code} onChange={(e) => setDraft(p => ({ ...p, code: e.target.value }))} placeholder="e.g. kitchen"
+                  disabled={!!editingId}
+                  style={{ width: "100%", border: "1px solid #d1d5db", borderRadius: "8px", padding: "9px 12px", fontSize: "0.9rem", boxSizing: "border-box", background: editingId ? "#f8fafc" : "#fff" }} />
+              </div>
+              <div>
+                <label style={{ display: "block", marginBottom: "4px", fontWeight: 600, fontSize: "0.875rem", color: "#374151" }}>Label *</label>
+                <input value={draft.label} onChange={(e) => setDraft(p => ({ ...p, label: e.target.value }))} placeholder="e.g. Kitchen Equipment"
+                  style={{ width: "100%", border: "1px solid #d1d5db", borderRadius: "8px", padding: "9px 12px", fontSize: "0.9rem", boxSizing: "border-box" }} />
+              </div>
+              <div>
+                <label style={{ display: "block", marginBottom: "4px", fontWeight: 600, fontSize: "0.875rem", color: "#374151" }}>Category</label>
+                <input value={draft.category} onChange={(e) => setDraft(p => ({ ...p, category: e.target.value }))} placeholder="Optional grouping"
+                  style={{ width: "100%", border: "1px solid #d1d5db", borderRadius: "8px", padding: "9px 12px", fontSize: "0.9rem", boxSizing: "border-box" }} />
+              </div>
+              <div>
+                <label style={{ display: "block", marginBottom: "4px", fontWeight: 600, fontSize: "0.875rem", color: "#374151" }}>Workflow Type</label>
+                <select value={draft.workflowType} onChange={(e) => setDraft(p => ({ ...p, workflowType: e.target.value }))}
+                  style={{ width: "100%", border: "1px solid #d1d5db", borderRadius: "8px", padding: "9px 12px", fontSize: "0.9rem", background: "#fff", boxSizing: "border-box" }}>
+                  <option value="standard">Standard</option>
+                  <option value="soft">Soft Services</option>
+                  <option value="technical">Technical</option>
+                  <option value="fleet">Fleet</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Field Layout Builder */}
+            <div style={{ marginBottom: "20px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px" }}>
+                <span style={{ fontWeight: 600, fontSize: "0.875rem", color: "#374151" }}>Custom Fields</span>
+                <button type="button" onClick={addField}
+                  style={{ padding: "3px 12px", background: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe", borderRadius: "6px", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}>+ Add Field</button>
+              </div>
+              {(draft.fieldLayout?.fields || []).map((f, idx) => (
+                <div key={idx} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 100px 70px 28px", gap: "6px", alignItems: "end", marginBottom: "6px", background: "#f8fafc", padding: "8px", borderRadius: "8px" }}>
+                  <div><label style={{ fontSize: "11px", fontWeight: 600, color: "#64748b", display: "block", marginBottom: "2px" }}>Label</label>
+                    <input value={f.label} onChange={(e) => updateField(idx, { label: e.target.value })}
+                      placeholder="Field label" style={{ width: "100%", border: "1px solid #d1d5db", borderRadius: "6px", padding: "6px 8px", fontSize: "0.85rem", boxSizing: "border-box" }} /></div>
+                  <div><label style={{ fontSize: "11px", fontWeight: 600, color: "#64748b", display: "block", marginBottom: "2px" }}>Placeholder</label>
+                    <input value={f.placeholder || ""} onChange={(e) => updateField(idx, { placeholder: e.target.value })}
+                      placeholder="Placeholder" style={{ width: "100%", border: "1px solid #d1d5db", borderRadius: "6px", padding: "6px 8px", fontSize: "0.85rem", boxSizing: "border-box" }} /></div>
+                  <div><label style={{ fontSize: "11px", fontWeight: 600, color: "#64748b", display: "block", marginBottom: "2px" }}>Type</label>
+                    <select value={f.type} onChange={(e) => updateField(idx, { type: e.target.value })}
+                      style={{ width: "100%", border: "1px solid #d1d5db", borderRadius: "6px", padding: "6px 8px", fontSize: "0.85rem", background: "#fff" }}>
+                      <option value="text">Text</option>
+                      <option value="number">Number</option>
+                      <option value="date">Date</option>
+                      <option value="textarea">Textarea</option>
+                    </select></div>
+                  <div><label style={{ fontSize: "11px", fontWeight: 600, color: "#64748b", display: "block", marginBottom: "2px" }}>Required</label>
+                    <select value={f.required ? "yes" : "no"} onChange={(e) => updateField(idx, { required: e.target.value === "yes" })}
+                      style={{ width: "100%", border: "1px solid #d1d5db", borderRadius: "6px", padding: "6px 8px", fontSize: "0.85rem", background: "#fff" }}>
+                      <option value="no">No</option>
+                      <option value="yes">Yes</option>
+                    </select></div>
+                  <button type="button" onClick={() => removeField(idx)}
+                    style={{ width: "28px", height: "28px", background: "#fef2f2", color: "#dc2626", border: "none", borderRadius: "6px", cursor: "pointer", alignSelf: "flex-end" }}>✕</button>
+                </div>
+              ))}
+            </div>
+
             <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
               <button onClick={closeForm} style={{ padding: "9px 20px", borderRadius: "8px", border: "1px solid #d1d5db", background: "#f8fafc", cursor: "pointer", fontWeight: 500 }}>Cancel</button>
-              <button
-                onClick={handleSave}
-                disabled={saving || !form.name.trim()}
-                style={{ padding: "9px 20px", borderRadius: "8px", border: "none", background: saving ? "#93c5fd" : "#2563eb", color: "#fff", cursor: saving ? "default" : "pointer", fontWeight: 600 }}
-              >
-                {saving ? "Saving…" : "Save"}
+              <button onClick={handleSave} disabled={saving}
+                style={{ padding: "9px 20px", borderRadius: "8px", border: "none", background: saving ? "#93c5fd" : "#2563eb", color: "#fff", cursor: saving ? "default" : "pointer", fontWeight: 600 }}>
+                {saving ? "Saving…" : editingId ? "Update Type" : "Create Type"}
               </button>
             </div>
           </div>

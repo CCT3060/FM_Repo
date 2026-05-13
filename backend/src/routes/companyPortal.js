@@ -439,6 +439,73 @@ router.get("/dashboard/chart-stats", async (req, res, next) => {
   }
 });
 
+/* ── Asset Types (company portal admin CRUD) ───────────────────────────────── */
+router.get("/asset-types", async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT id, code, label, category, status,
+              workflow_type AS "workflowType",
+              field_layout  AS "fieldLayout"
+       FROM asset_types
+       WHERE status = 'Active'
+       ORDER BY label`
+    );
+    const parsed = rows.map(r => ({ ...r, fieldLayout: r.fieldLayout || null }));
+    res.json(parsed);
+  } catch (err) { next(err); }
+});
+
+router.post("/asset-types", async (req, res, next) => {
+  try {
+    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    const { code, label, category, workflowType = "standard", fieldLayout } = req.body;
+    if (!code?.trim() || !label?.trim()) return res.status(400).json({ message: "code and label are required" });
+    const fl = fieldLayout?.fields?.length ? JSON.stringify(fieldLayout) : null;
+    const [rows] = await pool.query(
+      `INSERT INTO asset_types (code, label, category, status, workflow_type, field_layout)
+       VALUES (?, ?, ?, 'Active', ?, ?)
+       RETURNING id, code, label, category, status,
+                 workflow_type AS "workflowType",
+                 field_layout  AS "fieldLayout"`,
+      [code.trim().toLowerCase(), label.trim(), category?.trim() || null, workflowType, fl]
+    );
+    res.status(201).json({ ...rows[0], fieldLayout: rows[0].fieldLayout || null });
+  } catch (err) {
+    if (err.code === "23505") return res.status(409).json({ message: "Asset type code already exists" });
+    next(err);
+  }
+});
+
+router.put("/asset-types/:id", async (req, res, next) => {
+  try {
+    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    const { id } = req.params;
+    const { label, category, workflowType = "standard", fieldLayout } = req.body;
+    if (!label?.trim()) return res.status(400).json({ message: "label is required" });
+    const fl = fieldLayout?.fields?.length ? JSON.stringify(fieldLayout) : null;
+    const [rows] = await pool.query(
+      `UPDATE asset_types SET label = ?, category = ?, workflow_type = ?, field_layout = ?
+       WHERE id = ?
+       RETURNING id, code, label, category, status,
+                 workflow_type AS "workflowType",
+                 field_layout  AS "fieldLayout"`,
+      [label.trim(), category?.trim() || null, workflowType, fl, id]
+    );
+    if (!rows.length) return res.status(404).json({ message: "Asset type not found" });
+    res.json({ ...rows[0], fieldLayout: rows[0].fieldLayout || null });
+  } catch (err) { next(err); }
+});
+
+router.delete("/asset-types/:id", async (req, res, next) => {
+  try {
+    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    const { id } = req.params;
+    const [rows] = await pool.query(`UPDATE asset_types SET status = 'Inactive' WHERE id = ? RETURNING id`, [id]);
+    if (!rows.length) return res.status(404).json({ message: "Asset type not found" });
+    res.json({ success: true });
+  } catch (err) { next(err); }
+});
+
 /* ── Departments ────────────────────────────────────────────────────────────── */
 router.get("/departments", async (req, res, next) => {
   try {
