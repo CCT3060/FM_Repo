@@ -3198,12 +3198,14 @@ export default function CompanyEmployeePortal() {
   const visibleNav = useMemo(() => {
     const base = getNav(currentUser?.role || "employee");
     const ALWAYS_VISIBLE = new Set(["dashboard", "mytasks", "employees"]);
+    // Admins always see all their allowed tabs regardless of which company modules are enabled.
+    if (currentUser?.role === "admin") return base;
     const byCompany = !enabledModules
       ? base
       : base.filter((n) => ALWAYS_VISIBLE.has(n.key) || enabledModules.includes(n.key));
-    // Admins keep full access regardless of personal moduleAccess (so they can always manage).
+    // Non-admin users without a personal moduleAccess list see all company-enabled tabs.
     const userModules = currentUser?.moduleAccess;
-    if (currentUser?.role === "admin" || !Array.isArray(userModules) || userModules.length === 0) {
+    if (!Array.isArray(userModules) || userModules.length === 0) {
       return byCompany;
     }
     return byCompany.filter((n) => ALWAYS_VISIBLE.has(n.key) || userModules.includes(n.key));
