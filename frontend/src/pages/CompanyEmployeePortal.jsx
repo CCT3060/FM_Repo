@@ -1145,44 +1145,8 @@ function AssetModal({ existing, token, departments, employees = [], assetTypesLi
             </div>
           </>}
 
-          {/* ── Legacy Soft Services ── */}
+          {/* ── Legacy Soft Services: Location only ── */}
           {form.assetType && isSoftLegacy && <>
-            <FInput label="Asset Unique ID" name="assetUniqueId" value={form.assetUniqueId} onChange={handleChange} placeholder="Auto or manual" />
-            <FSelect label="Department" name="departmentId" value={form.departmentId} onChange={handleChange}>
-              <option value="">— None —</option>
-              {departments.map(d => <option key={d.id} value={d.id}>{d.departmentName}</option>)}
-            </FSelect>
-            <FSelect label="Status" name="status" value={form.status} onChange={handleChange}>
-              <option value="Active">Active</option>
-              <option value="Inactive">Inactive</option>
-            </FSelect>
-            <FSelect label="Assign To (Employee)" name="assignedToId" value={form.assignedToId} onChange={handleChange}>
-              <option value="">— None —</option>
-              {employees.map(e => <option key={e.id} value={e.id}>{e.fullName}{e.designation ? ` · ${e.designation}` : ""}</option>)}
-            </FSelect>
-
-            <FSec title="Soft Services" />
-            <FInput label="Service Area" name="serviceArea" value={form.serviceArea} onChange={handleChange} placeholder="e.g. Floor 1 Lobby" />
-            <FSelect label="Frequency" name="frequency" value={form.frequency} onChange={handleChange}>
-              <option value="Daily">Daily</option>
-              <option value="Weekly">Weekly</option>
-              <option value="Monthly">Monthly</option>
-              <option value="On Demand">On Demand</option>
-            </FSelect>
-            <FSelect label="Shift" name="shift" value={form.shift} onChange={handleChange}>
-              <option value="Morning">Morning</option>
-              <option value="Afternoon">Afternoon</option>
-              <option value="Evening">Evening</option>
-              <option value="Night">Night</option>
-            </FSelect>
-            <FInput label="Supervisor" name="supervisor" value={form.supervisor} onChange={handleChange} placeholder="Name" />
-            <FInput label="Staff Required" name="staffRequired" type="number" value={form.staffRequired} onChange={handleChange} placeholder="e.g. 2" />
-            <div style={{ gridColumn: "span 2" }}>
-              <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Special Instructions</label>
-              <textarea name="specialInstructions" value={form.specialInstructions} onChange={handleChange} rows={2} placeholder="Notes..."
-                style={{ width: "100%", boxSizing: "border-box", padding: "8px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13.5px", resize: "vertical", fontFamily: "inherit", outline: "none" }} />
-            </div>
-
             <FSec title="Location" />
             <FInput label="Building" name="building" value={form.building} onChange={handleChange} placeholder="e.g. Block A" />
             <FInput label="Floor" name="floor" value={form.floor} onChange={handleChange} placeholder="e.g. 3rd Floor" />
@@ -3234,13 +3198,16 @@ export default function CompanyEmployeePortal() {
   const [enabledModules, setEnabledModules] = useState(null);
   const visibleNav = useMemo(() => {
     const base = getNav(currentUser?.role || "employee");
+    // Admin always gets full nav — skip all module filtering
+    if (currentUser?.role === "admin" || currentUser?.role === "catalyst_admin") {
+      return base;
+    }
     const ALWAYS_VISIBLE = new Set(["dashboard", "mytasks", "employees"]);
     const byCompany = !enabledModules
       ? base
       : base.filter((n) => ALWAYS_VISIBLE.has(n.key) || enabledModules.includes(n.key));
-    // Admins keep full access regardless of personal moduleAccess (so they can always manage).
     const userModules = currentUser?.moduleAccess;
-    if (currentUser?.role === "admin" || !Array.isArray(userModules) || userModules.length === 0) {
+    if (!Array.isArray(userModules) || userModules.length === 0) {
       return byCompany;
     }
     return byCompany.filter((n) => ALWAYS_VISIBLE.has(n.key) || userModules.includes(n.key));
