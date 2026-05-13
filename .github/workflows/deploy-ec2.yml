@@ -2,7 +2,7 @@ name: Deploy to EC2 (FM_Instance – ap-south-1)
 
 on:
   push:
-    branches: [develop, main]
+    branches: [develop, main, testing]
     paths:
       - 'frontend/**'
       - 'backend/**'
@@ -125,9 +125,15 @@ jobs:
               fi
             fi
 
-            # ── Install backend deps and restart PM2 ──────────────────────────
+            # ── Install backend deps ───────────────────────────────────────────
             cd /var/www/fmapp/backend
             sudo npm ci --omit=dev
+
+            # ── Run pending SQL migrations ────────────────────────────────────
+            set -a; source /var/www/fmapp/backend/.env; set +a
+            node /var/www/fmapp/backend/run-migrations.js || true
+
+            # ── Restart PM2 ───────────────────────────────────────────────────
             # Use restart (not reload) to guarantee a clean process after npm ci.
             # Falls back to pm2 start if the named process doesn't exist yet.
             pm2 restart fmapp-backend 2>/dev/null || \

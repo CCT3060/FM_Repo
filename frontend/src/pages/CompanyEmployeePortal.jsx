@@ -974,11 +974,18 @@ function AssetModal({ existing, token, departments, employees = [], assetTypesLi
   const selectedTypeDef = assetTypesList.find(t => t.code === form.assetType);
   const customFields = selectedTypeDef?.fieldLayout?.fields || [];
   const hasCustomLayout = customFields.length > 0;
-  const workflowType = selectedTypeDef?.workflowType || form.assetType;
-  // Soft workflow: room is used as asset name (legacy "soft" code or workflowType=soft without custom layout)
-  const isSoftLegacy = !hasCustomLayout && (form.assetType === "soft" || workflowType === "soft");
-  const isFleetLegacy = !hasCustomLayout && (form.assetType === "fleet" || workflowType === "fleet");
-  const isTechnicalLegacy = !hasCustomLayout && (form.assetType === "technical" || workflowType === "technical");
+  // Built-in types always use hardcoded field rendering regardless of any saved custom layout.
+  // Any extra fields in their custom layout (keys not matching builtin keys) are shown additionally.
+  const isSoftLegacy = form.assetType === "soft";
+  const isFleetLegacy = form.assetType === "fleet";
+  const isTechnicalLegacy = form.assetType === "technical";
+  const isBuiltinType = isSoftLegacy || isFleetLegacy || isTechnicalLegacy;
+  // Keys the hardcoded blocks already render — filter these out from custom field rendering
+  const BUILTIN_SOFT_KEYS = new Set(["service_area","frequency","shift","supervisor","staff_required","special_instructions"]);
+  const BUILTIN_TECHNICAL_KEYS = new Set(["machine_name","brand","model_number","serial_number","installation_date","warranty_expiry","maintenance_frequency","last_service_date","next_service_date","technician"]);
+  const BUILTIN_FLEET_KEYS = new Set(["vehicle_number","vehicle_type","fuel_type","driver","rc_number","insurance_expiry","puc_expiry","service_due_date","purchase_date","vendor"]);
+  const builtinKeySet = isSoftLegacy ? BUILTIN_SOFT_KEYS : isTechnicalLegacy ? BUILTIN_TECHNICAL_KEYS : isFleetLegacy ? BUILTIN_FLEET_KEYS : new Set();
+  const extraCustomFields = customFields.filter(f => !builtinKeySet.has(f.key));
 
   const buildMetadata = () => {
     const assignedEmployee = employees.find(e => String(e.id) === String(form.assignedToId));
@@ -989,15 +996,25 @@ function AssetModal({ existing, token, departments, employees = [], assetTypesLi
       assignedToId: form.assignedToId || null,
       assignedToName: assignedEmployee?.fullName || null,
     };
+    // Built-in types: always collect hardcoded legacy fields + any extra custom fields
+    if (isSoftLegacy) {
+      const extra = {}; for (const f of extraCustomFields) extra[f.key] = form[`_custom_${f.key}`] || "";
+      return { ...base, serviceArea: form.serviceArea, frequency: form.frequency, shift: form.shift, supervisor: form.supervisor, staffRequired: form.staffRequired, specialInstructions: form.specialInstructions, ...extra };
+    }
+    if (isTechnicalLegacy) {
+      const extra = {}; for (const f of extraCustomFields) extra[f.key] = form[`_custom_${f.key}`] || "";
+      return { ...base, machineName: form.machineName, brand: form.brand, modelNumber: form.modelNumber, serialNumber: form.serialNumber, installationDate: form.installationDate, warrantyExpiry: form.warrantyExpiry, maintenanceFrequency: form.maintenanceFrequency, lastServiceDate: form.lastServiceDate, nextServiceDate: form.nextServiceDate, technician: form.technician, ...extra };
+    }
+    if (isFleetLegacy) {
+      const extra = {}; for (const f of extraCustomFields) extra[f.key] = form[`_custom_${f.key}`] || "";
+      return { ...base, vehicleNumber: form.vehicleNumber, vehicleType: form.vehicleType, fuelType: form.fuelType, driver: form.driver, rcNumber: form.rcNumber, insuranceExpiry: form.insuranceExpiry, pucExpiry: form.pucExpiry, serviceDueDate: form.serviceDueDate, purchaseDate: form.purchaseDate, vendor: form.vendor, dailyKmTracking: form.dailyKmTracking, ...extra };
+    }
+    // Pure custom type
     if (hasCustomLayout) {
-      // Collect dynamic custom field values
       const customData = {};
       for (const f of customFields) customData[f.key] = form[`_custom_${f.key}`] || "";
       return { ...base, ...customData };
     }
-    if (isSoftLegacy) return { ...base, serviceArea: form.serviceArea, frequency: form.frequency, shift: form.shift, supervisor: form.supervisor, staffRequired: form.staffRequired, specialInstructions: form.specialInstructions };
-    if (isTechnicalLegacy) return { ...base, machineName: form.machineName, brand: form.brand, modelNumber: form.modelNumber, serialNumber: form.serialNumber, installationDate: form.installationDate, warrantyExpiry: form.warrantyExpiry, maintenanceFrequency: form.maintenanceFrequency, lastServiceDate: form.lastServiceDate, nextServiceDate: form.nextServiceDate, technician: form.technician };
-    if (isFleetLegacy) return { ...base, vehicleNumber: form.vehicleNumber, vehicleType: form.vehicleType, fuelType: form.fuelType, driver: form.driver, rcNumber: form.rcNumber, insuranceExpiry: form.insuranceExpiry, pucExpiry: form.pucExpiry, serviceDueDate: form.serviceDueDate, purchaseDate: form.purchaseDate, vendor: form.vendor, dailyKmTracking: form.dailyKmTracking };
     return base;
   };
 
@@ -1101,9 +1118,8 @@ function AssetModal({ existing, token, departments, employees = [], assetTypesLi
             </FSelect>
           </div>
 
-          {/* ── Dynamic layout: asset type has a custom field layout ── */}
-          {form.assetType && hasCustomLayout && <>
-            {/* Asset Name + core fields */}
+          {/* ── Custom types only (non-builtin) with a saved field layout ── */}
+          {form.assetType && !isBuiltinType && hasCustomLayout && <>
             <div style={{ gridColumn: "span 2" }}>
               <FInput label="Asset Name" required name="assetName" value={form.assetName} onChange={handleChange} placeholder="e.g. Block A - Level 2" />
             </div>
@@ -1120,24 +1136,17 @@ function AssetModal({ existing, token, departments, employees = [], assetTypesLi
               <option value="">— None —</option>
               {employees.map(e => <option key={e.id} value={e.id}>{e.fullName}{e.designation ? ` · ${e.designation}` : ""}</option>)}
             </FSelect>
-
-            {/* Dynamic custom fields from fieldLayout */}
             <FSec title={selectedTypeDef?.label || "Asset Details"} />
             {customFields.map(renderCustomField)}
-
-            {/* Location always included */}
             <FSec title="Location" />
             <FInput label="Building" name="building" value={form.building} onChange={handleChange} placeholder="e.g. Block A" />
             <FInput label="Floor" name="floor" value={form.floor} onChange={handleChange} placeholder="e.g. 3rd Floor" />
             <div style={{ gridColumn: "span 2" }}>
               <FInput label="Room / Area" name="room" value={form.room} onChange={handleChange} placeholder="e.g. Server Room" />
             </div>
-
-            {/* Valuation */}
             <FSec title="Asset Valuation" />
             <FInput label="Purchase Value (₹)" name="purchaseValue" type="number" value={form.purchaseValue} onChange={handleChange} placeholder="e.g. 250000" />
             <FInput label="Useful Life (Years)" name="usefulLifeYears" type="number" value={form.usefulLifeYears} onChange={handleChange} placeholder="e.g. 10" />
-
             <div style={{ gridColumn: "span 2" }}>
               <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Description</label>
               <textarea name="description" value={form.description} onChange={handleChange} rows={2} placeholder="Notes, instructions, etc."
@@ -1145,23 +1154,8 @@ function AssetModal({ existing, token, departments, employees = [], assetTypesLi
             </div>
           </>}
 
-          {/* ── Legacy Soft Services ── */}
-          {form.assetType && isSoftLegacy && <>
-            <FSec title="Location" />
-            <FInput label="Building" name="building" value={form.building} onChange={handleChange} placeholder="e.g. Block A" />
-            <FInput label="Floor" name="floor" value={form.floor} onChange={handleChange} placeholder="e.g. 3rd Floor" />
-            <div style={{ gridColumn: "span 2" }}>
-              <FInput label="Room / Area" name="room" value={form.room} onChange={handleChange} placeholder="e.g. Server Room" />
-            </div>
-            <div style={{ gridColumn: "span 2" }}>
-              <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Description</label>
-              <textarea name="description" value={form.description} onChange={handleChange} rows={2} placeholder="Notes, instructions, etc."
-                style={{ width: "100%", boxSizing: "border-box", padding: "8px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13.5px", resize: "vertical", fontFamily: "inherit", outline: "none" }} />
-            </div>
-          </>}
-
-          {/* ── Legacy Non-soft without custom layout: show core + valuation + location ── */}
-          {form.assetType && !hasCustomLayout && !isSoftLegacy && <>
+          {/* ── Custom types with no layout yet — hint ── */}
+          {form.assetType && !isBuiltinType && !hasCustomLayout && <>
             <div style={{ gridColumn: "span 2" }}>
               <FInput label="Asset Name" required name="assetName" value={form.assetName} onChange={handleChange} placeholder="e.g. HVAC Unit 1" />
             </div>
@@ -1178,20 +1172,9 @@ function AssetModal({ existing, token, departments, employees = [], assetTypesLi
               <option value="">— None —</option>
               {employees.map(e => <option key={e.id} value={e.id}>{e.fullName}{e.designation ? ` · ${e.designation}` : ""}</option>)}
             </FSelect>
-
-            <FSec title="Asset Valuation" />
-            <FInput label="Purchase Value (₹)" name="purchaseValue" type="number" value={form.purchaseValue} onChange={handleChange} placeholder="e.g. 250000" />
-            <FInput label="Useful Life (Years)" name="usefulLifeYears" type="number" value={form.usefulLifeYears} onChange={handleChange} placeholder="e.g. 10" />
-
-            {!isFleetLegacy && <>
-              <FSec title="Location" />
-              <FInput label="Building" name="building" value={form.building} onChange={handleChange} placeholder="e.g. Block A" />
-              <FInput label="Floor" name="floor" value={form.floor} onChange={handleChange} placeholder="e.g. 3rd Floor" />
-              <div style={{ gridColumn: "span 2" }}>
-                <FInput label="Room / Area" name="room" value={form.room} onChange={handleChange} placeholder="e.g. Server Room" />
-              </div>
-            </>}
-
+            <div style={{ gridColumn: "span 2", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: "8px", padding: "12px 14px", fontSize: "13px", color: "#92400e" }}>
+              ℹ️ No custom fields configured for this asset type. Go to <strong>Asset Types → Field Layout</strong> to add fields.
+            </div>
             <div style={{ gridColumn: "span 2" }}>
               <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Description</label>
               <textarea name="description" value={form.description} onChange={handleChange} rows={2} placeholder="Notes, instructions, etc."
@@ -1199,8 +1182,85 @@ function AssetModal({ existing, token, departments, employees = [], assetTypesLi
             </div>
           </>}
 
-          {/* ── Legacy Technical fields ── */}
+          {/* ── Built-in Soft Services (always hardcoded, extra custom fields appended) ── */}
+          {isSoftLegacy && <>
+            <FInput label="Asset Unique ID" name="assetUniqueId" value={form.assetUniqueId} onChange={handleChange} placeholder="Auto or manual" />
+            <FSelect label="Department" name="departmentId" value={form.departmentId} onChange={handleChange}>
+              <option value="">— None —</option>
+              {departments.map(d => <option key={d.id} value={d.id}>{d.departmentName}</option>)}
+            </FSelect>
+            <FSelect label="Status" name="status" value={form.status} onChange={handleChange}>
+              <option value="Active">Active</option>
+              <option value="Inactive">Inactive</option>
+            </FSelect>
+            <FSelect label="Assign To (Employee)" name="assignedToId" value={form.assignedToId} onChange={handleChange}>
+              <option value="">— None —</option>
+              {employees.map(e => <option key={e.id} value={e.id}>{e.fullName}{e.designation ? ` · ${e.designation}` : ""}</option>)}
+            </FSelect>
+            <FSec title="Soft Services" />
+            <FInput label="Service Area" name="serviceArea" value={form.serviceArea} onChange={handleChange} placeholder="e.g. Floor 1 Lobby" />
+            <FSelect label="Frequency" name="frequency" value={form.frequency} onChange={handleChange}>
+              <option value="">— Select —</option>
+              <option value="Daily">Daily</option>
+              <option value="Weekly">Weekly</option>
+              <option value="Monthly">Monthly</option>
+              <option value="Quarterly">Quarterly</option>
+            </FSelect>
+            <FSelect label="Shift" name="shift" value={form.shift} onChange={handleChange}>
+              <option value="">— Select —</option>
+              <option value="Morning">Morning</option>
+              <option value="Afternoon">Afternoon</option>
+              <option value="Evening">Evening</option>
+              <option value="Night">Night</option>
+            </FSelect>
+            <FInput label="Supervisor" name="supervisor" value={form.supervisor} onChange={handleChange} placeholder="Name" />
+            <FInput label="Staff Required" name="staffRequired" type="number" value={form.staffRequired} onChange={handleChange} placeholder="e.g. 2" />
+            <div style={{ gridColumn: "span 2" }}>
+              <FInput label="Special Instructions" name="specialInstructions" value={form.specialInstructions} onChange={handleChange} placeholder="Notes..." />
+            </div>
+            <FSec title="Location" />
+            <FInput label="Building" name="building" value={form.building} onChange={handleChange} placeholder="e.g. Block A" />
+            <FInput label="Floor" name="floor" value={form.floor} onChange={handleChange} placeholder="e.g. 3rd Floor" />
+            <div style={{ gridColumn: "span 2" }}>
+              <FInput label="Room / Area *" required name="room" value={form.room} onChange={handleChange} placeholder="e.g. Block A Lobby (used as asset name)" />
+            </div>
+            {extraCustomFields.length > 0 && <>
+              {extraCustomFields.map(renderCustomField)}
+            </>}
+            <div style={{ gridColumn: "span 2" }}>
+              <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Description</label>
+              <textarea name="description" value={form.description} onChange={handleChange} rows={2} placeholder="Notes, instructions, etc."
+                style={{ width: "100%", boxSizing: "border-box", padding: "8px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13.5px", resize: "vertical", fontFamily: "inherit", outline: "none" }} />
+            </div>
+          </>}
+
+          {/* ── Built-in Technical (always hardcoded + extra custom fields) ── */}
           {isTechnicalLegacy && <>
+            <div style={{ gridColumn: "span 2" }}>
+              <FInput label="Asset Name" required name="assetName" value={form.assetName} onChange={handleChange} placeholder="e.g. HVAC Unit 1" />
+            </div>
+            <FInput label="Asset Unique ID" name="assetUniqueId" value={form.assetUniqueId} onChange={handleChange} placeholder="Auto or manual" />
+            <FSelect label="Department" name="departmentId" value={form.departmentId} onChange={handleChange}>
+              <option value="">— None —</option>
+              {departments.map(d => <option key={d.id} value={d.id}>{d.departmentName}</option>)}
+            </FSelect>
+            <FSelect label="Status" name="status" value={form.status} onChange={handleChange}>
+              <option value="Active">Active</option>
+              <option value="Inactive">Inactive</option>
+            </FSelect>
+            <FSelect label="Assign To (Employee)" name="assignedToId" value={form.assignedToId} onChange={handleChange}>
+              <option value="">— None —</option>
+              {employees.map(e => <option key={e.id} value={e.id}>{e.fullName}{e.designation ? ` · ${e.designation}` : ""}</option>)}
+            </FSelect>
+            <FSec title="Asset Valuation" />
+            <FInput label="Purchase Value (₹)" name="purchaseValue" type="number" value={form.purchaseValue} onChange={handleChange} placeholder="e.g. 250000" />
+            <FInput label="Useful Life (Years)" name="usefulLifeYears" type="number" value={form.usefulLifeYears} onChange={handleChange} placeholder="e.g. 10" />
+            <FSec title="Location" />
+            <FInput label="Building" name="building" value={form.building} onChange={handleChange} placeholder="e.g. Block A" />
+            <FInput label="Floor" name="floor" value={form.floor} onChange={handleChange} placeholder="e.g. 3rd Floor" />
+            <div style={{ gridColumn: "span 2" }}>
+              <FInput label="Room / Area" name="room" value={form.room} onChange={handleChange} placeholder="e.g. Server Room" />
+            </div>
             <FSec title="Technical Asset" />
             <FInput label="Machine Name" name="machineName" value={form.machineName} onChange={handleChange} />
             <FInput label="Brand / Manufacturer" name="brand" value={form.brand} onChange={handleChange} />
@@ -1212,10 +1272,38 @@ function AssetModal({ existing, token, departments, employees = [], assetTypesLi
             <FInput label="Last Service Date" name="lastServiceDate" type="date" value={form.lastServiceDate} onChange={handleChange} />
             <FInput label="Next Service Date" name="nextServiceDate" type="date" value={form.nextServiceDate} onChange={handleChange} />
             <FInput label="Technician Assigned" name="technician" value={form.technician} onChange={handleChange} />
+            {extraCustomFields.length > 0 && <>
+              <FSec title="Additional Fields" />
+              {extraCustomFields.map(renderCustomField)}
+            </>}
+            <div style={{ gridColumn: "span 2" }}>
+              <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Description</label>
+              <textarea name="description" value={form.description} onChange={handleChange} rows={2} placeholder="Notes, instructions, etc."
+                style={{ width: "100%", boxSizing: "border-box", padding: "8px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13.5px", resize: "vertical", fontFamily: "inherit", outline: "none" }} />
+            </div>
           </>}
 
-          {/* ── Legacy Fleet fields ── */}
+          {/* ── Built-in Fleet (always hardcoded + extra custom fields) ── */}
           {isFleetLegacy && <>
+            <div style={{ gridColumn: "span 2" }}>
+              <FInput label="Asset Name" required name="assetName" value={form.assetName} onChange={handleChange} placeholder="e.g. Truck KA-01-AB-1234" />
+            </div>
+            <FInput label="Asset Unique ID" name="assetUniqueId" value={form.assetUniqueId} onChange={handleChange} placeholder="Auto or manual" />
+            <FSelect label="Department" name="departmentId" value={form.departmentId} onChange={handleChange}>
+              <option value="">— None —</option>
+              {departments.map(d => <option key={d.id} value={d.id}>{d.departmentName}</option>)}
+            </FSelect>
+            <FSelect label="Status" name="status" value={form.status} onChange={handleChange}>
+              <option value="Active">Active</option>
+              <option value="Inactive">Inactive</option>
+            </FSelect>
+            <FSelect label="Assign To (Employee)" name="assignedToId" value={form.assignedToId} onChange={handleChange}>
+              <option value="">— None —</option>
+              {employees.map(e => <option key={e.id} value={e.id}>{e.fullName}{e.designation ? ` · ${e.designation}` : ""}</option>)}
+            </FSelect>
+            <FSec title="Asset Valuation" />
+            <FInput label="Purchase Value (₹)" name="purchaseValue" type="number" value={form.purchaseValue} onChange={handleChange} placeholder="e.g. 250000" />
+            <FInput label="Useful Life (Years)" name="usefulLifeYears" type="number" value={form.usefulLifeYears} onChange={handleChange} placeholder="e.g. 10" />
             <FSec title="Fleet Asset" />
             <FInput label="Vehicle Number" required name="vehicleNumber" value={form.vehicleNumber} onChange={handleChange} />
             <FInput label="Vehicle Type" name="vehicleType" value={form.vehicleType} onChange={handleChange} />
@@ -1230,6 +1318,15 @@ function AssetModal({ existing, token, departments, employees = [], assetTypesLi
             <div style={{ gridColumn: "span 2", display: "flex", alignItems: "center", gap: "9px", marginTop: "2px" }}>
               <input type="checkbox" name="dailyKmTracking" checked={form.dailyKmTracking} onChange={handleChange} id="dkmtrack" style={{ width: "15px", height: "15px", cursor: "pointer" }} />
               <label htmlFor="dkmtrack" style={{ fontSize: "13.5px", fontWeight: 600, color: "#475569", cursor: "pointer" }}>Daily KM Tracking</label>
+            </div>
+            {extraCustomFields.length > 0 && <>
+              <FSec title="Additional Fields" />
+              {extraCustomFields.map(renderCustomField)}
+            </>}
+            <div style={{ gridColumn: "span 2" }}>
+              <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Description</label>
+              <textarea name="description" value={form.description} onChange={handleChange} rows={2} placeholder="Notes, instructions, etc."
+                style={{ width: "100%", boxSizing: "border-box", padding: "8px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13.5px", resize: "vertical", fontFamily: "inherit", outline: "none" }} />
             </div>
           </>}
         </div>
@@ -2762,7 +2859,7 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false }) {
 }
 
 /* ─── Asset Types Panel ──────────────────────────────────────────── */
-function AssetTypesPanel({ token }) {
+function AssetTypesPanel({ token, onTypesChanged }) {
   const API = import.meta.env.VITE_API_BASE || "";
   const [tab, setTab] = useState("types"); // "types" | "layout"
   const [types, setTypes] = useState([]);
@@ -2781,12 +2878,50 @@ function AssetTypesPanel({ token }) {
   const [layoutFields, setLayoutFields] = useState([]);
   const [savingLayout, setSavingLayout] = useState(false);
 
+  // Built-in legacy field definitions so admins can see and edit them in the layout editor
+  const LEGACY_FIELD_DEFAULTS = {
+    soft: [
+      { key: "service_area", label: "Service Area", type: "text", required: false, placeholder: "e.g. Floor 1 Lobby", wide: false },
+      { key: "frequency", label: "Frequency", type: "select", required: false, options: ["Daily", "Weekly", "Monthly", "Quarterly"], wide: false },
+      { key: "shift", label: "Shift", type: "select", required: false, options: ["Morning", "Afternoon", "Evening", "Night"], wide: false },
+      { key: "supervisor", label: "Supervisor", type: "text", required: false, placeholder: "Name", wide: false },
+      { key: "staff_required", label: "Staff Required", type: "number", required: false, placeholder: "e.g. 2", wide: false },
+      { key: "special_instructions", label: "Special Instructions", type: "textarea", required: false, placeholder: "Notes...", wide: true },
+    ],
+    technical: [
+      { key: "machine_name", label: "Machine Name", type: "text", required: false, placeholder: "", wide: false },
+      { key: "brand", label: "Brand / Manufacturer", type: "text", required: false, placeholder: "", wide: false },
+      { key: "model_number", label: "Model Number", type: "text", required: false, placeholder: "", wide: false },
+      { key: "serial_number", label: "Serial Number", type: "text", required: false, placeholder: "", wide: false },
+      { key: "installation_date", label: "Installation Date", type: "date", required: false, placeholder: "", wide: false },
+      { key: "warranty_expiry", label: "Warranty Expiry", type: "date", required: false, placeholder: "", wide: false },
+      { key: "maintenance_frequency", label: "Maintenance Frequency", type: "text", required: false, placeholder: "e.g. Monthly", wide: false },
+      { key: "last_service_date", label: "Last Service Date", type: "date", required: false, placeholder: "", wide: false },
+      { key: "next_service_date", label: "Next Service Date", type: "date", required: false, placeholder: "", wide: false },
+      { key: "technician", label: "Technician Assigned", type: "text", required: false, placeholder: "", wide: false },
+    ],
+    fleet: [
+      { key: "vehicle_number", label: "Vehicle Number", type: "text", required: true, placeholder: "", wide: false },
+      { key: "vehicle_type", label: "Vehicle Type", type: "text", required: false, placeholder: "", wide: false },
+      { key: "fuel_type", label: "Fuel Type", type: "text", required: false, placeholder: "", wide: false },
+      { key: "driver", label: "Driver Assigned", type: "text", required: false, placeholder: "", wide: false },
+      { key: "rc_number", label: "RC Number", type: "text", required: false, placeholder: "", wide: false },
+      { key: "insurance_expiry", label: "Insurance Expiry", type: "date", required: false, placeholder: "", wide: false },
+      { key: "puc_expiry", label: "PUC Expiry", type: "date", required: false, placeholder: "", wide: false },
+      { key: "service_due_date", label: "Service Due Date", type: "date", required: false, placeholder: "", wide: false },
+      { key: "purchase_date", label: "Purchase Date", type: "date", required: false, placeholder: "", wide: false },
+      { key: "vendor", label: "Vendor", type: "text", required: false, placeholder: "", wide: false },
+    ],
+  };
+
   const loadTypes = async () => {
     setLoading(true); setError(null);
     try {
       const r = await fetch(`${API}/api/company-portal/asset-types`, { headers: { Authorization: `Bearer ${token}` } });
       if (!r.ok) throw new Error("Failed to load asset types");
-      setTypes(await r.json());
+      const data = await r.json();
+      setTypes(data);
+      onTypesChanged?.(data);
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   };
@@ -2795,12 +2930,12 @@ function AssetTypesPanel({ token }) {
   // Sync layout fields when selected type changes
   useEffect(() => {
     const t = types.find(t => String(t.id) === String(selectedTypeId));
-    if (t?.fieldLayout?.fields) {
+    if (t?.fieldLayout?.fields?.length) {
       setLayoutFields(JSON.parse(JSON.stringify(t.fieldLayout.fields)));
     } else {
       setLayoutFields([]);
     }
-  }, [selectedTypeId, types]);
+  }, [selectedTypeId, types]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ─── Tab 1: Asset Type CRUD ─── */
   const startEdit = (t) => {
@@ -3146,7 +3281,7 @@ function AssetTypesPanel({ token }) {
               <div style={{ padding: "14px 20px", borderTop: "1px solid #f1f5f9", display: "flex", justifyContent: "flex-end", gap: "10px" }}>
                 <button onClick={() => {
                   const t = types.find(t => String(t.id) === String(selectedTypeId));
-                  setLayoutFields(t?.fieldLayout?.fields ? JSON.parse(JSON.stringify(t.fieldLayout.fields)) : []);
+                  setLayoutFields(t?.fieldLayout?.fields?.length ? JSON.parse(JSON.stringify(t.fieldLayout.fields)) : []);
                 }} style={{ padding: "9px 20px", borderRadius: "7px", border: "1px solid #e2e8f0", background: "#f8fafc", color: "#475569", cursor: "pointer", fontWeight: 600 }}>
                   Reset
                 </button>
@@ -5210,7 +5345,7 @@ export default function CompanyEmployeePortal() {
 
         {/* ── Asset Types ────────────────────────────────────────── */}
         {nav === "asset-types" && (
-          <AssetTypesPanel token={token} />
+          <AssetTypesPanel token={token} onTypesChanged={(updated) => setAssetTypesList(updated)} />
         )}
 
         {/* ── Shifts ────────────────────────────────────────────── */}
