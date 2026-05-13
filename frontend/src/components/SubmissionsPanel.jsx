@@ -184,6 +184,20 @@ function PhotoAnswer({ src, alt = "Photo", caption, sizeKB }) {
 function renderAnswerValue(val) {
   if (!val) return <span style={{ color: "#94a3b8", fontWeight: 400 }}>No answer</span>;
 
+  // Unwrap { value: ... } wrapper that the backend stores in answer_json
+  if (typeof val === "string") {
+    const trimmed = val.trim();
+    if (trimmed.startsWith("{")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        // { value: "..." } — extract the inner value and re-render
+        if ("value" in parsed) {
+          return renderAnswerValue(parsed.value ?? "");
+        }
+      } catch { /* keep as-is */ }
+    }
+  }
+
   // Plain image URL string (e.g. uploaded via mobile)
   if (typeof val === "string" && val.startsWith("http") && /\.(jpe?g|png|gif|webp)(\?|$)/i.test(val)) {
     return <PhotoAnswer src={val} />;
@@ -468,7 +482,10 @@ function DetailModal({ submission, type, onClose }) {
           {allAnswers.length > 0 ? (
             <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
               {allAnswers.map((a, i) => {
-                const val = a.answerValue || a.answer || "";
+                // Prefer option_selected; fall back to answer_json which stores photo URLs
+                // and other structured values as { value: <answer> }.
+                const rawVal = a.answerValue || a.answer || a.answerJson || "";
+                const val = rawVal;
                 return (
                   <div key={i} style={{ background: "#f8fafc", border: "1px solid #e2e8f0",
                     borderRadius: "9px", padding: "11px 14px", display: "flex", gap: "14px" }}>

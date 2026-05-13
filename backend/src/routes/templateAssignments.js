@@ -294,12 +294,36 @@ router.get("/my-assignments", async (req, res, next) => {
       serviceDomain = (cuRow?.serviceDomain || 'technical').toLowerCase();
     } catch { /* default technical */ }
 
+    // Load all asset type codes that have workflow_type = 'soft' for this company context.
+    // Also include legacy codes 'soft' and any type whose label matches 'soft service'
+    // for backward compatibility.
+    let softTypeCodes = new Set(['soft']);
+    try {
+      const [softAtRows] = await pool.query(
+        `SELECT code FROM asset_types WHERE workflow_type = 'soft' AND status = 'Active'`
+      );
+      softAtRows.forEach(r => softTypeCodes.add(r.code.toLowerCase().trim()));
+      // Also include types whose label is 'soft service' (legacy)
+      const [legacyRows] = await pool.query(
+        `SELECT code FROM asset_types WHERE LOWER(TRIM(label)) = 'soft service' AND status = 'Active'`
+      );
+      legacyRows.forEach(r => softTypeCodes.add(r.code.toLowerCase().trim()));
+    } catch { /* ignore */ }
+
+    // Helper: is a given asset_type code a soft-workflow type?
+    const isSoftCode = (code) => {
+      if (!code) return false;
+      const lc = code.toLowerCase().trim();
+      return softTypeCodes.has(lc) || lc === 'soft service';
+    };
+
     const isSoftUser = serviceDomain === 'soft' || serviceDomain === 'both';
     const isTechUser = serviceDomain === 'technical' || serviceDomain === 'both';
 
     let softFormatted = [];
     if (isSoftUser) {
-      // Soft service users automatically see all soft service templates — no assignment needed
+      // Soft-workflow users automatically see all templates for soft asset types — no assignment needed.
+      // "Soft" includes: any asset type with workflow_type = 'soft', legacy 'soft service' label, or code 'soft'.
       const [softTemplates] = await pool.query(
         `SELECT
            ct.id AS "templateId",
@@ -322,7 +346,10 @@ router.get("/my-assignments", async (req, res, next) => {
          LEFT JOIN shifts s ON s.id = ct.shift_id
          WHERE ct.company_id = ?
            AND ct.is_active = 1
-           AND LOWER(TRIM(COALESCE(ct.asset_type,''))) = 'soft service'`,
+           AND (
+             LOWER(TRIM(COALESCE(ct.asset_type,''))) = 'soft service'
+             OR ct.asset_type IN (SELECT code FROM asset_types WHERE workflow_type = 'soft' AND status = 'Active')
+           )`,
         [req.companyUser.id, cid(req)]
       );
       const assignedTemplateIds = new Set(
@@ -350,13 +377,13 @@ router.get("/my-assignments", async (req, res, next) => {
         }));
     }
 
-    // Strip soft service templates from technical-only users (even if directly assigned)
-    // Strip technical templates from soft-only users
+    // Strip soft templates from technical-only users (even if directly assigned).
+    // Strip non-soft templates from soft-only users.
     let visibleFormatted = formatted;
     if (serviceDomain === 'technical') {
-      visibleFormatted = formatted.filter(f => (f.assetType || '').toLowerCase().trim() !== 'soft service');
+      visibleFormatted = formatted.filter(f => !isSoftCode(f.assetType));
     } else if (serviceDomain === 'soft') {
-      visibleFormatted = formatted.filter(f => (f.assetType || '').toLowerCase().trim() === 'soft service' || !f.assetType);
+      visibleFormatted = formatted.filter(f => isSoftCode(f.assetType) || !f.assetType);
     }
 
     res.json([...visibleFormatted, ...softFormatted]);
@@ -1225,20 +1252,13 @@ router.get("/my-submission-detail/:type/:id", async (req, res, next) => {
         `SELECT cs.id, ct.template_name AS name, a.asset_name AS "assetName",
                 cs.status, cs.completion_pct AS "completionPct",
                 COALESCE(cs.submitted_at, cs.created_at) AS "submittedAt",
-                cs.shift
+                cs.shift, cu.full_name AS "submittedByName"
          FROM checklist_submissions cs
          JOIN checklist_templates ct ON ct.id = cs.template_id
          LEFT JOIN assets a ON a.id = cs.asset_id
-         WHERE cs.id = ? AND ct.company_id = ?
-           AND (
-             cs.company_user_id = ?
-             OR (cs.company_user_id IS NULL AND cs.submitted_by IN (
-               SELECT u.id FROM users u
-               JOIN company_users cu ON cu.email = u.email
-               WHERE cu.id = ?
-             ))
-           )`,
-        [id, companyId, userId, userId]
+         LEFT JOIN company_users cu ON cu.id = cs.company_user_id
+         WHERE cs.id = ? AND ct.company_id = ?`,
+        [id, companyId]
       );
       if (!sub) return res.status(404).json({ message: "Submission not found" });
       const [answers] = await pool.query(
@@ -1247,31 +1267,42 @@ router.get("/my-submission-detail/:type/:id", async (req, res, next) => {
          FROM checklist_submission_answers WHERE submission_id = ? ORDER BY id`,
         [id]
       ).catch(() => [[]]);
-      const mapped = answers.map(a => ({
-        question: a.question,
-        type: a.inputType,
-        answer: normalizeAnswerValue(a.answer ?? a.answerJson)
-      }));
+      const mapped = answers.map(a => {
+        // Try to extract value from answer_json when option_selected is empty
+        let answerValue = a.answer;
+        let photoUrl = null;
+        if (!answerValue && a.answerJson) {
+          const raw = typeof a.answerJson === 'string' ? (() => { try { return JSON.parse(a.answerJson); } catch { return null; } })() : a.answerJson;
+          if (raw && typeof raw === 'object' && 'value' in raw) {
+            const v = raw.value;
+            if (v && typeof v === 'object' && (v.uri || v.url)) {
+              photoUrl = v.url || v.uri;
+              answerValue = photoUrl;
+            } else {
+              answerValue = v != null ? String(v) : null;
+            }
+          }
+        }
+        return {
+          question: a.question,
+          type: a.inputType,
+          answer: normalizeAnswerValue(answerValue),
+          photoUrl,
+        };
+      });
       return res.json({ ...sub, type: "checklist", answers: mapped });
 
     } else if (type === "logsheet") {
       const [[entry]] = await pool.query(
         `SELECT le.id, lt.template_name AS name, a.asset_name AS "assetName",
                 le.shift, le.entry_date AS "entryDate",
-                le.submitted_at AS "submittedAt", le.data
+                le.submitted_at AS "submittedAt", le.data, cu.full_name AS "submittedByName"
          FROM logsheet_entries le
          JOIN logsheet_templates lt ON lt.id = le.template_id
          LEFT JOIN assets a ON a.id = le.asset_id
-         WHERE le.id = ? AND lt.company_id = ?
-           AND (
-             le.company_user_id = ?
-             OR (le.company_user_id IS NULL AND le.submitted_by IN (
-               SELECT u.id FROM users u
-               JOIN company_users cu ON cu.email = u.email
-               WHERE cu.id = ?
-             ))
-           )`,
-        [id, companyId, userId, userId]
+         LEFT JOIN company_users cu ON cu.id = le.company_user_id
+         WHERE le.id = ? AND lt.company_id = ?`,
+        [id, companyId]
       );
       if (!entry) return res.status(404).json({ message: "Entry not found" });
       const rawData = entry.data ? (typeof entry.data === "string" ? JSON.parse(entry.data) : entry.data) : {};

@@ -3,6 +3,54 @@ import { getApiBaseUrl } from '../utils/runtimeConfig';
 
 const API_BASE = getApiBaseUrl();
 
+function tryParse(s) {
+    try { return JSON.parse(s); } catch { return null; }
+}
+
+/** Extract the display value from an answer, unwrapping {value:...} JSON wrappers */
+function extractAnswerDisplay(answerValue, answerJson) {
+    // answerValue (option_selected) is the primary source
+    if (answerValue && String(answerValue).trim()) {
+        return String(answerValue).trim();
+    }
+    // Fallback to answerJson which may contain {value: "..."} or a direct string
+    if (answerJson) {
+        const raw = typeof answerJson === 'string' ? tryParse(answerJson) : answerJson;
+        if (raw && typeof raw === 'object' && 'value' in raw) {
+            return raw.value != null ? String(raw.value) : null;
+        }
+        if (typeof answerJson === 'string' && answerJson.trim()) return answerJson.trim();
+    }
+    return null;
+}
+
+/** Render an answer cell — shows a photo thumbnail if the value is an image URL */
+function AnswerCell({ questionText, answerValue, answerJson, index }) {
+    const display = extractAnswerDisplay(answerValue, answerJson);
+
+    const isImageUrl = (s) => typeof s === 'string' && s.startsWith('http') && /\.(jpe?g|png|gif|webp)(\?|$)/i.test(s);
+
+    return (
+        <div style={styles.answerCard}>
+            <div style={styles.questionText}>Q{index + 1}: {questionText}</div>
+            {isImageUrl(display) ? (
+                <div style={{ marginTop: '8px' }}>
+                    <img
+                        src={display}
+                        alt="Photo answer"
+                        style={{ maxWidth: '200px', maxHeight: '150px', borderRadius: '8px', objectFit: 'cover',
+                            border: '1px solid #e2e8f0', display: 'block', cursor: 'pointer' }}
+                        onClick={() => window.open(display, '_blank')}
+                    />
+                    <div style={{ fontSize: '11px', color: '#64748b', marginTop: '4px' }}>Tap to view full image</div>
+                </div>
+            ) : (
+                <div style={styles.answerValue}>{display || 'No answer provided'}</div>
+            )}
+        </div>
+    );
+}
+
 export default function SubmissionsPage() {
     const [checklistSubmissions, setChecklistSubmissions] = useState([]);
     const [logsheetSubmissions, setLogsheetSubmissions] = useState([]);
@@ -193,14 +241,13 @@ export default function SubmissionsPage() {
                             <h3 style={styles.answersTitle}>Answers</h3>
                             <div style={styles.answersList}>
                                 {submissionDetails.answers.map((answer, index) => (
-                                    <div key={index} style={styles.answerCard}>
-                                        <div style={styles.questionText}>
-                                            Q{index + 1}: {answer.questionText}
-                                        </div>
-                                        <div style={styles.answerValue}>
-                                            {answer.answerValue || 'No answer provided'}
-                                        </div>
-                                    </div>
+                                    <AnswerCell
+                                        key={index}
+                                        index={index}
+                                        questionText={answer.questionText}
+                                        answerValue={answer.answerValue}
+                                        answerJson={answer.answerJson}
+                                    />
                                 ))}
                             </div>
                         </div>

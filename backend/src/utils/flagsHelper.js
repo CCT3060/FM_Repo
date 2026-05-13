@@ -423,7 +423,9 @@ export function detectChecklistFlags(answers, context, ruleMap = {}) {
     const qId          = ans.question_id || null;
     const questionRule = qId ? (ruleMap[qId] || null) : null;
 
-    // ── Rule-based evaluation (takes priority over heuristics) ──────────────
+    // ── Rule-based evaluation (only triggers when an explicit rule_json is configured) ──
+    // Flags are NOT auto-created for yes_no="no" or ok_not_ok="not_ok" by default.
+    // Admins must explicitly configure a flag rule on the question to trigger alerts.
     if (questionRule) {
       const rawVal   = answerText || selected;
       const ruleEval = evaluateRule(questionRule, rawVal);
@@ -441,36 +443,6 @@ export function detectChecklistFlags(answers, context, ruleMap = {}) {
         });
         continue;
       }
-    }
-
-    // yes_no → NO → RED flag
-    if (inputType === "yes_no" && (selected === "no" || answerText === "no")) {
-      flags.push({
-        source: "checklist",
-        companyId, assetId, checklistId, submissionId,
-        questionId:   ans.question_id || null,
-        raisedBy,
-        description:  `Checklist NO answer: "${ans.question_text}"`,
-        severity:     "high",
-        enteredValue: "no",
-        expectedRule: 'Expected "yes"',
-      });
-      continue;
-    }
-
-    // ok_not_ok → not_ok → RED flag
-    if (inputType === "ok_not_ok" && (selected === "not_ok" || selected === "not ok" || answerText === "not_ok")) {
-      flags.push({
-        source: "checklist",
-        companyId, assetId, checklistId, submissionId,
-        questionId:   ans.question_id || null,
-        raisedBy,
-        description:  `Checklist NOT OK answer: "${ans.question_text}"`,
-        severity:     "high",
-        enteredValue: "not_ok",
-        expectedRule: 'Expected "ok"',
-      });
-      continue;
     }
 
     // remark field with content → YELLOW flag

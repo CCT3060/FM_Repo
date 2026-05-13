@@ -96,7 +96,12 @@ router.get("/:assetId", async (req, res, next) => {
       headerConfig: safeParse(t.headerConfig) || {},
     }));
 
-    // Checklist templates: if user logged in, only show assigned ones
+    // Checklist templates: if user logged in, only show assigned ones.
+    // A template shows for this asset only if:
+    //   - ct.asset_id = this asset (explicitly assigned), OR
+    //   - ct.asset_id IS NULL AND ct.asset_type matches (type-wide template)
+    // This prevents a test/global template assigned to a different asset from
+    // appearing on every asset of the same type.
     let checklistTemplates;
     if (companyUser) {
       [checklistTemplates] = await pool.query(
@@ -104,18 +109,21 @@ router.get("/:assetId", async (req, res, next) => {
                 ct.category, ct.description, ct.frequency, ct.shift, ct.status, ct.questions
          FROM checklist_templates ct
          JOIN template_user_assignments tua ON tua.template_id = ct.id AND tua.template_type = 'checklist'
-         WHERE ct.company_id = ? AND (ct.asset_type = ? OR ct.asset_id = ?) AND ct.is_active = 1 AND tua.assigned_to = ?
+         WHERE ct.company_id = ? AND ct.is_active = 1
+           AND (ct.asset_id = ? OR (ct.asset_id IS NULL AND ct.asset_type = ?))
+           AND tua.assigned_to = ?
          ORDER BY ct.template_name`,
-        [asset.companyId, asset.assetType, assetId, companyUser.sub]
+        [asset.companyId, assetId, asset.assetType, companyUser.sub]
       );
     } else {
       [checklistTemplates] = await pool.query(
         `SELECT ct.id, ct.template_name AS "templateName", ct.asset_type AS "assetType",
                 ct.category, ct.description, ct.frequency, ct.shift, ct.status, ct.questions
          FROM checklist_templates ct
-         WHERE ct.company_id = ? AND (ct.asset_type = ? OR ct.asset_id = ?) AND ct.is_active = 1
+         WHERE ct.company_id = ? AND ct.is_active = 1
+           AND (ct.asset_id = ? OR (ct.asset_id IS NULL AND ct.asset_type = ?))
          ORDER BY ct.template_name`,
-        [asset.companyId, asset.assetType, assetId]
+        [asset.companyId, assetId, asset.assetType]
       );
     }
     const normalizedCL = checklistTemplates.map((t) => ({

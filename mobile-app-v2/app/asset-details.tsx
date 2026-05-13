@@ -263,12 +263,21 @@ export default function AssetDetailsScreen() {
             </View>
           )}
 
-          {/* Recent submission card */}
+          {/* Recent submission card — tappable so the supervisor can read responses */}
           <View style={styles.sectionHeader}>
             <Text style={[styles.sectionLabel, { color: theme.textMuted }]}>LAST INSPECTION</Text>
           </View>
           {recent ? (
-            <View style={[styles.recentCard, { backgroundColor: theme.surface, borderColor: theme.borderLight }]}>
+            <TouchableOpacity
+              style={[styles.recentCard, { backgroundColor: theme.surface, borderColor: theme.borderLight }]}
+              onPress={() =>
+                router.push({
+                  pathname: '/submission-detail',
+                  params: { type: 'checklist', id: String(recent.id) },
+                })
+              }
+              activeOpacity={0.8}
+            >
               <View style={styles.recentCardTop}>
                 <View style={[styles.recentStatusDot, { backgroundColor: recent.status === 'submitted' || recent.status === 'approved' ? '#10B981' : '#F59E0B' }]} />
                 <Text style={[styles.recentTemplateName, { color: theme.textPrimary }]} numberOfLines={1}>
@@ -290,7 +299,8 @@ export default function AssetDetailsScreen() {
                   </Text>
                 </View>
               </View>
-            </View>
+              <Text style={[{ fontSize: 11, color: theme.textMuted, marginTop: 4 }]}>Tap to view responses →</Text>
+            </TouchableOpacity>
           ) : (
             <View style={[styles.recentEmpty, { backgroundColor: theme.surface, borderColor: theme.borderLight }]}>
               <MaterialCommunityIcons name="clipboard-text-outline" size={20} color={theme.textMuted} />

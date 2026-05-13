@@ -13,7 +13,7 @@ function AnswerValue({ answer }: { answer: any }) {
   // Backend stores answers as { value: <answer>, photoUrl?: <url> } JSON objects.
   // These arrive as either a parsed object or a raw JSON string — handle both.
   let raw = answer.value ?? answer.answer ?? null;
-  let photoUrl: string | null = null;
+  let photoUrl: string | null = answer.photoUrl ?? null;
 
   if (typeof raw === 'string') {
     const trimmed = raw.trim();
@@ -21,12 +21,12 @@ function AnswerValue({ answer }: { answer: any }) {
       try {
         const parsed = JSON.parse(trimmed);
         raw      = parsed.value ?? parsed.answer ?? null;
-        photoUrl = parsed.photoUrl ?? parsed.url ?? null;
+        photoUrl = photoUrl ?? parsed.photoUrl ?? parsed.url ?? null;
       } catch { /* keep raw as-is */ }
     }
   } else if (raw && typeof raw === 'object') {
-    photoUrl = raw.photoUrl ?? raw.url ?? null;
-    raw      = raw.value ?? raw.answer ?? null;
+    photoUrl = photoUrl ?? (raw as any).photoUrl ?? (raw as any).url ?? null;
+    raw      = (raw as any).value ?? (raw as any).answer ?? null;
   }
 
   const str = raw != null && raw !== '' ? String(raw) : null;
@@ -93,6 +93,12 @@ export default function SubmissionDetailScreen() {
             <Text style={[styles.metaLabel, { color: theme.textSecondary }]}>Submitted</Text>
             <Text style={[styles.metaValue, { color: theme.textPrimary }]}>{new Date(detail.submittedAt).toLocaleString()}</Text>
           </View>
+          {(detail.submittedByName || detail.submittedBy) ? (
+            <View style={styles.metaRow}>
+              <Text style={[styles.metaLabel, { color: theme.textSecondary }]}>Submitted By</Text>
+              <Text style={[styles.metaValue, { color: theme.textPrimary }]}>{detail.submittedByName ?? detail.submittedBy}</Text>
+            </View>
+          ) : null}
           {detail.hasFlagged ? (
             <View style={styles.metaRow}>
               <Text style={[styles.metaLabel, { color: theme.textSecondary }]}>Status</Text>

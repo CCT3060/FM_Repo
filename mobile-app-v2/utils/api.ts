@@ -306,6 +306,15 @@ export async function fetchMySubmissionDetail(type: string, id: number) {
   return apiGet<unknown>(`/api/template-assignments/my-submission-detail/${type}/${id}`);
 }
 
+/**
+ * Fetch full detail of any checklist submission in the same company.
+ * Used by client supervisors to view submissions they didn't file themselves
+ * (e.g. the "Last Inspection" card on the asset details screen).
+ */
+export async function fetchAssetSubmissionDetail(submissionId: number) {
+  return apiGet<unknown>(`/api/template-assignments/my-submission-detail/checklist/${submissionId}`);
+}
+
 export async function fetchMyWarnings() {
   return apiGet<unknown[]>('/api/template-assignments/my-warnings');
 }

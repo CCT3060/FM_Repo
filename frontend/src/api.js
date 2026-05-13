@@ -88,6 +88,8 @@ export const assignChecklistToUsers = (token, id, userIds) => request("POST", `/
 // Asset types master
 export const getAssetTypes = (token) => request("GET", "/api/asset-types", undefined, { authToken: token });
 export const createAssetType = (token, data) => request("POST", "/api/asset-types", data, { authToken: token });
+export const updateAssetType = (token, id, data) => request("PUT", `/api/asset-types/${id}`, data, { authToken: token });
+export const deleteAssetType = (token, id) => request("DELETE", `/api/asset-types/${id}`, undefined, { authToken: token });
 
 // Company Users (admins / staff per company)
 export const getCompanyUsers = (token, companyId) => request("GET", `/api/company-users?companyId=${companyId}`, undefined, { authToken: token });

@@ -20,6 +20,8 @@ import {
   assignChecklistToUsers,
   getAssetTypes,
   createAssetType,
+  updateAssetType,
+  deleteAssetType,
   getUsers,
   getCompanyUsers,
   createCompanyUser,
@@ -797,7 +799,9 @@ const CompanyPortal = () => {
   const [assetTypeFilter, setAssetTypeFilter] = useState("all");
   const [editingAssetId, setEditingAssetId] = useState(null);
   const [assetTypes, setAssetTypes] = useState([]);
-  const [assetTypeDraft, setAssetTypeDraft] = useState({ code: "", label: "", category: "" });
+  const [assetTypeDraft, setAssetTypeDraft] = useState({ code: "", label: "", category: "", workflowType: "standard", fieldLayout: { fields: [] } });
+  const [editingAssetTypeId, setEditingAssetTypeId] = useState(null);
+  const [showFieldLayoutBuilder, setShowFieldLayoutBuilder] = useState(false);
   const [departments, setDepartments] = useState([]);
   const [departmentForm, setDepartmentForm] = useState(emptyDepartment);
   const [departmentLoading, setDepartmentLoading] = useState(false);
@@ -1375,19 +1379,94 @@ const CompanyPortal = () => {
         code: assetTypeDraft.code.trim().toLowerCase(),
         label: assetTypeDraft.label.trim(),
         category: assetTypeDraft.category.trim() || undefined,
+        workflowType: assetTypeDraft.workflowType || "standard",
+        fieldLayout: assetTypeDraft.fieldLayout?.fields?.length ? assetTypeDraft.fieldLayout : undefined,
       };
-      const created = await createAssetType(token, payload);
-      setAssetTypes((prev) => [...prev, created].sort((a, b) => a.label.localeCompare(b.label)));
-      setAssetTypeDraft({ code: "", label: "", category: "" });
+      if (editingAssetTypeId) {
+        const updated = await updateAssetType(token, editingAssetTypeId, payload);
+        setAssetTypes((prev) => prev.map(t => t.id === editingAssetTypeId ? { ...t, ...updated } : t).sort((a, b) => a.label.localeCompare(b.label)));
+        setEditingAssetTypeId(null);
+      } else {
+        const created = await createAssetType(token, payload);
+        setAssetTypes((prev) => [...prev, created].sort((a, b) => a.label.localeCompare(b.label)));
+      }
+      setAssetTypeDraft({ code: "", label: "", category: "", workflowType: "standard", fieldLayout: { fields: [] } });
+      setShowFieldLayoutBuilder(false);
     } catch (err) {
-      setAssetError(err.message || "Could not create asset type");
+      setAssetError(err.message || "Could not save asset type");
     } finally {
       setAssetLoading(false);
     }
   };
 
+  const handleDeleteAssetType = async (id) => {
+    if (!window.confirm("Delete this asset type? Assets using this type will keep the type code.")) return;
+    if (!token) return;
+    try {
+      await deleteAssetType(token, id);
+      setAssetTypes(prev => prev.filter(t => t.id !== id));
+    } catch (err) {
+      alert(err.message || "Could not delete asset type");
+    }
+  };
+
+  const handleEditAssetType = (at) => {
+    setEditingAssetTypeId(at.id);
+    setAssetTypeDraft({
+      code: at.code,
+      label: at.label,
+      category: at.category || "",
+      workflowType: at.workflowType || "standard",
+      fieldLayout: at.fieldLayout || { fields: [] },
+    });
+    setShowFieldLayoutBuilder(!!(at.fieldLayout?.fields?.length));
+  };
+
+  const addFieldToLayout = () => {
+    setAssetTypeDraft(prev => ({
+      ...prev,
+      fieldLayout: {
+        fields: [
+          ...(prev.fieldLayout?.fields || []),
+          { key: "", label: "", type: "text", required: false, placeholder: "" },
+        ],
+      },
+    }));
+    setShowFieldLayoutBuilder(true);
+  };
+
+  const updateLayoutField = (idx, changes) => {
+    setAssetTypeDraft(prev => {
+      const fields = [...(prev.fieldLayout?.fields || [])];
+      fields[idx] = { ...fields[idx], ...changes };
+      // Auto-generate key from label if key not set
+      if (changes.label && !fields[idx].key) {
+        fields[idx].key = changes.label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/(^_|_$)/g, "");
+      }
+      return { ...prev, fieldLayout: { fields } };
+    });
+  };
+
+  const removeLayoutField = (idx) => {
+    setAssetTypeDraft(prev => ({
+      ...prev,
+      fieldLayout: { fields: prev.fieldLayout.fields.filter((_, i) => i !== idx) },
+    }));
+  };
+
+  const getWorkflowTypeForAsset = (assetTypeCode) => {
+    const at = assetTypes.find(t => t.code === assetTypeCode);
+    if (at?.workflowType) return at.workflowType;
+    // Legacy fallback
+    if (assetTypeCode === "soft" || assetTypeCode === "soft service") return "soft";
+    if (assetTypeCode === "fleet") return "fleet";
+    if (assetTypeCode === "technical") return "technical";
+    return "standard";
+  };
+
   const buildMetadataFromForm = (form) => {
-    if (form.assetType === "soft") {
+    const wf = getWorkflowTypeForAsset(form.assetType);
+    if (wf === "soft") {
       return {
         building: form.building,
         floor: form.floor,
@@ -1395,7 +1474,7 @@ const CompanyPortal = () => {
         description: form.description,
       };
     }
-    if (form.assetType === "technical") {
+    if (wf === "technical") {
       return {
         machineName: form.machineName,
         brand: form.brand,
@@ -1413,7 +1492,7 @@ const CompanyPortal = () => {
         documents: form.documentLinks ? form.documentLinks.split(/\n|,/).map((d) => d.trim()).filter(Boolean) : [],
       };
     }
-    if (form.assetType === "fleet") {
+    if (wf === "fleet") {
       return {
         vehicleNumber: form.vehicleNumber,
         vehicleType: form.vehicleType,
@@ -1436,6 +1515,10 @@ const CompanyPortal = () => {
       description: form.description,
       imageUrl: form.imageUrl,
       documents: form.documentLinks ? form.documentLinks.split(/\n|,/).map((d) => d.trim()).filter(Boolean) : [],
+      // Collect any custom field values (prefixed with _custom_)
+      ...Object.entries(form)
+        .filter(([k]) => k.startsWith("_custom_"))
+        .reduce((acc, [k, v]) => { acc[k.replace("_custom_", "")] = v; return acc; }, {}),
     };
   };
 
@@ -3125,30 +3208,130 @@ const CompanyPortal = () => {
               <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", marginBottom: "16px" }}>
                 <div style={{ padding: "16px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px" }}>
                   <div>
-                    <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", lineHeight: 1.3 }}>Asset Type Master</p>
-                    <p style={{ fontSize: "12.5px", color: "#64748b", marginTop: "2px" }}>Create reusable asset types for consistent data.</p>
+                    <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", lineHeight: 1.3 }}>Asset Type Manager</p>
+                    <p style={{ fontSize: "12.5px", color: "#64748b", marginTop: "2px" }}>Create asset types with dynamic field layouts and workflow configuration.</p>
                   </div>
                   <span style={{ background: "#eff6ff", color: "#2563eb", padding: "4px 12px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, flexShrink: 0 }}>{assetTypes.length} types</span>
                 </div>
                 <div style={{ padding: "16px 20px" }}>
-                  <form onSubmit={handleCreateAssetType} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px", alignItems: "end" }}>
-                    <div>
-                      <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Type Code</label>
-                      <input className="form-input" value={assetTypeDraft.code} onChange={(e) => setAssetTypeDraft({ ...assetTypeDraft, code: e.target.value })} placeholder="e.g. kitchen" required />
+                  <form onSubmit={handleCreateAssetType}>
+                    {/* Basic info row */}
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "12px", alignItems: "end", marginBottom: "12px" }}>
+                      <div>
+                        <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Type Code *</label>
+                        <input className="form-input" value={assetTypeDraft.code} onChange={(e) => setAssetTypeDraft({ ...assetTypeDraft, code: e.target.value })} placeholder="e.g. kitchen" required disabled={!!editingAssetTypeId} />
+                      </div>
+                      <div>
+                        <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Label *</label>
+                        <input className="form-input" value={assetTypeDraft.label} onChange={(e) => setAssetTypeDraft({ ...assetTypeDraft, label: e.target.value })} placeholder="Kitchen Equipment" required />
+                      </div>
+                      <div>
+                        <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Category</label>
+                        <input className="form-input" value={assetTypeDraft.category} onChange={(e) => setAssetTypeDraft({ ...assetTypeDraft, category: e.target.value })} placeholder="Grouping (optional)" />
+                      </div>
+                      <div>
+                        <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Workflow Type</label>
+                        <select className="form-select" value={assetTypeDraft.workflowType} onChange={(e) => setAssetTypeDraft({ ...assetTypeDraft, workflowType: e.target.value })}>
+                          <option value="standard">Standard</option>
+                          <option value="soft">Soft Services</option>
+                          <option value="technical">Technical</option>
+                          <option value="fleet">Fleet</option>
+                        </select>
+                      </div>
                     </div>
-                    <div>
-                      <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Type Label</label>
-                      <input className="form-input" value={assetTypeDraft.label} onChange={(e) => setAssetTypeDraft({ ...assetTypeDraft, label: e.target.value })} placeholder="Kitchen Equipment" required />
+
+                    {/* Field Layout Builder */}
+                    <div style={{ marginBottom: "12px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px" }}>
+                        <span style={{ fontSize: "12.5px", fontWeight: 600, color: "#475569" }}>Custom Fields (Asset Form Layout)</span>
+                        <button type="button" onClick={addFieldToLayout}
+                          style={{ padding: "4px 12px", background: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe", borderRadius: "6px", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}>
+                          + Add Field
+                        </button>
+                        {(assetTypeDraft.fieldLayout?.fields?.length > 0) && (
+                          <span style={{ fontSize: "11px", color: "#64748b" }}>{assetTypeDraft.fieldLayout.fields.length} custom field(s)</span>
+                        )}
+                      </div>
+                      {showFieldLayoutBuilder && assetTypeDraft.fieldLayout?.fields?.map((field, idx) => (
+                        <div key={idx} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 120px 80px auto", gap: "8px", alignItems: "end", marginBottom: "8px", background: "#f8fafc", padding: "10px", borderRadius: "8px" }}>
+                          <div>
+                            <label style={{ fontSize: "11px", fontWeight: 600, color: "#64748b", display: "block", marginBottom: "3px" }}>Label</label>
+                            <input className="form-input" value={field.label} placeholder="e.g. Serial Number"
+                              onChange={(e) => updateLayoutField(idx, { label: e.target.value, key: field.key || e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/(^_|_$)/g, "") })} />
+                          </div>
+                          <div>
+                            <label style={{ fontSize: "11px", fontWeight: 600, color: "#64748b", display: "block", marginBottom: "3px" }}>Placeholder</label>
+                            <input className="form-input" value={field.placeholder || ""} placeholder="e.g. Enter serial..."
+                              onChange={(e) => updateLayoutField(idx, { placeholder: e.target.value })} />
+                          </div>
+                          <div>
+                            <label style={{ fontSize: "11px", fontWeight: 600, color: "#64748b", display: "block", marginBottom: "3px" }}>Type</label>
+                            <select className="form-select" value={field.type} onChange={(e) => updateLayoutField(idx, { type: e.target.value })}>
+                              <option value="text">Text</option>
+                              <option value="number">Number</option>
+                              <option value="date">Date</option>
+                              <option value="textarea">Textarea</option>
+                              <option value="select">Dropdown</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label style={{ fontSize: "11px", fontWeight: 600, color: "#64748b", display: "block", marginBottom: "3px" }}>Required</label>
+                            <select className="form-select" value={field.required ? "yes" : "no"} onChange={(e) => updateLayoutField(idx, { required: e.target.value === "yes" })}>
+                              <option value="no">No</option>
+                              <option value="yes">Yes</option>
+                            </select>
+                          </div>
+                          <button type="button" onClick={() => removeLayoutField(idx)}
+                            style={{ width: "30px", height: "30px", background: "#fef2f2", color: "#dc2626", border: "none", borderRadius: "6px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", alignSelf: "flex-end" }}>
+                            ✕
+                          </button>
+                        </div>
+                      ))}
                     </div>
-                    <div>
-                      <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Category (optional)</label>
-                      <input className="form-input" value={assetTypeDraft.category} onChange={(e) => setAssetTypeDraft({ ...assetTypeDraft, category: e.target.value })} placeholder="Grouping or module" />
+
+                    <div style={{ display: "flex", gap: "8px" }}>
+                      <button type="submit" disabled={assetLoading}
+                        style={{ padding: "8px 20px", background: assetLoading ? "#93c5fd" : "#2563eb", color: "#fff", border: "none", borderRadius: "8px", fontWeight: 600, fontSize: "14px", cursor: "pointer" }}>
+                        {assetLoading ? "Saving…" : editingAssetTypeId ? "Update Type" : "Add Type"}
+                      </button>
+                      {editingAssetTypeId && (
+                        <button type="button" onClick={() => { setEditingAssetTypeId(null); setAssetTypeDraft({ code: "", label: "", category: "", workflowType: "standard", fieldLayout: { fields: [] } }); setShowFieldLayoutBuilder(false); }}
+                          style={{ padding: "8px 16px", background: "#f1f5f9", color: "#475569", border: "1px solid #e2e8f0", borderRadius: "8px", fontWeight: 600, fontSize: "14px", cursor: "pointer" }}>
+                          Cancel Edit
+                        </button>
+                      )}
                     </div>
-                    <button type="submit" disabled={assetLoading}
-                      style={{ height: "40px", background: assetLoading ? "#93c5fd" : "#2563eb", color: "#fff", border: "none", borderRadius: "8px", fontWeight: 600, fontSize: "14px", cursor: "pointer" }}>
-                      {assetLoading ? "Saving…" : "Add Type"}
-                    </button>
                   </form>
+
+                  {/* Existing types list */}
+                  {assetTypes.length > 0 && (
+                    <div style={{ marginTop: "16px", borderTop: "1px solid #e2e8f0", paddingTop: "12px" }}>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+                        {assetTypes.map((at) => (
+                          <div key={at.id} style={{ display: "flex", alignItems: "center", gap: "6px", padding: "5px 12px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "20px", fontSize: "13px" }}>
+                            <span style={{ fontWeight: 600, color: "#0f172a" }}>{at.label}</span>
+                            <span style={{ color: "#94a3b8", fontSize: "11px" }}>({at.code})</span>
+                            {at.workflowType && at.workflowType !== 'standard' && (
+                              <span style={{ padding: "1px 7px", borderRadius: "10px", fontSize: "10px", fontWeight: 600,
+                                background: at.workflowType === 'soft' ? '#f0fdf4' : at.workflowType === 'technical' ? '#eff6ff' : '#faf5ff',
+                                color: at.workflowType === 'soft' ? '#16a34a' : at.workflowType === 'technical' ? '#2563eb' : '#7c3aed' }}>
+                                {at.workflowType}
+                              </span>
+                            )}
+                            {at.fieldLayout?.fields?.length > 0 && (
+                              <span style={{ padding: "1px 7px", borderRadius: "10px", fontSize: "10px", fontWeight: 600, background: "#fffbeb", color: "#92400e" }}>
+                                {at.fieldLayout.fields.length} fields
+                              </span>
+                            )}
+                            <button type="button" onClick={() => handleEditAssetType(at)}
+                              style={{ background: "none", border: "none", cursor: "pointer", color: "#2563eb", fontSize: "12px", fontWeight: 600, padding: "0 2px" }}>Edit</button>
+                            <button type="button" onClick={() => handleDeleteAssetType(at.id)}
+                              style={{ background: "none", border: "none", cursor: "pointer", color: "#dc2626", fontSize: "12px", fontWeight: 600, padding: "0 2px" }}>✕</button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -3247,144 +3430,194 @@ const CompanyPortal = () => {
                       <select name="assetType" value={assetForm.assetType} onChange={handleAssetChange} className="form-select" required>
                         <option value="" disabled>Select type</option>
                         {(assetTypes.length ? assetTypes : [
-                          { code: "soft", label: "Soft Services" },
-                          { code: "technical", label: "Technical" },
-                          { code: "fleet", label: "Fleet" },
+                          { code: "soft", label: "Soft Services", workflowType: "soft" },
+                          { code: "technical", label: "Technical", workflowType: "technical" },
+                          { code: "fleet", label: "Fleet", workflowType: "fleet" },
                         ]).map((t) => (
                           <option key={t.code} value={t.code}>{t.label}</option>
                         ))}
                       </select>
                     </div>
-                    {assetForm.assetType && assetForm.assetType !== "soft" && (
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px", marginTop: "12px" }}>
-                        <div className="form-group">
-                          <label>Asset Name <span style={{ color: "#ef4444" }}>*</span></label>
-                          <input name="assetName" value={assetForm.assetName} onChange={handleAssetChange} className="form-input" required placeholder="e.g. HVAC Unit 1" />
+                  </div>
+
+                  {/* Determine workflow type of selected asset type */}
+                  {(() => {
+                    const selectedAt = assetTypes.find(t => t.code === assetForm.assetType);
+                    const wf = selectedAt?.workflowType || (assetForm.assetType === "soft" ? "soft" : assetForm.assetType === "fleet" ? "fleet" : "technical");
+                    const customFields = selectedAt?.fieldLayout?.fields || [];
+                    const isSoftWf = wf === "soft";
+                    const isFleetWf = wf === "fleet";
+                    const isTechWf = wf === "technical";
+
+                    if (!assetForm.assetType) return null;
+
+                    return (<>
+                      {/* Company + Asset Name (all types except soft) */}
+                      {!isSoftWf && (
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px", marginBottom: "12px" }}>
+                          <div className="form-group">
+                            <label>Asset Name <span style={{ color: "#ef4444" }}>*</span></label>
+                            <input name="assetName" value={assetForm.assetName} onChange={handleAssetChange} className="form-input" required placeholder="e.g. HVAC Unit 1" />
+                          </div>
+                          <div className="form-group">
+                            <label>Company <span style={{ color: "#ef4444" }}>*</span></label>
+                            <select name="companyId" value={assetForm.companyId || ""} onChange={handleAssetChange} className="form-select" required>
+                              <option value="" disabled>Select company</option>
+                              {companies.map((c) => (
+                                <option key={c.id} value={c.id}>{c.companyName}</option>
+                              ))}
+                            </select>
+                          </div>
                         </div>
+                      )}
+
+                      {/* Soft workflow: Location fields only */}
+                      {isSoftWf && (
+                        <div style={{ marginBottom: "12px" }}>
+                          <div className="form-section">
+                            <h3 style={{ marginBottom: "12px", fontSize: "13px", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.05em" }}>Location</h3>
+                            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px" }}>
+                              <div className="form-group"><label>Building</label><input name="building" value={assetForm.building} onChange={handleAssetChange} className="form-input" placeholder="e.g. Block A" /></div>
+                              <div className="form-group"><label>Floor</label><input name="floor" value={assetForm.floor} onChange={handleAssetChange} className="form-input" placeholder="e.g. 3rd Floor" /></div>
+                              <div className="form-group"><label>Room / Area <span style={{ color: "#ef4444" }}>*</span></label><input name="room" value={assetForm.room} onChange={handleAssetChange} className="form-input" required placeholder="e.g. Hot Kitchen, Lobby Area" /></div>
+                            </div>
+                            <div className="form-group" style={{ marginTop: "10px" }}>
+                              <label>Description</label>
+                              <textarea name="description" value={assetForm.description} onChange={handleAssetChange} className="form-input" rows="2" placeholder="Notes, instructions, etc." />
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Non-soft: standard fields */}
+                      {!isSoftWf && (<>
                         <div className="form-group">
-                          <label>Company <span style={{ color: "#ef4444" }}>*</span></label>
-                          <select name="companyId" value={assetForm.companyId || ""} onChange={handleAssetChange} className="form-select" required>
-                            <option value="" disabled>Select company</option>
-                            {companies.map((c) => (
-                              <option key={c.id} value={c.id}>{c.companyName}</option>
+                          <label>Department</label>
+                          <select name="departmentId" value={assetForm.departmentId || ""} onChange={handleAssetChange} className="form-select">
+                            <option value="">— None —</option>
+                            {companyDepartmentOptions.map((d) => (
+                              <option key={d.id} value={d.id}>{d.name}</option>
                             ))}
                           </select>
                         </div>
-                      </div>
-                    )}
-                  </div>
 
-                  {/* ── Soft Services: Location fields only — asset name = Room / Area ── */}
-                  {assetForm.assetType === "soft" && (
-                    <div style={{ marginBottom: "12px" }}>
-                      <div className="form-section">
-                        <h3 style={{ marginBottom: "12px", fontSize: "13px", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.05em" }}>Location</h3>
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px" }}>
-                          <div className="form-group"><label>Building</label><input name="building" value={assetForm.building} onChange={handleAssetChange} className="form-input" placeholder="e.g. Block A" /></div>
-                          <div className="form-group"><label>Floor</label><input name="floor" value={assetForm.floor} onChange={handleAssetChange} className="form-input" placeholder="e.g. 3rd Floor" /></div>
-                          <div className="form-group"><label>Room / Area <span style={{ color: "#ef4444" }}>*</span></label><input name="room" value={assetForm.room} onChange={handleAssetChange} className="form-input" required placeholder="e.g. Hot Kitchen, Lobby Area" /></div>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "12px", marginBottom: "12px" }}>
+                          <div className="form-group">
+                            <label>Asset Unique ID</label>
+                            <input name="assetUniqueId" value={assetForm.assetUniqueId} onChange={handleAssetChange} className="form-input" placeholder="Auto or manual" />
+                          </div>
+                          <div className="form-group">
+                            <label>Status</label>
+                            <select name="status" value={assetForm.status} onChange={handleAssetChange} className="form-select">
+                              <option value="Active">Active</option>
+                              <option value="Inactive">Inactive</option>
+                            </select>
+                          </div>
                         </div>
-                        <div className="form-group" style={{ marginTop: "10px" }}>
-                          <label>Description</label>
+
+                        {!isFleetWf && (
+                          <div className="form-section" style={{ marginBottom: "12px" }}>
+                            <h3 style={{ marginBottom: "8px" }}>Location</h3>
+                            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px" }}>
+                              <div className="form-group"><label>Building</label><input name="building" value={assetForm.building} onChange={handleAssetChange} className="form-input" /></div>
+                              <div className="form-group"><label>Floor</label><input name="floor" value={assetForm.floor} onChange={handleAssetChange} className="form-input" /></div>
+                              <div className="form-group"><label>Room/Area</label><input name="room" value={assetForm.room} onChange={handleAssetChange} className="form-input" /></div>
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="form-group" style={{ marginBottom: "12px" }}>
+                          <label>Asset Description</label>
                           <textarea name="description" value={assetForm.description} onChange={handleAssetChange} className="form-input" rows="2" placeholder="Notes, instructions, etc." />
                         </div>
-                      </div>
-                    </div>
-                  )}
 
-                  {/* ── Non-soft fields ── */}
-                  {assetForm.assetType && assetForm.assetType !== "soft" && (<>
-                  <div className="form-group">
-                    <label>Department</label>
-                    <select name="departmentId" value={assetForm.departmentId || ""} onChange={handleAssetChange} className="form-select">
-                      <option value="">— None —</option>
-                      {companyDepartmentOptions.map((d) => (
-                        <option key={d.id} value={d.id}>{d.name}</option>
-                      ))}
-                    </select>
-                  </div>
+                        {isTechWf && (
+                          <div className="form-section" style={{ marginBottom: "12px" }}>
+                            <h3 style={{ marginBottom: "8px" }}>Technical Details</h3>
+                            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px" }}>
+                              <div className="form-group"><label>Machine Name</label><input name="machineName" value={assetForm.machineName} onChange={handleAssetChange} className="form-input" /></div>
+                              <div className="form-group"><label>Brand/Manufacturer</label><input name="brand" value={assetForm.brand} onChange={handleAssetChange} className="form-input" /></div>
+                              <div className="form-group"><label>Model Number</label><input name="modelNumber" value={assetForm.modelNumber} onChange={handleAssetChange} className="form-input" /></div>
+                              <div className="form-group"><label>Serial Number</label><input name="serialNumber" value={assetForm.serialNumber} onChange={handleAssetChange} className="form-input" /></div>
+                              <div className="form-group"><label>Installation Date</label><input type="date" name="installationDate" value={assetForm.installationDate} onChange={handleAssetChange} className="form-input" /></div>
+                              <div className="form-group"><label>Warranty Expiry</label><input type="date" name="warrantyExpiry" value={assetForm.warrantyExpiry} onChange={handleAssetChange} className="form-input" /></div>
+                              <div className="form-group"><label>Maintenance Frequency</label><input name="maintenanceFrequency" value={assetForm.maintenanceFrequency} onChange={handleAssetChange} className="form-input" placeholder="e.g. Monthly" /></div>
+                              <div className="form-group"><label>Last Service Date</label><input type="date" name="lastServiceDate" value={assetForm.lastServiceDate} onChange={handleAssetChange} className="form-input" /></div>
+                              <div className="form-group"><label>Next Service Date</label><input type="date" name="nextServiceDate" value={assetForm.nextServiceDate} onChange={handleAssetChange} className="form-input" /></div>
+                              <div className="form-group"><label>Technician Assigned</label><input name="technician" value={assetForm.technician} onChange={handleAssetChange} className="form-input" /></div>
+                            </div>
+                          </div>
+                        )}
 
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "12px" }}>
-                    <div className="form-group">
-                      <label>Asset Unique ID</label>
-                      <input name="assetUniqueId" value={assetForm.assetUniqueId} onChange={handleAssetChange} className="form-input" placeholder="Auto or manual" />
-                    </div>
-                    <div className="form-group">
-                      <label>Status</label>
-                      <select name="status" value={assetForm.status} onChange={handleAssetChange} className="form-select">
-                        <option value="Active">Active</option>
-                        <option value="Inactive">Inactive</option>
-                      </select>
-                    </div>
-                  </div>
+                        {isFleetWf && (
+                          <div className="form-section" style={{ marginBottom: "12px" }}>
+                            <h3 style={{ marginBottom: "8px" }}>Fleet Details</h3>
+                            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px" }}>
+                              <div className="form-group"><label>Vehicle Number</label><input name="vehicleNumber" value={assetForm.vehicleNumber} onChange={handleAssetChange} className="form-input" required /></div>
+                              <div className="form-group"><label>Vehicle Type</label><input name="vehicleType" value={assetForm.vehicleType} onChange={handleAssetChange} className="form-input" /></div>
+                              <div className="form-group"><label>Fuel Type</label><input name="fuelType" value={assetForm.fuelType} onChange={handleAssetChange} className="form-input" /></div>
+                              <div className="form-group"><label>Driver Assigned</label><input name="driver" value={assetForm.driver} onChange={handleAssetChange} className="form-input" /></div>
+                              <div className="form-group"><label>RC Number</label><input name="rcNumber" value={assetForm.rcNumber} onChange={handleAssetChange} className="form-input" /></div>
+                              <div className="form-group"><label>Insurance Expiry</label><input type="date" name="insuranceExpiry" value={assetForm.insuranceExpiry} onChange={handleAssetChange} className="form-input" /></div>
+                              <div className="form-group"><label>PUC Expiry</label><input type="date" name="pucExpiry" value={assetForm.pucExpiry} onChange={handleAssetChange} className="form-input" /></div>
+                              <div className="form-group"><label>Service Due Date</label><input type="date" name="serviceDueDate" value={assetForm.serviceDueDate} onChange={handleAssetChange} className="form-input" /></div>
+                              <div className="form-group"><label>Purchase Date</label><input type="date" name="purchaseDate" value={assetForm.purchaseDate} onChange={handleAssetChange} className="form-input" /></div>
+                              <div className="form-group"><label>Vendor</label><input name="vendor" value={assetForm.vendor} onChange={handleAssetChange} className="form-input" /></div>
+                              <label className="checkbox-row" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                <input type="checkbox" name="dailyKmTracking" checked={assetForm.dailyKmTracking} onChange={handleAssetChange} />
+                                <span>Daily KM Tracking</span>
+                              </label>
+                            </div>
+                          </div>
+                        )}
 
-                  {assetForm.assetType !== "fleet" && (
-                  <div className="form-section" style={{ marginBottom: "12px" }}>
-                    <h3 style={{ marginBottom: "8px" }}>Location</h3>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px" }}>
-                      <div className="form-group"><label>Building</label><input name="building" value={assetForm.building} onChange={handleAssetChange} className="form-input" /></div>
-                      <div className="form-group"><label>Floor</label><input name="floor" value={assetForm.floor} onChange={handleAssetChange} className="form-input" /></div>
-                      <div className="form-group"><label>Room/Area</label><input name="room" value={assetForm.room} onChange={handleAssetChange} className="form-input" /></div>
-                    </div>
-                  </div>
-                  )}
+                        {/* Dynamic custom fields from field_layout */}
+                        {customFields.length > 0 && (
+                          <div className="form-section" style={{ marginBottom: "12px" }}>
+                            <h3 style={{ marginBottom: "8px" }}>Additional Fields</h3>
+                            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px" }}>
+                              {customFields.map((f) => (
+                                <div key={f.key} className="form-group">
+                                  <label>{f.label}{f.required && <span style={{ color: "#ef4444" }}> *</span>}</label>
+                                  {f.type === "textarea" ? (
+                                    <textarea
+                                      name={`_custom_${f.key}`}
+                                      value={assetForm[`_custom_${f.key}`] || ""}
+                                      onChange={handleAssetChange}
+                                      className="form-input"
+                                      rows="2"
+                                      placeholder={f.placeholder || ""}
+                                      required={f.required}
+                                    />
+                                  ) : (
+                                    <input
+                                      type={f.type === "number" ? "number" : f.type === "date" ? "date" : "text"}
+                                      name={`_custom_${f.key}`}
+                                      value={assetForm[`_custom_${f.key}`] || ""}
+                                      onChange={handleAssetChange}
+                                      className="form-input"
+                                      placeholder={f.placeholder || ""}
+                                      required={f.required}
+                                    />
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
 
-                  <div className="form-group">
-                    <label>Asset Description</label>
-                    <textarea name="description" value={assetForm.description} onChange={handleAssetChange} className="form-input" rows="2" placeholder="Notes, instructions, etc." />
-                  </div>
-
-                  {assetForm.assetType === "technical" && (
-                    <div className="form-section" style={{ marginBottom: "12px" }}>
-                      <h3 style={{ marginBottom: "8px" }}>Technical Asset</h3>
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px" }}>
-                        <div className="form-group"><label>Machine Name</label><input name="machineName" value={assetForm.machineName} onChange={handleAssetChange} className="form-input" /></div>
-                        <div className="form-group"><label>Brand/Manufacturer</label><input name="brand" value={assetForm.brand} onChange={handleAssetChange} className="form-input" /></div>
-                        <div className="form-group"><label>Model Number</label><input name="modelNumber" value={assetForm.modelNumber} onChange={handleAssetChange} className="form-input" /></div>
-                        <div className="form-group"><label>Serial Number</label><input name="serialNumber" value={assetForm.serialNumber} onChange={handleAssetChange} className="form-input" /></div>
-                        <div className="form-group"><label>Installation Date</label><input type="date" name="installationDate" value={assetForm.installationDate} onChange={handleAssetChange} className="form-input" /></div>
-                        <div className="form-group"><label>Warranty Expiry</label><input type="date" name="warrantyExpiry" value={assetForm.warrantyExpiry} onChange={handleAssetChange} className="form-input" /></div>
-                        <div className="form-group"><label>Maintenance Frequency</label><input name="maintenanceFrequency" value={assetForm.maintenanceFrequency} onChange={handleAssetChange} className="form-input" placeholder="e.g. Monthly" /></div>
-                        <div className="form-group"><label>Last Service Date</label><input type="date" name="lastServiceDate" value={assetForm.lastServiceDate} onChange={handleAssetChange} className="form-input" /></div>
-                        <div className="form-group"><label>Next Service Date</label><input type="date" name="nextServiceDate" value={assetForm.nextServiceDate} onChange={handleAssetChange} className="form-input" /></div>
-                        <div className="form-group"><label>Technician Assigned</label><input name="technician" value={assetForm.technician} onChange={handleAssetChange} className="form-input" /></div>
-                      </div>
-                    </div>
-                  )}
-
-                  {assetForm.assetType === "fleet" && (
-                    <div className="form-section" style={{ marginBottom: "12px" }}>
-                      <h3 style={{ marginBottom: "8px" }}>Fleet Asset</h3>
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px" }}>
-                        <div className="form-group"><label>Vehicle Number</label><input name="vehicleNumber" value={assetForm.vehicleNumber} onChange={handleAssetChange} className="form-input" required /></div>
-                        <div className="form-group"><label>Vehicle Type</label><input name="vehicleType" value={assetForm.vehicleType} onChange={handleAssetChange} className="form-input" /></div>
-                        <div className="form-group"><label>Fuel Type</label><input name="fuelType" value={assetForm.fuelType} onChange={handleAssetChange} className="form-input" /></div>
-                        <div className="form-group"><label>Driver Assigned</label><input name="driver" value={assetForm.driver} onChange={handleAssetChange} className="form-input" /></div>
-                        <div className="form-group"><label>RC Number</label><input name="rcNumber" value={assetForm.rcNumber} onChange={handleAssetChange} className="form-input" /></div>
-                        <div className="form-group"><label>Insurance Expiry</label><input type="date" name="insuranceExpiry" value={assetForm.insuranceExpiry} onChange={handleAssetChange} className="form-input" /></div>
-                        <div className="form-group"><label>PUC Expiry</label><input type="date" name="pucExpiry" value={assetForm.pucExpiry} onChange={handleAssetChange} className="form-input" /></div>
-                        <div className="form-group"><label>Service Due Date</label><input type="date" name="serviceDueDate" value={assetForm.serviceDueDate} onChange={handleAssetChange} className="form-input" /></div>
-                        <div className="form-group"><label>Purchase Date</label><input type="date" name="purchaseDate" value={assetForm.purchaseDate} onChange={handleAssetChange} className="form-input" /></div>
-                        <div className="form-group"><label>Vendor</label><input name="vendor" value={assetForm.vendor} onChange={handleAssetChange} className="form-input" /></div>
-                        <label className="checkbox-row" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                          <input type="checkbox" name="dailyKmTracking" checked={assetForm.dailyKmTracking} onChange={handleAssetChange} />
-                          <span>Daily KM Tracking</span>
-                        </label>
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="form-section" style={{ marginBottom: "12px" }}>
-                    <h3 style={{ marginBottom: "8px" }}>Attachments & Tracking</h3>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px" }}>
-                      <div className="form-group"><label>Image URL</label><input name="imageUrl" value={assetForm.imageUrl} onChange={handleAssetChange} className="form-input" placeholder="Link to asset image" /></div>
-                      <div className="form-group"><label>Checklist (name or ID)</label><input name="checklist" value={assetForm.checklist} onChange={handleAssetChange} className="form-input" placeholder="Attach checklist reference" /></div>
-                      <div className="form-group"><label>QR Code</label><input name="qrCode" value={assetForm.qrCode} onChange={handleAssetChange} className="form-input" placeholder="QR code value (optional)" /></div>
-                      <div className="form-group"><label>Document Links (one per line)</label><textarea name="documentLinks" value={assetForm.documentLinks} onChange={handleAssetChange} className="form-input" rows="2" placeholder="Paste URLs or notes" /></div>
-                    </div>
-                  </div>
-                  </>)}
-                  {/* ── End non-soft fields ── */}
+                        <div className="form-section" style={{ marginBottom: "12px" }}>
+                          <h3 style={{ marginBottom: "8px" }}>Attachments & Tracking</h3>
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px" }}>
+                            <div className="form-group"><label>Image URL</label><input name="imageUrl" value={assetForm.imageUrl} onChange={handleAssetChange} className="form-input" placeholder="Link to asset image" /></div>
+                            <div className="form-group"><label>Checklist (name or ID)</label><input name="checklist" value={assetForm.checklist} onChange={handleAssetChange} className="form-input" placeholder="Attach checklist reference" /></div>
+                            <div className="form-group"><label>QR Code</label><input name="qrCode" value={assetForm.qrCode} onChange={handleAssetChange} className="form-input" placeholder="QR code value (optional)" /></div>
+                            <div className="form-group"><label>Document Links (one per line)</label><textarea name="documentLinks" value={assetForm.documentLinks} onChange={handleAssetChange} className="form-input" rows="2" placeholder="Paste URLs or notes" /></div>
+                          </div>
+                        </div>
+                      </>)}
+                    </>);
+                  })()}
 
                   <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end", marginTop: "8px" }}>
                     <button type="button" onClick={() => { setShowAssetModal(false); setEditingAssetId(null); }} style={{ padding: "9px 20px", border: "1px solid #e2e8f0", borderRadius: "8px", background: "#fff", color: "#475569", fontWeight: 600, cursor: "pointer", fontSize: "14px" }}>Cancel</button>
