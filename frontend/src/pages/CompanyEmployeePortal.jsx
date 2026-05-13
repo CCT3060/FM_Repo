@@ -975,10 +975,10 @@ function AssetModal({ existing, token, departments, employees = [], assetTypesLi
   const customFields = selectedTypeDef?.fieldLayout?.fields || [];
   const hasCustomLayout = customFields.length > 0;
   const workflowType = selectedTypeDef?.workflowType || form.assetType;
-  // Soft workflow: room is used as asset name (legacy "soft" code or workflowType=soft without custom layout)
-  const isSoftLegacy = !hasCustomLayout && (form.assetType === "soft" || workflowType === "soft");
-  const isFleetLegacy = !hasCustomLayout && (form.assetType === "fleet" || workflowType === "fleet");
-  const isTechnicalLegacy = !hasCustomLayout && (form.assetType === "technical" || workflowType === "technical");
+  // Only the three built-in type codes use legacy form layouts; custom types always get the generic form
+  const isSoftLegacy = !hasCustomLayout && form.assetType === "soft";
+  const isFleetLegacy = !hasCustomLayout && form.assetType === "fleet";
+  const isTechnicalLegacy = !hasCustomLayout && form.assetType === "technical";
 
   const buildMetadata = () => {
     const assignedEmployee = employees.find(e => String(e.id) === String(form.assignedToId));
@@ -1147,11 +1147,47 @@ function AssetModal({ existing, token, departments, employees = [], assetTypesLi
 
           {/* ── Legacy Soft Services ── */}
           {form.assetType && isSoftLegacy && <>
+            <FInput label="Asset Unique ID" name="assetUniqueId" value={form.assetUniqueId} onChange={handleChange} placeholder="Auto or manual" />
+            <FSelect label="Department" name="departmentId" value={form.departmentId} onChange={handleChange}>
+              <option value="">— None —</option>
+              {departments.map(d => <option key={d.id} value={d.id}>{d.departmentName}</option>)}
+            </FSelect>
+            <FSelect label="Status" name="status" value={form.status} onChange={handleChange}>
+              <option value="Active">Active</option>
+              <option value="Inactive">Inactive</option>
+            </FSelect>
+            <FSelect label="Assign To (Employee)" name="assignedToId" value={form.assignedToId} onChange={handleChange}>
+              <option value="">— None —</option>
+              {employees.map(e => <option key={e.id} value={e.id}>{e.fullName}{e.designation ? ` · ${e.designation}` : ""}</option>)}
+            </FSelect>
+
+            <FSec title="Soft Services" />
+            <FInput label="Service Area" name="serviceArea" value={form.serviceArea} onChange={handleChange} placeholder="e.g. Floor 1 Lobby" />
+            <FSelect label="Frequency" name="frequency" value={form.frequency} onChange={handleChange}>
+              <option value="Daily">Daily</option>
+              <option value="Weekly">Weekly</option>
+              <option value="Monthly">Monthly</option>
+              <option value="On Demand">On Demand</option>
+            </FSelect>
+            <FSelect label="Shift" name="shift" value={form.shift} onChange={handleChange}>
+              <option value="Morning">Morning</option>
+              <option value="Afternoon">Afternoon</option>
+              <option value="Evening">Evening</option>
+              <option value="Night">Night</option>
+            </FSelect>
+            <FInput label="Supervisor" name="supervisor" value={form.supervisor} onChange={handleChange} placeholder="Name" />
+            <FInput label="Staff Required" name="staffRequired" type="number" value={form.staffRequired} onChange={handleChange} placeholder="e.g. 2" />
+            <div style={{ gridColumn: "span 2" }}>
+              <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Special Instructions</label>
+              <textarea name="specialInstructions" value={form.specialInstructions} onChange={handleChange} rows={2} placeholder="Notes..."
+                style={{ width: "100%", boxSizing: "border-box", padding: "8px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13.5px", resize: "vertical", fontFamily: "inherit", outline: "none" }} />
+            </div>
+
             <FSec title="Location" />
             <FInput label="Building" name="building" value={form.building} onChange={handleChange} placeholder="e.g. Block A" />
             <FInput label="Floor" name="floor" value={form.floor} onChange={handleChange} placeholder="e.g. 3rd Floor" />
             <div style={{ gridColumn: "span 2" }}>
-              <FInput label="Room / Area" name="room" value={form.room} onChange={handleChange} placeholder="e.g. Server Room" />
+              <FInput label="Room / Area (used as Asset Name)" required name="room" value={form.room} onChange={handleChange} placeholder="e.g. Server Room" />
             </div>
             <div style={{ gridColumn: "span 2" }}>
               <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Description</label>
@@ -2762,7 +2798,7 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false }) {
 }
 
 /* ─── Asset Types Panel ──────────────────────────────────────────── */
-function AssetTypesPanel({ token }) {
+function AssetTypesPanel({ token, onLayoutSaved }) {
   const API = import.meta.env.VITE_API_BASE || "";
   const [tab, setTab] = useState("types"); // "types" | "layout"
   const [types, setTypes] = useState([]);
@@ -2870,6 +2906,7 @@ function AssetTypesPanel({ token }) {
       });
       if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.message || "Save failed"); }
       await loadTypes();
+      onLayoutSaved?.();
       alert("Field layout saved!");
     } catch (e) { alert(e.message); }
     finally { setSavingLayout(false); }
@@ -5208,7 +5245,7 @@ export default function CompanyEmployeePortal() {
 
         {/* ── Asset Types ────────────────────────────────────────── */}
         {nav === "asset-types" && (
-          <AssetTypesPanel token={token} />
+          <AssetTypesPanel token={token} onLayoutSaved={() => getCompanyPortalAssetTypes(token).then(d => d && setAssetTypesList(d)).catch(() => {})} />
         )}
 
         {/* ── Shifts ────────────────────────────────────────────── */}
