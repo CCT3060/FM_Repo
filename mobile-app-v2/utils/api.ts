@@ -15,7 +15,7 @@ import type { RoleCapabilities } from './permissions';
 // ─── Config ───────────────────────────────────────────────────────────────────
 export const API_BASE: string =
   (process.env.EXPO_PUBLIC_API_URL as string | undefined) ??
-  'https://catalystservices.eco';  // Production domain with SSL
+  'http://3.110.166.39';  // EC2 IP — update DNS for catalystservices.eco to point here for HTTPS
 
 // ─── Error class ──────────────────────────────────────────────────────────────
 export class ApiError extends Error {
