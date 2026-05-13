@@ -581,12 +581,17 @@ router.get("/assets", async (req, res, next) => {
     const serviceDomain = (cuRow?.serviceDomain || 'technical').toLowerCase();
 
     let softFilter = '';
-    if (serviceDomain === 'technical') {
-      softFilter = `AND LOWER(TRIM(COALESCE(a.asset_type,''))) != 'soft service'`;
-    } else if (serviceDomain === 'soft') {
-      softFilter = `AND LOWER(TRIM(COALESCE(a.asset_type,''))) = 'soft service'`;
+    const userRole = req.companyUser?.role || '';
+    const isAdminRole = ['admin', 'catalyst_admin'].includes(userRole);
+    if (!isAdminRole) {
+      // Admins see all asset types; non-admins are scoped by service domain
+      if (serviceDomain === 'technical') {
+        softFilter = `AND LOWER(TRIM(COALESCE(a.asset_type,''))) != 'soft'`;
+      } else if (serviceDomain === 'soft') {
+        softFilter = `AND LOWER(TRIM(COALESCE(a.asset_type,''))) = 'soft'`;
+      }
     }
-    // 'both' → no filter
+    // 'both' domain or admin role → no filter
 
     const { search, type, assignedOnly } = req.query;
     const params = [cid(req)];
