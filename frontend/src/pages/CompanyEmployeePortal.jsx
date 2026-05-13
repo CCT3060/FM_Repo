@@ -262,8 +262,13 @@ function normalizePerms(p) {
 function EmployeeModal({ existing, token, employees = [], customRoles = [], currentUserRole = "admin", onClose, onSaved }) {
   const isEdit = !!existing;
 
-  // Derive service domain from existing employee's custom role capabilities
+  // Use the saved service_domain from the DB directly.
+  // Falls back to role-capability derivation only when the field is absent.
   const deriveServiceDomain = () => {
+    if (isEdit && existing?.serviceDomain) {
+      const sd = existing.serviceDomain.toLowerCase();
+      if (["soft", "technical", "both"].includes(sd)) return sd;
+    }
     if (!isEdit || !existing?.role) return "technical";
     const matched = customRoles.find((r) => r.roleKey === existing.role);
     if (matched) {
