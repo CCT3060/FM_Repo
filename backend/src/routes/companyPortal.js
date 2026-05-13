@@ -582,9 +582,9 @@ router.get("/assets", async (req, res, next) => {
 
     let softFilter = '';
     if (serviceDomain === 'technical') {
-      softFilter = `AND LOWER(TRIM(COALESCE(a.asset_type,''))) != 'soft'`;
+      softFilter = `AND LOWER(TRIM(COALESCE(a.asset_type,''))) != 'soft service'`;
     } else if (serviceDomain === 'soft') {
-      softFilter = `AND LOWER(TRIM(COALESCE(a.asset_type,''))) = 'soft'`;
+      softFilter = `AND LOWER(TRIM(COALESCE(a.asset_type,''))) = 'soft service'`;
     }
     // 'both' → no filter
 
