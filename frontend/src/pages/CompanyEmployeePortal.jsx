@@ -2764,17 +2764,24 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false }) {
 /* ─── Asset Types Panel ──────────────────────────────────────────── */
 function AssetTypesPanel({ token }) {
   const API = import.meta.env.VITE_API_BASE || "";
-  const emptyDraft = { code: "", label: "", category: "", workflowType: "standard", fieldLayout: { fields: [] } };
+  const [tab, setTab] = useState("types"); // "types" | "layout"
   const [types, setTypes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState(null);
+
+  /* ── Tab 1 state ── */
+  const emptyDraft = { code: "", label: "", category: "", workflowType: "standard" };
   const [draft, setDraft] = useState(emptyDraft);
+  const [editingId, setEditingId] = useState(null);
   const [saving, setSaving] = useState(false);
   const [deleteId, setDeleteId] = useState(null);
 
-  const load = async () => {
+  /* ── Tab 2 state ── */
+  const [selectedTypeId, setSelectedTypeId] = useState("");
+  const [layoutFields, setLayoutFields] = useState([]);
+  const [savingLayout, setSavingLayout] = useState(false);
+
+  const loadTypes = async () => {
     setLoading(true); setError(null);
     try {
       const r = await fetch(`${API}/api/company-portal/asset-types`, { headers: { Authorization: `Bearer ${token}` } });
@@ -2783,189 +2790,381 @@ function AssetTypesPanel({ token }) {
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   };
-  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadTypes(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const openCreate = () => { setEditingId(null); setDraft(emptyDraft); setShowForm(true); };
-  const openEdit = (t) => {
+  // Sync layout fields when selected type changes
+  useEffect(() => {
+    const t = types.find(t => String(t.id) === String(selectedTypeId));
+    if (t?.fieldLayout?.fields) {
+      setLayoutFields(JSON.parse(JSON.stringify(t.fieldLayout.fields)));
+    } else {
+      setLayoutFields([]);
+    }
+  }, [selectedTypeId, types]);
+
+  /* ─── Tab 1: Asset Type CRUD ─── */
+  const startEdit = (t) => {
     setEditingId(t.id);
-    setDraft({ code: t.code, label: t.label, category: t.category || "", workflowType: t.workflowType || "standard", fieldLayout: t.fieldLayout || { fields: [] } });
-    setShowForm(true);
+    setDraft({ code: t.code, label: t.label, category: t.category || "", workflowType: t.workflowType || "standard" });
   };
-  const closeForm = () => setShowForm(false);
+  const cancelEdit = () => { setEditingId(null); setDraft(emptyDraft); };
 
-  const addField = () => setDraft(p => ({ ...p, fieldLayout: { fields: [...(p.fieldLayout?.fields || []), { key: "", label: "", type: "text", required: false, placeholder: "" }] } }));
-  const updateField = (idx, changes) => setDraft(p => {
-    const fields = [...(p.fieldLayout?.fields || [])];
-    fields[idx] = { ...fields[idx], ...changes };
-    if (changes.label !== undefined) fields[idx].key = changes.label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/(^_|_$)/g, "");
-    return { ...p, fieldLayout: { fields } };
-  });
-  const removeField = (idx) => setDraft(p => ({ ...p, fieldLayout: { fields: p.fieldLayout.fields.filter((_, i) => i !== idx) } }));
-
-  const handleSave = async () => {
+  const handleSaveType = async () => {
     if (!draft.code.trim() || !draft.label.trim()) return alert("Code and label are required");
     setSaving(true);
     try {
       const url = editingId ? `${API}/api/company-portal/asset-types/${editingId}` : `${API}/api/company-portal/asset-types`;
+      const body = editingId
+        ? { label: draft.label.trim(), category: draft.category.trim() || undefined, workflowType: draft.workflowType }
+        : { code: draft.code.trim().toLowerCase(), label: draft.label.trim(), category: draft.category.trim() || undefined, workflowType: draft.workflowType };
       const r = await fetch(url, {
         method: editingId ? "PUT" : "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ code: draft.code.trim().toLowerCase(), label: draft.label.trim(), category: draft.category.trim() || undefined, workflowType: draft.workflowType, fieldLayout: draft.fieldLayout?.fields?.length ? draft.fieldLayout : undefined }),
+        body: JSON.stringify(body),
       });
       if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.message || "Save failed"); }
-      setShowForm(false);
-      load();
+      setEditingId(null); setDraft(emptyDraft);
+      loadTypes();
     } catch (e) { alert(e.message); }
     finally { setSaving(false); }
   };
 
-  const handleDelete = async (id) => {
+  const handleDeleteType = async (id) => {
     if (!window.confirm("Delete this asset type?")) return;
     setDeleteId(id);
     try {
       const r = await fetch(`${API}/api/company-portal/asset-types/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
       if (!r.ok) throw new Error("Delete failed");
-      load();
+      if (String(selectedTypeId) === String(id)) setSelectedTypeId("");
+      loadTypes();
     } catch (e) { alert(e.message); }
     finally { setDeleteId(null); }
   };
 
-  const wfColor = (w) => ({ soft: "#d1fae5", technical: "#dbeafe", fleet: "#ede9fe" }[w] || "#f1f5f9");
+  /* ─── Tab 2: Field Layout Builder ─── */
+  const addLayoutField = () => setLayoutFields(p => [...p, { key: "", label: "", type: "text", required: false, placeholder: "", wide: false }]);
+  const updateLayoutField = (idx, changes) => setLayoutFields(p => {
+    const next = [...p];
+    next[idx] = { ...next[idx], ...changes };
+    if (changes.label !== undefined) next[idx].key = changes.label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/(^_|_$)/g, "");
+    return next;
+  });
+  const removeLayoutField = (idx) => setLayoutFields(p => p.filter((_, i) => i !== idx));
+  const moveField = (idx, dir) => setLayoutFields(p => {
+    const next = [...p];
+    const swap = idx + dir;
+    if (swap < 0 || swap >= next.length) return p;
+    [next[idx], next[swap]] = [next[swap], next[idx]];
+    return next;
+  });
+
+  const handleSaveLayout = async () => {
+    if (!selectedTypeId) return alert("Please select an asset type first");
+    setSavingLayout(true);
+    try {
+      const fieldLayout = layoutFields.length ? { fields: layoutFields } : undefined;
+      const r = await fetch(`${API}/api/company-portal/asset-types/${selectedTypeId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ label: types.find(t => String(t.id) === String(selectedTypeId))?.label, workflowType: types.find(t => String(t.id) === String(selectedTypeId))?.workflowType || "standard", fieldLayout }),
+      });
+      if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.message || "Save failed"); }
+      await loadTypes();
+      alert("Field layout saved!");
+    } catch (e) { alert(e.message); }
+    finally { setSavingLayout(false); }
+  };
+
+  const wfColor = (w) => ({ soft: "#d1fae5", technical: "#dbeafe", fleet: "#ede9fe", standard: "#f1f5f9" }[w] || "#f1f5f9");
+  const wfTextColor = (w) => ({ soft: "#065f46", technical: "#1e40af", fleet: "#5b21b6", standard: "#374151" }[w] || "#374151");
+
+  const TabBtn = ({ id, label }) => (
+    <button onClick={() => setTab(id)} style={{
+      padding: "9px 22px", borderRadius: "8px", fontWeight: 700, fontSize: "0.9rem", cursor: "pointer", border: "none", transition: "all 0.15s",
+      background: tab === id ? "#2563eb" : "transparent",
+      color: tab === id ? "#fff" : "#64748b",
+    }}>{label}</button>
+  );
 
   return (
-    <div style={{ padding: "24px", maxWidth: "900px", margin: "0 auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
-        <div>
-          <h2 style={{ margin: 0, fontSize: "1.3rem", fontWeight: 700, color: "#1e293b" }}>Asset Types</h2>
-          <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: "0.875rem" }}>
-            Manage asset type categories. These filter what assets employees see based on their service domain.
-          </p>
-        </div>
-        <button
-          onClick={openCreate}
-          style={{ background: "#2563eb", color: "#fff", border: "none", borderRadius: "8px", padding: "10px 18px", fontWeight: 600, cursor: "pointer", fontSize: "0.9rem" }}
-        >
-          + Add Asset Type
-        </button>
+    <div style={{ padding: "24px", maxWidth: "960px", margin: "0 auto" }}>
+      {/* Page header */}
+      <div style={{ marginBottom: "20px" }}>
+        <h2 style={{ margin: "0 0 4px", fontSize: "1.4rem", fontWeight: 800, color: "#0f172a" }}>Asset Types Manager</h2>
+        <p style={{ margin: 0, color: "#64748b", fontSize: "0.875rem" }}>
+          Define asset types and configure custom field layouts for each type.
+        </p>
+      </div>
+
+      {/* Tab bar */}
+      <div style={{ display: "flex", gap: "4px", background: "#f1f5f9", borderRadius: "10px", padding: "4px", marginBottom: "24px", width: "fit-content" }}>
+        <TabBtn id="types" label="📋  Asset Types" />
+        <TabBtn id="layout" label="🔧  Field Layout" />
       </div>
 
       {loading && <div style={{ textAlign: "center", padding: "40px", color: "#94a3b8" }}>Loading…</div>}
-      {error && <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: "8px", padding: "16px", color: "#dc2626" }}>{error}</div>}
+      {error && <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: "8px", padding: "16px", color: "#dc2626", marginBottom: "16px" }}>{error}</div>}
 
-      {!loading && !error && types.length === 0 && (
-        <div style={{ textAlign: "center", padding: "60px 20px", color: "#94a3b8" }}>
-          <div style={{ fontSize: "2rem", marginBottom: "8px" }}>📋</div>
-          <p>No asset types yet. Add your first one.</p>
-        </div>
-      )}
+      {/* ═══════════════════ TAB 1: ASSET TYPES ═══════════════════ */}
+      {tab === "types" && !loading && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
 
-      {!loading && types.length > 0 && (
-        <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-          {types.map((t) => (
-            <div key={t.id} style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: "10px", padding: "14px 18px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
-                  <span style={{ fontWeight: 700, color: "#1e293b" }}>{t.label}</span>
-                  <span style={{ fontSize: "11px", color: "#94a3b8" }}>({t.code})</span>
-                  {t.workflowType && t.workflowType !== "standard" && (
-                    <span style={{ background: wfColor(t.workflowType), color: "#374151", fontSize: "0.72rem", fontWeight: 600, borderRadius: "999px", padding: "2px 9px" }}>{t.workflowType}</span>
-                  )}
-                  {t.fieldLayout?.fields?.length > 0 && (
-                    <span style={{ background: "#fffbeb", color: "#92400e", fontSize: "0.72rem", fontWeight: 600, borderRadius: "999px", padding: "2px 9px" }}>{t.fieldLayout.fields.length} custom fields</span>
-                  )}
-                </div>
-                {t.category && <div style={{ fontSize: "0.8rem", color: "#64748b" }}>{t.category}</div>}
+          {/* List of existing types */}
+          <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
+            <div style={{ padding: "14px 18px", borderBottom: "1px solid #f1f5f9", background: "#f8fafc", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontWeight: 700, fontSize: "0.95rem", color: "#374151" }}>Existing Asset Types ({types.length})</span>
+            </div>
+            {types.length === 0 ? (
+              <div style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>
+                <div style={{ fontSize: "2rem", marginBottom: "8px" }}>📭</div>
+                <p style={{ margin: 0 }}>No asset types yet. Create one below.</p>
               </div>
-              <div style={{ display: "flex", gap: "8px", marginLeft: "16px" }}>
-                <button onClick={() => openEdit(t)} style={{ background: "#f1f5f9", border: "1px solid #e2e8f0", borderRadius: "6px", padding: "6px 14px", cursor: "pointer", fontWeight: 500, color: "#374151" }}>Edit</button>
-                <button onClick={() => handleDelete(t.id)} disabled={deleteId === t.id}
-                  style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: "6px", padding: "6px 14px", cursor: "pointer", fontWeight: 500, color: "#dc2626" }}>
-                  {deleteId === t.id ? "…" : "Delete"}
+            ) : (
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr style={{ background: "#f8fafc" }}>
+                    {["Code", "Label", "Category", "Workflow", "Fields", "Actions"].map(h => (
+                      <th key={h} style={{ padding: "10px 14px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.04em", borderBottom: "1px solid #f1f5f9" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {types.map((t) => (
+                    <tr key={t.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                      {editingId === t.id ? (
+                        <td colSpan={6} style={{ padding: "14px" }}>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr auto auto", gap: "10px", alignItems: "end" }}>
+                            <div>
+                              <label style={{ display: "block", fontSize: "11px", fontWeight: 600, color: "#64748b", marginBottom: "3px" }}>Code (read-only)</label>
+                              <input value={draft.code} disabled style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", border: "1px solid #e2e8f0", borderRadius: "6px", fontSize: "0.85rem", background: "#f8fafc" }} />
+                            </div>
+                            <div>
+                              <label style={{ display: "block", fontSize: "11px", fontWeight: 600, color: "#64748b", marginBottom: "3px" }}>Label *</label>
+                              <input value={draft.label} onChange={(e) => setDraft(p => ({ ...p, label: e.target.value }))} style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", border: "1px solid #d1d5db", borderRadius: "6px", fontSize: "0.85rem" }} />
+                            </div>
+                            <div>
+                              <label style={{ display: "block", fontSize: "11px", fontWeight: 600, color: "#64748b", marginBottom: "3px" }}>Category</label>
+                              <input value={draft.category} onChange={(e) => setDraft(p => ({ ...p, category: e.target.value }))} placeholder="Optional" style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", border: "1px solid #d1d5db", borderRadius: "6px", fontSize: "0.85rem" }} />
+                            </div>
+                            <div>
+                              <label style={{ display: "block", fontSize: "11px", fontWeight: 600, color: "#64748b", marginBottom: "3px" }}>Workflow</label>
+                              <select value={draft.workflowType} onChange={(e) => setDraft(p => ({ ...p, workflowType: e.target.value }))} style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", border: "1px solid #d1d5db", borderRadius: "6px", fontSize: "0.85rem", background: "#fff" }}>
+                                <option value="standard">Standard</option>
+                                <option value="soft">Soft Services</option>
+                                <option value="technical">Technical</option>
+                                <option value="fleet">Fleet</option>
+                              </select>
+                            </div>
+                            <button onClick={handleSaveType} disabled={saving} style={{ padding: "7px 14px", background: saving ? "#93c5fd" : "#2563eb", color: "#fff", border: "none", borderRadius: "6px", cursor: saving ? "default" : "pointer", fontWeight: 600, fontSize: "0.85rem" }}>{saving ? "…" : "Save"}</button>
+                            <button onClick={cancelEdit} style={{ padding: "7px 14px", background: "#f8fafc", color: "#475569", border: "1px solid #e2e8f0", borderRadius: "6px", cursor: "pointer", fontSize: "0.85rem" }}>Cancel</button>
+                          </div>
+                        </td>
+                      ) : (
+                        <>
+                          <td style={{ padding: "12px 14px", fontSize: "0.85rem", fontFamily: "monospace", color: "#475569" }}>{t.code}</td>
+                          <td style={{ padding: "12px 14px", fontWeight: 600, color: "#1e293b" }}>{t.label}</td>
+                          <td style={{ padding: "12px 14px", fontSize: "0.85rem", color: "#64748b" }}>{t.category || "—"}</td>
+                          <td style={{ padding: "12px 14px" }}>
+                            <span style={{ background: wfColor(t.workflowType), color: wfTextColor(t.workflowType), fontSize: "0.75rem", fontWeight: 600, borderRadius: "999px", padding: "3px 10px" }}>{t.workflowType || "standard"}</span>
+                          </td>
+                          <td style={{ padding: "12px 14px" }}>
+                            {t.fieldLayout?.fields?.length > 0
+                              ? <span style={{ background: "#fffbeb", color: "#92400e", fontSize: "0.75rem", fontWeight: 600, borderRadius: "999px", padding: "3px 10px" }}>{t.fieldLayout.fields.length} fields</span>
+                              : <span style={{ color: "#cbd5e1", fontSize: "0.8rem" }}>None</span>}
+                          </td>
+                          <td style={{ padding: "12px 14px" }}>
+                            <div style={{ display: "flex", gap: "6px" }}>
+                              <button onClick={() => startEdit(t)} style={{ background: "#f1f5f9", border: "1px solid #e2e8f0", borderRadius: "5px", padding: "4px 10px", cursor: "pointer", fontWeight: 500, color: "#374151", fontSize: "0.8rem" }}>Edit</button>
+                              <button onClick={() => { setSelectedTypeId(String(t.id)); setTab("layout"); }} style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: "5px", padding: "4px 10px", cursor: "pointer", fontWeight: 500, color: "#2563eb", fontSize: "0.8rem" }}>Fields</button>
+                              <button onClick={() => handleDeleteType(t.id)} disabled={deleteId === t.id} style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: "5px", padding: "4px 10px", cursor: "pointer", fontWeight: 500, color: "#dc2626", fontSize: "0.8rem" }}>{deleteId === t.id ? "…" : "Delete"}</button>
+                            </div>
+                          </td>
+                        </>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          {/* Add new type form */}
+          {editingId === null && (
+            <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", padding: "20px" }}>
+              <p style={{ margin: "0 0 14px", fontWeight: 700, fontSize: "0.95rem", color: "#374151" }}>+ Create New Asset Type</p>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr auto", gap: "12px", alignItems: "end" }}>
+                <div>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>Type Code *</label>
+                  <input value={draft.code} onChange={(e) => setDraft(p => ({ ...p, code: e.target.value }))} placeholder="e.g. kitchen"
+                    style={{ width: "100%", boxSizing: "border-box", padding: "9px 12px", border: "1px solid #d1d5db", borderRadius: "7px", fontSize: "0.9rem" }} />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>Label *</label>
+                  <input value={draft.label} onChange={(e) => setDraft(p => ({ ...p, label: e.target.value }))} placeholder="e.g. Kitchen Equipment"
+                    style={{ width: "100%", boxSizing: "border-box", padding: "9px 12px", border: "1px solid #d1d5db", borderRadius: "7px", fontSize: "0.9rem" }} />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>Category</label>
+                  <input value={draft.category} onChange={(e) => setDraft(p => ({ ...p, category: e.target.value }))} placeholder="Optional grouping"
+                    style={{ width: "100%", boxSizing: "border-box", padding: "9px 12px", border: "1px solid #d1d5db", borderRadius: "7px", fontSize: "0.9rem" }} />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>Workflow Type</label>
+                  <select value={draft.workflowType} onChange={(e) => setDraft(p => ({ ...p, workflowType: e.target.value }))}
+                    style={{ width: "100%", boxSizing: "border-box", padding: "9px 12px", border: "1px solid #d1d5db", borderRadius: "7px", fontSize: "0.9rem", background: "#fff" }}>
+                    <option value="standard">Standard</option>
+                    <option value="soft">Soft Services</option>
+                    <option value="technical">Technical</option>
+                    <option value="fleet">Fleet</option>
+                  </select>
+                </div>
+                <button onClick={handleSaveType} disabled={saving || !draft.code.trim() || !draft.label.trim()}
+                  style={{ padding: "9px 20px", borderRadius: "7px", border: "none", background: (saving || !draft.code.trim() || !draft.label.trim()) ? "#93c5fd" : "#2563eb", color: "#fff", cursor: (saving || !draft.code.trim() || !draft.label.trim()) ? "default" : "pointer", fontWeight: 700, whiteSpace: "nowrap", fontSize: "0.9rem" }}>
+                  {saving ? "Saving…" : "Create Type"}
                 </button>
               </div>
             </div>
-          ))}
+          )}
         </div>
       )}
 
-      {/* ── Create / Edit Modal ── */}
-      {showForm && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 9000, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
-          <div style={{ background: "#fff", borderRadius: "12px", padding: "28px", width: "560px", maxWidth: "95vw", maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
-            <h3 style={{ margin: "0 0 20px", fontSize: "1.1rem", fontWeight: 700 }}>{editingId ? "Edit Asset Type" : "New Asset Type"}</h3>
+      {/* ═══════════════════ TAB 2: FIELD LAYOUT ═══════════════════ */}
+      {tab === "layout" && !loading && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "12px" }}>
-              <div>
-                <label style={{ display: "block", marginBottom: "4px", fontWeight: 600, fontSize: "0.875rem", color: "#374151" }}>Type Code *</label>
-                <input value={draft.code} onChange={(e) => setDraft(p => ({ ...p, code: e.target.value }))} placeholder="e.g. kitchen"
-                  disabled={!!editingId}
-                  style={{ width: "100%", border: "1px solid #d1d5db", borderRadius: "8px", padding: "9px 12px", fontSize: "0.9rem", boxSizing: "border-box", background: editingId ? "#f8fafc" : "#fff" }} />
-              </div>
-              <div>
-                <label style={{ display: "block", marginBottom: "4px", fontWeight: 600, fontSize: "0.875rem", color: "#374151" }}>Label *</label>
-                <input value={draft.label} onChange={(e) => setDraft(p => ({ ...p, label: e.target.value }))} placeholder="e.g. Kitchen Equipment"
-                  style={{ width: "100%", border: "1px solid #d1d5db", borderRadius: "8px", padding: "9px 12px", fontSize: "0.9rem", boxSizing: "border-box" }} />
-              </div>
-              <div>
-                <label style={{ display: "block", marginBottom: "4px", fontWeight: 600, fontSize: "0.875rem", color: "#374151" }}>Category</label>
-                <input value={draft.category} onChange={(e) => setDraft(p => ({ ...p, category: e.target.value }))} placeholder="Optional grouping"
-                  style={{ width: "100%", border: "1px solid #d1d5db", borderRadius: "8px", padding: "9px 12px", fontSize: "0.9rem", boxSizing: "border-box" }} />
-              </div>
-              <div>
-                <label style={{ display: "block", marginBottom: "4px", fontWeight: 600, fontSize: "0.875rem", color: "#374151" }}>Workflow Type</label>
-                <select value={draft.workflowType} onChange={(e) => setDraft(p => ({ ...p, workflowType: e.target.value }))}
-                  style={{ width: "100%", border: "1px solid #d1d5db", borderRadius: "8px", padding: "9px 12px", fontSize: "0.9rem", background: "#fff", boxSizing: "border-box" }}>
-                  <option value="standard">Standard</option>
-                  <option value="soft">Soft Services</option>
-                  <option value="technical">Technical</option>
-                  <option value="fleet">Fleet</option>
-                </select>
-              </div>
-            </div>
-
-            {/* Field Layout Builder */}
-            <div style={{ marginBottom: "20px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px" }}>
-                <span style={{ fontWeight: 600, fontSize: "0.875rem", color: "#374151" }}>Custom Fields</span>
-                <button type="button" onClick={addField}
-                  style={{ padding: "3px 12px", background: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe", borderRadius: "6px", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}>+ Add Field</button>
-              </div>
-              {(draft.fieldLayout?.fields || []).map((f, idx) => (
-                <div key={idx} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 100px 70px 28px", gap: "6px", alignItems: "end", marginBottom: "6px", background: "#f8fafc", padding: "8px", borderRadius: "8px" }}>
-                  <div><label style={{ fontSize: "11px", fontWeight: 600, color: "#64748b", display: "block", marginBottom: "2px" }}>Label</label>
-                    <input value={f.label} onChange={(e) => updateField(idx, { label: e.target.value })}
-                      placeholder="Field label" style={{ width: "100%", border: "1px solid #d1d5db", borderRadius: "6px", padding: "6px 8px", fontSize: "0.85rem", boxSizing: "border-box" }} /></div>
-                  <div><label style={{ fontSize: "11px", fontWeight: 600, color: "#64748b", display: "block", marginBottom: "2px" }}>Placeholder</label>
-                    <input value={f.placeholder || ""} onChange={(e) => updateField(idx, { placeholder: e.target.value })}
-                      placeholder="Placeholder" style={{ width: "100%", border: "1px solid #d1d5db", borderRadius: "6px", padding: "6px 8px", fontSize: "0.85rem", boxSizing: "border-box" }} /></div>
-                  <div><label style={{ fontSize: "11px", fontWeight: 600, color: "#64748b", display: "block", marginBottom: "2px" }}>Type</label>
-                    <select value={f.type} onChange={(e) => updateField(idx, { type: e.target.value })}
-                      style={{ width: "100%", border: "1px solid #d1d5db", borderRadius: "6px", padding: "6px 8px", fontSize: "0.85rem", background: "#fff" }}>
-                      <option value="text">Text</option>
-                      <option value="number">Number</option>
-                      <option value="date">Date</option>
-                      <option value="textarea">Textarea</option>
-                    </select></div>
-                  <div><label style={{ fontSize: "11px", fontWeight: 600, color: "#64748b", display: "block", marginBottom: "2px" }}>Required</label>
-                    <select value={f.required ? "yes" : "no"} onChange={(e) => updateField(idx, { required: e.target.value === "yes" })}
-                      style={{ width: "100%", border: "1px solid #d1d5db", borderRadius: "6px", padding: "6px 8px", fontSize: "0.85rem", background: "#fff" }}>
-                      <option value="no">No</option>
-                      <option value="yes">Yes</option>
-                    </select></div>
-                  <button type="button" onClick={() => removeField(idx)}
-                    style={{ width: "28px", height: "28px", background: "#fef2f2", color: "#dc2626", border: "none", borderRadius: "6px", cursor: "pointer", alignSelf: "flex-end" }}>✕</button>
-                </div>
-              ))}
-            </div>
-
-            <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
-              <button onClick={closeForm} style={{ padding: "9px 20px", borderRadius: "8px", border: "1px solid #d1d5db", background: "#f8fafc", cursor: "pointer", fontWeight: 500 }}>Cancel</button>
-              <button onClick={handleSave} disabled={saving}
-                style={{ padding: "9px 20px", borderRadius: "8px", border: "none", background: saving ? "#93c5fd" : "#2563eb", color: "#fff", cursor: saving ? "default" : "pointer", fontWeight: 600 }}>
-                {saving ? "Saving…" : editingId ? "Update Type" : "Create Type"}
-              </button>
-            </div>
+          {/* Asset type selector */}
+          <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", padding: "18px 20px" }}>
+            <label style={{ display: "block", fontSize: "13px", fontWeight: 700, color: "#374151", marginBottom: "8px" }}>
+              Select Asset Type to configure its fields:
+            </label>
+            {types.length === 0 ? (
+              <p style={{ color: "#94a3b8", margin: 0 }}>No asset types found. Create some in the Asset Types tab first.</p>
+            ) : (
+              <select value={selectedTypeId} onChange={(e) => setSelectedTypeId(e.target.value)}
+                style={{ padding: "9px 14px", border: "1px solid #d1d5db", borderRadius: "8px", fontSize: "0.95rem", background: "#fff", minWidth: "260px", color: selectedTypeId ? "#1e293b" : "#94a3b8" }}>
+                <option value="">— Choose an asset type —</option>
+                {types.map(t => <option key={t.id} value={t.id}>{t.label} ({t.code})</option>)}
+              </select>
+            )}
           </div>
+
+          {/* Field builder — only when a type is selected */}
+          {selectedTypeId && (
+            <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
+              <div style={{ padding: "14px 20px", background: "#f8fafc", borderBottom: "1px solid #f1f5f9", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <span style={{ fontWeight: 700, color: "#1e293b", fontSize: "0.95rem" }}>
+                    Fields for: <span style={{ color: "#2563eb" }}>{types.find(t => String(t.id) === String(selectedTypeId))?.label}</span>
+                  </span>
+                  <p style={{ margin: "2px 0 0", fontSize: "0.8rem", color: "#64748b" }}>
+                    These fields will appear in the Add Asset form when this type is selected.
+                  </p>
+                </div>
+                <button onClick={addLayoutField}
+                  style={{ padding: "8px 18px", background: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe", borderRadius: "7px", fontWeight: 700, cursor: "pointer", fontSize: "0.875rem" }}>
+                  + Add Field
+                </button>
+              </div>
+
+              <div style={{ padding: "16px 20px" }}>
+                {layoutFields.length === 0 ? (
+                  <div style={{ textAlign: "center", padding: "40px", color: "#94a3b8" }}>
+                    <div style={{ fontSize: "2rem", marginBottom: "8px" }}>🔧</div>
+                    <p style={{ margin: 0 }}>No custom fields yet. Click "+ Add Field" to start building the layout.</p>
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                    {/* Header row */}
+                    <div style={{ display: "grid", gridTemplateColumns: "32px 1fr 1fr 110px 90px 80px 60px", gap: "8px", alignItems: "center", padding: "0 8px" }}>
+                      {["#", "Field Label *", "Placeholder", "Type", "Required", "Full Width", ""].map(h => (
+                        <span key={h} style={{ fontSize: "11px", fontWeight: 700, color: "#94a3b8", textTransform: "uppercase" }}>{h}</span>
+                      ))}
+                    </div>
+                    {layoutFields.map((f, idx) => (
+                      <div key={idx} style={{ display: "grid", gridTemplateColumns: "32px 1fr 1fr 110px 90px 80px 60px", gap: "8px", alignItems: "center", background: "#f8fafc", padding: "10px 8px", borderRadius: "8px", border: "1px solid #f1f5f9" }}>
+                        {/* Order buttons */}
+                        <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                          <button onClick={() => moveField(idx, -1)} disabled={idx === 0} style={{ width: "24px", height: "17px", background: "none", border: "1px solid #e2e8f0", borderRadius: "3px", cursor: "pointer", fontSize: "9px", color: "#94a3b8", display: "flex", alignItems: "center", justifyContent: "center" }}>▲</button>
+                          <button onClick={() => moveField(idx, 1)} disabled={idx === layoutFields.length - 1} style={{ width: "24px", height: "17px", background: "none", border: "1px solid #e2e8f0", borderRadius: "3px", cursor: "pointer", fontSize: "9px", color: "#94a3b8", display: "flex", alignItems: "center", justifyContent: "center" }}>▼</button>
+                        </div>
+                        {/* Label */}
+                        <input value={f.label} onChange={(e) => updateLayoutField(idx, { label: e.target.value })} placeholder="e.g. Machine Name"
+                          style={{ padding: "7px 9px", border: "1px solid #d1d5db", borderRadius: "6px", fontSize: "0.85rem", width: "100%", boxSizing: "border-box" }} />
+                        {/* Placeholder */}
+                        <input value={f.placeholder || ""} onChange={(e) => updateLayoutField(idx, { placeholder: e.target.value })} placeholder="Hint text..."
+                          style={{ padding: "7px 9px", border: "1px solid #d1d5db", borderRadius: "6px", fontSize: "0.85rem", width: "100%", boxSizing: "border-box" }} />
+                        {/* Type */}
+                        <select value={f.type || "text"} onChange={(e) => updateLayoutField(idx, { type: e.target.value })}
+                          style={{ padding: "7px 9px", border: "1px solid #d1d5db", borderRadius: "6px", fontSize: "0.85rem", background: "#fff" }}>
+                          <option value="text">Text</option>
+                          <option value="number">Number</option>
+                          <option value="date">Date</option>
+                          <option value="textarea">Text Area</option>
+                          <option value="select">Dropdown</option>
+                          <option value="checkbox">Checkbox</option>
+                        </select>
+                        {/* Required */}
+                        <select value={f.required ? "yes" : "no"} onChange={(e) => updateLayoutField(idx, { required: e.target.value === "yes" })}
+                          style={{ padding: "7px 9px", border: "1px solid #d1d5db", borderRadius: "6px", fontSize: "0.85rem", background: "#fff" }}>
+                          <option value="no">No</option>
+                          <option value="yes">Yes</option>
+                        </select>
+                        {/* Wide (full row) */}
+                        <select value={f.wide ? "yes" : "no"} onChange={(e) => updateLayoutField(idx, { wide: e.target.value === "yes" })}
+                          style={{ padding: "7px 9px", border: "1px solid #d1d5db", borderRadius: "6px", fontSize: "0.85rem", background: "#fff" }}>
+                          <option value="no">No</option>
+                          <option value="yes">Yes</option>
+                        </select>
+                        {/* Remove */}
+                        <button onClick={() => removeLayoutField(idx)}
+                          style={{ padding: "7px 10px", background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca", borderRadius: "6px", cursor: "pointer", fontWeight: 700, fontSize: "0.85rem" }}>✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Dropdown options helper (only for select-type fields) */}
+                {layoutFields.some(f => f.type === "select") && (
+                  <div style={{ marginTop: "16px", padding: "14px", background: "#fffbeb", borderRadius: "8px", border: "1px solid #fde68a" }}>
+                    <p style={{ margin: "0 0 10px", fontSize: "12px", fontWeight: 700, color: "#92400e" }}>📋 Dropdown Options — enter comma-separated options below each select field:</p>
+                    {layoutFields.filter(f => f.type === "select").map((f, rawIdx) => {
+                      const actualIdx = layoutFields.findIndex(x => x === f);
+                      return (
+                        <div key={rawIdx} style={{ marginBottom: "8px" }}>
+                          <label style={{ fontSize: "12px", fontWeight: 600, color: "#78350f", marginBottom: "4px", display: "block" }}>{f.label || "(unnamed field)"} options:</label>
+                          <input value={(f.options || []).join(", ")} onChange={(e) => updateLayoutField(actualIdx, { options: e.target.value.split(",").map(o => o.trim()).filter(Boolean) })}
+                            placeholder="e.g. Option A, Option B, Option C"
+                            style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", border: "1px solid #fcd34d", borderRadius: "6px", fontSize: "0.85rem" }} />
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Save button */}
+              <div style={{ padding: "14px 20px", borderTop: "1px solid #f1f5f9", display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+                <button onClick={() => {
+                  const t = types.find(t => String(t.id) === String(selectedTypeId));
+                  setLayoutFields(t?.fieldLayout?.fields ? JSON.parse(JSON.stringify(t.fieldLayout.fields)) : []);
+                }} style={{ padding: "9px 20px", borderRadius: "7px", border: "1px solid #e2e8f0", background: "#f8fafc", color: "#475569", cursor: "pointer", fontWeight: 600 }}>
+                  Reset
+                </button>
+                <button onClick={handleSaveLayout} disabled={savingLayout}
+                  style={{ padding: "9px 24px", borderRadius: "7px", border: "none", background: savingLayout ? "#93c5fd" : "#2563eb", color: "#fff", cursor: savingLayout ? "default" : "pointer", fontWeight: 700, fontSize: "0.9rem" }}>
+                  {savingLayout ? "Saving…" : "💾  Save Field Layout"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {!selectedTypeId && types.length > 0 && (
+            <div style={{ textAlign: "center", padding: "40px", color: "#94a3b8", background: "#fff", borderRadius: "12px", border: "1px dashed #e2e8f0" }}>
+              <div style={{ fontSize: "2.5rem", marginBottom: "10px" }}>👆</div>
+              <p style={{ margin: 0, fontWeight: 600 }}>Select an asset type above to configure its field layout.</p>
+              <p style={{ margin: "6px 0 0", fontSize: "0.85rem" }}>Or go to the Asset Types tab and click "Fields" next to any type.</p>
+            </div>
+          )}
         </div>
       )}
     </div>
