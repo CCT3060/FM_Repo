@@ -21,6 +21,7 @@ import {
   createCompanyPortalDepartment,
   updateCompanyPortalDepartment,
   deleteCompanyPortalDepartment,
+  getCompanyPortalAssetTypes,
   getCompanyPortalAssets,
   createCompanyPortalAsset,
   updateCompanyPortalAsset,
@@ -879,11 +880,26 @@ function DeptModal({ existing, token, onClose, onSaved }) {
 }
 
 /* ─── Asset Modal ─────────────────────────────────────────────── */
-function AssetModal({ existing, token, departments, employees = [], onClose, onSaved }) {
+function AssetModal({ existing, token, departments, employees = [], assetTypesList = [], onClose, onSaved }) {
   const isEdit = !!existing;
+
+  // Known hardcoded metadata keys (not custom)
+  const KNOWN_META_KEYS = new Set([
+    "description","purchaseValue","usefulLifeYears","assignedToId","assignedToName",
+    "serviceArea","frequency","shift","supervisor","staffRequired","specialInstructions",
+    "machineName","brand","modelNumber","serialNumber","installationDate","warrantyExpiry",
+    "maintenanceFrequency","lastServiceDate","nextServiceDate","technician",
+    "vehicleNumber","vehicleType","fuelType","driver","rcNumber",
+    "insuranceExpiry","pucExpiry","serviceDueDate","purchaseDate","vendor","dailyKmTracking",
+  ]);
 
   const buildForm = (src) => {
     const meta = src?.metadata || {};
+    // Populate any unknown meta keys as _custom_ fields (for editing dynamic-type assets)
+    const customFromMeta = {};
+    for (const [k, v] of Object.entries(meta)) {
+      if (!KNOWN_META_KEYS.has(k)) customFromMeta[`_custom_${k}`] = String(v ?? "");
+    }
     return {
       assetName:    src?.assetName    || "",
       assetUniqueId: src?.assetUniqueId || "",
@@ -894,14 +910,14 @@ function AssetModal({ existing, token, departments, employees = [], onClose, onS
       room:         src?.room         || "",
       status:       src?.status       || "Active",
       description:  meta.description  || "",
-      // Soft
+      // Soft legacy
       serviceArea:         meta.serviceArea         || "",
       frequency:           meta.frequency           || "Daily",
       shift:               meta.shift               || "Morning",
       supervisor:          meta.supervisor          || "",
       staffRequired:       meta.staffRequired       || "",
       specialInstructions: meta.specialInstructions || "",
-      // Technical
+      // Technical legacy
       machineName:          meta.machineName          || "",
       brand:                meta.brand                || "",
       modelNumber:          meta.modelNumber          || "",
@@ -912,12 +928,11 @@ function AssetModal({ existing, token, departments, employees = [], onClose, onS
       lastServiceDate:      meta.lastServiceDate      || "",
       nextServiceDate:      meta.nextServiceDate      || "",
       technician:           meta.technician           || "",
-      // Asset Valuation (all types)
+      // Valuation
       purchaseValue:    meta.purchaseValue    || "",
       usefulLifeYears:  meta.usefulLifeYears  || "",
-      // Assign To
       assignedToId:    meta.assignedToId    != null ? String(meta.assignedToId) : "",
-      // Fleet
+      // Fleet legacy
       vehicleNumber:   meta.vehicleNumber   || "",
       vehicleType:     meta.vehicleType     || "",
       fuelType:        meta.fuelType        || "",
@@ -929,6 +944,7 @@ function AssetModal({ existing, token, departments, employees = [], onClose, onS
       purchaseDate:    meta.purchaseDate    || "",
       vendor:          meta.vendor          || "",
       dailyKmTracking: !!meta.dailyKmTracking,
+      ...customFromMeta,
     };
   };
 
@@ -942,38 +958,60 @@ function AssetModal({ existing, token, departments, employees = [], onClose, onS
     ch(name, type === "checkbox" ? checked : value);
   };
 
-  // When assetType changes, preserve existing values but clear type-specific fields
   const handleTypeChange = (e) => {
     const newType = e.target.value;
-    setForm(p => ({
-      ...p, assetType: newType,
-      serviceArea: "", frequency: "Daily", shift: "Morning", supervisor: "", staffRequired: "", specialInstructions: "",
-      machineName: "", brand: "", modelNumber: "", serialNumber: "", installationDate: "", warrantyExpiry: "",
-      maintenanceFrequency: "", lastServiceDate: "", nextServiceDate: "", technician: "",
-      vehicleNumber: "", vehicleType: "", fuelType: "", driver: "", rcNumber: "",
-      insuranceExpiry: "", pucExpiry: "", serviceDueDate: "", purchaseDate: "", vendor: "", dailyKmTracking: false,
-      // keep assignedToId across type changes
-    }));
+    // Clear all _custom_ keys and legacy type-specific fields
+    setForm(p => {
+      const cleared = {};
+      for (const k of Object.keys(p)) { if (k.startsWith("_custom_")) cleared[k] = ""; }
+      return {
+        ...p, ...cleared, assetType: newType,
+        serviceArea: "", frequency: "Daily", shift: "Morning", supervisor: "", staffRequired: "", specialInstructions: "",
+        machineName: "", brand: "", modelNumber: "", serialNumber: "", installationDate: "", warrantyExpiry: "",
+        maintenanceFrequency: "", lastServiceDate: "", nextServiceDate: "", technician: "",
+        vehicleNumber: "", vehicleType: "", fuelType: "", driver: "", rcNumber: "",
+        insuranceExpiry: "", pucExpiry: "", serviceDueDate: "", purchaseDate: "", vendor: "", dailyKmTracking: false,
+      };
+    });
   };
 
+  // Derive selected asset type object + its custom fields
+  const selectedTypeDef = assetTypesList.find(t => t.code === form.assetType);
+  const customFields = selectedTypeDef?.fieldLayout?.fields || [];
+  const hasCustomLayout = customFields.length > 0;
+  const workflowType = selectedTypeDef?.workflowType || form.assetType;
+  // Soft workflow: room is used as asset name (legacy "soft" code or workflowType=soft without custom layout)
+  const isSoftLegacy = !hasCustomLayout && (form.assetType === "soft" || workflowType === "soft");
+  const isFleetLegacy = !hasCustomLayout && (form.assetType === "fleet" || workflowType === "fleet");
+  const isTechnicalLegacy = !hasCustomLayout && (form.assetType === "technical" || workflowType === "technical");
+
   const buildMetadata = () => {
-    const t = form.assetType;
     const assignedEmployee = employees.find(e => String(e.id) === String(form.assignedToId));
-    const base = { description: form.description, purchaseValue: form.purchaseValue ? parseFloat(form.purchaseValue) : null, usefulLifeYears: form.usefulLifeYears ? parseFloat(form.usefulLifeYears) : null, assignedToId: form.assignedToId || null, assignedToName: assignedEmployee?.fullName || null };
-    if (t === "soft") return { ...base, serviceArea: form.serviceArea, frequency: form.frequency, shift: form.shift, supervisor: form.supervisor, staffRequired: form.staffRequired, specialInstructions: form.specialInstructions };
-    if (t === "technical") return { ...base, machineName: form.machineName, brand: form.brand, modelNumber: form.modelNumber, serialNumber: form.serialNumber, installationDate: form.installationDate, warrantyExpiry: form.warrantyExpiry, maintenanceFrequency: form.maintenanceFrequency, lastServiceDate: form.lastServiceDate, nextServiceDate: form.nextServiceDate, technician: form.technician };
-    if (t === "fleet") return { ...base, vehicleNumber: form.vehicleNumber, vehicleType: form.vehicleType, fuelType: form.fuelType, driver: form.driver, rcNumber: form.rcNumber, insuranceExpiry: form.insuranceExpiry, pucExpiry: form.pucExpiry, serviceDueDate: form.serviceDueDate, purchaseDate: form.purchaseDate, vendor: form.vendor, dailyKmTracking: form.dailyKmTracking };
+    const base = {
+      description: form.description,
+      purchaseValue: form.purchaseValue ? parseFloat(form.purchaseValue) : null,
+      usefulLifeYears: form.usefulLifeYears ? parseFloat(form.usefulLifeYears) : null,
+      assignedToId: form.assignedToId || null,
+      assignedToName: assignedEmployee?.fullName || null,
+    };
+    if (hasCustomLayout) {
+      // Collect dynamic custom field values
+      const customData = {};
+      for (const f of customFields) customData[f.key] = form[`_custom_${f.key}`] || "";
+      return { ...base, ...customData };
+    }
+    if (isSoftLegacy) return { ...base, serviceArea: form.serviceArea, frequency: form.frequency, shift: form.shift, supervisor: form.supervisor, staffRequired: form.staffRequired, specialInstructions: form.specialInstructions };
+    if (isTechnicalLegacy) return { ...base, machineName: form.machineName, brand: form.brand, modelNumber: form.modelNumber, serialNumber: form.serialNumber, installationDate: form.installationDate, warrantyExpiry: form.warrantyExpiry, maintenanceFrequency: form.maintenanceFrequency, lastServiceDate: form.lastServiceDate, nextServiceDate: form.nextServiceDate, technician: form.technician };
+    if (isFleetLegacy) return { ...base, vehicleNumber: form.vehicleNumber, vehicleType: form.vehicleType, fuelType: form.fuelType, driver: form.driver, rcNumber: form.rcNumber, insuranceExpiry: form.insuranceExpiry, pucExpiry: form.pucExpiry, serviceDueDate: form.serviceDueDate, purchaseDate: form.purchaseDate, vendor: form.vendor, dailyKmTracking: form.dailyKmTracking };
     return base;
   };
 
   const handleSave = async () => {
     if (!form.assetType) return setError("Please select an asset type");
     let assetNameToUse = form.assetName.trim();
-    if (form.assetType === "soft") {
+    if (isSoftLegacy) {
       assetNameToUse = (form.room || "").trim();
-      if (!assetNameToUse) {
-        return setError("Room / Area is required for Soft Services");
-      }
+      if (!assetNameToUse) return setError("Room / Area is required for Soft Services");
     } else if (!assetNameToUse) {
       return setError("Asset name is required");
     }
@@ -1005,6 +1043,36 @@ function AssetModal({ existing, token, departments, employees = [], onClose, onS
     </div>
   );
 
+  // Render a single dynamic field from fieldLayout
+  const renderCustomField = (f) => {
+    const name = `_custom_${f.key}`;
+    const value = form[name] || "";
+    const isWide = f.type === "textarea" || f.wide;
+    return (
+      <div key={f.key} style={isWide ? { gridColumn: "span 2" } : {}}>
+        {f.type === "textarea" ? (
+          <div>
+            <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>{f.label}{f.required && <span style={{ color: "#ef4444" }}> *</span>}</label>
+            <textarea name={name} value={value} onChange={handleChange} rows={2} placeholder={f.placeholder || ""}
+              style={{ width: "100%", boxSizing: "border-box", padding: "8px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13.5px", resize: "vertical", fontFamily: "inherit", outline: "none" }} />
+          </div>
+        ) : f.type === "select" && f.options?.length ? (
+          <FSelect label={f.label} name={name} value={value} onChange={handleChange}>
+            <option value="">— Select —</option>
+            {f.options.map(o => <option key={o} value={o}>{o}</option>)}
+          </FSelect>
+        ) : f.type === "checkbox" ? (
+          <div style={{ display: "flex", alignItems: "center", gap: "9px", marginTop: "18px" }}>
+            <input type="checkbox" id={`chk_${f.key}`} name={name} checked={!!form[name]} onChange={e => ch(name, e.target.checked)} style={{ width: "15px", height: "15px", cursor: "pointer" }} />
+            <label htmlFor={`chk_${f.key}`} style={{ fontSize: "13.5px", fontWeight: 600, color: "#475569", cursor: "pointer" }}>{f.label}</label>
+          </div>
+        ) : (
+          <FInput label={f.label} required={f.required} name={name} type={f.type || "text"} value={value} onChange={handleChange} placeholder={f.placeholder || ""} />
+        )}
+      </div>
+    );
+  };
+
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 1000, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "24px 16px", overflowY: "auto" }}>
       <div style={{ background: "#fff", borderRadius: "14px", width: "100%", maxWidth: "720px" }} onClick={e => e.stopPropagation()}>
@@ -1023,18 +1091,67 @@ function AssetModal({ existing, token, departments, employees = [], onClose, onS
         <div style={{ padding: "18px 22px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
           {error && <div style={{ gridColumn: "span 2" }}><Alert>{error}</Alert></div>}
 
-          {/* ── Asset Type FIRST — drives which fields appear ── */}
+          {/* ── Asset Type dropdown — drives which fields appear ── */}
           <div style={{ gridColumn: "span 2" }}>
             <FSelect label="Asset Type" required name="assetType" value={form.assetType} onChange={handleTypeChange}>
               <option value="" disabled>Select type</option>
-              <option value="soft">Soft Services</option>
-              <option value="technical">Technical</option>
-              <option value="fleet">Fleet</option>
+              {assetTypesList.length > 0
+                ? assetTypesList.map(t => <option key={t.code} value={t.code}>{t.label}</option>)
+                : <>
+                    <option value="soft">Soft Services</option>
+                    <option value="technical">Technical</option>
+                    <option value="fleet">Fleet</option>
+                  </>
+              }
             </FSelect>
           </div>
 
-          {/* ── Soft Services: Location fields only ── */}
-          {form.assetType === "soft" && <>
+          {/* ── Dynamic layout: asset type has a custom field layout ── */}
+          {form.assetType && hasCustomLayout && <>
+            {/* Asset Name + core fields */}
+            <div style={{ gridColumn: "span 2" }}>
+              <FInput label="Asset Name" required name="assetName" value={form.assetName} onChange={handleChange} placeholder="e.g. Block A - Level 2" />
+            </div>
+            <FInput label="Asset Unique ID" name="assetUniqueId" value={form.assetUniqueId} onChange={handleChange} placeholder="Auto or manual" />
+            <FSelect label="Department" name="departmentId" value={form.departmentId} onChange={handleChange}>
+              <option value="">— None —</option>
+              {departments.map(d => <option key={d.id} value={d.id}>{d.departmentName}</option>)}
+            </FSelect>
+            <FSelect label="Status" name="status" value={form.status} onChange={handleChange}>
+              <option value="Active">Active</option>
+              <option value="Inactive">Inactive</option>
+            </FSelect>
+            <FSelect label="Assign To (Employee)" name="assignedToId" value={form.assignedToId} onChange={handleChange}>
+              <option value="">— None —</option>
+              {employees.map(e => <option key={e.id} value={e.id}>{e.fullName}{e.designation ? ` · ${e.designation}` : ""}</option>)}
+            </FSelect>
+
+            {/* Dynamic custom fields from fieldLayout */}
+            <FSec title={selectedTypeDef?.label || "Asset Details"} />
+            {customFields.map(renderCustomField)}
+
+            {/* Location always included */}
+            <FSec title="Location" />
+            <FInput label="Building" name="building" value={form.building} onChange={handleChange} placeholder="e.g. Block A" />
+            <FInput label="Floor" name="floor" value={form.floor} onChange={handleChange} placeholder="e.g. 3rd Floor" />
+            <div style={{ gridColumn: "span 2" }}>
+              <FInput label="Room / Area" name="room" value={form.room} onChange={handleChange} placeholder="e.g. Server Room" />
+            </div>
+
+            {/* Valuation */}
+            <FSec title="Asset Valuation" />
+            <FInput label="Purchase Value (₹)" name="purchaseValue" type="number" value={form.purchaseValue} onChange={handleChange} placeholder="e.g. 250000" />
+            <FInput label="Useful Life (Years)" name="usefulLifeYears" type="number" value={form.usefulLifeYears} onChange={handleChange} placeholder="e.g. 10" />
+
+            <div style={{ gridColumn: "span 2" }}>
+              <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Description</label>
+              <textarea name="description" value={form.description} onChange={handleChange} rows={2} placeholder="Notes, instructions, etc."
+                style={{ width: "100%", boxSizing: "border-box", padding: "8px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13.5px", resize: "vertical", fontFamily: "inherit", outline: "none" }} />
+            </div>
+          </>}
+
+          {/* ── Legacy Soft Services ── */}
+          {form.assetType && isSoftLegacy && <>
             <FSec title="Location" />
             <FInput label="Building" name="building" value={form.building} onChange={handleChange} placeholder="e.g. Block A" />
             <FInput label="Floor" name="floor" value={form.floor} onChange={handleChange} placeholder="e.g. 3rd Floor" />
@@ -1048,8 +1165,8 @@ function AssetModal({ existing, token, departments, employees = [], onClose, onS
             </div>
           </>}
 
-          {/* ── Non-soft: Core + Valuation + Location + Description ── */}
-          {form.assetType && form.assetType !== "soft" && <>
+          {/* ── Legacy Non-soft without custom layout: show core + valuation + location ── */}
+          {form.assetType && !hasCustomLayout && !isSoftLegacy && <>
             <div style={{ gridColumn: "span 2" }}>
               <FInput label="Asset Name" required name="assetName" value={form.assetName} onChange={handleChange} placeholder="e.g. HVAC Unit 1" />
             </div>
@@ -1071,7 +1188,7 @@ function AssetModal({ existing, token, departments, employees = [], onClose, onS
             <FInput label="Purchase Value (₹)" name="purchaseValue" type="number" value={form.purchaseValue} onChange={handleChange} placeholder="e.g. 250000" />
             <FInput label="Useful Life (Years)" name="usefulLifeYears" type="number" value={form.usefulLifeYears} onChange={handleChange} placeholder="e.g. 10" />
 
-            {form.assetType !== "fleet" && <>
+            {!isFleetLegacy && <>
               <FSec title="Location" />
               <FInput label="Building" name="building" value={form.building} onChange={handleChange} placeholder="e.g. Block A" />
               <FInput label="Floor" name="floor" value={form.floor} onChange={handleChange} placeholder="e.g. 3rd Floor" />
@@ -1087,8 +1204,8 @@ function AssetModal({ existing, token, departments, employees = [], onClose, onS
             </div>
           </>}
 
-          {/* ── Technical ── */}
-          {form.assetType === "technical" && <>
+          {/* ── Legacy Technical fields ── */}
+          {isTechnicalLegacy && <>
             <FSec title="Technical Asset" />
             <FInput label="Machine Name" name="machineName" value={form.machineName} onChange={handleChange} />
             <FInput label="Brand / Manufacturer" name="brand" value={form.brand} onChange={handleChange} />
@@ -1102,8 +1219,8 @@ function AssetModal({ existing, token, departments, employees = [], onClose, onS
             <FInput label="Technician Assigned" name="technician" value={form.technician} onChange={handleChange} />
           </>}
 
-          {/* ── Fleet ── */}
-          {form.assetType === "fleet" && <>
+          {/* ── Legacy Fleet fields ── */}
+          {isFleetLegacy && <>
             <FSec title="Fleet Asset" />
             <FInput label="Vehicle Number" required name="vehicleNumber" value={form.vehicleNumber} onChange={handleChange} />
             <FInput label="Vehicle Type" name="vehicleType" value={form.vehicleType} onChange={handleChange} />
@@ -2962,6 +3079,7 @@ export default function CompanyEmployeePortal() {
   const [dashWOAssignSaving, setDashWOAssignSaving]     = useState(false);
   const [dashWOAssignErr, setDashWOAssignErr]           = useState(null);
   const [departments, setDepartments] = useState([]);
+  const [assetTypesList, setAssetTypesList] = useState([]);
   const [assets, setAssets] = useState([]);
   const [checklists, setChecklists] = useState([]);
   const [employees, setEmployees] = useState([]);
@@ -3084,6 +3202,8 @@ export default function CompanyEmployeePortal() {
       getCompanyPortalDepartments(token).then((d) => d && setDepartments(d)).catch(() => {});
       getCompanyPortalAssets(token).then((d) => d && setAssets(d)).catch(() => {});
       getCompanyPortalEmployees(token).then((d) => d && setEmployees(d)).catch(() => {});
+      // Load dynamic asset types for Add Asset modal
+      getCompanyPortalAssetTypes(token).then(d => d && setAssetTypesList(d)).catch(() => {});
       getTemplateUserAssignments(token).then((d) => d && setAssignments(d)).catch(() => {});
       getShifts(token).then((d) => d && setShifts(d)).catch(() => {});
       getActiveShifts(token).then((d) => d && setActiveShifts(d)).catch(() => {});
@@ -3110,6 +3230,7 @@ export default function CompanyEmployeePortal() {
       getCompanyPortalEmployees(token).then((d) => d && setEmployees(d)).catch(() => {});
       getCompanyPortalDepartments(token).then((d) => d && setDepartments(d)).catch(() => {});
       getCompanyPortalAssets(token).then((d) => d && setAssets(d)).catch(() => {});
+      getCompanyPortalAssetTypes(token).then(d => d && setAssetTypesList(d)).catch(() => {});
     } else {
       // Employee: preload assigned tasks for dashboard stat card
       getMyTemplateAssignments(token).then((d) => d && setMyAssignments(d)).catch(() => {});
@@ -6048,6 +6169,7 @@ export default function CompanyEmployeePortal() {
           existing={editAsset}
           departments={departments}
           employees={employees}
+          assetTypesList={assetTypesList}
           onClose={() => { setShowAssetModal(false); setEditAsset(null); }}
           onSaved={handleAssetSaved}
         />
