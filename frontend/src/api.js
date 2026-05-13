@@ -124,6 +124,7 @@ export const getCompanyPortalDepartments = (token) => request("GET", "/api/compa
 export const createCompanyPortalDepartment = (token, data) => request("POST", "/api/company-portal/departments", data, { authToken: token });
 export const updateCompanyPortalDepartment = (token, id, data) => request("PUT", `/api/company-portal/departments/${id}`, data, { authToken: token });
 export const deleteCompanyPortalDepartment = (token, id) => request("DELETE", `/api/company-portal/departments/${id}`, undefined, { authToken: token });
+export const getCompanyPortalAssetTypes = (token) => request("GET", "/api/company-portal/asset-types", undefined, { authToken: token });
 export const getCompanyPortalAssets = (token) => request("GET", "/api/company-portal/assets", undefined, { authToken: token });
 export const createCompanyPortalAsset = (token, data) => request("POST", "/api/company-portal/assets", data, { authToken: token });
 export const updateCompanyPortalAsset = (token, id, data) => request("PUT", `/api/company-portal/assets/${id}`, data, { authToken: token });
