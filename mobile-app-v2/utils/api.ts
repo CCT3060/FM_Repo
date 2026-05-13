@@ -15,7 +15,7 @@ import type { RoleCapabilities } from './permissions';
 // ─── Config ───────────────────────────────────────────────────────────────────
 export const API_BASE: string =
   (process.env.EXPO_PUBLIC_API_URL as string | undefined) ??
-  'http://3.110.166.39';  // DNS still points to old IP; using new EC2 IP directly
+  'https://catalystservices.eco';  // Production domain with SSL
 
 // ─── Error class ──────────────────────────────────────────────────────────────
 export class ApiError extends Error {
