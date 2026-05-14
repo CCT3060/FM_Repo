@@ -41,6 +41,25 @@ const uploadImage = multer({
   },
 });
 
+// Company logo upload (stores as company-{id}.{ext} in uploads/logos/)
+const logosDir = path.join(__dirname, "../../uploads/logos");
+fs.mkdirSync(logosDir, { recursive: true });
+const logoStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, logosDir),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase() || ".png";
+    cb(null, `company-${req.companyUser.companyId}${ext}`);
+  },
+});
+const uploadLogo = multer({
+  storage: logoStorage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype.startsWith("image/")) cb(null, true);
+    else cb(new Error("Only image files are allowed for logo"));
+  },
+});
+
 const router = Router();
 router.use(requireCompanyAuth);
 
@@ -1755,7 +1774,7 @@ router.get("/me", async (req, res, next) => {
     const [[row]] = await pool.query(
       `SELECT cu.id, cu.full_name AS "fullName", cu.email, cu.phone, cu.designation, cu.role,
               cu.status, cu.company_id AS "companyId", c.company_name AS "companyName",
-              c.enabled_modules AS "enabledModules"
+              c.enabled_modules AS "enabledModules", c.logo_url AS "logoUrl"
        FROM company_users cu
        JOIN companies c ON c.id = cu.company_id
        WHERE cu.id = ?`,
@@ -3505,6 +3524,27 @@ router.post("/upload-image", (req, res, next) => {
     if (!req.file) return res.status(400).json({ message: "No file provided" });
     const url = `/uploads/${req.file.filename}`;
     res.json({ url, filename: req.file.filename, size: req.file.size, mimetype: req.file.mimetype });
+  } catch (err) { next(err); }
+});
+
+/* POST /upload-logo – upload company client logo (admin only) */
+router.post("/upload-logo", (req, res, next) => {
+  uploadLogo.single("logo")(req, res, (err) => {
+    if (err instanceof multer.MulterError) {
+      return res.status(400).json({ message: err.message || "File too large" });
+    } else if (err) {
+      return res.status(400).json({ message: err.message || "Only image files are allowed" });
+    }
+    next();
+  });
+}, async (req, res, next) => {
+  try {
+    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!req.file) return res.status(400).json({ message: "No file provided" });
+    const ext = path.extname(req.file.originalname).toLowerCase() || ".png";
+    const url = `/uploads/logos/company-${req.companyUser.companyId}${ext}`;
+    await pool.query("UPDATE companies SET logo_url = ? WHERE id = ?", [url, req.companyUser.companyId]);
+    res.json({ url });
   } catch (err) { next(err); }
 });
 
