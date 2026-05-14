@@ -3343,6 +3343,9 @@ export default function CompanyEmployeePortal() {
   const [ojtQrDataUrl, setOjtQrDataUrl] = useState("");
   const [assetQrModal, setAssetQrModal] = useState(null);
   const [assetQrDataUrl, setAssetQrDataUrl] = useState("");
+  const [companyLogoUrl, setCompanyLogoUrl] = useState("");
+  const [selectedQrIds, setSelectedQrIds] = useState(new Set());
+  const [bulkQrPrinting, setBulkQrPrinting] = useState(false);
   // Fleet State
   const [fleetAssets, setFleetAssets] = useState([]);
   const [fleetInspections, setFleetInspections] = useState([]);
@@ -3388,7 +3391,10 @@ export default function CompanyEmployeePortal() {
   useEffect(() => {
     if (!token) return;
     load("dashboard", () => getCompanyPortalDashboard(token)).then((d) => d && setDashboard(d));
-    getCompanyPortalMe(token).then((me) => { if (me?.enabledModules) setEnabledModules(me.enabledModules); }).catch(() => {});
+    getCompanyPortalMe(token).then((me) => {
+      if (me?.enabledModules) setEnabledModules(me.enabledModules);
+      if (me?.logoUrl) setCompanyLogoUrl(me.logoUrl);
+    }).catch(() => {});
     setRecentEntriesLoading(true);
     getCompanyPortalRecentLogsheetEntries(token)
       .then((d) => d && setRecentEntries(d))
@@ -3706,12 +3712,102 @@ export default function CompanyEmployeePortal() {
     return getPublicAppUrl();
   };
 
-  const handleShowAssetQR = async (assetId, assetName) => {
+  // Convert a URL to a base64 data URL for embedding in print windows
+  const urlToDataUrl = async (url) => {
+    if (!url) return null;
     try {
-      const url = `${getQrBaseUrl()}/asset-scan/${assetId}`;
+      const resp = await fetch(url);
+      if (!resp.ok) return null;
+      const blob = await resp.blob();
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result);
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(blob);
+      });
+    } catch { return null; }
+  };
+
+  // Build the styled QR card HTML for a single asset
+  const buildQrCardHtml = (qrDataUrl, asset, clientLogoDataUrl, catalystLogoDataUrl) => {
+    const floor = asset.floor || "";
+    const room = asset.room || "";
+    const assetName = asset.assetName || asset.asset_name || "";
+    const clientLogoHtml = clientLogoDataUrl
+      ? `<img src="${clientLogoDataUrl}" style="max-width:90px;max-height:55px;object-fit:contain;" />`
+      : `<div style="width:90px;"></div>`;
+    const catalystLogoHtml = catalystLogoDataUrl
+      ? `<img src="${catalystLogoDataUrl}" style="max-width:90px;max-height:55px;object-fit:contain;" />`
+      : `<div style="font-size:10px;font-weight:800;color:#fff;text-align:right;line-height:1.2;">CATALYST<br/><span style="font-size:8px;font-weight:400;">PARTNERING FOR SUSTAINABILITY</span></div>`;
+    return `
+      <div style="background:#2e7d32;color:#fff;padding:24px 20px 20px;border-radius:16px;width:300px;text-align:center;font-family:Arial,sans-serif;box-shadow:0 4px 16px rgba(0,0,0,0.2);">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+          <div style="width:90px;height:55px;display:flex;align-items:center;justify-content:flex-start;">${clientLogoHtml}</div>
+          <div style="width:90px;height:55px;display:flex;align-items:center;justify-content:flex-end;">${catalystLogoHtml}</div>
+        </div>
+        <div style="font-size:15px;font-weight:800;letter-spacing:2px;margin-bottom:3px;">SCAN QR CODE</div>
+        <div style="font-size:11px;opacity:0.85;margin-bottom:14px;">For Service Excellence</div>
+        <div style="background:#fff;padding:10px;border-radius:10px;display:inline-block;margin-bottom:12px;">
+          <img src="${qrDataUrl}" style="width:200px;height:200px;display:block;" />
+        </div>
+        ${assetName ? `<div style="font-size:13px;font-weight:600;margin-bottom:2px;">${assetName}</div>` : ""}
+        ${floor ? `<div style="font-size:13px;margin-top:4px;">Floor - ${floor}</div>` : ""}
+        ${room ? `<div style="font-size:13px;">Area - ${room}</div>` : ""}
+        <div style="font-size:11px;opacity:0.75;margin-top:8px;margin-bottom:14px;">www.catalystsolutions.eco</div>
+        <div style="background:#000;padding:11px 20px;border-radius:4px;font-weight:800;font-size:13px;letter-spacing:2px;">SCAN FOR ECHECKLIST</div>
+      </div>`;
+  };
+
+  // Open a print window with one or more QR cards (one per page)
+  const openQrPrintWindow = async (assetsToPrint) => {
+    if (!assetsToPrint.length) return;
+    setBulkQrPrinting(true);
+    try {
+      const catalystLogoDataUrl = await urlToDataUrl(`${window.location.origin}/catalyst-logo.png`);
+      const clientLogoDataUrl = companyLogoUrl
+        ? await urlToDataUrl(`${window.location.origin}${companyLogoUrl.startsWith("/") ? "" : "/"}${companyLogoUrl}`)
+        : null;
+
+      const cardHtmls = await Promise.all(assetsToPrint.map(async (asset) => {
+        const url = `${getQrBaseUrl()}/asset-scan/${asset.id}`;
+        const qrDataUrl = await QRCode.toDataURL(url, { width: 400, margin: 2 });
+        return buildQrCardHtml(qrDataUrl, asset, clientLogoDataUrl, catalystLogoDataUrl);
+      }));
+
+      const printHtml = `<!DOCTYPE html><html><head><title>QR Codes</title>
+        <style>
+          *{margin:0;padding:0;box-sizing:border-box;}
+          body{background:#f8fafc;font-family:Arial,sans-serif;}
+          .page{display:flex;align-items:center;justify-content:center;min-height:100vh;page-break-after:always;}
+          .page:last-child{page-break-after:auto;}
+          @media print{
+            body{background:#fff;}
+            .page{min-height:100vh;page-break-after:always;}
+            .page:last-child{page-break-after:auto;}
+          }
+        </style>
+      </head><body>
+        ${cardHtmls.map(h => `<div class="page">${h}</div>`).join("")}
+      </body></html>`;
+
+      const w = window.open("", "_blank");
+      w.document.write(printHtml);
+      w.document.close();
+      w.focus();
+      setTimeout(() => { w.print(); }, 700);
+    } catch (err) {
+      alert("Print failed: " + err.message);
+    } finally {
+      setBulkQrPrinting(false);
+    }
+  };
+
+  const handleShowAssetQR = async (asset) => {
+    try {
+      const url = `${getQrBaseUrl()}/asset-scan/${asset.id}`;
       const dataUrl = await QRCode.toDataURL(url, { width: 300, margin: 2 });
       setAssetQrDataUrl(dataUrl);
-      setAssetQrModal({ assetId, assetName, url });
+      setAssetQrModal({ assetId: asset.id, assetName: asset.assetName, url, asset });
     } catch (err) {
       alert("QR generation failed: " + err.message);
     }
@@ -4707,10 +4803,47 @@ export default function CompanyEmployeePortal() {
                 <p style={{ color: "#64748b", fontSize: "13.5px" }}>All assets registered under {currentUser.companyName}</p>
               </div>
               {isAdmin && (
-                <Btn onClick={() => { setEditAsset(null); setShowAssetModal(true); }}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                  Add Asset
-                </Btn>
+                <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+                  {/* Company logo upload */}
+                  <label title="Upload client logo for QR cards" style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "8px", background: companyLogoUrl ? "#f0fdf4" : "#f8fafc", color: companyLogoUrl ? "#16a34a" : "#64748b", border: `1px solid ${companyLogoUrl ? "#bbf7d0" : "#e2e8f0"}`, cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                    {companyLogoUrl ? "Logo ✓" : "Upload Logo"}
+                    <input type="file" accept="image/*" style={{ display: "none" }} onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const fd = new FormData();
+                      fd.append("logo", file);
+                      try {
+                        const r = await fetch("/api/company-portal/upload-logo", { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: fd });
+                        const data = await r.json();
+                        if (!r.ok) throw new Error(data.message || "Upload failed");
+                        setCompanyLogoUrl(data.url);
+                        alert("Logo uploaded successfully!");
+                      } catch (err) { alert(err.message); }
+                      e.target.value = "";
+                    }} />
+                  </label>
+                  {/* Print selected button */}
+                  {selectedQrIds.size > 0 && (
+                    <button disabled={bulkQrPrinting} onClick={() => {
+                      const toPrint = filteredAssets.filter(a => selectedQrIds.has(a.id));
+                      openQrPrintWindow(toPrint);
+                    }} style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "8px", background: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                      Print Selected ({selectedQrIds.size})
+                    </button>
+                  )}
+                  {/* Print all button */}
+                  <button disabled={bulkQrPrinting || filteredAssets.length === 0} onClick={() => openQrPrintWindow(filteredAssets)}
+                    style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "8px", background: "#f0fdf4", color: "#16a34a", border: "1px solid #bbf7d0", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                    {bulkQrPrinting ? "Generating…" : "Print All QR"}
+                  </button>
+                  <Btn onClick={() => { setEditAsset(null); setShowAssetModal(true); }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    Add Asset
+                  </Btn>
+                </div>
               )}
             </div>
             {errors.assets && <Alert>{errors.assets}</Alert>}
@@ -4734,6 +4867,13 @@ export default function CompanyEmployeePortal() {
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
                     <thead>
                       <tr>
+                        {isAdmin && (
+                          <th style={{ padding: "12px 16px", textAlign: "center", color: "#475569", fontWeight: 600, fontSize: "12px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", width: "40px" }}>
+                            <input type="checkbox" checked={filteredAssets.length > 0 && filteredAssets.every(a => selectedQrIds.has(a.id))}
+                              onChange={(e) => setSelectedQrIds(e.target.checked ? new Set(filteredAssets.map(a => a.id)) : new Set())}
+                              title="Select all" style={{ cursor: "pointer" }} />
+                          </th>
+                        )}
                         {["#", "Asset Name", "ID", "Type", "Department", "Location", "Status", ...(isAdmin ? ["Actions"] : [])].map((h) => (
                           <th key={h} style={{ padding: "12px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>{h}</th>
                         ))}
@@ -4741,9 +4881,16 @@ export default function CompanyEmployeePortal() {
                     </thead>
                     <tbody>
                       {filteredAssets.length === 0
-                        ? <tr><td colSpan={isAdmin ? 8 : 7} style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>No assets found</td></tr>
+                        ? <tr><td colSpan={isAdmin ? 9 : 7} style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>No assets found</td></tr>
                         : filteredAssets.map((a, i) => (
-                          <tr key={a.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                          <tr key={a.id} style={{ borderBottom: "1px solid #f1f5f9", background: selectedQrIds.has(a.id) ? "#f0fdf4" : undefined }}>
+                            {isAdmin && (
+                              <td style={{ padding: "14px 16px", textAlign: "center" }}>
+                                <input type="checkbox" checked={selectedQrIds.has(a.id)}
+                                  onChange={(e) => setSelectedQrIds(prev => { const n = new Set(prev); e.target.checked ? n.add(a.id) : n.delete(a.id); return n; })}
+                                  style={{ cursor: "pointer" }} />
+                              </td>
+                            )}
                             <td style={{ padding: "14px 16px", color: "#64748b" }}>{i + 1}</td>
                             <td style={{ padding: "14px 16px", fontWeight: 600, color: "#0f172a" }}>{a.assetName}</td>
                             <td style={{ padding: "14px 16px", color: "#64748b", fontFamily: "monospace", fontSize: "12px" }}>{a.assetUniqueId || "—"}</td>
@@ -4762,7 +4909,7 @@ export default function CompanyEmployeePortal() {
                             {isAdmin && (
                               <td style={{ padding: "12px 16px" }}>
                                 <div style={{ display: "flex", gap: "6px" }}>
-                                  <button title="Show QR Code" onClick={() => handleShowAssetQR(a.id, a.assetName)}
+                                  <button title="Show QR Code" onClick={() => handleShowAssetQR(a)}
                                     style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#f0fdf4", color: "#16a34a", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
                                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
                                   </button>
@@ -5672,33 +5819,54 @@ export default function CompanyEmployeePortal() {
         {/* Asset QR Modal */}
         {assetQrModal && (
           <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
-            <div style={{ background: "#fff", borderRadius: "16px", width: "100%", maxWidth: "360px", padding: "32px", textAlign: "center", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
+            <div style={{ background: "#fff", borderRadius: "16px", width: "100%", maxWidth: "400px", padding: "28px", textAlign: "center", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
               <h3 style={{ margin: "0 0 4px", fontSize: "18px", fontWeight: 800, color: "#0f172a" }}>Asset QR Code</h3>
               <p style={{ margin: "0 0 20px", fontSize: "13px", color: "#64748b" }}>{assetQrModal.assetName}</p>
+
+              {/* QR Card Preview */}
               {assetQrDataUrl ? (
-                <img src={assetQrDataUrl} alt="QR Code" style={{ width: "220px", height: "220px", borderRadius: "12px", border: "1px solid #e2e8f0" }} />
+                <div style={{ display: "inline-block", background: "#2e7d32", color: "#fff", padding: "20px 18px 16px", borderRadius: "14px", textAlign: "center", fontFamily: "Arial, sans-serif", width: "280px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+                    <div style={{ width: "80px", height: "48px", display: "flex", alignItems: "center", justifyContent: "flex-start" }}>
+                      {companyLogoUrl
+                        ? <img src={companyLogoUrl} alt="Client" style={{ maxWidth: "80px", maxHeight: "48px", objectFit: "contain" }} />
+                        : <div style={{ width: "80px" }} />}
+                    </div>
+                    <div style={{ width: "80px", height: "48px", display: "flex", alignItems: "center", justifyContent: "flex-end" }}>
+                      <img src="/catalyst-logo.png" alt="Catalyst" style={{ maxWidth: "80px", maxHeight: "48px", objectFit: "contain" }}
+                        onError={(e) => { e.target.style.display = "none"; e.target.nextSibling.style.display = "block"; }}
+                      />
+                      <span style={{ display: "none", fontSize: "9px", fontWeight: 800, color: "#fff", textAlign: "right", lineHeight: 1.2 }}>CATALYST<br/><span style={{ fontWeight: 400 }}>PARTNERING FOR<br/>SUSTAINABILITY</span></span>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: "13px", fontWeight: 800, letterSpacing: "2px", marginBottom: "2px" }}>SCAN QR CODE</div>
+                  <div style={{ fontSize: "10px", opacity: 0.85, marginBottom: "12px" }}>For Service Excellence</div>
+                  <div style={{ background: "#fff", padding: "8px", borderRadius: "8px", display: "inline-block", marginBottom: "10px" }}>
+                    <img src={assetQrDataUrl} alt="QR" style={{ width: "180px", height: "180px", display: "block" }} />
+                  </div>
+                  {assetQrModal.assetName && <div style={{ fontSize: "12px", fontWeight: 600, marginBottom: "2px" }}>{assetQrModal.assetName}</div>}
+                  {assetQrModal.asset?.floor && <div style={{ fontSize: "12px" }}>Floor - {assetQrModal.asset.floor}</div>}
+                  {assetQrModal.asset?.room && <div style={{ fontSize: "12px" }}>Area - {assetQrModal.asset.room}</div>}
+                  <div style={{ fontSize: "10px", opacity: 0.75, marginTop: "6px", marginBottom: "12px" }}>www.catalystsolutions.eco</div>
+                  <div style={{ background: "#000", padding: "9px 16px", borderRadius: "4px", fontWeight: 800, fontSize: "12px", letterSpacing: "2px" }}>SCAN FOR ECHECKLIST</div>
+                </div>
               ) : (
                 <p style={{ color: "#94a3b8" }}>Generating QR...</p>
               )}
-              <p style={{ marginTop: "16px", fontSize: "11px", color: "#94a3b8" }}>Scan to view asset details and training on mobile</p>
+
               <div style={{ display: "flex", gap: "10px", marginTop: "20px", justifyContent: "center", flexWrap: "wrap" }}>
+                {assetQrDataUrl && (
+                  <button onClick={() => openQrPrintWindow([assetQrModal.asset])} disabled={bulkQrPrinting}
+                    style={{ padding: "8px 18px", borderRadius: "8px", background: "#f0fdf4", color: "#16a34a", border: "1px solid #bbf7d0", cursor: "pointer", fontSize: "13px", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                    {bulkQrPrinting ? "Preparing…" : "Print QR"}
+                  </button>
+                )}
                 {assetQrDataUrl && (
                   <a href={assetQrDataUrl} download={`QR-${assetQrModal.assetName.replace(/[^a-zA-Z0-9]/g, "_")}-${assetQrModal.assetId}.png`} style={{ padding: "8px 18px", borderRadius: "8px", background: "#2563eb", color: "#fff", textDecoration: "none", fontSize: "13px", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "6px" }}>
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                     Download QR
                   </a>
-                )}
-                {assetQrDataUrl && (
-                  <button onClick={() => {
-                    const w = window.open("", "_blank");
-                    w.document.write(`<html><head><title>QR - ${assetQrModal.assetName}</title><style>body{margin:0;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:sans-serif;background:#fff} h3{margin-bottom:8px;font-size:18px;color:#0f172a} p{margin:0 0 16px;color:#64748b;font-size:13px}</style></head><body><h3>${assetQrModal.assetName}</h3><p>Scan to open on mobile</p><img src="${assetQrDataUrl}" style="width:260px;height:260px"/></body></html>`);
-                    w.document.close();
-                    w.focus();
-                    setTimeout(() => { w.print(); }, 400);
-                  }} style={{ padding: "8px 18px", borderRadius: "8px", background: "#f0fdf4", color: "#16a34a", border: "1px solid #bbf7d0", cursor: "pointer", fontSize: "13px", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "6px" }}>
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
-                    Print QR
-                  </button>
                 )}
                 <button onClick={() => { setAssetQrModal(null); setAssetQrDataUrl(""); }} style={{ padding: "8px 18px", borderRadius: "8px", background: "#f1f5f9", color: "#475569", border: "none", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>Close</button>
               </div>
