@@ -186,6 +186,15 @@ function renderAnswerValue(val) {
 
   // Handle already-parsed objects (JSONB from PostgreSQL arrives as object, not string)
   if (val !== null && typeof val === "object" && !Array.isArray(val)) {
+    // Object with both a text value AND a photo
+    if ("photoUrl" in val && val.photoUrl) {
+      return (
+        <>
+          {"value" in val && val.value ? <span style={{ fontWeight: 600, color: "#0f172a" }}>{String(val.value)}</span> : null}
+          <PhotoAnswer src={val.photoUrl} />
+        </>
+      );
+    }
     if ("value" in val) {
       return renderAnswerValue(val.value ?? "");
     }
@@ -198,6 +207,15 @@ function renderAnswerValue(val) {
     if (trimmed.startsWith("{")) {
       try {
         const parsed = JSON.parse(trimmed);
+        // { value: "...", photoUrl: "..." } — show both text and photo
+        if ("photoUrl" in parsed && parsed.photoUrl) {
+          return (
+            <>
+              {"value" in parsed && parsed.value ? <span style={{ fontWeight: 600, color: "#0f172a" }}>{String(parsed.value)}</span> : null}
+              <PhotoAnswer src={parsed.photoUrl} />
+            </>
+          );
+        }
         // { value: "..." } — extract the inner value and re-render
         if ("value" in parsed) {
           return renderAnswerValue(parsed.value ?? "");

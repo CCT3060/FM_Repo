@@ -318,7 +318,23 @@ export default function SoftResolveScreen() {
                 {beforeDisplay !== null && (
                   <View style={[styles.beforeBox, { backgroundColor: theme.inputBg, borderColor: theme.inputBorder }]}>
                     <Text style={[styles.beforeLabel, { color: theme.textMuted }]}>CLIENT RESPONSE (BEFORE)</Text>
-                    <Text style={[styles.beforeValue, { color: theme.textSecondary }]}>{beforeDisplay}</Text>
+                    {/* If beforeDisplay is a URL, render as image; otherwise render as text */}
+                    {beforeDisplay.startsWith('http') && /\.(jpe?g|png|gif|webp)/i.test(beforeDisplay) ? (
+                      <Image
+                        source={{ uri: beforeDisplay }}
+                        style={{ width: '100%', height: 160, borderRadius: 8, marginTop: 8 }}
+                        resizeMode="cover"
+                      />
+                    ) : (
+                      <Text style={[styles.beforeValue, { color: theme.textSecondary }]}>{beforeDisplay}</Text>
+                    )}
+                    {beforeEntry?.photoUrl && !(beforeDisplay.startsWith('http') && /\.(jpe?g|png|gif|webp)/i.test(beforeDisplay)) ? (
+                      <Image
+                        source={{ uri: beforeEntry.photoUrl }}
+                        style={{ width: '100%', height: 160, borderRadius: 8, marginTop: 8 }}
+                        resizeMode="cover"
+                      />
+                    ) : null}
                   </View>
                 )}
 

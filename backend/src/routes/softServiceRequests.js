@@ -289,6 +289,7 @@ router.get("/requests/asset/:assetId", async (req, res, next) => {
                'questionText',  csa.question_text,
                'inputType',     csa.input_type,
                'answer',        csa.answer_json->>'value',
+               'photoUrl',      csa.answer_json->>'photoUrl',
                'optionSelected', csa.option_selected
              ) ORDER BY csa.id
            )
@@ -426,6 +427,7 @@ router.get("/requests/:id", async (req, res, next) => {
                'questionText',   csa.question_text,
                'inputType',      csa.input_type,
                'answer',         csa.answer_json->>'value',
+               'photoUrl',       csa.answer_json->>'photoUrl',
                'optionSelected', csa.option_selected
              ) ORDER BY csa.id
            )

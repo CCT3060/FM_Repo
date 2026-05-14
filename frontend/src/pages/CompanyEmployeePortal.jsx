@@ -75,6 +75,7 @@ import {
   getFleetFuelLogs, createFleetFuelLog, updateFleetFuelLog, deleteFleetFuelLog,
   getFleetMaintenance, createFleetMaintenance, updateFleetMaintenance, updateFleetMaintenanceStatus, deleteFleetMaintenance,
   getFleetSubmissions, getFleetSubmissionDetail, downloadFleetSubmissionsCSV,
+  getSoftServiceRequestsAll, getSoftServiceRequestsMy,
 } from "../api.js";
 
 /* ─── Role definitions ────────────────────────────────────────────── */
@@ -149,7 +150,7 @@ const NAV_ALL = [
   { key: "employees", label: "My Team", roles: ["supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> },
   { key: "employees", label: "Employees", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> },
   { key: "warnings", label: "Warnings", roles: ["admin","supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> },
-  { key: "workorders", label: "Work Orders", roles: ["admin","supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-4 0v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg> },
+  { key: "workorders", label: "Requests", roles: ["admin","supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-4 0v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg> },
   { key: "shifts", label: "Shifts", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> },
   { key: "roles", label: "Manage Roles", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 7h18M3 12h18M3 17h18"/></svg> },
   { key: "asset-types", label: "Asset Types", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg> },
@@ -244,7 +245,7 @@ const ALL_MODULES = [
   { key: "dashboard",  label: "Dashboard" },
   { key: "checklists", label: "Checklists" },
   { key: "logsheets",  label: "Logsheets" },
-  { key: "workorders", label: "Work Orders" },
+  { key: "workorders", label: "Requests" },
   { key: "warnings",   label: "Warnings" },
   { key: "assets",     label: "Assets" },
   { key: "mytasks",    label: "My Tasks" },
@@ -3198,11 +3199,19 @@ export default function CompanyEmployeePortal() {
   const [enabledModules, setEnabledModules] = useState(null);
   const visibleNav = useMemo(() => {
     const base = getNav(currentUser?.role || "employee");
-    // Admin always gets full nav — skip all module filtering
-    if (currentUser?.role === "admin" || currentUser?.role === "catalyst_admin") {
-      return base;
-    }
+    const isAdmin = currentUser?.role === "admin" || currentUser?.role === "catalyst_admin";
+    // Admin-only management tabs that are always visible for admins regardless of module settings
+    const ADMIN_ALWAYS = new Set(["dashboard", "roles", "asset-types", "employees", "departments"]);
     const ALWAYS_VISIBLE = new Set(["dashboard", "mytasks", "employees"]);
+
+    if (isAdmin) {
+      // If no modules restriction set by super-admin, show everything
+      if (!enabledModules) return base;
+      // Otherwise apply company-level module filter but keep admin management tabs
+      return base.filter((n) => ADMIN_ALWAYS.has(n.key) || enabledModules.includes(n.key));
+    }
+
+    // Non-admin: filter by company enabledModules first
     const byCompany = !enabledModules
       ? base
       : base.filter((n) => ALWAYS_VISIBLE.has(n.key) || enabledModules.includes(n.key));
@@ -3276,6 +3285,9 @@ export default function CompanyEmployeePortal() {
   const [dashWOAssignNote, setDashWOAssignNote]         = useState("");
   const [dashWOAssignSaving, setDashWOAssignSaving]     = useState(false);
   const [dashWOAssignErr, setDashWOAssignErr]           = useState(null);
+  // Dashboard soft requests (visible to all roles that can raise soft requests)
+  const [dashboardSoftRequests, setDashboardSoftRequests] = useState([]);
+  const [dashboardSoftLoading, setDashboardSoftLoading]   = useState(false);
   const [departments, setDepartments] = useState([]);
   const [assetTypesList, setAssetTypesList] = useState([]);
   const [assets, setAssets] = useState([]);
@@ -3435,6 +3447,12 @@ export default function CompanyEmployeePortal() {
       getCompanyPortalDepartments(token).then((d) => d && setDepartments(d)).catch(() => {});
       getCompanyPortalAssets(token).then((d) => d && setAssets(d)).catch(() => {});
       getCompanyPortalAssetTypes(token).then(d => d && setAssetTypesList(d)).catch(() => {});
+      // Load soft requests raised by this supervisor
+      setDashboardSoftLoading(true);
+      getSoftServiceRequestsMy(token, "status=open")
+        .then((d) => setDashboardSoftRequests(Array.isArray(d) ? d : []))
+        .catch(() => {})
+        .finally(() => setDashboardSoftLoading(false));
     } else {
       // Employee: preload assigned tasks for dashboard stat card
       getMyTemplateAssignments(token).then((d) => d && setMyAssignments(d)).catch(() => {});
@@ -3486,6 +3504,19 @@ export default function CompanyEmployeePortal() {
         })
         .catch(() => {})
         .finally(() => setDashboardWOLoading(false));
+      // Admin sees all open soft requests
+      setDashboardSoftLoading(true);
+      getSoftServiceRequestsAll(token, "status=open")
+        .then((d) => setDashboardSoftRequests(Array.isArray(d) ? d.slice(0, 5) : []))
+        .catch(() => {})
+        .finally(() => setDashboardSoftLoading(false));
+    } else if (currentUser?.role === "supervisor") {
+      // Supervisor sees their own open soft requests
+      setDashboardSoftLoading(true);
+      getSoftServiceRequestsMy(token, "status=open")
+        .then((d) => setDashboardSoftRequests(Array.isArray(d) ? d : []))
+        .catch(() => {})
+        .finally(() => setDashboardSoftLoading(false));
     }
   }, [nav, token]);
 
@@ -3749,7 +3780,7 @@ export default function CompanyEmployeePortal() {
         ${floor ? `<div style="font-size:13px;margin-top:4px;">Floor - ${floor}</div>` : ""}
         ${room ? `<div style="font-size:13px;">Area - ${room}</div>` : ""}
         <div style="font-size:11px;opacity:0.75;margin-top:8px;margin-bottom:14px;">www.catalystsolutions.eco</div>
-        <div style="background:#000;padding:11px 20px;border-radius:4px;font-weight:800;font-size:13px;letter-spacing:2px;">SCAN FOR ECHECKLIST</div>
+        <div style="background:#000;padding:11px 20px;border-radius:4px;font-weight:800;font-size:13px;letter-spacing:2px;">SCAN FOR E-CHECKLIST</div>
       </div>`;
   };
 
@@ -4351,7 +4382,7 @@ export default function CompanyEmployeePortal() {
                     <StatCard label="Active Assets" value={dashboard.activeAssets} sub={`${dashboard.totalAssets} total`} subCol="#22c55e"
                       iconBg="#eff6ff" iconCol="#2563eb" onClick={() => setNav("assets")}
                       icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 19.07a10 10 0 0 1 0-14.14"/></svg>} />
-                    <StatCard label="Open Work Orders" value={dashboard.openIssues}
+                    <StatCard label="Open Requests" value={dashboard.openIssues}
                       sub={dashboard.openIssues > 0 ? "Needs attention" : "All clear"}
                       subCol={dashboard.openIssues > 0 ? "#dc2626" : "#22c55e"}
                       iconBg={dashboard.openIssues > 0 ? "#fef2f2" : "#f0fdf4"}
@@ -4390,9 +4421,9 @@ export default function CompanyEmployeePortal() {
                     <p style={{ margin: 0, fontSize: "12px", color: "#64748b" }}>{criticalAlertsCount} critical alert{criticalAlertsCount !== 1 ? "s" : ""} open</p>
                   </div>
                   <div style={{ background: "linear-gradient(135deg, #fef2f2 0%, #f8fafc 100%)", border: "1px solid #fecaca", borderRadius: "12px", padding: "12px 14px" }}>
-                    <p style={{ margin: 0, fontSize: "11px", fontWeight: 700, color: "#b91c1c", letterSpacing: "0.03em", textTransform: "uppercase" }}>Work Order Coverage</p>
+                    <p style={{ margin: 0, fontSize: "11px", fontWeight: 700, color: "#b91c1c", letterSpacing: "0.03em", textTransform: "uppercase" }}>Request Coverage</p>
                     <p style={{ margin: "6px 0 2px", fontSize: "22px", fontWeight: 800, color: "#0f172a" }}>{unassignedOpenWorkOrders}</p>
-                    <p style={{ margin: 0, fontSize: "12px", color: "#64748b" }}>Open work orders without an assignee</p>
+                    <p style={{ margin: 0, fontSize: "12px", color: "#64748b" }}>Open requests without an assignee</p>
                   </div>
                 </div>
 
@@ -4554,7 +4585,7 @@ export default function CompanyEmployeePortal() {
                   <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
                       <div>
-                        <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", margin: 0 }}>Work Orders</p>
+                        <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", margin: 0 }}>Requests</p>
                         <p style={{ fontSize: "12px", color: "#94a3b8", margin: 0, marginTop: "2px" }}>Open • Assign to team members</p>
                       </div>
                       <button onClick={() => setNav("workorders")}
@@ -4612,6 +4643,51 @@ export default function CompanyEmployeePortal() {
                       </div>
                     )}
                   </div>
+
+                  {/* Soft Service Requests */}
+                  {(currentUser?.role === "admin" || currentUser?.role === "supervisor") && (
+                  <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+                      <div>
+                        <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", margin: 0 }}>Soft Service Requests</p>
+                        <p style={{ fontSize: "12px", color: "#94a3b8", margin: 0, marginTop: "2px" }}>Open requests raised by supervisors</p>
+                      </div>
+                    </div>
+                    {dashboardSoftLoading ? (
+                      <p style={{ color: "#94a3b8", fontSize: "13px", padding: "8px 0" }}>Loading…</p>
+                    ) : dashboardSoftRequests.length === 0 ? (
+                      <div style={{ padding: "24px", textAlign: "center", color: "#94a3b8", background: "#f8fafc", borderRadius: "8px", fontSize: "13px" }}>
+                        ✅ No open soft service requests
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                        {dashboardSoftRequests.map((sr) => (
+                          <div key={sr.id} style={{ display: "flex", alignItems: "flex-start", gap: "10px", padding: "10px 12px", borderRadius: "8px", border: "1px solid #f1f5f9", background: "#fafafa" }}>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "3px" }}>
+                                <span style={{ flexShrink: 0, padding: "2px 8px", borderRadius: "20px", fontSize: "10.5px", fontWeight: 700, background: "#dcfce7", color: "#166534", textTransform: "capitalize" }}>
+                                  SOFT SERVICE
+                                </span>
+                                <p style={{ margin: 0, fontWeight: 700, fontSize: "12.5px", color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                  {sr.assetName || `Asset #${sr.assetId}`}
+                                </p>
+                              </div>
+                              <p style={{ margin: 0, fontSize: "11.5px", color: "#64748b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                {sr.templateName || "Soft checklist"}{sr.raisedByName ? ` — by ${sr.raisedByName}` : ""}
+                              </p>
+                              <p style={{ margin: "3px 0 0", fontSize: "10.5px", color: "#94a3b8" }}>
+                                {sr.raisedAt ? new Date(sr.raisedAt).toLocaleString() : ""}
+                              </p>
+                            </div>
+                            <span style={{ flexShrink: 0, padding: "4px 10px", borderRadius: "6px", border: "1px solid #bbf7d0", background: "#f0fdf4", color: "#16a34a", fontSize: "11.5px", fontWeight: 600 }}>
+                              Open
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  )}
 
                   </div>{/* end right column */}
                 </div>{/* end 2-col grid */}
@@ -5843,7 +5919,7 @@ export default function CompanyEmployeePortal() {
                   {assetQrModal.asset?.floor && <div style={{ fontSize: "12px" }}>Floor - {assetQrModal.asset.floor}</div>}
                   {assetQrModal.asset?.room && <div style={{ fontSize: "12px" }}>Area - {assetQrModal.asset.room}</div>}
                   <div style={{ fontSize: "10px", opacity: 0.75, marginTop: "6px", marginBottom: "12px" }}>www.catalystsolutions.eco</div>
-                  <div style={{ background: "#000", padding: "9px 16px", borderRadius: "4px", fontWeight: 800, fontSize: "12px", letterSpacing: "2px" }}>SCAN FOR ECHECKLIST</div>
+                  <div style={{ background: "#000", padding: "9px 16px", borderRadius: "4px", fontWeight: 800, fontSize: "12px", letterSpacing: "2px" }}>SCAN FOR E-CHECKLIST</div>
                 </div>
               ) : (
                 <p style={{ color: "#94a3b8" }}>Generating QR...</p>

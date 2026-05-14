@@ -394,7 +394,7 @@ export default function WorkOrdersPanel({ token, companyId, assets = [], presele
       <div style={{ display: "flex", alignItems: "flex-start", gap: "12px", marginBottom: "20px", flexWrap: "wrap" }}>
         <div style={{ width: "42px", height: "42px", borderRadius: "10px", background: "#dbeafe", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "22px", flexShrink: 0 }}>🔧</div>
         <div style={{ flex: 1, minWidth: "160px" }}>
-          <h2 style={{ margin: 0, fontSize: "20px", fontWeight: 700, color: "#0f172a" }}>Work Orders</h2>
+          <h2 style={{ margin: 0, fontSize: "20px", fontWeight: 700, color: "#0f172a" }}>Requests</h2>
           <p style={{ margin: "2px 0 0", fontSize: "13px", color: "#64748b" }}>Track and manage maintenance tasks and issue resolutions</p>
         </div>
         <button onClick={() => load()} style={{ padding: "8px 16px", borderRadius: "8px", border: "1px solid #e2e8f0", background: "#f8fafc", color: "#475569", fontWeight: 600, fontSize: "13px", cursor: "pointer" }}>↻ Refresh</button>
@@ -453,9 +453,9 @@ export default function WorkOrdersPanel({ token, companyId, assets = [], presele
         {!loading && !error && displayed.length === 0 && (
           <div style={{ padding: "60px 20px", textAlign: "center" }}>
             <div style={{ fontSize: "44px", marginBottom: "12px" }}>✅</div>
-            <div style={{ fontWeight: 700, fontSize: "16px", color: "#0f172a", marginBottom: "6px" }}>No work orders found</div>
+            <div style={{ fontWeight: 700, fontSize: "16px", color: "#0f172a", marginBottom: "6px" }}>No requests found</div>
             <div style={{ color: "#64748b", fontSize: "13px", marginBottom: "16px" }}>
-              {filter === "all" ? "No work orders yet." : `No ${filter.replace("_", " ")} work orders.`}
+              {filter === "all" ? "No requests yet." : `No ${filter.replace("_", " ")} requests.`}
             </div>
             <button onClick={() => setShowCreate(true)} style={{ padding: "9px 20px", borderRadius: "8px", border: "none", background: "#2563eb", color: "#fff", fontWeight: 600, fontSize: "13px", cursor: "pointer" }}>
               + Create First Work Order
