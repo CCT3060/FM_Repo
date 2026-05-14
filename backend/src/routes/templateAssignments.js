@@ -1136,6 +1136,39 @@ router.get("/my-today-progress", async (req, res, next) => {
 });
 
 /* ────────────────────────────────────────────────────────────────────────────
+   GET /checklist-history  – recent checklist submissions across the company
+   Used by client supervisors to view recently filled checklists by all staff.
+   Returns the most recent 50 checklist submissions for the company.
+   ──────────────────────────────────────────────────────────────────────────── */
+router.get("/checklist-history", async (req, res, next) => {
+  try {
+    const companyId = cid(req);
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    const [checklists] = await pool.query(
+      `SELECT cs.id, 'checklist' AS type, ct.template_name AS "templateName",
+              a.asset_name AS "assetName", cs.submitted_at AS "submittedAt",
+              cs.status, cs.template_id AS "templateId",
+              cu.full_name AS "submittedBy",
+              EXISTS (
+                SELECT 1 FROM checklist_submission_answers csa
+                WHERE csa.submission_id = cs.id
+                  AND (csa.option_selected IN ('flag','alert','critical')
+                    OR (csa.answer_json::text ILIKE '%flag%'))
+              ) AS "hasFlagged"
+       FROM checklist_submissions cs
+       JOIN checklist_templates ct ON cs.template_id = ct.id
+       LEFT JOIN assets a ON cs.asset_id = a.id
+       LEFT JOIN company_users cu ON cs.company_user_id = cu.id
+       WHERE ct.company_id = ?
+       ORDER BY cs.submitted_at DESC NULLS LAST
+       LIMIT ?`,
+      [companyId, limit]
+    );
+    res.json(checklists);
+  } catch (err) { next(err); }
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
    GET /my-submission-history  – recent submissions by current user
    ──────────────────────────────────────────────────────────────────────────── */
 router.get("/my-submission-history", async (req, res, next) => {
@@ -1275,9 +1308,17 @@ router.get("/my-submission-detail/:type/:id", async (req, res, next) => {
           const raw = typeof a.answerJson === 'string' ? (() => { try { return JSON.parse(a.answerJson); } catch { return null; } })() : a.answerJson;
           if (raw && typeof raw === 'object' && 'value' in raw) {
             const v = raw.value;
-            if (v && typeof v === 'object' && (v.uri || v.url)) {
-              photoUrl = v.url || v.uri;
-              answerValue = photoUrl;
+            if (v && typeof v === 'object') {
+              // v may be { uri/url } (direct photo), or { value, photoUrl } (text+photo), or { value } (nested)
+              photoUrl = v.photoUrl || v.url || v.uri || null;
+              const innerVal = v.value;
+              if (innerVal != null && typeof innerVal !== 'object') {
+                answerValue = String(innerVal);
+              } else if (!innerVal && photoUrl) {
+                answerValue = photoUrl;
+              } else {
+                answerValue = null;
+              }
             } else {
               answerValue = v != null ? String(v) : null;
             }
