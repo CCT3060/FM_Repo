@@ -418,7 +418,7 @@ function AdminWorkOrdersSection({ token, companies = [] }) {
   return (
     <div style={{ padding:"24px", maxWidth:"1300px" }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:"20px", flexWrap:"wrap", gap:"10px" }}>
-        <div><h1 style={{ fontSize:"22px", fontWeight:800, color:"#0f172a", margin:0 }}>Work Orders</h1><p style={{ color:"#64748b", fontSize:"13.5px", margin:"4px 0 0" }}>Track and manage maintenance tasks across companies</p></div>
+        <div><h1 style={{ fontSize:"22px", fontWeight:800, color:"#0f172a", margin:0 }}>Requests</h1><p style={{ color:"#64748b", fontSize:"13.5px", margin:"4px 0 0" }}>Track and manage maintenance tasks across companies</p></div>
         <button type="button" onClick={() => setShowCreate(true)} style={{ padding:"9px 18px", background:"#2563eb", color:"#fff", border:"none", borderRadius:"8px", fontSize:"13.5px", fontWeight:700, cursor:"pointer" }}>+ New Work Order</button>
       </div>
 
@@ -477,7 +477,7 @@ function AdminWorkOrdersSection({ token, companies = [] }) {
       {loading ? (
         <div style={{ padding:"40px", textAlign:"center", color:"#94a3b8" }}>Loading work orders…</div>
       ) : displayed.length === 0 ? (
-        <div style={{ padding:"48px", textAlign:"center", color:"#94a3b8", background:"#fff", borderRadius:"12px", border:"1px solid #e2e8f0" }}>No work orders found.</div>
+        <div style={{ padding:"48px", textAlign:"center", color:"#94a3b8", background:"#fff", borderRadius:"12px", border:"1px solid #e2e8f0" }}>No requests found.</div>
       ) : (
         <div style={{ background:"#fff", borderRadius:"12px", border:"1px solid #e2e8f0", overflow:"hidden" }}>
           <table style={{ width:"100%", borderCollapse:"collapse", fontSize:"14px" }}>
@@ -1823,7 +1823,7 @@ const CompanyPortal = () => {
     { key: "assets", label: "Asset Management" },
     { key: "checklists", label: "FM e Checklist" },
     { key: "logsheets", label: "Logsheets" },
-    { key: "workorders", label: "Work Orders" },
+    { key: "workorders", label: "Requests" },
     { key: "ojt", label: "OJT Training" },
     { key: "fleet", label: "Fleet Management" },
     { key: "warnings", label: "Warnings" },
@@ -2331,7 +2331,7 @@ const CompanyPortal = () => {
           <button className={nav === "checklists" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("checklists"); setShowAddForm(false); }}>Checklists</button>
           <button className={nav === "logsheets" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("logsheets"); setShowAddForm(false); }}>Logsheets</button>
           <button className={nav === "employees" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("employees"); setShowAddForm(false); }}>Employees</button>
-          <button className={nav === "workorders" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("workorders"); setShowAddForm(false); }}>Work Orders</button>
+          <button className={nav === "workorders" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("workorders"); setShowAddForm(false); }}>Requests</button>
           <button className={nav === "reports" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("reports"); setShowAddForm(false); }}>Reports</button>
           <button className={nav === "shifts" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("shifts"); setShowAddForm(false); }}>Shifts</button>
           <button className={nav === "ojt" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("ojt"); setShowAddForm(false); }}>OJT Training</button>

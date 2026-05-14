@@ -589,25 +589,55 @@ router.delete("/departments/:id", async (req, res, next) => {
 /* ── Assets ─────────────────────────────────────────────────────────────────── */
 router.get("/assets", async (req, res, next) => {
   try {
-    // Use service_domain from the authenticated company user record.
-    // technical → exclude soft service assets
-    // soft      → only soft service assets
-    // both      → no filter
+    // Determine service domain from company_users + role capabilities.
+    // service_domain: technical → exclude soft assets, soft → only soft, both → all
+    // For users without explicit service_domain, infer from role capabilities.
     const [[cuRow]] = await pool.query(
-      `SELECT service_domain AS "serviceDomain" FROM company_users WHERE id = ? LIMIT 1`,
+      `SELECT cu.service_domain AS "serviceDomain",
+              COALESCE(cr.can_raise_soft_issue, FALSE)      AS "canRaiseSoftIssue",
+              COALESCE(cr.is_technician, FALSE)             AS "isTechnician",
+              COALESCE(cr.is_technical_supervisor, FALSE)   AS "isTechnicalSupervisor",
+              COALESCE(cr.is_soft_manager, FALSE)           AS "isSoftManager"
+       FROM company_users cu
+       LEFT JOIN company_roles cr
+         ON cr.company_id = cu.company_id AND cr.role_key = cu.role AND cr.is_active = TRUE
+       WHERE cu.id = ? LIMIT 1`,
       [req.companyUser.id]
     );
-    const serviceDomain = (cuRow?.serviceDomain || 'technical').toLowerCase();
 
-    let softFilter = '';
+    let serviceDomain = (cuRow?.serviceDomain || '').toLowerCase();
+
     const userRole = req.companyUser?.role || '';
     const isAdminRole = ['admin', 'catalyst_admin'].includes(userRole);
-    if (!isAdminRole) {
-      // Admins see all asset types; non-admins are scoped by service domain
-      if (serviceDomain === 'technical') {
-        softFilter = `AND LOWER(TRIM(COALESCE(a.asset_type,''))) != 'soft'`;
-      } else if (serviceDomain === 'soft') {
-        softFilter = `AND LOWER(TRIM(COALESCE(a.asset_type,''))) = 'soft'`;
+
+    // Infer service domain from capabilities when not explicitly set
+    if (!isAdminRole && serviceDomain !== 'both') {
+      const hasSoftCap = Boolean(cuRow?.canRaiseSoftIssue || cuRow?.isSoftManager);
+      const hasTechCap = Boolean(cuRow?.isTechnician || cuRow?.isTechnicalSupervisor);
+      if (hasSoftCap && !hasTechCap) {
+        // Strictly a soft-service user — force to soft regardless of service_domain setting
+        serviceDomain = 'soft';
+      } else if (hasTechCap && !hasSoftCap) {
+        // Strictly a technical user — exclude soft assets
+        serviceDomain = 'technical';
+      } else if (!serviceDomain) {
+        serviceDomain = 'technical'; // safe default
+      }
+    }
+
+    // Build the asset type filter
+    let softFilter = '';
+    if (!isAdminRole && serviceDomain !== 'both') {
+      if (serviceDomain === 'soft') {
+        // Only show assets whose type belongs to soft-service workflow
+        softFilter = `AND (
+          LOWER(TRIM(COALESCE(a.asset_type,''))) = 'soft'
+          OR a.asset_type IN (SELECT code FROM asset_types WHERE workflow_type = 'soft' AND status = 'Active')
+        )`;
+      } else {
+        // 'technical' — exclude all soft-service asset types
+        softFilter = `AND LOWER(TRIM(COALESCE(a.asset_type,''))) != 'soft'
+          AND (a.asset_type IS NULL OR a.asset_type NOT IN (SELECT code FROM asset_types WHERE workflow_type = 'soft' AND status = 'Active'))`;
       }
     }
     // 'both' domain or admin role → no filter

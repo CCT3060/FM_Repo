@@ -117,10 +117,19 @@ function tryParse(s) {
   try { return JSON.parse(s); } catch { return null; }
 }
 
+/* Normalize photo URLs: old uploads stored as http://EC2-IP/uploads/... must be
+   converted to relative paths so they work on HTTPS portals without mixed-content errors. */
+function normalizePhotoUrl(src) {
+  if (!src || typeof src !== "string") return src;
+  // Strip EC2 IP host (HTTP or HTTPS) — let the browser use the current origin/Nginx
+  return src.replace(/^https?:\/\/[^/]+(:\d+)?(?=\/uploads\/)/, "");
+}
+
 /* --- Photo thumbnail + full-screen lightbox -------------------- */
 function PhotoAnswer({ src, alt = "Photo", caption, sizeKB }) {
   const [open, setOpen] = useState(false);
   const [imgSize, setImgSize] = useState(null);
+  const safeSrc = normalizePhotoUrl(src);
 
   const handleLoad = (e) => {
     // Get natural dimensions from the img element
@@ -132,7 +141,7 @@ function PhotoAnswer({ src, alt = "Photo", caption, sizeKB }) {
     <>
       <div style={{ marginTop: "6px" }}>
         <img
-          src={src} alt={alt}
+          src={safeSrc} alt={alt}
           onClick={() => setOpen(true)}
           onLoad={handleLoad}
           style={{ maxWidth: "160px", maxHeight: "120px", borderRadius: "8px", objectFit: "cover",
@@ -160,7 +169,7 @@ function PhotoAnswer({ src, alt = "Photo", caption, sizeKB }) {
         >
           <div onClick={(e) => e.stopPropagation()} style={{ position: "relative" }}>
             <img
-              src={src} alt={alt}
+              src={safeSrc} alt={alt}
               style={{ maxWidth: "90vw", maxHeight: "85vh", borderRadius: "12px",
                 objectFit: "contain", boxShadow: "0 8px 40px rgba(0,0,0,0.5)" }}
             />
@@ -186,6 +195,15 @@ function renderAnswerValue(val) {
 
   // Handle already-parsed objects (JSONB from PostgreSQL arrives as object, not string)
   if (val !== null && typeof val === "object" && !Array.isArray(val)) {
+    // Object with both a text value AND a photo
+    if ("photoUrl" in val && val.photoUrl) {
+      return (
+        <>
+          {"value" in val && val.value ? <span style={{ fontWeight: 600, color: "#0f172a" }}>{String(val.value)}</span> : null}
+          <PhotoAnswer src={val.photoUrl} />
+        </>
+      );
+    }
     if ("value" in val) {
       return renderAnswerValue(val.value ?? "");
     }
@@ -198,6 +216,15 @@ function renderAnswerValue(val) {
     if (trimmed.startsWith("{")) {
       try {
         const parsed = JSON.parse(trimmed);
+        // { value: "...", photoUrl: "..." } — show both text and photo
+        if ("photoUrl" in parsed && parsed.photoUrl) {
+          return (
+            <>
+              {"value" in parsed && parsed.value ? <span style={{ fontWeight: 600, color: "#0f172a" }}>{String(parsed.value)}</span> : null}
+              <PhotoAnswer src={parsed.photoUrl} />
+            </>
+          );
+        }
         // { value: "..." } — extract the inner value and re-render
         if ("value" in parsed) {
           return renderAnswerValue(parsed.value ?? "");

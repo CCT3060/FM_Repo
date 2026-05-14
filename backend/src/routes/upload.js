@@ -33,7 +33,12 @@ const router = Router();
 
 router.post("/", upload.single("file"), (req, res) => {
   if (!req.file) return res.status(400).json({ message: "No file uploaded" });
-  const host = process.env.API_BASE_URL || `${req.protocol}://${req.get("host")}`;
+  // Use x-forwarded-proto set by Nginx reverse proxy to build correct HTTPS URL.
+  // Without this, req.protocol returns 'http' (the internal plain-text connection)
+  // and the returned URL would be blocked as mixed content on HTTPS portals.
+  const proto = (req.headers['x-forwarded-proto']) || req.protocol;
+  const hostHeader = (req.headers['x-forwarded-host']) || req.get("host");
+  const host = process.env.API_BASE_URL || `${proto}://${hostHeader}`;
   const url = `${host}/uploads/${req.file.filename}`;
   res.json({ url, name: req.file.originalname, size: req.file.size });
 });

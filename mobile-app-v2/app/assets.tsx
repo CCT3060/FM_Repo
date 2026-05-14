@@ -10,20 +10,31 @@ import { fetchAssets } from '../utils/api';
 import { useTheme, Typography, Spacing, Radius } from '../utils/theme';
 import EmptyState from '../components/EmptyState';
 import Header from '../components/Header';
+import { useAuth } from '../context/AuthContext';
+import { hasSoftAccess, hasTechAccess } from '../utils/permissions';
 
 export default function AssetsScreen() {
   const { theme } = useTheme();
+  const { capabilities } = useAuth();
   const [assets,     setAssets]     = useState<any[]>([]);
   const [loading,    setLoading]    = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [search,     setSearch]     = useState('');
 
+  // Determine which asset types this user should see based on role capabilities
+  const softOnly = hasSoftAccess(capabilities) && !hasTechAccess(capabilities);
+  const techOnly = hasTechAccess(capabilities) && !hasSoftAccess(capabilities);
+  const assetTypeFilter = softOnly ? 'soft' : techOnly ? 'technical' : undefined;
+
   const load = useCallback(async (q?: string) => {
     try {
-      const data = await fetchAssets({ ...(q ? { search: q } : {}) });
+      const data = await fetchAssets({
+        ...(q ? { search: q } : {}),
+        ...(assetTypeFilter ? { type: assetTypeFilter } : {}),
+      });
       setAssets(data as any[]);
     } catch { /* silent */ } finally { setLoading(false); setRefreshing(false); }
-  }, []);
+  }, [assetTypeFilter]);
 
   useEffect(() => { void load(); }, [load]);
 

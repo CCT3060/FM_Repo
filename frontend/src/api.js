@@ -328,3 +328,9 @@ export const downloadFleetSubmissionsCSV   = (token)            => {
   });
 };
 
+// ── Soft Service Requests ─────────────────────────────────────────────────────
+export const getSoftServiceRequestsAll = (token, params = "") =>
+  request("GET", `/api/soft-service/requests/all${params ? `?${params}` : ""}`, undefined, { authToken: token });
+export const getSoftServiceRequestsMy  = (token, params = "") =>
+  request("GET", `/api/soft-service/requests/my${params ? `?${params}` : ""}`, undefined, { authToken: token });
+
