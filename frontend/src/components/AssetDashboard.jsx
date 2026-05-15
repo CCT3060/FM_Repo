@@ -444,7 +444,7 @@ export default function AssetDashboard({ token, companyId, assetList = [], onVie
   );
 
   return (
-    <div className="ad-root" style={{ fontFamily: "inherit", display: "flex", flexDirection: "column", gap: "0" }}>
+    <div className="ad-root" style={{ fontFamily: "inherit", display: "flex", flexDirection: "column", gap: "0", maxWidth: "100%", overflowX: "hidden" }}>
       {/* Responsive CSS */}
       <style>{`
         .ad-root .ad-grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px}

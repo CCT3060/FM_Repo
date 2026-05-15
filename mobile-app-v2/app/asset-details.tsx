@@ -132,12 +132,6 @@ export default function AssetDetailsScreen() {
       <SafeAreaView style={[styles.safe, { backgroundColor: theme.background }]} edges={['top']}>
         <Header title={assetName} showBack />
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-          {/* Hero */}
-          <View style={[styles.hero, { backgroundColor: theme.primary }]}>
-            <MaterialCommunityIcons name="package-variant" size={48} color="rgba(255,255,255,0.9)" />
-            <Text style={styles.heroId}>{asset.assetUniqueId ?? asset.uniqueId}</Text>
-          </View>
-
           {/* Open issue banner */}
           <View style={[styles.alertBanner, { backgroundColor: '#FEF3C7', borderColor: '#F59E0B' }]}>
             <MaterialCommunityIcons name="alert-circle" size={20} color="#92400E" />
@@ -379,12 +373,6 @@ export default function AssetDetailsScreen() {
       <SafeAreaView style={[styles.safe, { backgroundColor: theme.background }]} edges={['top']}>
         <Header title={assetName} showBack />
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-          {/* Hero */}
-          <View style={[styles.hero, { backgroundColor: theme.primary }]}>
-            <MaterialCommunityIcons name="package-variant" size={48} color="rgba(255,255,255,0.9)" />
-            <Text style={styles.heroId}>{asset.assetUniqueId ?? asset.uniqueId}</Text>
-          </View>
-
           {/* All clear badge */}
           <View style={[styles.alertBanner, { backgroundColor: '#D1FAE5', borderColor: '#059669' }]}>
             <MaterialCommunityIcons name="check-circle" size={20} color="#065F46" />
@@ -451,12 +439,6 @@ export default function AssetDetailsScreen() {
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.background }]} edges={['top']}>
       <Header title={assetName} showBack />
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-
-        {/* Hero */}
-        <View style={[styles.hero, { backgroundColor: theme.primary }]}>
-          <MaterialCommunityIcons name="package-variant" size={48} color="rgba(255,255,255,0.9)" />
-          <Text style={styles.heroId}>{asset.assetUniqueId ?? asset.uniqueId}</Text>
-        </View>
 
         {/* Info */}
         <View style={[styles.card, { backgroundColor: theme.surface, shadowColor: theme.cardShadow }]}>
@@ -535,8 +517,6 @@ export default function AssetDetailsScreen() {
 const styles = StyleSheet.create({
   safe:         { flex: 1 },
   scroll:       { paddingBottom: Spacing.xxl },
-  hero:         { padding: Spacing.xxl, alignItems: 'center', gap: Spacing.sm },
-  heroId:       { ...Typography.h4, color: 'rgba(255,255,255,0.9)' },
   card:         { margin: Spacing.lg, borderRadius: Radius.xl, overflow: 'hidden', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 8, elevation: 4 },
   row:          { flexDirection: 'row', justifyContent: 'space-between', padding: Spacing.md, borderBottomWidth: 1 },
   rowLabel:     { ...Typography.bodyS },

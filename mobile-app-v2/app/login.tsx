@@ -6,9 +6,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import Constants from 'expo-constants';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { loginEmployee, clearStoredCompany } from '../utils/api';
-import { registerForPushNotifications } from '../utils/notifications';
 import { useAuth } from '../context/AuthContext';
 import { useTheme, Typography, Spacing, Radius } from '../utils/theme';
 
@@ -47,7 +47,10 @@ export default function LoginScreen() {
     try {
       const { user } = await loginEmployee(Number(companyId), employeeId.trim(), password);
       setUser(user);
-      void registerForPushNotifications();
+      // Dynamic import so expo-notifications never loads in Expo Go
+      if (Constants.appOwnership !== 'expo') {
+        void import('../utils/notifications').then(m => m.registerForPushNotifications());
+      }
       router.replace('/(tabs)/home');
     } catch (err: any) {
       Alert.alert('Login Failed', err.message ?? 'Invalid credentials. Please try again.');

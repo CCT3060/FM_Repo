@@ -179,3 +179,64 @@ export async function markNotificationRead(notificationId, recipientId, conn = p
     [notificationId, recipientId]
   );
 }
+
+// ── Send an Expo push notification ────────────────────────────────────────────
+/**
+ * Sends a push notification via Expo's push API.
+ * Silently fails if the token is invalid or the request fails.
+ *
+ * @param {string} pushToken - ExponentPushToken[...]
+ * @param {string} title
+ * @param {string} body
+ * @param {object} [data]  - extra payload (e.g. { screen: '/checklist-entry' })
+ */
+export async function sendExpoPush(pushToken, title, body, data = {}) {
+  if (!pushToken || !String(pushToken).startsWith("ExponentPushToken")) return;
+  try {
+    await fetch("https://exp.host/--/api/v2/push/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ to: pushToken, title, body, data, sound: "default" }),
+    });
+  } catch {
+    // Non-fatal
+  }
+}
+
+// ── Notify a user about a template assignment ─────────────────────────────────
+/**
+ * Creates an in-app notification and sends an Expo push for a template assignment.
+ *
+ * @param {object} params
+ * @param {number}  params.companyId
+ * @param {number}  params.recipientId   – company_users.id of the assigned user
+ * @param {string}  params.templateName
+ * @param {string}  params.templateType  – "checklist" | "logsheet"
+ * @param {number}  params.templateId
+ */
+export async function notifyAssignment({ companyId, recipientId, templateName, templateType, templateId }) {
+  const label = templateType === "checklist" ? "Checklist" : "Log Sheet";
+  const title = `📋 New ${label} Assigned`;
+  const message = `"${templateName}" has been assigned to you.`;
+
+  // In-app notification
+  await createNotification({ companyId, recipientId, type: "assignment", title, message });
+
+  // Expo push notification
+  try {
+    const [[user]] = await pool.query(
+      `SELECT push_token FROM company_users WHERE id = ? LIMIT 1`,
+      [recipientId]
+    );
+    if (user?.push_token) {
+      await sendExpoPush(user.push_token, title, message, {
+        screen: "/all-templates",
+        templateType,
+        templateId,
+      });
+    }
+  } catch {
+    // Non-fatal
+  }
+}
+

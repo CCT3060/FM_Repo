@@ -121,8 +121,16 @@ function tryParse(s) {
    converted to relative paths so they work on HTTPS portals without mixed-content errors. */
 function normalizePhotoUrl(src) {
   if (!src || typeof src !== "string") return src;
-  // Strip EC2 IP host (HTTP or HTTPS) — let the browser use the current origin/Nginx
-  return src.replace(/^https?:\/\/[^/]+(:\d+)?(?=\/uploads\/)/, "");
+  // Handle bare filenames (no path prefix) — assume they live in /uploads/
+  if (!src.startsWith("/") && !src.startsWith("http") && !src.includes("/")) {
+    return `/uploads/${src}`;
+  }
+  // On HTTPS (production): strip any external host to use relative /uploads/ path (avoids mixed content)
+  if (typeof window !== "undefined" && window.location.protocol === "https:") {
+    return src.replace(/^https?:\/\/[^/]+(:\d+)?(?=\/uploads\/)/, "");
+  }
+  // On HTTP (local dev): only strip localhost/127.0.0.1 — keep external EC2 URLs for direct access
+  return src.replace(/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(?=\/uploads\/)/, "");
 }
 
 /* --- Photo thumbnail + full-screen lightbox -------------------- */

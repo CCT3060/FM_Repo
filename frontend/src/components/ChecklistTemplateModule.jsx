@@ -512,8 +512,6 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
     setError(null);
     if (!isEdit && !form.companyId) return setError("Select a company");
     if (!form.templateName.trim()) return setError("Template name is required");
-    if (!form.assetType.trim()) return setError("Asset type is required");
-    if (!form.assetId) return setError("Please select an asset to link this checklist to");
     for (const [i, q] of questions.entries()) {
       if (!q.questionText.trim() && !q.questionImageUrl) return setError(`Question ${i + 1}: provide either question text or a photo`);
     }
@@ -607,13 +605,13 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
             <Inp value={form.templateName} onChange={(e) => setForm((p) => ({ ...p, templateName: e.target.value }))} placeholder='e.g. "Daily Safety Check", "AMC Inspection Form"' />
           </div>
           <div>
-            <Label required>Asset Type</Label>
+            <Label>Asset Type</Label>
             <Sel value={form.assetType} onChange={(e) => setForm((p) => ({ ...p, assetType: e.target.value }))}>
               {ASSET_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
             </Sel>
           </div>
           <div>
-            <Label required>Asset</Label>
+            <Label>Asset</Label>
             <Sel value={form.assetId} onChange={(e) => setForm((p) => ({ ...p, assetId: e.target.value }))}>
               <option value="">— Select asset —</option>
               {filteredChecklistAssets.map((a) => (

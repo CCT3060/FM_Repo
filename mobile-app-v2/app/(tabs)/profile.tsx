@@ -1,11 +1,12 @@
 import { router } from 'expo-router';
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Alert, ScrollView, StyleSheet, Text,
   TouchableOpacity, View, Switch,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '../../context/AuthContext';
 import { logout, logoutUser, getStoredCompany } from '../../utils/api';
 import { useTheme, Typography, Spacing, Radius } from '../../utils/theme';
@@ -32,6 +33,18 @@ const CAP_LABELS: { key: keyof RoleCapabilities; label: string }[] = [
 export default function ProfileTab() {
   const { theme, isDark, setPreference, preference } = useTheme();
   const { user, capabilities, clearUser } = useAuth();
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+
+  useEffect(() => {
+    AsyncStorage.getItem('notifications_enabled').then((val) => {
+      if (val !== null) setNotificationsEnabled(val === 'true');
+    });
+  }, []);
+
+  const toggleNotifications = async (value: boolean) => {
+    setNotificationsEnabled(value);
+    await AsyncStorage.setItem('notifications_enabled', String(value));
+  };
 
   const handleLogout = () => {
     Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
@@ -88,6 +101,18 @@ export default function ProfileTab() {
               onValueChange={toggleTheme}
               trackColor={{ false: theme.border, true: theme.primary }}
               thumbColor={isDark ? '#fff' : theme.textMuted}
+            />
+          </View>
+          <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: theme.borderLight, paddingTop: Spacing.md }]}>
+            <View style={styles.settingLeft}>
+              <MaterialCommunityIcons name={notificationsEnabled ? 'bell-outline' : 'bell-off-outline'} size={22} color={theme.textSecondary} />
+              <Text style={[styles.settingLabel, { color: theme.textPrimary }]}>Push Notifications</Text>
+            </View>
+            <Switch
+              value={notificationsEnabled}
+              onValueChange={toggleNotifications}
+              trackColor={{ false: theme.border, true: theme.primary }}
+              thumbColor={notificationsEnabled ? '#fff' : theme.textMuted}
             />
           </View>
         </View>

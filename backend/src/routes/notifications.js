@@ -66,7 +66,7 @@ router.get("/count", async (req, res, next) => {
       `SELECT COUNT(*) AS cnt FROM notifications WHERE recipient_id = ? AND is_read = FALSE`,
       [req.companyUser.id]
     );
-    res.json({ unread: Number(row?.cnt ?? 0) });
+    res.json({ unread: Number(row?.cnt ?? 0), count: Number(row?.cnt ?? 0) });
   } catch (err) {
     next(err);
   }

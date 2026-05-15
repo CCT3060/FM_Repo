@@ -532,19 +532,22 @@ tr:last-child td {
   display: flex;
   min-height: 100vh;
   background: var(--bg);
+  overflow-x: hidden;
 }
 
 .client-side-panel {
-  width: 240px;
+  width: 220px;
   background: var(--card);
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 20px 16px;
+  gap: 8px;
+  padding: 16px 12px;
   position: sticky;
   top: 0;
   height: 100vh;
+  overflow-y: auto;
+  flex-shrink: 0;
 }
 
 .client-side-header {
@@ -621,7 +624,7 @@ tr:last-child td {
   flex: 1;
   min-width: 0;
   margin-left: 0;
-  padding: 32px;
+  padding: 24px;
 }
 
 .client-main-area.page {

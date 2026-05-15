@@ -1,6 +1,7 @@
 # =============================================================================
 # FM App — Local Development Starter
 # Run from FM_Repo root:  .\start-dev.ps1
+# Optionally pass PEM key: .\start-dev.ps1 -PemFile "C:\path\to\key.pem"
 #
 # What this does:
 #   1. Opens SSH tunnel  localhost:5432  →  EC2 PostgreSQL (3.110.166.39:5432)
@@ -8,18 +9,34 @@
 #   2. Starts backend    on  localhost:4000
 #   3. Starts frontend   on  localhost:5173
 #
-# Mobile app (Expo Go via tunnel QR) must be started separately:
-#   cd mobile-app-v2 && npx expo start
+# Mobile app (Expo Go):
+#   cd mobile-app-v2 && npx expo start --go --lan
 # =============================================================================
+param(
+    [string]$PemFile = ""
+)
 
 $EC2_IP    = "3.110.166.39"
 $EC2_USER  = "ec2-user"
-$PEM_FILE  = "$env:USERPROFILE\.ssh\Key.pem"
+
+# --- Locate PEM file ---------------------------------------------------------
+$candidatePaths = @(
+    $PemFile,
+    "$env:USERPROFILE\.ssh\Key.pem",
+    "$env:USERPROFILE\.ssh\fm-ec2.pem",
+    "$env:USERPROFILE\.ssh\ec2.pem",
+    "$env:USERPROFILE\Downloads\Key.pem",
+    "$env:USERPROFILE\Desktop\Key.pem"
+)
+$PEM_FILE = $candidatePaths | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
 
 # ── Validate PEM file ─────────────────────────────────────────────────────────
-if (-not (Test-Path $PEM_FILE)) {
-    Write-Error "PEM file not found: $PEM_FILE"
-    Write-Error "Expected key at: $PEM_FILE"
+if (-not $PEM_FILE) {
+    Write-Host ""
+    Write-Host "ERROR: EC2 SSH key (.pem) not found." -ForegroundColor Red
+    Write-Host "  Option 1 — Copy your .pem key to: $env:USERPROFILE\.ssh\Key.pem" -ForegroundColor Cyan
+    Write-Host "  Option 2 — .\start-dev.ps1 -PemFile `"C:\path\to\key.pem`"" -ForegroundColor Cyan
+    Write-Host ""
     exit 1
 }
 
@@ -88,7 +105,7 @@ Write-Host "  Backend   →  http://localhost:4000" -ForegroundColor White
 Write-Host "  Frontend  →  http://localhost:5173" -ForegroundColor White
 Write-Host "  Database  →  EC2 PostgreSQL (via SSH tunnel)" -ForegroundColor White
 Write-Host ""
-Write-Host "  Mobile app: cd mobile-app && npm run start" -ForegroundColor White
+Write-Host "  Mobile app: cd mobile-app-v2 && npx expo start --go --lan" -ForegroundColor White
 Write-Host ""
 Write-Host "  Press Ctrl+C to stop all services." -ForegroundColor DarkGray
 Write-Host "===================================================" -ForegroundColor Cyan

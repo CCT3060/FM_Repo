@@ -58,6 +58,10 @@ const errStyles = StyleSheet.create({
 // ─── Auth bootstrapper ────────────────────────────────────────────────────────
 function AuthBootstrap({ children }: { children: React.ReactNode }) {
   const { setUser, isLoaded } = useAuth();
+  // Use a ref so the effect body can read the latest isLoaded without
+  // being re-added to the dependency array (runs once on mount only).
+  const isLoadedRef = useRef(isLoaded);
+  isLoadedRef.current = isLoaded;
 
   useEffect(() => {
     (async () => {
@@ -66,8 +70,11 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
         setUser(result.user);
         router.replace('/(tabs)/home');
       } else {
-        setUser(null);
-        router.replace('/');
+        // Mark auth as loaded but do NOT navigate — index.tsx owns routing
+        // for unauthenticated users. Navigating here causes a race with
+        // index.tsx's own redirect and produces visible login-screen flicker.
+        // Skip the state update if already loaded to avoid a needless re-render.
+        if (!isLoadedRef.current) setUser(null);
       }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps

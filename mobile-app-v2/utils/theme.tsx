@@ -156,7 +156,7 @@ interface ThemeCtx {
 const Ctx = createContext<ThemeCtx>({
   theme: LightTheme,
   isDark: false,
-  preference: 'system',
+  preference: 'light',
   setPreference: () => {},
 });
 
@@ -164,7 +164,9 @@ const PREF_KEY = '@fmv2_theme_pref';
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const system = useColorScheme();
-  const [preference, setPreference] = useState<Preference>('system');
+  // Default to 'light' so the very first render is always the light theme.
+  // AsyncStorage may override this if the user has explicitly saved a preference.
+  const [preference, setPreference] = useState<Preference>('light');
 
   useEffect(() => {
     AsyncStorage.getItem(PREF_KEY).then((v) => {

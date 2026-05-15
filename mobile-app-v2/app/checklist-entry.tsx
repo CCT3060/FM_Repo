@@ -270,12 +270,12 @@ function FieldInput({ field, value, onChange }: { field: Field; value: any; onCh
             key={opt}
             style={[
               styles.boolBtn,
-              value === opt && styles.boolBtnActive,
+              value === opt && { backgroundColor: theme.primary, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.2, shadowRadius: 2, elevation: 3 },
             ]}
             onPress={() => onChange(value === opt ? null : opt)}
             activeOpacity={0.7}
           >
-            <Text style={[styles.boolBtnText, { color: value === opt ? theme.textPrimary : theme.textSecondary }]}>
+            <Text style={[styles.boolBtnText, { color: value === opt ? '#fff' : theme.textSecondary }]}>
               {opt}
             </Text>
           </TouchableOpacity>
@@ -676,7 +676,7 @@ const styles = StyleSheet.create({
   // Boolean segmented control
   boolContainer:     { flexDirection: 'row', gap: 4, padding: 4, borderRadius: Radius.md },
   boolBtn:           { flex: 1, paddingVertical: 9, borderRadius: 6, alignItems: 'center' },
-  boolBtnActive:     { backgroundColor: '#fff', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.12, shadowRadius: 2, elevation: 2 },
+  boolBtnActive:     {},
   boolBtnText:       { fontSize: 12, fontWeight: '500' as const, lineHeight: 16 },
 
   // Select chips (wrapping)

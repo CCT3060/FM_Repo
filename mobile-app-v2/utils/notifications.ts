@@ -1,23 +1,35 @@
 import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { registerPushToken } from './api';
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
-});
+// setNotificationHandler has module-level side effects that crash Expo Go.
+// Only configure it in standalone / dev-client builds.
+if (Constants.appOwnership !== 'expo') {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: true,
+      shouldShowBanner: true,
+      shouldShowList: true,
+    }),
+  });
+}
 
 export async function registerForPushNotifications(): Promise<string | null> {
   try {
     // Skip in Expo Go — device push tokens don't work there
     if (Constants.appOwnership === 'expo') {
       console.log('[Push] Skipping registration in Expo Go');
+      return null;
+    }
+
+    // Respect user preference — default to enabled if not set
+    const prefVal = await AsyncStorage.getItem('notifications_enabled');
+    if (prefVal === 'false') {
+      console.log('[Push] Notifications disabled by user preference');
       return null;
     }
 

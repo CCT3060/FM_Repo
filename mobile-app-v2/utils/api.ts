@@ -492,7 +492,7 @@ export async function markAllNotificationsRead() {
 }
 
 export async function markNotificationRead(id: number) {
-  return authenticatedFetch(`/api/notifications/${id}`, { method: 'PUT' });
+  return authenticatedFetch(`/api/notifications/${id}/read`, { method: 'PUT' });
 }
 
 // ─── OJT Training ────────────────────────────────────────────────────────────
@@ -545,9 +545,9 @@ export async function fetchActiveShift() {
  * Returns the public URL of the uploaded file.
  * Does NOT set Content-Type — the native fetch will set it with the multipart boundary.
  */
-const MAX_PHOTO_BYTES = 5 * 1024 * 1024; // 5 MB
+const MAX_PHOTO_BYTES = 4 * 1024 * 1024; // 4 MB — nginx limit is 15m, kept at 4 MB for safety
 
-/** Compress an image so it is under 5 MB. Returns the (possibly new) URI. */
+/** Compress an image so it is under 4 MB. Returns the (possibly new) URI. */
 async function compressToUnder5MB(uri: string): Promise<string> {
   try {
     const info = await FileSystem.getInfoAsync(uri, { size: true });

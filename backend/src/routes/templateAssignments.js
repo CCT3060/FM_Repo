@@ -10,7 +10,7 @@ import {
   buildExpectedRuleText,
   calculateLogsheetSeverity,
 } from "../utils/flagsHelper.js";
-import { dispatchFlagNotifications } from "../utils/notificationsHelper.js";
+import { dispatchFlagNotifications, notifyAssignment } from "../utils/notificationsHelper.js";
 
 const router = Router();
 router.use(requireCompanyAuth);
@@ -122,8 +122,9 @@ router.post(
 
       // Verify template exists and belongs to company
       const tableName = templateType === "checklist" ? "checklist_templates" : "logsheet_templates";
+      const nameCol = templateType === "checklist" ? "template_name" : "template_name";
       const [[template]] = await pool.query(
-        `SELECT id FROM ${tableName} WHERE id = ? AND company_id = ?`,
+        `SELECT id, ${nameCol} AS templateName FROM ${tableName} WHERE id = ? AND company_id = ?`,
         [templateId, cid(req)]
       );
       if (!template) {
@@ -143,6 +144,15 @@ router.post(
          RETURNING id`,
         [cid(req), templateType, templateId, assignedTo, req.companyUser.id, note || null]
       );
+
+      // Notify the assigned user
+      void notifyAssignment({
+        companyId: cid(req),
+        recipientId: assignedTo,
+        templateName: template.templateName,
+        templateType,
+        templateId,
+      });
 
       res.json({
         message: `${templateType} assigned successfully`,
@@ -284,15 +294,15 @@ router.get("/my-assignments", async (req, res, next) => {
     }));
 
     // ── Filter / auto-include templates based on service_domain ──────────────
-    // service_domain: 'technical' (default) | 'soft' | 'both'
-    let serviceDomain = 'technical';
+    // service_domain: 'technical' | 'soft' | 'both' — default 'both' shows everything
+    let serviceDomain = 'both';
     try {
       const [[cuRow]] = await pool.query(
         `SELECT service_domain AS "serviceDomain" FROM company_users WHERE id = ? LIMIT 1`,
         [req.companyUser.id]
       );
-      serviceDomain = (cuRow?.serviceDomain || 'technical').toLowerCase();
-    } catch { /* default technical */ }
+      serviceDomain = (cuRow?.serviceDomain || 'both').toLowerCase();
+    } catch { /* default both */ }
 
     // Load all asset type codes that have workflow_type = 'soft' for this company context.
     // Also include legacy codes 'soft' and any type whose label matches 'soft service'
@@ -408,8 +418,12 @@ router.post(
 
       // Get the original assignment
       const [[assignment]] = await pool.query(
-        `SELECT template_type, template_id FROM template_user_assignments 
-         WHERE id = ? AND assigned_to = ? AND company_id = ?`,
+        `SELECT tua.template_type, tua.template_id,
+                COALESCE(ct.template_name, lt.template_name) AS templateName
+         FROM template_user_assignments tua
+         LEFT JOIN checklist_templates ct ON tua.template_type = 'checklist' AND ct.id = tua.template_id
+         LEFT JOIN logsheet_templates lt ON tua.template_type = 'logsheet' AND lt.id = tua.template_id
+         WHERE tua.id = ? AND tua.assigned_to = ? AND tua.company_id = ?`,
         [assignmentId, req.companyUser.id, cid(req)]
       );
       if (!assignment) {
@@ -438,6 +452,15 @@ router.post(
            created_at = NOW()`,
         [cid(req), assignment.template_type, assignment.template_id, assignedTo, req.companyUser.id, note || null]
       );
+
+      // Notify the assigned user
+      void notifyAssignment({
+        companyId: cid(req),
+        recipientId: assignedTo,
+        templateName: assignment.templateName ?? "Template",
+        templateType: assignment.template_type,
+        templateId: assignment.template_id,
+      });
 
       res.json({ message: "Reassigned successfully" });
     } catch (err) {
@@ -1600,7 +1623,7 @@ router.post(
       }
       const tableName = templateType === "checklist" ? "checklist_templates" : "logsheet_templates";
       const [[template]] = await pool.query(
-        `SELECT id FROM ${tableName} WHERE id = ? AND company_id = ?`,
+        `SELECT id, template_name AS templateName FROM ${tableName} WHERE id = ? AND company_id = ?`,
         [templateId, cid(req)]
       );
       if (!template) return res.status(404).json({ message: `${templateType} template not found` });
@@ -1615,6 +1638,16 @@ router.post(
            created_at = NOW()`,
         [cid(req), templateType, templateId, assignedTo, req.companyUser.id, note || null]
       );
+
+      // Notify the assigned user
+      void notifyAssignment({
+        companyId: cid(req),
+        recipientId: assignedTo,
+        templateName: template.templateName ?? "Template",
+        templateType,
+        templateId,
+      });
+
       res.json({ message: "Template assigned successfully" });
     } catch (err) { next(err); }
   }
@@ -1881,14 +1914,15 @@ router.get("/site-score", async (req, res, next) => {
     const companyId = cid(req);
 
     // Use service_domain from company_users to determine what the user can see
-    let serviceDomain = 'technical';
+    // Default to 'both' so users without explicit domain see all templates
+    let serviceDomain = 'both';
     try {
       const [[cuRow]] = await pool.query(
         `SELECT service_domain AS "serviceDomain" FROM company_users WHERE id = ? LIMIT 1`,
         [req.companyUser.id]
       );
-      serviceDomain = (cuRow?.serviceDomain || 'technical').toLowerCase();
-    } catch { /* default technical */ }
+      serviceDomain = (cuRow?.serviceDomain || 'both').toLowerCase();
+    } catch { /* default both */ }
 
     // Build SQL filter based on domain
     let softFilter = '';
@@ -1998,14 +2032,15 @@ router.get("/all-templates", async (req, res, next) => {
     const companyId = cid(req);
 
     // Determine service domain from company_users record
-    let serviceDomain = 'technical';
+    // Default to 'both' so users without explicit domain setting see all templates
+    let serviceDomain = 'both';
     try {
       const [[cuRow]] = await pool.query(
         `SELECT service_domain AS "serviceDomain" FROM company_users WHERE id = ? LIMIT 1`,
         [req.companyUser.id]
       );
-      serviceDomain = (cuRow?.serviceDomain || 'technical').toLowerCase();
-    } catch { /* default technical */ }
+      serviceDomain = (cuRow?.serviceDomain || 'both').toLowerCase();
+    } catch { /* default both */ }
 
     let softFilter = '';
     if (serviceDomain === 'technical') {

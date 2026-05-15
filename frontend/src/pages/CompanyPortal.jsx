@@ -1829,6 +1829,8 @@ const CompanyPortal = () => {
     { key: "warnings", label: "Warnings" },
     { key: "shifts", label: "Shifts" },
     { key: "departments", label: "Departments" },
+    { key: "asset-types", label: "Asset Types" },
+    { key: "roles", label: "Manage Roles" },
   ];
 
   const ALL_ROLES = ["admin", "technical_lead", "assistant_manager", "technical_executive", "supervisor", "technician", "cleaner", "security", "driver", "fleet_operator", "employee"];

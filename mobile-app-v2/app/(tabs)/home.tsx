@@ -112,14 +112,14 @@ export default function HomeScreen() {
         ) : progress ? (
           <View style={[styles.statsRow, { backgroundColor: theme.surface, borderColor: theme.border }]}>
             {[
-              { label: 'Assigned',  value: (progress as any).assigned  ?? 0, color: theme.primary },
-              { label: 'Done',      value: (progress as any).completed ?? 0, color: '#059669' },
-              { label: 'Pending',   value: (progress as any).pending   ?? 0, color: '#D97706' },
-            ].map(({ label, value, color }, i, arr) => (
-              <View key={label} style={[styles.statItem, i < arr.length - 1 && { borderRightWidth: 1, borderRightColor: theme.border }]}>
+              { label: 'Assigned',  value: (progress as any).assigned  ?? 0, color: theme.primary,  route: '/(tabs)/checklists' },
+              { label: 'Done',      value: (progress as any).completed ?? 0, color: '#059669',      route: '/history' },
+              { label: 'Pending',   value: (progress as any).pending   ?? 0, color: '#D97706',      route: '/(tabs)/checklists' },
+            ].map(({ label, value, color, route }, i, arr) => (
+              <TouchableOpacity key={label} onPress={() => router.push(route as any)} activeOpacity={0.7} style={[styles.statItem, i < arr.length - 1 && { borderRightWidth: 1, borderRightColor: theme.border }]}>
                 <Text style={[styles.statValue, { color }]}>{value}</Text>
                 <Text style={[styles.statLabel, { color: theme.textSecondary }]}>{label}</Text>
-              </View>
+              </TouchableOpacity>
             ))}
           </View>
         ) : null}

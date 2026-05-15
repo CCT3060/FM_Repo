@@ -277,9 +277,30 @@ export default function SoftResolveScreen() {
             const beforeValue = beforeEntry
               ? (beforeEntry.answer ?? beforeEntry.optionSelected ?? beforeEntry.value ?? null)
               : null;
-            const beforeDisplay = beforeValue !== null && beforeValue !== undefined && String(beforeValue).trim() !== ''
-              ? String(beforeValue)
-              : null;
+
+            // The answer may be stored as a JSON object { value, photoUrl } — parse it
+            let parsedBeforeText: string | null = null;
+            let parsedBeforePhotoUrl: string | null = null;
+            if (beforeValue !== null && beforeValue !== undefined) {
+              const raw = String(beforeValue).trim();
+              if (raw.startsWith('{')) {
+                try {
+                  const obj = JSON.parse(raw);
+                  parsedBeforeText = obj.value != null ? String(obj.value) : null;
+                  parsedBeforePhotoUrl = obj.photoUrl ?? null;
+                } catch {
+                  parsedBeforeText = raw || null;
+                }
+              } else {
+                parsedBeforeText = raw || null;
+              }
+            }
+            // Also check explicit photoUrl field on the entry (legacy path)
+            if (!parsedBeforePhotoUrl && beforeEntry?.photoUrl) {
+              parsedBeforePhotoUrl = beforeEntry.photoUrl;
+            }
+
+            const beforeDisplay = parsedBeforeText;
 
             return (
               <View key={String(q.id ?? idx)} style={[styles.fieldCard, { backgroundColor: theme.surface, shadowColor: theme.cardShadow, borderColor: theme.border }]}>
@@ -319,7 +340,7 @@ export default function SoftResolveScreen() {
                   <View style={[styles.beforeBox, { backgroundColor: theme.inputBg, borderColor: theme.inputBorder }]}>
                     <Text style={[styles.beforeLabel, { color: theme.textMuted }]}>CLIENT RESPONSE (BEFORE)</Text>
                     {/* If beforeDisplay is a URL, render as image; otherwise render as text */}
-                    {beforeDisplay.startsWith('http') && /\.(jpe?g|png|gif|webp)/i.test(beforeDisplay) ? (
+                    {beforeDisplay && beforeDisplay.startsWith('http') && /\.(jpe?g|png|gif|webp)/i.test(beforeDisplay) ? (
                       <Image
                         source={{ uri: beforeDisplay }}
                         style={{ width: '100%', height: 160, borderRadius: 8, marginTop: 8 }}
@@ -328,9 +349,9 @@ export default function SoftResolveScreen() {
                     ) : (
                       <Text style={[styles.beforeValue, { color: theme.textSecondary }]}>{beforeDisplay}</Text>
                     )}
-                    {beforeEntry?.photoUrl && !(beforeDisplay.startsWith('http') && /\.(jpe?g|png|gif|webp)/i.test(beforeDisplay)) ? (
+                    {parsedBeforePhotoUrl ? (
                       <Image
-                        source={{ uri: beforeEntry.photoUrl }}
+                        source={{ uri: parsedBeforePhotoUrl }}
                         style={{ width: '100%', height: 160, borderRadius: 8, marginTop: 8 }}
                         resizeMode="cover"
                       />
@@ -347,11 +368,14 @@ export default function SoftResolveScreen() {
                     {boolOpts.map((opt) => (
                       <TouchableOpacity
                         key={opt}
-                        style={[styles.boolBtn, answers[q.id] === opt && styles.boolBtnActive]}
+                        style={[
+                          styles.boolBtn,
+                          answers[q.id] === opt && { backgroundColor: theme.primary, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.2, shadowRadius: 2, elevation: 3 },
+                        ]}
                         onPress={() => setAnswers((prev) => ({ ...prev, [q.id]: prev[q.id] === opt ? null : opt }))}
                         activeOpacity={0.7}
                       >
-                        <Text style={[styles.boolBtnText, { color: answers[q.id] === opt ? theme.textPrimary : theme.textSecondary }]}>{opt}</Text>
+                        <Text style={[styles.boolBtnText, { color: answers[q.id] === opt ? '#fff' : theme.textSecondary }]}>{opt}</Text>
                       </TouchableOpacity>
                     ))}
                   </View>
@@ -458,7 +482,7 @@ const styles = StyleSheet.create({
   // Boolean
   boolContainer: { flexDirection: 'row', gap: 4, padding: 4, borderRadius: Radius.md },
   boolBtn:       { flex: 1, paddingVertical: 9, borderRadius: 6, alignItems: 'center' },
-  boolBtnActive: { backgroundColor: '#fff', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.12, shadowRadius: 2, elevation: 2 },
+  boolBtnActive: {},
   boolBtnText:   { fontSize: 12, fontWeight: '500' as const, lineHeight: 16 },
   // Select
   selectGrid:    { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.xs },

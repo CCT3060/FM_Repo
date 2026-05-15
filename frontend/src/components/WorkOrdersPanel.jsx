@@ -389,7 +389,7 @@ export default function WorkOrdersPanel({ token, companyId, assets = [], presele
   }
 
   return (
-    <div style={{ padding: "24px", maxWidth: "1300px" }}>
+    <div style={{ maxWidth: "100%" }}>
       {/* Header */}
       <div style={{ display: "flex", alignItems: "flex-start", gap: "12px", marginBottom: "20px", flexWrap: "wrap" }}>
         <div style={{ width: "42px", height: "42px", borderRadius: "10px", background: "#dbeafe", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "22px", flexShrink: 0 }}>🔧</div>

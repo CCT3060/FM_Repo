@@ -1011,8 +1011,8 @@ function AssetModal({ existing, token, departments, employees = [], assetTypesLi
     if (!form.assetType) return setError("Please select an asset type");
     let assetNameToUse = form.assetName.trim();
     if (isSoftLegacy) {
-      assetNameToUse = (form.room || "").trim();
-      if (!assetNameToUse) return setError("Room / Area is required for Soft Services");
+      assetNameToUse = (form.assetName || form.room || "").trim();
+      if (!assetNameToUse) return setError("Asset Name is required for Soft Services");
     } else if (!assetNameToUse) {
       return setError("Asset name is required");
     }
@@ -1153,11 +1153,19 @@ function AssetModal({ existing, token, departments, employees = [], assetTypesLi
 
           {/* ── Legacy Soft Services: Location only ── */}
           {form.assetType && isSoftLegacy && <>
+            <div style={{ gridColumn: "span 2" }}>
+              <FInput label="Asset Name" required name="assetName" value={form.assetName} onChange={handleChange} placeholder="e.g. Housekeeping Block A" />
+            </div>
+            <FInput label="Asset Unique ID" name="assetUniqueId" value={form.assetUniqueId} onChange={handleChange} placeholder="e.g. DA001 (auto if blank)" />
+            <FSelect label="Status" name="status" value={form.status} onChange={handleChange}>
+              <option value="Active">Active</option>
+              <option value="Inactive">Inactive</option>
+            </FSelect>
             <FSec title="Location" />
             <FInput label="Building" name="building" value={form.building} onChange={handleChange} placeholder="e.g. Block A" />
             <FInput label="Floor" name="floor" value={form.floor} onChange={handleChange} placeholder="e.g. 3rd Floor" />
             <div style={{ gridColumn: "span 2" }}>
-              <FInput label="Room / Area (used as Asset Name)" required name="room" value={form.room} onChange={handleChange} placeholder="e.g. Server Room" />
+              <FInput label="Room / Area" name="room" value={form.room} onChange={handleChange} placeholder="e.g. Server Room" />
             </div>
             <div style={{ gridColumn: "span 2" }}>
               <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Description</label>
@@ -3206,7 +3214,7 @@ export default function CompanyEmployeePortal() {
     const base = getNav(currentUser?.role || "employee");
     const isAdmin = currentUser?.role === "admin" || currentUser?.role === "catalyst_admin";
     // Admin-only management tabs that are always visible for admins regardless of module settings
-    const ADMIN_ALWAYS = new Set(["dashboard", "roles", "asset-types", "employees", "departments"]);
+    const ADMIN_ALWAYS = new Set(["dashboard", "employees"]);
     const ALWAYS_VISIBLE = new Set(["dashboard", "mytasks", "employees"]);
 
     if (isAdmin) {
@@ -4045,7 +4053,7 @@ export default function CompanyEmployeePortal() {
       </aside>
 
       {/* Main content */}
-      <main style={{ marginLeft: "240px", flex: 1, padding: "28px 32px", minHeight: "100vh" }}>
+      <main style={{ marginLeft: "240px", flex: 1, padding: "28px 32px", minHeight: "100vh", overflowX: "hidden" }}>
 
         {/* ── Dashboard ──────────────────────────────────────────── */}
         {nav === "dashboard" && (() => {
@@ -4950,14 +4958,14 @@ export default function CompanyEmployeePortal() {
                               title="Select all" style={{ cursor: "pointer" }} />
                           </th>
                         )}
-                        {["#", "Asset Name", "ID", "Type", "Department", "Location", "Status", ...(isAdmin ? ["Actions"] : [])].map((h) => (
+                        {["#", "Name", "ID", "Type", ...(!enabledModules || enabledModules.includes("departments") ? ["Department"] : []), "Location", "Status", ...(isAdmin ? ["Actions"] : [])].map((h) => (
                           <th key={h} style={{ padding: "12px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
                       {filteredAssets.length === 0
-                        ? <tr><td colSpan={isAdmin ? 9 : 7} style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>No assets found</td></tr>
+                        ? <tr><td colSpan={(isAdmin ? 2 : 0) + (!enabledModules || enabledModules.includes("departments") ? 7 : 6)} style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>No assets found</td></tr>
                         : filteredAssets.map((a, i) => (
                           <tr key={a.id} style={{ borderBottom: "1px solid #f1f5f9", background: selectedQrIds.has(a.id) ? "#f0fdf4" : undefined }}>
                             {isAdmin && (
@@ -4975,7 +4983,9 @@ export default function CompanyEmployeePortal() {
                                 {a.assetType}
                               </span>
                             </td>
-                            <td style={{ padding: "14px 16px", color: "#64748b", fontSize: "13px" }}>{a.departmentName || "—"}</td>
+                            {(!enabledModules || enabledModules.includes("departments")) && (
+                              <td style={{ padding: "14px 16px", color: "#64748b", fontSize: "13px" }}>{a.departmentName || "—"}</td>
+                            )}
                             <td style={{ padding: "14px 16px", color: "#64748b", fontSize: "12.5px" }}>{[a.building, a.floor, a.room].filter(Boolean).join(" / ") || "—"}</td>
                             <td style={{ padding: "14px 16px" }}>
                               <span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: a.status === "Active" ? "#f0fdf4" : "#f8fafc", color: a.status === "Active" ? "#16a34a" : "#94a3b8" }}>

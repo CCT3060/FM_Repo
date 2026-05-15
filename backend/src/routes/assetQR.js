@@ -106,7 +106,7 @@ router.get("/:assetId", async (req, res, next) => {
     if (companyUser) {
       [checklistTemplates] = await pool.query(
         `SELECT ct.id, ct.template_name AS "templateName", ct.asset_type AS "assetType",
-                ct.category, ct.description, ct.frequency, ct.shift, ct.status, ct.questions
+                ct.category, ct.description, ct.frequency, ct.shift, ct.status
          FROM checklist_templates ct
          JOIN template_user_assignments tua ON tua.template_id = ct.id AND tua.template_type = 'checklist'
          WHERE ct.company_id = ? AND ct.is_active = 1
@@ -118,7 +118,7 @@ router.get("/:assetId", async (req, res, next) => {
     } else {
       [checklistTemplates] = await pool.query(
         `SELECT ct.id, ct.template_name AS "templateName", ct.asset_type AS "assetType",
-                ct.category, ct.description, ct.frequency, ct.shift, ct.status, ct.questions
+                ct.category, ct.description, ct.frequency, ct.shift, ct.status
          FROM checklist_templates ct
          WHERE ct.company_id = ? AND ct.is_active = 1
            AND (ct.asset_id = ? OR (ct.asset_id IS NULL AND ct.asset_type = ?))
@@ -126,9 +126,35 @@ router.get("/:assetId", async (req, res, next) => {
         [asset.companyId, assetId, asset.assetType]
       );
     }
+
+    // Fetch questions from the dedicated questions table
+    let clQuestions = [];
+    if (checklistTemplates.length > 0) {
+      const clIds = checklistTemplates.map((t) => t.id);
+      [clQuestions] = await pool.query(
+        `SELECT id, template_id AS "templateId", question_text AS "questionText", input_type AS "inputType",
+                is_required AS "isRequired", order_index AS "orderIndex", options_json AS "optionsJson", meta
+         FROM checklist_template_questions
+         WHERE template_id IN (${clIds.map(() => "?").join(",")})
+         ORDER BY order_index ASC, id ASC`,
+        clIds
+      );
+    }
+
     const normalizedCL = checklistTemplates.map((t) => ({
       ...t,
-      questions: safeParse(t.questions) || [],
+      questions: clQuestions
+        .filter((q) => q.templateId === t.id)
+        .map((q) => {
+          const parsedMeta = q.meta ? JSON.parse(q.meta) : {};
+          return {
+            ...q,
+            meta: parsedMeta,
+            rule: parsedMeta.rule || undefined,
+            options: q.optionsJson ? JSON.parse(q.optionsJson) : undefined,
+            boolLabels: parsedMeta.boolLabels || undefined,
+          };
+        }),
     }));
 
     // OJT Trainings linked to this asset

@@ -8,6 +8,20 @@ import { orchestrateFlag } from "../utils/flagOrchestrator.js";
 const router = Router();
 router.use(requireAuth);
 
+// ── Auto-migrations: ensure all columns this router depends on exist ──────────
+(async () => {
+  try {
+    await pool.query(`ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS asset_id BIGINT REFERENCES assets(id) ON DELETE SET NULL`);
+    await pool.query(`ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS custom_hours JSONB`);
+    await pool.query(`ALTER TABLE checklist_template_questions ADD COLUMN IF NOT EXISTS flag_rule_json JSONB`);
+    await pool.query(`ALTER TABLE checklist_template_questions ADD COLUMN IF NOT EXISTS reference_image_url TEXT`);
+    await pool.query(`ALTER TABLE checklist_template_questions ADD COLUMN IF NOT EXISTS question_image_url TEXT`);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn("[templateChecklists] migration warning:", err.message);
+  }
+})();
+
 // pg returns JSONB columns as already-parsed JS objects; guard against re-parsing
 const safeParse = (v) => {
   if (v == null) return null;
@@ -211,7 +225,7 @@ router.get(
         `SELECT ct.id, ct.company_id AS "companyId", ct.template_name AS "templateName", ct.asset_type AS "assetType",
           ct.asset_id AS "assetId", a.asset_name AS "assetName",
           ct.category, ct.description, ct.frequency, ct.custom_hours AS "customHours", ct.shift, ct.status, ct.is_active AS "isActive",
-          ct.questions, ct.created_at AS "createdAt"
+          ct.created_at AS "createdAt"
          FROM checklist_templates ct
          JOIN companies c ON ct.company_id = c.id
          LEFT JOIN assets a ON ct.asset_id = a.id
