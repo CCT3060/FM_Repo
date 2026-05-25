@@ -101,17 +101,19 @@ export function evaluateRule(rule, rawValue) {
   const operator    = (rule.operator || "between").toLowerCase();
   const ruleSev     = rule.severity || null;
 
-  // Yes/No and ok_not_ok
-  if (operator === "yes_no" || operator === "ok_not_ok") {
-    const triggerVal  = (rule.triggerValue || "no").toLowerCase().trim();
+  // Yes/No, ok_not_ok, and cleaned_not_cleaned
+  if (operator === "yes_no" || operator === "ok_not_ok" || operator === "cleaned_not_cleaned") {
+    const defaultTrigger = operator === "yes_no" ? "no" : operator === "ok_not_ok" ? "not_ok" : "not cleaned";
+    const triggerVal  = (rule.triggerValue || defaultTrigger).toLowerCase().trim();
     const answerLower = String(rawValue ?? "").toLowerCase().trim();
     const violated    = answerLower === triggerVal
-      || (triggerVal === "no"     && ["n", "false", "0"].includes(answerLower))
-      || (triggerVal === "not_ok" && ["not ok", "notok"].includes(answerLower));
+      || (triggerVal === "no"          && ["n", "false", "0"].includes(answerLower))
+      || (triggerVal === "not_ok"      && ["not ok", "notok"].includes(answerLower))
+      || (triggerVal === "not cleaned" && ["not_cleaned", "notcleaned", "not-cleaned"].includes(answerLower));
     if (!violated) return { violated: false, severity: "medium", expectedText: "" };
     return {
       violated: true,
-      severity: ruleSev || "high",
+      severity: ruleSev || (operator === "cleaned_not_cleaned" ? "medium" : "high"),
       expectedText: `Answer must NOT be "${triggerVal}"`,
     };
   }
@@ -159,7 +161,7 @@ export function evaluateRule(rule, rawValue) {
 export function buildExpectedRuleText(rule) {
   if (!rule) return "";
   const op  = (rule.operator || "between").toLowerCase();
-  if (op === "yes_no" || op === "ok_not_ok") return `Answer should NOT be "${rule.triggerValue || "no"}"`;
+  if (op === "yes_no" || op === "ok_not_ok" || op === "cleaned_not_cleaned") return `Answer should NOT be "${rule.triggerValue || (op === "ok_not_ok" ? "not_ok" : op === "cleaned_not_cleaned" ? "not cleaned" : "no")}"`;
   const min = rule.minValue != null ? rule.minValue : null;
   const max = rule.maxValue != null ? rule.maxValue : null;
   if (min != null && max != null) return `Acceptable range: [${min}, ${max}]`;

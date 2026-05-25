@@ -122,7 +122,7 @@ export default function ProfileTab() {
           {[
             { icon: 'history',              label: 'Submission History', onPress: () => router.push('/history')      },
             { icon: 'alert-outline',         label: 'My Warnings',        onPress: () => router.push('/warnings')     },
-            { icon: 'school-outline',        label: 'Training',           onPress: () => router.push('/training')     },
+            ...(user?.companyEnabledModules?.includes('ojt') ? [{ icon: 'school-outline', label: 'Training', onPress: () => router.push('/training') }] : []),
             { icon: 'bell-outline',          label: 'Notifications',      onPress: () => router.push('/notifications') },
           ].map((item, idx, arr) => (
             <TouchableOpacity

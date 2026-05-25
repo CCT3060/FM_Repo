@@ -582,6 +582,19 @@ export default function WorkOrdersPanel({ token, companyId, assets = [], presele
                               Close
                             </button>
                           )}
+                          {wo.status === "closed" && (
+                            <button disabled={isUpd} onClick={() => updateStatus(wo, "open")}
+                              style={{ padding: "5px 9px", borderRadius: "6px", border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", fontSize: "11px", fontWeight: 700, cursor: "pointer", opacity: isUpd ? 0.5 : 1, whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: "4px" }}>
+                              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.5"/></svg>
+                              Reopen
+                            </button>
+                          )}
+                          {wo.status === "closed" && (
+                            <button disabled={isUpd} onClick={() => setAssignWO(wo)}
+                              style={{ padding: "5px 9px", borderRadius: "6px", border: "1px solid #e2e8f0", background: "#f8fafc", color: "#475569", fontSize: "11px", fontWeight: 700, cursor: "pointer", opacity: isUpd ? 0.5 : 1, whiteSpace: "nowrap" }}>
+                              Reassign
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>

@@ -1,12 +1,39 @@
 import { Router } from "express";
 import { param } from "express-validator";
+import multer from "multer";
+import path from "path";
+import { fileURLToPath } from "url";
+import fs from "fs";
 import pool from "../db.js";
 import { validate } from "../validators.js";
 import { requireAuth } from "../middleware/auth.js";
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const router = Router();
 
 router.use(requireAuth);
+
+// Shared logos directory with companyPortal
+const logosDir = path.join(__dirname, "../../uploads/logos");
+fs.mkdirSync(logosDir, { recursive: true });
+
+const logoStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, logosDir),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase() || ".png";
+    cb(null, `company-${req.params.id}${ext}`);
+  },
+});
+const uploadLogo = multer({
+  storage: logoStorage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype.startsWith("image/")) cb(null, true);
+    else cb(new Error("Only image files are allowed"));
+  },
+});
 
 // Auto-migrations
 (async () => {
@@ -60,6 +87,7 @@ router.get("/", async (req, res, next) => {
               c.allow_guest_booking AS "allowGuestBooking",
               c.enabled_modules     AS "enabledModules",
               c.status,
+              c.logo_url            AS "logoUrl",
               c.created_at          AS "createdAt",
               COALESCE(cu.employee_count, 0) AS "employeeCount"
        FROM companies c
@@ -358,6 +386,27 @@ router.put(
       }
       res.json({ ok: true });
     } catch (err) { next(err); }
+  }
+);
+
+/* ── Upload company logo (Jabil admin) ──────────────────────────────────── */
+router.post(
+  "/:id/upload-logo",
+  validate([param("id").isInt().withMessage("id must be numeric")]),
+  (req, res, next) => {
+    uploadLogo.single("logo")(req, res, async (err) => {
+      if (err) return res.status(400).json({ message: err.message });
+      if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+      try {
+        const companyId = Number(req.params.id);
+        const [[co]] = await pool.query(`SELECT 1 FROM companies WHERE id = ? AND user_id = ?`, [companyId, req.user.id]);
+        if (!co) return res.status(404).json({ message: "Company not found" });
+        const ext = path.extname(req.file.originalname).toLowerCase() || ".png";
+        const url = `/uploads/logos/company-${companyId}${ext}`;
+        await pool.query(`UPDATE companies SET logo_url = ? WHERE id = ?`, [url, companyId]);
+        return res.json({ ok: true, url });
+      } catch (e) { return next(e); }
+    });
   }
 );
 

@@ -333,4 +333,16 @@ export const getSoftServiceRequestsAll = (token, params = "") =>
   request("GET", `/api/soft-service/requests/all${params ? `?${params}` : ""}`, undefined, { authToken: token });
 export const getSoftServiceRequestsMy  = (token, params = "") =>
   request("GET", `/api/soft-service/requests/my${params ? `?${params}` : ""}`, undefined, { authToken: token });
+export const resolveSoftServiceRequest = (token, id, notes = "") =>
+  request("PUT", `/api/soft-service/requests/${id}/resolve`, { notes }, { authToken: token });
+export const assignSoftServiceRequest  = (token, id, assignedToUserId) =>
+  request("PUT", `/api/soft-service/requests/${id}/assign`, { assignedToUserId }, { authToken: token });
+export const setCutoffSoftRequest      = (token, id, cutoffAt, escalationUserId) =>
+  request("PUT", `/api/soft-service/requests/${id}/cutoff`, { cutoffAt, escalationUserId }, { authToken: token });
+export const updateSoftRequestStatus   = (token, id, status) =>
+  request("PUT", `/api/soft-service/requests/${id}/status`, { status }, { authToken: token });
+export const getSoftRequestUsers       = (token) =>
+  request("GET", `/api/soft-service/requests/users`, undefined, { authToken: token });
+export const getOneSoftServiceRequest  = (token, id) =>
+  request("GET", `/api/soft-service/requests/${id}`, undefined, { authToken: token });
 

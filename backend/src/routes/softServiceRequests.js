@@ -25,6 +25,12 @@ router.use(requireCompanyAuth);
       ADD COLUMN IF NOT EXISTS escalated_at TIMESTAMPTZ DEFAULT NULL`);
     await pool.query(`ALTER TABLE soft_service_requests
       ADD COLUMN IF NOT EXISTS escalation_level INTEGER NOT NULL DEFAULT 0`);
+    await pool.query(`ALTER TABLE soft_service_requests
+      ADD COLUMN IF NOT EXISTS assigned_to_user_id BIGINT DEFAULT NULL`);
+    await pool.query(`ALTER TABLE soft_service_requests
+      ADD COLUMN IF NOT EXISTS cutoff_at TIMESTAMPTZ DEFAULT NULL`);
+    await pool.query(`ALTER TABLE soft_service_requests
+      ADD COLUMN IF NOT EXISTS cutoff_escalation_user_id BIGINT DEFAULT NULL`);
     // Per-company escalation cutoff table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS soft_escalation_settings (
@@ -288,8 +294,17 @@ router.get("/requests/asset/:assetId", async (req, res, next) => {
                'questionId',    csa.question_id,
                'questionText',  csa.question_text,
                'inputType',     csa.input_type,
-               'answer',        csa.answer_json->>'value',
-               'photoUrl',      csa.answer_json->>'photoUrl',
+               'answer',        CASE WHEN jsonb_typeof(csa.answer_json->'value') = 'object'
+                                     THEN csa.answer_json->'value'->>'value'
+                                     ELSE csa.answer_json->>'value'
+                                END,
+               'photoUrl',      COALESCE(
+                                  CASE WHEN jsonb_typeof(csa.answer_json->'value') = 'object'
+                                       THEN csa.answer_json->'value'->>'photoUrl'
+                                       ELSE NULL
+                                  END,
+                                  csa.answer_json->>'photoUrl'
+                                ),
                'optionSelected', csa.option_selected
              ) ORDER BY csa.id
            )
@@ -351,6 +366,19 @@ router.get("/requests/my", async (req, res, next) => {
   }
 });
 
+/* ── GET /requests/users ── List company users for assignment ────────────── */
+router.get("/requests/users", async (req, res, next) => {
+  try {
+    const companyId = req.companyUser.companyId;
+    const [rows] = await pool.query(
+      `SELECT id, full_name AS "fullName", role, designation
+       FROM company_users WHERE company_id = ? AND status = 'Active' ORDER BY full_name`,
+      [companyId]
+    );
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
 /* ── GET /requests/all ── Manager sees all requests ─────────────────────── */
 router.get("/requests/all", async (req, res, next) => {
   try {
@@ -378,13 +406,21 @@ router.get("/requests/all", async (req, res, next) => {
          raiser.full_name          AS "raisedByName",
          ssr.resolved_at           AS "resolvedAt",
          resolver.full_name        AS "resolvedByName",
+         ssr.assigned_to_user_id   AS "assignedToId",
+         assignee.full_name        AS "assignedToName",
+         ssr.cutoff_at             AS "cutoffAt",
+         ssr.cutoff_escalation_user_id AS "cutoffEscalateToId",
+         escuser.full_name          AS "cutoffEscalateToName",
          ssr.escalation_level      AS "escalationLevel",
          ssr.escalated_at          AS "escalatedAt",
-         COALESCE(ses.cutoff_hours, 24) AS "cutoffHours"
+         COALESCE(ses.cutoff_hours, 24) AS "cutoffHours",
+         CONCAT('SR-', LPAD(CAST(ssr.id AS VARCHAR), 5, '0')) AS "requestNumber"
        FROM soft_service_requests ssr
        JOIN assets a ON a.id = ssr.asset_id
        JOIN company_users raiser ON raiser.id = ssr.raised_by_user_id
        LEFT JOIN company_users resolver ON resolver.id = ssr.resolved_by_user_id
+       LEFT JOIN company_users assignee ON assignee.id = ssr.assigned_to_user_id
+       LEFT JOIN company_users escuser ON escuser.id = ssr.cutoff_escalation_user_id
        LEFT JOIN soft_escalation_settings ses ON ses.company_id = ssr.company_id
        WHERE ssr.company_id = ?${where}
        ORDER BY ssr.raised_at DESC
@@ -426,8 +462,17 @@ router.get("/requests/:id", async (req, res, next) => {
                'questionId',     csa.question_id,
                'questionText',   csa.question_text,
                'inputType',      csa.input_type,
-               'answer',         csa.answer_json->>'value',
-               'photoUrl',       csa.answer_json->>'photoUrl',
+               'answer',         CASE WHEN jsonb_typeof(csa.answer_json->'value') = 'object'
+                                      THEN csa.answer_json->'value'->>'value'
+                                      ELSE csa.answer_json->>'value'
+                                 END,
+               'photoUrl',       COALESCE(
+                                   CASE WHEN jsonb_typeof(csa.answer_json->'value') = 'object'
+                                        THEN csa.answer_json->'value'->>'photoUrl'
+                                        ELSE NULL
+                                   END,
+                                   csa.answer_json->>'photoUrl'
+                                 ),
                'optionSelected', csa.option_selected
              ) ORDER BY csa.id
            )
@@ -513,9 +558,91 @@ router.put("/requests/:id/resolve", async (req, res, next) => {
   }
 });
 
-/* ── GET /escalation-settings ─────────────────────────────────────────────── */
-router.get("/escalation-settings", async (req, res, next) => {
+/* ── PUT /requests/:id/assign ── Assign to a user ───────────────────────── */
+router.put("/requests/:id/assign", async (req, res, next) => {
   try {
+    const requestId = Number(req.params.id);
+    const { assignedToUserId } = req.body;
+    const companyId = req.companyUser.companyId;
+    if (!Number.isFinite(requestId)) return res.status(400).json({ message: "Invalid request id" });
+    const [[request]] = await pool.query(
+      `SELECT id, status FROM soft_service_requests WHERE id = ? AND company_id = ?`,
+      [requestId, companyId]
+    );
+    if (!request) return res.status(404).json({ message: "Request not found" });
+    await pool.query(
+      `UPDATE soft_service_requests SET assigned_to_user_id = ?, updated_at = NOW() WHERE id = ?`,
+      [assignedToUserId || null, requestId]
+    );
+    // Notify assigned user
+    if (assignedToUserId) {
+      const [[assignee]] = await pool.query(
+        `SELECT full_name, push_token FROM company_users WHERE id = ? AND company_id = ?`,
+        [assignedToUserId, companyId]
+      );
+      const [[assetRow]] = await pool.query(
+        `SELECT a.asset_name FROM soft_service_requests ssr JOIN assets a ON a.id = ssr.asset_id WHERE ssr.id = ?`,
+        [requestId]
+      );
+      if (assignee) {
+        await createInAppNotification(companyId, assignedToUserId, "Soft Request Assigned", `You have been assigned to handle a request for ${assetRow?.asset_name || "an asset"}.`);
+        if (assignee.push_token) {
+          await sendExpoPush(assignee.push_token, "Soft Request Assigned", `Handle request for ${assetRow?.asset_name || "an asset"}.`, { screen: "/(tabs)/soft-requests" });
+        }
+      }
+    }
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+/* ── PUT /requests/:id/cutoff ── Set cutoff date + escalation user ─────── */
+router.put("/requests/:id/cutoff", async (req, res, next) => {
+  try {
+    const requestId = Number(req.params.id);
+    const { cutoffAt, escalationUserId } = req.body;
+    const companyId = req.companyUser.companyId;
+    if (!Number.isFinite(requestId)) return res.status(400).json({ message: "Invalid request id" });
+    const [[request]] = await pool.query(
+      `SELECT id FROM soft_service_requests WHERE id = ? AND company_id = ?`,
+      [requestId, companyId]
+    );
+    if (!request) return res.status(404).json({ message: "Request not found" });
+    await pool.query(
+      `UPDATE soft_service_requests SET cutoff_at = ?, cutoff_escalation_user_id = ?, updated_at = NOW() WHERE id = ?`,
+      [cutoffAt || null, escalationUserId || null, requestId]
+    );
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+/* ── PUT /requests/:id/status ── Update status ─────────────────────────── */
+router.put("/requests/:id/status", async (req, res, next) => {
+  try {
+    const requestId = Number(req.params.id);
+    const { status } = req.body;
+    const companyId = req.companyUser.companyId;
+    const validStatuses = ["open", "acknowledged", "in_progress", "closed", "resolved"];
+    if (!Number.isFinite(requestId)) return res.status(400).json({ message: "Invalid request id" });
+    if (!validStatuses.includes(status)) return res.status(400).json({ message: "Invalid status" });
+    const [[request]] = await pool.query(
+      `SELECT id, status AS currentStatus FROM soft_service_requests WHERE id = ? AND company_id = ?`,
+      [requestId, companyId]
+    );
+    if (!request) return res.status(404).json({ message: "Request not found" });
+    const isClosed = status === "closed" || status === "resolved";
+    const resolvedFields = isClosed
+      ? `, resolved_by_user_id = ${req.companyUser.id}, resolved_at = NOW()`
+      : "";
+    await pool.query(
+      `UPDATE soft_service_requests SET status = ?${resolvedFields}, updated_at = NOW() WHERE id = ?`,
+      [status, requestId]
+    );
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+/* ── GET /escalation-settings ─────────────────────────────────────────────── */
+router.get("/escalation-settings", async (req, res, next) => {  try {
     const companyId = req.companyUser.companyId;
     const [[row]] = await pool.query(
       `SELECT cutoff_hours AS "cutoffHours" FROM soft_escalation_settings WHERE company_id = ?`,
@@ -545,5 +672,38 @@ router.put("/escalation-settings", async (req, res, next) => {
 });
 
 /* ── GET /requests/all — also returns escalation info ─────────────────────── */
+
+/* ── DELETE /requests/:id — delete a single soft request ─────────────────── */
+router.delete("/requests/:id", async (req, res, next) => {
+  try {
+    const companyId = req.companyUser.companyId;
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ message: "Invalid id" });
+    const [[row]] = await pool.query(
+      "SELECT id FROM soft_service_requests WHERE id = ? AND company_id = ?",
+      [id, companyId]
+    );
+    if (!row) return res.status(404).json({ message: "Request not found" });
+    await pool.query("DELETE FROM soft_service_requests WHERE id = ?", [id]);
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+/* ── POST /requests/bulk-delete — delete multiple soft requests ────────────── */
+router.post("/requests/bulk-delete", async (req, res, next) => {
+  try {
+    const companyId = req.companyUser.companyId;
+    const ids = (req.body.ids || []).map(Number).filter(Boolean);
+    if (!ids.length) return res.status(400).json({ message: "No ids provided" });
+    const [rows] = await pool.query(
+      `SELECT id FROM soft_service_requests WHERE id IN (${ids.map(() => "?").join(",")}) AND company_id = ?`,
+      [...ids, companyId]
+    );
+    const validIds = rows.map((r) => r.id);
+    if (!validIds.length) return res.status(404).json({ message: "No matching requests" });
+    await pool.query(`DELETE FROM soft_service_requests WHERE id IN (${validIds.map(() => "?").join(",")})`, validIds);
+    res.json({ ok: true, deleted: validIds.length });
+  } catch (err) { next(err); }
+});
 
 export default router;

@@ -36,11 +36,10 @@ export default function WorkOrderCreateScreen() {
   const handleCreate = async () => {
     if (!title.trim())  { Alert.alert('Required', 'Enter a title.'); return; }
     if (!selAsset)      { Alert.alert('Required', 'Select an asset.'); return; }
-    if (!selUser)       { Alert.alert('Required', 'Assign a team member.'); return; }
 
     setSubmitting(true);
     try {
-      await createWorkOrder({ title: title.trim(), description: desc.trim(), assetId: selAsset.id, assignedTo: selUser.id, priority });
+      await createWorkOrder({ title: title.trim(), description: desc.trim(), assetId: selAsset.id, assignedTo: selUser?.id ?? null, priority });
       Alert.alert('Work Order Created', 'The work order has been created.', [
         { text: 'Done', onPress: () => router.back() },
       ]);
@@ -124,7 +123,10 @@ export default function WorkOrderCreateScreen() {
         ))}
 
         {/* Assign to */}
-        <Text style={[styles.label, { color: theme.textSecondary }]}>Assign To</Text>
+        <Text style={[styles.label, { color: theme.textSecondary }]}>Assign To (Optional)</Text>
+        {team.length === 0 && (
+          <Text style={[{ color: theme.textMuted, marginBottom: Spacing.sm, fontSize: 13 }]}>No team members assigned to you. Work order will be unassigned.</Text>
+        )}
         {team.map((m) => (
           <TouchableOpacity
             key={m.id}

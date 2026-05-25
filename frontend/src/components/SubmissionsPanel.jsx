@@ -548,6 +548,8 @@ function DetailModal({ submission, type, onClose }) {
                       </div>
                       <div style={{ fontSize: "14px", color: a.isIssue ? "#dc2626" : "#0f172a" }}>
                         {renderAnswerValue(val)}
+                        {/* If backend returned a separate photoUrl for this answer, show it */}
+                        {a.photoUrl && !String(val).startsWith("http") && <PhotoAnswer src={a.photoUrl} />}
                         {a.isIssue && <span style={{ marginLeft: "6px", fontSize: "11px", background: "#fee2e2",
                           color: "#dc2626", padding: "2px 7px", borderRadius: "9px" }}>? Issue</span>}
                       </div>
@@ -1125,6 +1127,8 @@ function AssetDrilldown({ assetId, assetName, companyId, type, token, onBack }) 
   const [rows,     setRows]     = useState([]);
   const [loading,  setLoading]  = useState(true);
   const [detail,   setDetail]   = useState(null);
+  const [selected, setSelected] = useState(new Set());
+  const [deleting, setDeleting] = useState(false);
 
   const inputStyle = {
     padding: "7px 10px", border: "1px solid #e2e8f0", borderRadius: "8px",
@@ -1134,6 +1138,7 @@ function AssetDrilldown({ assetId, assetName, companyId, type, token, onBack }) 
   const load = useCallback(async () => {
     if (period === "custom" && !(dateFrom && dateTo)) return;
     setLoading(true);
+    setSelected(new Set());
     try {
       const p = new URLSearchParams();
       if (companyId) p.set("companyId", companyId);
@@ -1164,6 +1169,52 @@ function AssetDrilldown({ assetId, assetName, companyId, type, token, onBack }) 
       if (res.ok) setDetail(await res.json());
     } catch (e) { alert(e.message || "Failed to load"); }
   };
+
+  const deleteOne = async (id) => {
+    if (!window.confirm("Delete this submission? This cannot be undone.")) return;
+    setDeleting(true);
+    try {
+      const qs = companyId ? `?companyId=${companyId}` : "";
+      const res = await fetch(`${API_BASE}/api/company-portal/checklist-submissions/${id}${qs}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) { const d = await res.json(); throw new Error(d.message || "Delete failed"); }
+      setRows((prev) => prev.filter((r) => r.id !== id));
+      setSelected((prev) => { const s = new Set(prev); s.delete(id); return s; });
+    } catch (e) { alert(e.message); }
+    finally { setDeleting(false); }
+  };
+
+  const deleteBulk = async () => {
+    if (!selected.size) return;
+    if (!window.confirm(`Delete ${selected.size} submission${selected.size > 1 ? "s" : ""}? This cannot be undone.`)) return;
+    setDeleting(true);
+    try {
+      const qs = companyId ? `?companyId=${companyId}` : "";
+      const res = await fetch(`${API_BASE}/api/company-portal/checklist-submissions/bulk-delete${qs}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: [...selected] }),
+      });
+      if (!res.ok) { const d = await res.json(); throw new Error(d.message || "Bulk delete failed"); }
+      const { deleted } = await res.json();
+      setRows((prev) => prev.filter((r) => !selected.has(r.id)));
+      setSelected(new Set());
+      alert(`${deleted} submission${deleted > 1 ? "s" : ""} deleted.`);
+    } catch (e) { alert(e.message); }
+    finally { setDeleting(false); }
+  };
+
+  const toggleSelect = (id) => setSelected((prev) => {
+    const s = new Set(prev);
+    s.has(id) ? s.delete(id) : s.add(id);
+    return s;
+  });
+
+  const toggleAll = () => setSelected((prev) =>
+    prev.size === rows.length ? new Set() : new Set(rows.map((r) => r.id))
+  );
 
   const panelLabel = type === "checklists" ? "Checklist Submissions" : "Logsheet Entries";
 
@@ -1251,11 +1302,21 @@ function AssetDrilldown({ assetId, assetName, companyId, type, token, onBack }) 
                 padding: "2px 10px", fontSize: "12px", fontWeight: 700 }}>{rows.length}</span>
             )}
           </div>
-          <button onClick={() => exportToCSV(rows, type)}
-            style={{ padding: "7px 14px", border: "1px solid #bbf7d0", borderRadius: "8px",
-              background: "#f0fdf4", cursor: "pointer", fontSize: "13px", fontWeight: 600, color: "#16a34a" }}>
-            ↓ Export CSV
-          </button>
+          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+            {selected.size > 0 && (
+              <button onClick={deleteBulk} disabled={deleting}
+                style={{ padding: "7px 14px", border: "1px solid #fecaca", borderRadius: "8px",
+                  background: "#fef2f2", cursor: deleting ? "not-allowed" : "pointer",
+                  fontSize: "13px", fontWeight: 600, color: "#dc2626", opacity: deleting ? 0.6 : 1 }}>
+                🗑 Delete Selected ({selected.size})
+              </button>
+            )}
+            <button onClick={() => exportToCSV(rows, type)}
+              style={{ padding: "7px 14px", border: "1px solid #bbf7d0", borderRadius: "8px",
+                background: "#f0fdf4", cursor: "pointer", fontSize: "13px", fontWeight: 600, color: "#16a34a" }}>
+              ↓ Export CSV
+            </button>
+          </div>
         </div>
 
         {loading ? (
@@ -1269,6 +1330,11 @@ function AssetDrilldown({ assetId, assetName, companyId, type, token, onBack }) 
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13.5px" }}>
               <thead>
                 <tr>
+                  <th style={{ padding: "11px 14px", textAlign: "left", background: "#f8fafc",
+                    color: "#475569", fontWeight: 600, fontSize: "11.5px", borderBottom: "1px solid #e2e8f0", width: "36px" }}>
+                    <input type="checkbox" checked={selected.size === rows.length && rows.length > 0}
+                      onChange={toggleAll} style={{ cursor: "pointer", width: "15px", height: "15px" }} />
+                  </th>
                   {["#", "Template",
                     ...(type === "logsheets" ? ["Type"] : []),
                     "Submitted By",
@@ -1286,8 +1352,13 @@ function AssetDrilldown({ assetId, assetName, companyId, type, token, onBack }) 
                 {rows.map((r, i) => (
                   <tr key={r.id}
                     onMouseEnter={(e) => e.currentTarget.style.background = "#f8fafc"}
-                    onMouseLeave={(e) => e.currentTarget.style.background = ""}
-                    style={{ borderBottom: "1px solid #f1f5f9", transition: "background 0.1s" }}>
+                    onMouseLeave={(e) => e.currentTarget.style.background = selected.has(r.id) ? "#fff7ed" : ""}
+                    style={{ borderBottom: "1px solid #f1f5f9", transition: "background 0.1s",
+                      background: selected.has(r.id) ? "#fff7ed" : "" }}>
+                    <td style={{ padding: "10px 14px" }}>
+                      <input type="checkbox" checked={selected.has(r.id)}
+                        onChange={() => toggleSelect(r.id)} style={{ cursor: "pointer", width: "15px", height: "15px" }} />
+                    </td>
                     <td style={{ padding: "10px 14px", color: "#94a3b8", fontSize: "12px", fontWeight: 600 }}>{i + 1}</td>
                     <td style={{ padding: "10px 14px", fontWeight: 700, color: "#0f172a" }}>{r.templateName}</td>
                     {type === "logsheets" && (
@@ -1327,11 +1398,19 @@ function AssetDrilldown({ assetId, assetName, companyId, type, token, onBack }) 
                     </td>
                     <td style={{ padding: "10px 14px" }}><StatusBadge status={r.status} /></td>
                     <td style={{ padding: "10px 14px" }}>
-                      <button onClick={() => openDetail(r.id)}
-                        style={{ padding: "5px 14px", background: "#eff6ff", color: "#2563eb",
-                          border: "none", borderRadius: "7px", fontSize: "12.5px", fontWeight: 600, cursor: "pointer" }}>
-                        View →
-                      </button>
+                      <div style={{ display: "flex", gap: "6px" }}>
+                        <button onClick={() => openDetail(r.id)}
+                          style={{ padding: "5px 14px", background: "#eff6ff", color: "#2563eb",
+                            border: "none", borderRadius: "7px", fontSize: "12.5px", fontWeight: 600, cursor: "pointer" }}>
+                          View →
+                        </button>
+                        <button onClick={() => deleteOne(r.id)} disabled={deleting}
+                          style={{ padding: "5px 10px", background: "#fef2f2", color: "#dc2626",
+                            border: "1px solid #fecaca", borderRadius: "7px", fontSize: "12.5px",
+                            fontWeight: 600, cursor: deleting ? "not-allowed" : "pointer", opacity: deleting ? 0.6 : 1 }}>
+                          🗑
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -1353,6 +1432,7 @@ function AssetDrilldown({ assetId, assetName, companyId, type, token, onBack }) 
     </div>
   );
 }
+
 
 /* --- Main SubmissionsPanel -------------------------------------- */
 const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type = "checklists", companyId }) {

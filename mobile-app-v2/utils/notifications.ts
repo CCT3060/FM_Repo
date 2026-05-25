@@ -58,7 +58,7 @@ export async function registerForPushNotifications(): Promise<string | null> {
     if (finalStatus !== 'granted') return null;
 
     const { data: token } = await Notifications.getExpoPushTokenAsync({
-      projectId: '9e054c0f-0868-4787-8424-3ea4a6344bd8',
+      projectId: 'f5d10940-b371-498c-874e-768243da8506',
     });
 
     await registerPushToken(token, Platform.OS);

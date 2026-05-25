@@ -161,7 +161,7 @@ export default function HomeScreen() {
 
           <ActionCard icon="history" label="History" sublabel="Past submissions" color={theme.info} onPress={() => router.push('/history')} />
 
-          {hasTechAccess(capabilities) ? (
+          {hasTechAccess(capabilities) && user?.companyEnabledModules?.includes('ojt') ? (
             <ActionCard icon="school-outline" label="Training" sublabel="OJT modules" color="#059669" onPress={() => router.push('/training')} />
           ) : null}
         </View>

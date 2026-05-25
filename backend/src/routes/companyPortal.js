@@ -65,6 +65,15 @@ router.use(requireCompanyAuth);
 
 const cid = (req) => req.companyUser.companyId;
 
+/* ── Inline migration: add employee_code column ─────────────────────────── */
+(async () => {
+  try {
+    await pool.query(`ALTER TABLE company_users ADD COLUMN IF NOT EXISTS employee_code VARCHAR(100) DEFAULT NULL`);
+  } catch (e) {
+    console.warn('[companyPortal] migration warning:', e.message);
+  }
+})();
+
 /* ── Helper: compute cutoff status from expectedCompletionAt ─────────────────
    Returns 'overdue' | 'at_risk' | 'on_time' | null                           */
 const getCutoffStatus = (expectedCompletionAt, status) => {
@@ -302,6 +311,7 @@ router.get("/dashboard", async (req, res, next) => {
     const [
       [assetRows], [deptRows], [empRows], [activeAssets], [issueRows],
       [openFlags], [criticalFlags], [flagsBySeverity], [assetsHealth],
+      [openSoftRows], [softWarnRows],
     ] = await Promise.all([
       pool.query("SELECT COUNT(*) AS cnt FROM assets WHERE company_id = ?", [companyId]),
       pool.query("SELECT COUNT(*) AS cnt FROM departments WHERE company_id = ?", [companyId]),
@@ -338,6 +348,18 @@ router.get("/dashboard", async (req, res, next) => {
          FROM assets WHERE company_id = ? GROUP BY health_status`,
         [companyId]
       ),
+      // Open soft service requests
+      pool.query(
+        `SELECT COUNT(*) AS cnt FROM soft_service_requests
+         WHERE company_id = ? AND status NOT IN ('closed','resolved')`,
+        [companyId]
+      ),
+      // Escalated soft service requests (warnings)
+      pool.query(
+        `SELECT COUNT(*) AS cnt FROM soft_service_requests
+         WHERE company_id = ? AND escalation_level > 0 AND status NOT IN ('closed','resolved')`,
+        [companyId]
+      ),
     ]);
 
     const severityMap = {};
@@ -352,6 +374,8 @@ router.get("/dashboard", async (req, res, next) => {
       totalDepartments: Number(deptRows[0]?.cnt        || 0),
       activeEmployees:  Number(empRows[0]?.cnt         || 0),
       openIssues:       Number(issueRows[0]?.cnt        || 0),
+      openSoftRequests: Number(openSoftRows[0]?.cnt    || 0),
+      softRequestWarnings: Number(softWarnRows[0]?.cnt || 0),
       flags: {
         open:     Number(openFlags[0]?.cnt     || 0),
         critical: Number(criticalFlags[0]?.cnt || 0),
@@ -1559,6 +1583,7 @@ router.get("/employees", async (req, res, next) => {
       `SELECT cu.id, cu.company_id AS "companyId",
               cu.full_name AS "fullName", cu.email, cu.phone,
               cu.designation, cu.role, cu.shift, cu.status, cu.username,
+              cu.employee_code AS "employeeCode",
               cu.supervisor_id AS "supervisorId",
               COALESCE(cu.service_domain, 'technical') AS "serviceDomain",
               s.full_name AS "supervisorName",
@@ -1634,7 +1659,7 @@ router.get("/my-team", async (req, res, next) => {
 
 router.post("/employees", async (req, res, next) => {
   try {
-    const { fullName, email, phone, designation, role = "employee", status = "Active", password, username, supervisorId, shift, serviceDomain = "technical" } = req.body;
+    const { fullName, email, phone, designation, role = "employee", status = "Active", password, username, supervisorId, shift, serviceDomain = "technical", employeeCode } = req.body;
     if (!fullName || !email) return res.status(400).json({ message: "fullName and email are required" });
 
     if (req.companyUser.role !== "admin" && req.companyUser.role !== "supervisor") {
@@ -1652,16 +1677,17 @@ router.post("/employees", async (req, res, next) => {
     if (password) passwordHash = await bcrypt.hash(password, 10);
 
     const [rows] = await pool.query(
-      `INSERT INTO company_users (company_id, full_name, email, phone, designation, role, shift, status, password_hash, username, supervisor_id, service_domain)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO company_users (company_id, full_name, email, phone, designation, role, shift, status, password_hash, username, supervisor_id, service_domain, employee_code)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        RETURNING id,
                  company_id     AS "companyId",
                  full_name      AS "fullName",
                  email, phone, designation, role, shift, status, username,
+                 employee_code  AS "employeeCode",
                  supervisor_id  AS "supervisorId",
                  service_domain AS "serviceDomain",
                  created_at     AS "createdAt"`,
-      [cid(req), fullName, email, phone || null, designation || null, role, shift || null, status, passwordHash, username || null, resolvedSupervisorId, resolvedDomain]
+      [cid(req), fullName, email, phone || null, designation || null, role, shift || null, status, passwordHash, username || null, resolvedSupervisorId, resolvedDomain, employeeCode || null]
     );
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -1676,7 +1702,7 @@ router.post("/employees", async (req, res, next) => {
 router.put("/employees/:id", async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { fullName, email, phone, designation, role, status, password, username, supervisorId, shift, serviceDomain } = req.body;
+    const { fullName, email, phone, designation, role, status, password, username, supervisorId, shift, serviceDomain, employeeCode } = req.body;
 
     if (req.companyUser.role !== "admin" && req.companyUser.role !== "supervisor") {
       return res.status(403).json({ message: "Not authorised" });
@@ -1708,6 +1734,7 @@ router.put("/employees/:id", async (req, res, next) => {
     let usernameClause = username !== undefined ? ", username = ?" : "";
     let supervisorClause = resolvedSupervisorId !== undefined ? ", supervisor_id = ?" : "";
     let shiftClause = shift !== undefined ? ", shift = ?" : "";
+    let employeeCodeClause = employeeCode !== undefined ? ", employee_code = ?" : "";
     if (serviceDomain !== undefined && validDomains.includes(serviceDomain)) {
       serviceDomainClause = ", service_domain = ?";
     }
@@ -1716,6 +1743,7 @@ router.put("/employees/:id", async (req, res, next) => {
     if (resolvedSupervisorId !== undefined) params.push(resolvedSupervisorId);
     if (shift !== undefined) params.push(shift || null);
     if (serviceDomainClause) params.push(serviceDomain);
+    if (employeeCodeClause) params.push(employeeCode || null);
     if (password) {
       const hash = await bcrypt.hash(password, 10);
       passwordClause = ", password_hash = ?";
@@ -1725,11 +1753,12 @@ router.put("/employees/:id", async (req, res, next) => {
 
     const [rows] = await pool.query(
       `UPDATE company_users
-       SET full_name = ?, email = ?, phone = ?, designation = ?, role = ?, status = ?${usernameClause}${supervisorClause}${shiftClause}${serviceDomainClause}${passwordClause}, updated_at = NOW()
+       SET full_name = ?, email = ?, phone = ?, designation = ?, role = ?, status = ?${usernameClause}${supervisorClause}${shiftClause}${serviceDomainClause}${employeeCodeClause}${passwordClause}, updated_at = NOW()
        WHERE id = ?
        RETURNING id,
                  full_name      AS "fullName",
                  email, phone, designation, role, shift, status, username,
+                 employee_code  AS "employeeCode",
                  supervisor_id  AS "supervisorId",
                  service_domain AS "serviceDomain"`,
       params
@@ -1872,6 +1901,49 @@ router.get("/checklist-submissions/recent", async (req, res, next) => {
   }
 });
 
+/* ── Delete checklist submissions ──────────────────────────────────────────── */
+
+// DELETE /checklist-submissions/:id  — delete a single submission (admin only)
+router.delete("/checklist-submissions/:id", async (req, res, next) => {
+  try {
+    const companyId = cid(req);
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ message: "Invalid id" });
+    // Verify submission belongs to this company
+    const [[sub]] = await pool.query(
+      `SELECT cs.id FROM checklist_submissions cs
+       LEFT JOIN checklist_templates ct ON ct.id = cs.template_id
+       WHERE cs.id = ? AND ct.company_id = ?`,
+      [id, companyId]
+    );
+    if (!sub) return res.status(404).json({ message: "Submission not found" });
+    await pool.query("DELETE FROM checklist_submission_answers WHERE submission_id = ?", [id]);
+    await pool.query("DELETE FROM checklist_submissions WHERE id = ?", [id]);
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// DELETE /checklist-submissions/bulk  — delete multiple submissions at once
+router.post("/checklist-submissions/bulk-delete", async (req, res, next) => {
+  try {
+    const companyId = cid(req);
+    const ids = (req.body.ids || []).map(Number).filter(Boolean);
+    if (!ids.length) return res.status(400).json({ message: "No ids provided" });
+    // Verify all belong to this company
+    const [subs] = await pool.query(
+      `SELECT cs.id FROM checklist_submissions cs
+       LEFT JOIN checklist_templates ct ON ct.id = cs.template_id
+       WHERE cs.id IN (${ids.map(() => "?").join(",")}) AND ct.company_id = ?`,
+      [...ids, companyId]
+    );
+    const validIds = subs.map((r) => r.id);
+    if (!validIds.length) return res.status(404).json({ message: "No matching submissions found" });
+    await pool.query(`DELETE FROM checklist_submission_answers WHERE submission_id IN (${validIds.map(() => "?").join(",")})`, validIds);
+    await pool.query(`DELETE FROM checklist_submissions WHERE id IN (${validIds.map(() => "?").join(",")})`, validIds);
+    res.json({ ok: true, deleted: validIds.length });
+  } catch (err) { next(err); }
+});
+
 /* ── Template ↔ User Assignments ────────────────────────────────────────────── */
 
 // Admin assigns a template to a supervisor; supervisor can assign to their helpers
@@ -1958,12 +2030,27 @@ router.post("/template-user-assignments", async (req, res, next) => {
     }
 
     res.status(201).json(rows[0]);
+
+    // Push notification to the assigned user (non-blocking, fire-and-forget)
+    try {
+      const [[assignee]] = await pool.query(
+        "SELECT push_token FROM company_users WHERE id = ? AND company_id = ?",
+        [normalizedAssignedTo, cid(req)]
+      );
+      if (assignee?.push_token) {
+        const templateLabel = templateType === "checklist" ? "Checklist" : "Logsheet";
+        await sendExpoPush(
+          assignee.push_token,
+          `New ${templateLabel} Assigned`,
+          `A ${templateLabel.toLowerCase()} template has been assigned to you.`,
+          { type: "template_assignment", templateType, templateId: normalizedTemplateId }
+        );
+      }
+    } catch { /* Non-fatal */ }
   } catch (err) {
     next(err);
   }
 });
-
-// Get all assignments for this company (admin sees all; supervisor sees only theirs)
 router.get("/template-user-assignments", async (req, res, next) => {
   try {
     const role = req.companyUser.role;
@@ -2038,6 +2125,18 @@ router.get("/template-user-assignments/mine", async (req, res, next) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // WORK ORDERS
 // ─────────────────────────────────────────────────────────────────────────────
+
+/* ── Helper: send Expo push notification (non-fatal) ──────────────────────── */
+async function sendExpoPush(pushToken, title, body, data = {}) {
+  if (!pushToken || !pushToken.startsWith("ExponentPushToken")) return;
+  try {
+    await fetch("https://exp.host/--/api/v2/push/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ to: pushToken, title, body, data, sound: "default" }),
+    });
+  } catch { /* Non-fatal */ }
+}
 
 const generateWONumber = () =>
   `WO-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
@@ -2215,13 +2314,17 @@ router.post("/work-orders", async (req, res, next) => {
   try {
     const companyId = cid(req);
     const { role, id: userId } = req.companyUser;
-    if (role !== "admin" && role !== "supervisor") {
+    // Built-in non-supervisory roles cannot create work orders
+    const blockedRoles = ['employee', 'technician', 'cleaner', 'security', 'driver', 'fleet_operator'];
+    if (blockedRoles.includes(role)) {
       return res.status(403).json({ message: "Not authorised" });
     }
 
     const {
       assetId,
       issueDescription,
+      title,
+      description,
       priority = "medium",
       flagId,
       assignedTo,
@@ -2230,7 +2333,10 @@ router.post("/work-orders", async (req, res, next) => {
       escalationIntervalMinutes,
     } = req.body;
 
-    if (!issueDescription) {
+    // Accept 'title' or 'description' as fallback for 'issueDescription' (mobile compatibility)
+    const resolvedDescription = issueDescription || title || description;
+
+    if (!resolvedDescription) {
       return res.status(400).json({ message: "issueDescription is required" });
     }
 
@@ -2271,7 +2377,7 @@ router.post("/work-orders", async (req, res, next) => {
        RETURNING id`,
       [
         workOrderNumber, companyId, assetId || null, assetName, location,
-        issueSource, issueDescription, priority,
+        issueSource, resolvedDescription, priority,
         flagId || null, assignedTo || null, assignedNote || null, userId,
         resolvedDeadline, resolvedInterval,
       ]
@@ -2294,6 +2400,24 @@ router.post("/work-orders", async (req, res, next) => {
     }
 
     res.status(201).json({ id: woId, workOrderNumber });
+
+    // Push notification to the assigned technician (non-blocking)
+    if (assignedTo) {
+      try {
+        const [[assignee]] = await pool.query(
+          "SELECT push_token FROM company_users WHERE id = ? AND company_id = ?",
+          [assignedTo, companyId]
+        );
+        if (assignee?.push_token) {
+          await sendExpoPush(
+            assignee.push_token,
+            "Work Order Assigned",
+            `${workOrderNumber}: ${resolvedDescription.slice(0, 80)}`,
+            { type: "work_order", workOrderId: woId, workOrderNumber }
+          );
+        }
+      } catch { /* Non-fatal */ }
+    }
   } catch (err) {
     next(err);
   }

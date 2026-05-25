@@ -116,7 +116,8 @@ router.post("/login", async (req, res, next) => {
               cu.email, cu.phone, cu.designation, cu.role, cu.status,
               cu.password_hash AS "passwordHash", cu.supervisor_id AS "supervisorId",
               cu.permissions, cu.module_access AS "moduleAccess",
-              c.company_name AS "companyName"
+              c.company_name AS "companyName",
+              c.enabled_modules AS "companyEnabledModules"
        FROM company_users cu
        JOIN companies c ON c.id = cu.company_id
        WHERE LOWER(cu.username) = LOWER(?)
@@ -173,6 +174,9 @@ router.post("/login", async (req, res, next) => {
         supervisorId: user.supervisorId,
         permissions: user.permissions || {},
         moduleAccess: user.moduleAccess || [],
+        companyEnabledModules: user.companyEnabledModules
+          ? (typeof user.companyEnabledModules === "string" ? JSON.parse(user.companyEnabledModules) : user.companyEnabledModules)
+          : null,
         roleCapabilities,
       },
     });
@@ -201,7 +205,8 @@ router.get("/verify", async (req, res, next) => {
       `SELECT cu.id, cu.company_id AS "companyId", cu.full_name AS "fullName",
               cu.email, cu.phone, cu.designation, cu.role, cu.status,
               cu.supervisor_id AS "supervisorId",
-              c.company_name AS "companyName"
+              c.company_name AS "companyName",
+              c.enabled_modules AS "companyEnabledModules"
        FROM company_users cu
        JOIN companies c ON c.id = cu.company_id
        WHERE cu.id = ?`,
@@ -217,7 +222,10 @@ router.get("/verify", async (req, res, next) => {
     }
 
     const roleCapabilities = await getRoleCapabilities(user.companyId, user.role);
-    res.json({ user: { ...user, roleCapabilities } });
+    const companyEnabledModules = user.companyEnabledModules
+      ? (typeof user.companyEnabledModules === "string" ? JSON.parse(user.companyEnabledModules) : user.companyEnabledModules)
+      : null;
+    res.json({ user: { ...user, companyEnabledModules, roleCapabilities } });
   } catch (err) {
     if (err.name === "JsonWebTokenError" || err.name === "TokenExpiredError") {
       return res.status(401).json({ message: "Invalid or expired token" });

@@ -37,10 +37,17 @@ function AnswerValue({ answer }: { answer: any }) {
 
   if (displayPhoto) {
     return (
-      <TouchableOpacity onPress={() => Linking.openURL(displayPhoto)} activeOpacity={0.85}>
-        <Image source={{ uri: displayPhoto }} style={styles.photoThumb} resizeMode="cover" />
-        <Text style={[styles.photoCaption, { color: theme.textMuted }]}>Tap to open full image</Text>
-      </TouchableOpacity>
+      <View>
+        {str && !valIsPhoto && (
+          <Text style={[styles.answer, { color: answer.flagged ? theme.warning : theme.textPrimary }]}>
+            {str}
+          </Text>
+        )}
+        <TouchableOpacity onPress={() => Linking.openURL(displayPhoto)} activeOpacity={0.85}>
+          <Image source={{ uri: displayPhoto }} style={styles.photoThumb} resizeMode="cover" />
+          <Text style={[styles.photoCaption, { color: theme.textMuted }]}>Tap to open full image</Text>
+        </TouchableOpacity>
+      </View>
     );
   }
   return (

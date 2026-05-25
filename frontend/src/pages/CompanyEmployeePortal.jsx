@@ -9,6 +9,7 @@ import ChecklistTemplateModule from "../components/ChecklistTemplateModule.jsx";
 import SubmissionsPanel from "../components/SubmissionsPanel.jsx";
 import WarningsPanel from "../components/WarningsPanel.jsx";
 import WorkOrdersPanel from "../components/WorkOrdersPanel.jsx";
+import SoftRequestsPanel from "../components/SoftRequestsPanel.jsx";
 import AssetDashboard from "../components/AssetDashboard.jsx";
 import OjtTrainingBuilder, { TrainingPreviewModal, TrainingQRModal } from "../components/OjtTrainingBuilder.jsx";
 import { useAlertSound } from "../hooks/useAlertSound";
@@ -75,7 +76,8 @@ import {
   getFleetFuelLogs, createFleetFuelLog, updateFleetFuelLog, deleteFleetFuelLog,
   getFleetMaintenance, createFleetMaintenance, updateFleetMaintenance, updateFleetMaintenanceStatus, deleteFleetMaintenance,
   getFleetSubmissions, getFleetSubmissionDetail, downloadFleetSubmissionsCSV,
-  getSoftServiceRequestsAll, getSoftServiceRequestsMy,
+  getSoftServiceRequestsAll, getSoftServiceRequestsMy, resolveSoftServiceRequest,
+  getNotifications,
 } from "../api.js";
 
 /* ─── Role definitions ────────────────────────────────────────────── */
@@ -151,6 +153,7 @@ const NAV_ALL = [
   { key: "employees", label: "Employees", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> },
   { key: "warnings", label: "Warnings", roles: ["admin","supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> },
   { key: "workorders", label: "Requests", roles: ["admin","supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-4 0v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg> },
+  { key: "softrequests", label: "Soft Requests", roles: ["admin","supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> },
   { key: "shifts", label: "Shifts", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> },
   { key: "roles", label: "Manage Roles", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 7h18M3 12h18M3 17h18"/></svg> },
   { key: "asset-types", label: "Asset Types", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg> },
@@ -261,7 +264,7 @@ function normalizePerms(p) {
   };
 }
 
-function EmployeeModal({ existing, token, employees = [], customRoles = [], currentUserRole = "admin", onClose, onSaved }) {
+function EmployeeModal({ existing, token, employees = [], customRoles = [], currentUserRole = "admin", companyModules = null, onClose, onSaved }) {
   const isEdit = !!existing;
 
   // Use the saved service_domain from the DB directly.
@@ -285,6 +288,7 @@ function EmployeeModal({ existing, token, employees = [], customRoles = [], curr
   const def = {
     fullName: "", email: "", phone: "", designation: "", role: "technician",
     shift: "", status: "Active", password: "", username: "", supervisorId: "",
+    employeeCode: "",
     permissions: normalizePerms(null),
     moduleAccess: ["dashboard", "checklists", "logsheets", "mytasks"],
   };
@@ -293,6 +297,7 @@ function EmployeeModal({ existing, token, employees = [], customRoles = [], curr
     username: existing.username || "",
     supervisorId: existing.supervisorId ? String(existing.supervisorId) : "",
     shift: existing.shift || "",
+    employeeCode: existing.employeeCode || "",
     permissions: normalizePerms(existing.permissions),
     moduleAccess: Array.isArray(existing.moduleAccess) ? existing.moduleAccess : def.moduleAccess,
   } : def);
@@ -414,9 +419,10 @@ function EmployeeModal({ existing, token, employees = [], customRoles = [], curr
           <div style={{ gridColumn: "span 2" }}>
             <FInput label="Full Name" required value={form.fullName} onChange={(e) => change("fullName", e.target.value)} placeholder="e.g. Ahmed Hassan" />
           </div>
+          <FInput label="Employee ID" value={form.employeeCode} onChange={(e) => change("employeeCode", e.target.value)} placeholder="e.g. EMP-001" />
+          <FInput label="Designation / Job Title" value={form.designation} onChange={(e) => change("designation", e.target.value)} placeholder="e.g. Senior Technician" />
           <FInput label="Email Address" required type="email" value={form.email} onChange={(e) => change("email", e.target.value)} placeholder="ahmed@company.com" />
           <FInput label="Phone" value={form.phone} onChange={(e) => change("phone", e.target.value)} placeholder="+971 50 000 0000" />
-          <FInput label="Designation / Job Title" value={form.designation} onChange={(e) => change("designation", e.target.value)} placeholder="e.g. Senior Technician" />
           <FSelect label="Status" value={form.status} onChange={(e) => change("status", e.target.value)}>
             <option value="Active">Active</option>
             <option value="Inactive">Inactive</option>
@@ -465,8 +471,9 @@ function EmployeeModal({ existing, token, employees = [], customRoles = [], curr
                       if (serviceDomain === "both") return true;
                       const hasSoft = r.canRaiseSoftIssue || r.isSoftManager || r.canResolveSoftIssue;
                       const hasTech = r.isTechnician || r.isTechnicalSupervisor;
-                      if (serviceDomain === "soft") return hasSoft;
-                      if (serviceDomain === "technical") return hasTech || (!hasSoft && !hasTech);
+                      // Domain-agnostic roles (no flags) always show; purely opposite-domain roles hide
+                      if (serviceDomain === "soft") return !hasTech; // hide only purely-technical roles
+                      if (serviceDomain === "technical") return !hasSoft; // hide only purely-soft roles
                       return true;
                     })
                     .map((r) => {
@@ -489,7 +496,8 @@ function EmployeeModal({ existing, token, employees = [], customRoles = [], curr
                   if (serviceDomain === "both") return false;
                   const hasSoft = r.canRaiseSoftIssue || r.isSoftManager || r.canResolveSoftIssue;
                   const hasTech = r.isTechnician || r.isTechnicalSupervisor;
-                  if (serviceDomain === "soft") return !hasSoft;
+                  // Only show hint when there are roles hidden (purely opposite domain)
+                  if (serviceDomain === "soft") return hasTech && !hasSoft;
                   if (serviceDomain === "technical") return hasSoft && !hasTech;
                   return false;
                 }).length > 0 && (
@@ -610,7 +618,7 @@ function EmployeeModal({ existing, token, employees = [], customRoles = [], curr
             </div>
             <p style={{ fontSize: "12px", color: "#64748b", marginBottom: "12px" }}>Modules visible to this user on web portal and mobile app.</p>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-              {ALL_MODULES.map((m) => {
+              {(companyModules ? ALL_MODULES.filter((m) => companyModules.includes(m.key)) : ALL_MODULES).map((m) => {
                 const on = form.moduleAccess?.includes(m.key);
                 return (
                   <label key={m.key} style={{ display: "inline-flex", alignItems: "center", gap: "5px", padding: "5px 10px", background: on ? "#dcfce7" : "#fff", border: `1px solid ${on ? "#86efac" : "#e2e8f0"}`, borderRadius: "20px", fontSize: "12px", fontWeight: 600, color: on ? "#15803d" : "#64748b", cursor: "pointer", userSelect: "none" }}>
@@ -2501,6 +2509,13 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false }) {
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm]   = useState({});
 
+  // Always fetch fresh data from server on mount so roles are up-to-date
+  useEffect(() => {
+    getCompanyRoles(token).then((list) => {
+      if (Array.isArray(list)) setRoles(list);
+    }).catch(() => {});
+  }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const startEdit = (r) => {
     setEditingId(r.id);
     setEditForm({
@@ -2532,6 +2547,7 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false }) {
       });
       const list = await getCompanyRoles(token);
       setRoles(list || []);
+      onSaved(list || []);
       setEditingId(null);
     } catch (err) { setError(err.message || "Update failed"); }
     finally { setSaving(false); }
@@ -2556,6 +2572,7 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false }) {
       });
       const list = await getCompanyRoles(token);
       setRoles(list || []);
+      onSaved(list || []);
       setDraftLabel(""); setDraftParent(""); setDraftColor("#2563eb");
       setDraftCanRaise(false); setDraftCanResolve(false); setDraftIsManager(false);
       setDraftIsTechSupervisor(false); setDraftIsTechnician(false);
@@ -2570,6 +2587,7 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false }) {
       await deleteCompanyRole(token, id);
       const list = await getCompanyRoles(token);
       setRoles(list || []);
+      onSaved(list || []);
     } catch (err) { setError(err.message || "Delete failed"); }
     finally { setSaving(false); }
   };
@@ -2586,6 +2604,7 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false }) {
       await updateCompanyRole(token, b.id, { sortOrder: a.sortOrder });
       const list = await getCompanyRoles(token);
       setRoles(list || []);
+      onSaved(list || []);
     } catch (err) { setError(err.message || "Reorder failed"); }
     finally { setSaving(false); }
   };
@@ -3221,13 +3240,13 @@ export default function CompanyEmployeePortal() {
       // If no modules restriction set by super-admin, show everything
       if (!enabledModules) return base;
       // Otherwise apply company-level module filter but keep admin management tabs
-      return base.filter((n) => ADMIN_ALWAYS.has(n.key) || enabledModules.includes(n.key));
+      return base.filter((n) => ADMIN_ALWAYS.has(n.key) || enabledModules.includes(n.key) || enabledModules.includes(n.key === 'softrequests' ? 'soft-requests' : n.key));
     }
 
     // Non-admin: filter by company enabledModules first
     const byCompany = !enabledModules
       ? base
-      : base.filter((n) => ALWAYS_VISIBLE.has(n.key) || enabledModules.includes(n.key));
+      : base.filter((n) => ALWAYS_VISIBLE.has(n.key) || enabledModules.includes(n.key) || enabledModules.includes(n.key === 'softrequests' ? 'soft-requests' : n.key));
     const userModules = currentUser?.moduleAccess;
     if (!Array.isArray(userModules) || userModules.length === 0) {
       return byCompany;
@@ -3246,6 +3265,7 @@ export default function CompanyEmployeePortal() {
   const toastId         = useRef(0);
   const prevWOCount     = useRef(null);   // null = not yet initialised (suppress first-load sound)
   const prevAssignCount = useRef(null);   // null = not yet initialised
+  const prevSoftCount   = useRef(null);   // null = not yet initialised (suppress first-load sound)
 
   // Modular alert sound hook — single shared AudioContext, throttled, localStorage preference
   const {
@@ -3415,6 +3435,10 @@ export default function CompanyEmployeePortal() {
       if (me?.enabledModules) setEnabledModules(me.enabledModules);
       if (me?.logoUrl) setCompanyLogoUrl(me.logoUrl);
     }).catch(() => {});
+    // Always load custom roles on mount so dashboard can check role capabilities
+    getCompanyRoles(token).then((list) => {
+      if (Array.isArray(list)) { setCustomRoles(list); applyCustomRoles(list); }
+    }).catch(() => {});
     setRecentEntriesLoading(true);
     getCompanyPortalRecentLogsheetEntries(token)
       .then((d) => d && setRecentEntries(d))
@@ -3453,14 +3477,15 @@ export default function CompanyEmployeePortal() {
         })
         .catch(() => {})
         .finally(() => setDashboardWOLoading(false));
-    } else if (currentUser?.role === "supervisor") {
+    } else if (currentUser?.role === "supervisor" || !["admin","supervisor","technician","cleaner","security","driver","fleet_operator","employee"].includes(currentUser?.role)) {
+      // Supervisor or custom role (project manager etc.) — load supervisor-level data
       getMyTemplateAssignments(token).then((d) => d && setMyAssignments(d)).catch(() => {});
       getTemplateUserAssignments(token).then((d) => d && setAssignments(d)).catch(() => {});
       getCompanyPortalEmployees(token).then((d) => d && setEmployees(d)).catch(() => {});
       getCompanyPortalDepartments(token).then((d) => d && setDepartments(d)).catch(() => {});
       getCompanyPortalAssets(token).then((d) => d && setAssets(d)).catch(() => {});
       getCompanyPortalAssetTypes(token).then(d => d && setAssetTypesList(d)).catch(() => {});
-      // Load soft requests raised by this supervisor
+      // Load soft requests raised by this user
       setDashboardSoftLoading(true);
       getSoftServiceRequestsMy(token, "status=open")
         .then((d) => setDashboardSoftRequests(Array.isArray(d) ? d : []))
@@ -3541,14 +3566,23 @@ export default function CompanyEmployeePortal() {
     const poll = async () => {
       // 1. Flags (admin + supervisor)
       try {
-        const res = await getCompanyPortalAdminFlags(token, "status=open&limit=5");
+        const [res, notifRes] = await Promise.all([
+          getCompanyPortalAdminFlags(token, "status=open&limit=5"),
+          getNotifications(token, "limit=10"),
+        ]);
         if (!res) return;
         const newCount = res.total ?? 0;
         const prev     = prevWarnCount.current;
         prevWarnCount.current = newCount;
         setWarnOpenCount(newCount);
-        if (res.data?.length) setRecentAlerts(res.data.slice(0, 5));
         setDashboardAlerts(res.data ?? []);
+        // Merge flag alerts and soft_request notifications into bell
+        const softNotifs = Array.isArray(notifRes) ? notifRes.filter(n => n.type === 'soft_request').slice(0, 3) : [];
+        const merged = [
+          ...(res.data ?? []),
+          ...softNotifs.map(n => ({ id: `notif-${n.id}`, assetName: n.title, description: n.message, severity: 'medium', status: 'open', createdAt: n.createdAt, isSoftRequest: true })),
+        ].slice(0, 8);
+        setRecentAlerts(merged);
         if (newCount > prev) {
           const diff   = newCount - prev;
           const newest = res.data?.[0];
@@ -3576,22 +3610,51 @@ export default function CompanyEmployeePortal() {
           setDashboardWorkOrders(woRes?.data ?? []);
         } catch (_) { /* silent */ }
       }
+
+      // 3. Soft service requests — alert admin when new request raised
+      if (isAdmin) {
+        try {
+          const srRes = await getSoftServiceRequestsAll(token, "status=open");
+          const newSoftCount = Array.isArray(srRes) ? srRes.length : 0;
+          if (prevSoftCount.current !== null && newSoftCount > prevSoftCount.current) {
+            const diff = newSoftCount - prevSoftCount.current;
+            const newest = Array.isArray(srRes) ? srRes[0] : null;
+            const assetLabel = newest?.assetName || "an asset";
+            pushToast(`${diff} new soft request${diff > 1 ? "s" : ""} raised — ${assetLabel}`, "high");
+            playAlertSound("high");
+            ringBell();
+          }
+          prevSoftCount.current = newSoftCount;
+        } catch (_) { /* silent */ }
+      }
     };
 
     // Initial sync — seed counts without playing sound
     Promise.all([
       getCompanyPortalAdminFlags(token, "status=open&limit=5"),
       isAdmin ? getCompanyPortalWorkOrders(token, "status=open&limit=5") : Promise.resolve(null),
-    ]).then(([flagRes, woRes]) => {
+      getNotifications(token, "limit=10"),
+      isAdmin ? getSoftServiceRequestsAll(token, "status=open") : Promise.resolve(null),
+    ]).then(([flagRes, woRes, notifRes, srRes]) => {
       if (flagRes) {
         prevWarnCount.current = flagRes.total ?? 0;
         setWarnOpenCount(flagRes.total ?? 0);
-        if (flagRes.data?.length) setRecentAlerts(flagRes.data.slice(0, 5));
         setDashboardAlerts(flagRes.data ?? []);
+        // Merge flag alerts and soft_request notifications into bell
+        const softNotifs = Array.isArray(notifRes) ? notifRes.filter(n => n.type === 'soft_request').slice(0, 3) : [];
+        const merged = [
+          ...(flagRes.data ?? []),
+          ...softNotifs.map(n => ({ id: `notif-${n.id}`, assetName: n.title, description: n.message, severity: 'medium', status: 'open', createdAt: n.createdAt, isSoftRequest: true })),
+        ].slice(0, 8);
+        setRecentAlerts(merged);
       }
       if (woRes) {
         prevWOCount.current = woRes?.total ?? woRes?.data?.length ?? 0;
         setDashboardWorkOrders(woRes?.data ?? []);
+      }
+      // Seed soft request count (no sound on initial load)
+      if (srRes != null) {
+        prevSoftCount.current = Array.isArray(srRes) ? srRes.length : (srRes?.total ?? 0);
       }
     }).catch(() => {});
 
@@ -3777,23 +3840,23 @@ export default function CompanyEmployeePortal() {
       : `<div style="width:90px;"></div>`;
     const catalystLogoHtml = catalystLogoDataUrl
       ? `<img src="${catalystLogoDataUrl}" style="max-width:90px;max-height:55px;object-fit:contain;" />`
-      : `<div style="font-size:10px;font-weight:800;color:#fff;text-align:right;line-height:1.2;">CATALYST<br/><span style="font-size:8px;font-weight:400;">PARTNERING FOR SUSTAINABILITY</span></div>`;
+      : `<div style="font-size:10px;font-weight:800;color:#1a1a1a;text-align:right;line-height:1.2;">CATALYST<br/><span style="font-size:8px;font-weight:400;">PARTNERING FOR SUSTAINABILITY</span></div>`;
     return `
-      <div style="background:#2e7d32;color:#fff;padding:24px 20px 20px;border-radius:16px;width:300px;text-align:center;font-family:Arial,sans-serif;box-shadow:0 4px 16px rgba(0,0,0,0.2);">
+      <div style="background:#ffffff;color:#1a1a1a;padding:24px 20px 20px;border-radius:16px;width:300px;text-align:center;font-family:Arial,sans-serif;box-shadow:0 4px 16px rgba(0,0,0,0.15);border:1px solid #e2e8f0;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
           <div style="width:90px;height:55px;display:flex;align-items:center;justify-content:flex-start;">${clientLogoHtml}</div>
           <div style="width:90px;height:55px;display:flex;align-items:center;justify-content:flex-end;">${catalystLogoHtml}</div>
         </div>
-        <div style="font-size:15px;font-weight:800;letter-spacing:2px;margin-bottom:3px;">SCAN QR CODE</div>
-        <div style="font-size:11px;opacity:0.85;margin-bottom:14px;">For Service Excellence</div>
-        <div style="background:#fff;padding:10px;border-radius:10px;display:inline-block;margin-bottom:12px;">
+        <div style="font-size:15px;font-weight:800;letter-spacing:2px;margin-bottom:3px;color:#0f172a;">SCAN QR CODE</div>
+        <div style="font-size:11px;color:#475569;margin-bottom:14px;">For Service Excellence</div>
+        <div style="background:#f8fafc;padding:10px;border-radius:10px;display:inline-block;margin-bottom:12px;border:1px solid #e2e8f0;">
           <img src="${qrDataUrl}" style="width:200px;height:200px;display:block;" />
         </div>
-        ${assetName ? `<div style="font-size:13px;font-weight:600;margin-bottom:2px;">${assetName}</div>` : ""}
-        ${floor ? `<div style="font-size:13px;margin-top:4px;">Floor - ${floor}</div>` : ""}
-        ${room ? `<div style="font-size:13px;">Area - ${room}</div>` : ""}
-        <div style="font-size:11px;opacity:0.75;margin-top:8px;margin-bottom:14px;">www.catalystsolutions.eco</div>
-        <div style="background:#000;padding:11px 20px;border-radius:4px;font-weight:800;font-size:13px;letter-spacing:2px;">SCAN FOR E-CHECKLIST</div>
+        ${assetName ? `<div style="font-size:13px;font-weight:600;margin-bottom:2px;color:#0f172a;">${assetName}</div>` : ""}
+        ${floor ? `<div style="font-size:13px;margin-top:4px;color:#334155;">Floor - ${floor}</div>` : ""}
+        ${room ? `<div style="font-size:13px;color:#334155;">Area - ${room}</div>` : ""}
+        <div style="font-size:11px;color:#64748b;margin-top:8px;margin-bottom:14px;">www.catalystsolutions.eco</div>
+        <div style="background:#0f172a;color:#fff;padding:11px 20px;border-radius:4px;font-weight:800;font-size:13px;letter-spacing:2px;">SCAN FOR E-CHECKLIST</div>
       </div>`;
   };
 
@@ -3911,7 +3974,10 @@ export default function CompanyEmployeePortal() {
       <aside style={{ width: "240px", background: "#fff", borderRight: "1px solid #e2e8f0", display: "flex", flexDirection: "column", position: "fixed", top: 0, bottom: 0, left: 0, zIndex: 10 }}>
         {/* Brand */}
         <div style={{ padding: "18px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <img src={logo} alt="Logo" style={{ maxWidth: "150px", height: "40px", objectFit: "contain" }} />
+          {companyLogoUrl
+            ? <img src={companyLogoUrl} alt="Company Logo" style={{ maxWidth: "150px", height: "40px", objectFit: "contain" }} />
+            : <img src={logo} alt="Logo" style={{ maxWidth: "150px", height: "40px", objectFit: "contain" }} />
+          }
         </div>
 
         {/* Company name */}
@@ -3971,15 +4037,16 @@ export default function CompanyEmployeePortal() {
                     <div style={{ padding: "16px", textAlign: "center", color: "#94a3b8", fontSize: "12px" }}>No open warnings</div>
                   )}
                   {recentAlerts.map((a) => {
-                    const sevColor = { critical: "#dc2626", high: "#ea580c", medium: "#d97706", low: "#16a34a" }[a.severity] || "#475569";
-                    const sevBg    = { critical: "#fee2e2", high: "#fff7ed", medium: "#fefce8", low: "#f0fdf4"  }[a.severity] || "#f8fafc";
+                    const isSoftReq = a.isSoftRequest;
+                    const sevColor = isSoftReq ? "#7c3aed" : ({ critical: "#dc2626", high: "#ea580c", medium: "#d97706", low: "#16a34a" }[a.severity] || "#475569");
+                    const sevBg    = isSoftReq ? "#f3e8ff" : ({ critical: "#fee2e2", high: "#fff7ed", medium: "#fefce8", low: "#f0fdf4"  }[a.severity] || "#f8fafc");
                     return (
                       <div key={a.id} style={{ padding: "9px 14px", borderBottom: "1px solid #f8fafc", cursor: "pointer" }}
-                        onClick={() => { setBellOpen(false); setNav("warnings"); }}
+                        onClick={() => { setBellOpen(false); setNav(isSoftReq ? "softrequests" : "warnings"); }}
                         onMouseEnter={(e) => (e.currentTarget.style.background = "#f8fafc")}
                         onMouseLeave={(e) => (e.currentTarget.style.background = "")}>
                         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                          <span style={{ background: sevBg, color: sevColor, fontSize: "9px", fontWeight: 800, padding: "2px 6px", borderRadius: "8px", textTransform: "uppercase" }}>{a.severity}</span>
+                          <span style={{ background: sevBg, color: sevColor, fontSize: "9px", fontWeight: 800, padding: "2px 6px", borderRadius: "8px", textTransform: "uppercase" }}>{isSoftReq ? "Soft Req" : (a.severity || "—")}</span>
                           <span style={{ fontWeight: 600, fontSize: "11px", color: "#0f172a", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.assetName || "Unknown asset"}</span>
                         </div>
                         <div style={{ fontSize: "10px", color: "#64748b", marginTop: "2px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.description || "No description"}</div>
@@ -4171,7 +4238,12 @@ export default function CompanyEmployeePortal() {
           );
 
           /* ── SUPERVISOR DASHBOARD ── */
-          if (currentUser.role === "supervisor") {
+          // Determine if user has supervisor-level access via custom role
+          const builtInRoles = ["admin", "supervisor", "technical_lead", "assistant_manager", "technical_executive", "technician", "cleaner", "security", "driver", "fleet_operator", "employee"];
+          const userCustomRoleInfo = !builtInRoles.includes(currentUser.role) ? customRoles.find((r) => r.roleKey === currentUser.role) : null;
+          // Custom roles are always manager/supervisor type — show supervisor dashboard
+          const hasCustomSupervisorAccess = !!userCustomRoleInfo;
+          if (currentUser.role === "supervisor" || hasCustomSupervisorAccess) {
             const myTeam = employees.filter((e) => String(e.supervisorId) === String(currentUser.id));
             const forwardedByMe = assignments.filter((a) => String(a.assignedBy) === String(currentUser.id));
             return (
@@ -4389,9 +4461,9 @@ export default function CompanyEmployeePortal() {
 
                 {loading.dashboard && <p style={{ color: "#94a3b8" }}>Loading dashboard…</p>}
 
-                {/* 3 Key stat cards */}
+                {/* 4 Key stat cards */}
                 {dashboard && (
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "16px", marginBottom: "16px" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "16px", marginBottom: "16px" }}>
                     <StatCard label="Active Assets" value={dashboard.activeAssets} sub={`${dashboard.totalAssets} total`} subCol="#22c55e"
                       iconBg="#eff6ff" iconCol="#2563eb" onClick={() => setNav("assets")}
                       icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 19.07a10 10 0 0 1 0-14.14"/></svg>} />
@@ -4402,11 +4474,18 @@ export default function CompanyEmployeePortal() {
                       iconCol={dashboard.openIssues > 0 ? "#dc2626" : "#22c55e"}
                       onClick={() => setNav("workorders")}
                       icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>} />
-                    <StatCard label="Total Warnings" value={dashboard.flags?.open || 0}
-                      sub={`${dashboard.flags?.critical || 0} critical`}
-                      subCol={(dashboard.flags?.critical || 0) > 0 ? "#dc2626" : "#64748b"}
-                      iconBg={(dashboard.flags?.open || 0) > 0 ? "#fff7ed" : "#f0fdf4"}
-                      iconCol={(dashboard.flags?.open || 0) > 0 ? "#ea580c" : "#22c55e"}
+                    <StatCard label="Open Soft Requests" value={dashboard.openSoftRequests ?? dashboardSoftRequests.length}
+                      sub={(dashboard.openSoftRequests ?? dashboardSoftRequests.length) > 0 ? "Needs attention" : "All clear"}
+                      subCol={(dashboard.openSoftRequests ?? dashboardSoftRequests.length) > 0 ? "#7c3aed" : "#22c55e"}
+                      iconBg={(dashboard.openSoftRequests ?? dashboardSoftRequests.length) > 0 ? "#f3e8ff" : "#f0fdf4"}
+                      iconCol={(dashboard.openSoftRequests ?? dashboardSoftRequests.length) > 0 ? "#7c3aed" : "#22c55e"}
+                      onClick={() => setNav("softrequests")}
+                      icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>} />
+                    <StatCard label="Total Warnings" value={(dashboard.flags?.open || 0) + (dashboard.softRequestWarnings || 0)}
+                      sub={`${dashboard.flags?.critical || 0} critical flags${dashboard.softRequestWarnings ? ` + ${dashboard.softRequestWarnings} escalated requests` : ""}`}
+                      subCol={(dashboard.flags?.critical || 0) > 0 || (dashboard.softRequestWarnings || 0) > 0 ? "#dc2626" : "#64748b"}
+                      iconBg={(dashboard.flags?.open || 0) + (dashboard.softRequestWarnings || 0) > 0 ? "#fff7ed" : "#f0fdf4"}
+                      iconCol={(dashboard.flags?.open || 0) + (dashboard.softRequestWarnings || 0) > 0 ? "#ea580c" : "#22c55e"}
                       onClick={() => setNav("warnings")}
                       icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>} />
                   </div>
@@ -4560,7 +4639,7 @@ export default function CompanyEmployeePortal() {
                     </div>
                     {dashboardAlertsLoading ? (
                       <p style={{ color: "#94a3b8", fontSize: "13px", padding: "8px 0" }}>Loading…</p>
-                    ) : dashboardAlerts.length === 0 ? (
+                    ) : dashboardAlerts.length === 0 && dashboardSoftRequests.filter(sr => sr.escalationLevel > 0).length === 0 ? (
                       <div style={{ padding: "24px", textAlign: "center", color: "#94a3b8", background: "#f8fafc", borderRadius: "8px", fontSize: "13px" }}>
                         ✅ No open alerts
                       </div>
@@ -4590,6 +4669,27 @@ export default function CompanyEmployeePortal() {
                             </div>
                           );
                         })}
+                        {/* Escalated soft requests in latest alerts */}
+                        {dashboardSoftRequests.filter(sr => sr.escalationLevel > 0).slice(0, 3).map((sr) => (
+                          <div key={`sr-${sr.id}`} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px", borderRadius: "8px", border: "1px solid #e9d5ff", background: "#faf5ff", cursor: "pointer" }}
+                            onClick={() => setNav("softrequests")}>
+                            <span style={{ flexShrink: 0, width: "9px", height: "9px", borderRadius: "50%", display: "inline-block", background: "#7c3aed", animation: "blink-dot 1s ease-in-out infinite" }} />
+                            <span style={{ flexShrink: 0, padding: "2px 8px", borderRadius: "20px", fontSize: "10.5px", fontWeight: 700, background: "#ede9fe", color: "#6d28d9" }}>
+                              Escalated L{sr.escalationLevel}
+                            </span>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <p style={{ margin: 0, fontWeight: 600, fontSize: "12.5px", color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                {sr.assetName || "Unknown asset"} — Soft Request
+                              </p>
+                              <p style={{ margin: 0, fontSize: "11.5px", color: "#64748b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                Raised by {sr.raisedByName || "supervisor"} • Needs resolution
+                              </p>
+                            </div>
+                            <span style={{ flexShrink: 0, fontSize: "10.5px", color: "#94a3b8", whiteSpace: "nowrap" }}>
+                              {sr.raisedAt ? new Date(sr.raisedAt).toLocaleDateString() : ""}
+                            </span>
+                          </div>
+                        ))}
                       </div>
                     )}
                   </div>
@@ -5117,6 +5217,8 @@ export default function CompanyEmployeePortal() {
           />
         )}
 
+        {/* ── Soft Service Requests ─────────────────────────────── */}
+        {nav === "softrequests" && <SoftRequestsPanel token={token} currentUser={currentUser} />}
         {/* ── Employees ─────────────────────────────────────────── */}
         {nav === "employees" && (() => {
           const canManage = currentUser.role === "admin" || currentUser.role === "supervisor";
@@ -5375,7 +5477,7 @@ export default function CompanyEmployeePortal() {
                       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
                         <thead>
                           <tr>
-                            {["Employee", "Supervisor", "Email", "Designation", "Role", "Status", ...(canManage ? ["Actions"] : [])].map((h) => (
+                            {["Employee", "Emp ID", "Email", "Designation", "Role", "Status", ...(canManage ? ["Actions"] : [])].map((h) => (
                               <th key={h} style={{ padding: "11px 14px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>{h}</th>
                             ))}
                           </tr>
@@ -5391,10 +5493,21 @@ export default function CompanyEmployeePortal() {
                                     <span style={{ fontWeight: 600, color: "#0f172a" }}>{e.fullName}</span>
                                   </div>
                                 </td>
-                                <td style={{ padding: "11px 14px", color: "#64748b", fontSize: "13px" }}>{e.supervisorName || <span style={{ color: "#cbd5e1" }}>—</span>}</td>
+                                <td style={{ padding: "11px 14px", color: "#475569", fontSize: "12px" }}>
+                                  {e.employeeCode
+                                    ? <span style={{ background: "#f1f5f9", padding: "2px 8px", borderRadius: "6px", fontWeight: 600, fontFamily: "monospace" }}>{e.employeeCode}</span>
+                                    : <span style={{ color: "#cbd5e1" }}>—</span>}
+                                </td>
                                 <td style={{ padding: "11px 14px", color: "#64748b", fontSize: "13px" }}>{e.email}</td>
                                 <td style={{ padding: "11px 14px", color: "#475569", fontSize: "13px" }}>{e.designation || "—"}</td>
-                                <td style={{ padding: "11px 14px" }}><Badge val={e.role} /></td>
+                                <td style={{ padding: "11px 14px" }}>
+                                  {(() => {
+                                    const cr = customRoles.find((x) => x.roleKey === e.role);
+                                    return cr
+                                      ? <span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: cr.bgColor || "#f1f5f9", color: cr.color || "#475569" }}>{cr.label}</span>
+                                      : <Badge val={e.role} />;
+                                  })()}
+                                </td>
                                 <td style={{ padding: "11px 14px" }}>
                                   <span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: e.status === "Active" ? "#f0fdf4" : "#fef2f2", color: e.status === "Active" ? "#16a34a" : "#dc2626" }}>{e.status}</span>
                                 </td>
@@ -5911,7 +6024,7 @@ export default function CompanyEmployeePortal() {
 
               {/* QR Card Preview */}
               {assetQrDataUrl ? (
-                <div style={{ display: "inline-block", background: "#2e7d32", color: "#fff", padding: "20px 18px 16px", borderRadius: "14px", textAlign: "center", fontFamily: "Arial, sans-serif", width: "280px" }}>
+                <div style={{ display: "inline-block", background: "#ffffff", color: "#1a1a1a", padding: "20px 18px 16px", borderRadius: "14px", textAlign: "center", fontFamily: "Arial, sans-serif", width: "280px", border: "1px solid #e2e8f0", boxShadow: "0 4px 16px rgba(0,0,0,0.08)" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
                     <div style={{ width: "80px", height: "48px", display: "flex", alignItems: "center", justifyContent: "flex-start" }}>
                       {companyLogoUrl
@@ -5922,19 +6035,19 @@ export default function CompanyEmployeePortal() {
                       <img src="/catalyst-logo.png" alt="Catalyst" style={{ maxWidth: "80px", maxHeight: "48px", objectFit: "contain" }}
                         onError={(e) => { e.target.style.display = "none"; e.target.nextSibling.style.display = "block"; }}
                       />
-                      <span style={{ display: "none", fontSize: "9px", fontWeight: 800, color: "#fff", textAlign: "right", lineHeight: 1.2 }}>CATALYST<br/><span style={{ fontWeight: 400 }}>PARTNERING FOR<br/>SUSTAINABILITY</span></span>
+                      <span style={{ display: "none", fontSize: "9px", fontWeight: 800, color: "#1a1a1a", textAlign: "right", lineHeight: 1.2 }}>CATALYST<br/><span style={{ fontWeight: 400 }}>PARTNERING FOR<br/>SUSTAINABILITY</span></span>
                     </div>
                   </div>
-                  <div style={{ fontSize: "13px", fontWeight: 800, letterSpacing: "2px", marginBottom: "2px" }}>SCAN QR CODE</div>
-                  <div style={{ fontSize: "10px", opacity: 0.85, marginBottom: "12px" }}>For Service Excellence</div>
-                  <div style={{ background: "#fff", padding: "8px", borderRadius: "8px", display: "inline-block", marginBottom: "10px" }}>
+                  <div style={{ fontSize: "13px", fontWeight: 800, letterSpacing: "2px", marginBottom: "2px", color: "#0f172a" }}>SCAN QR CODE</div>
+                  <div style={{ fontSize: "10px", color: "#475569", marginBottom: "12px" }}>For Service Excellence</div>
+                  <div style={{ background: "#f8fafc", padding: "8px", borderRadius: "8px", display: "inline-block", marginBottom: "10px", border: "1px solid #e2e8f0" }}>
                     <img src={assetQrDataUrl} alt="QR" style={{ width: "180px", height: "180px", display: "block" }} />
                   </div>
-                  {assetQrModal.assetName && <div style={{ fontSize: "12px", fontWeight: 600, marginBottom: "2px" }}>{assetQrModal.assetName}</div>}
-                  {assetQrModal.asset?.floor && <div style={{ fontSize: "12px" }}>Floor - {assetQrModal.asset.floor}</div>}
-                  {assetQrModal.asset?.room && <div style={{ fontSize: "12px" }}>Area - {assetQrModal.asset.room}</div>}
-                  <div style={{ fontSize: "10px", opacity: 0.75, marginTop: "6px", marginBottom: "12px" }}>www.catalystsolutions.eco</div>
-                  <div style={{ background: "#000", padding: "9px 16px", borderRadius: "4px", fontWeight: 800, fontSize: "12px", letterSpacing: "2px" }}>SCAN FOR E-CHECKLIST</div>
+                  {assetQrModal.assetName && <div style={{ fontSize: "12px", fontWeight: 600, marginBottom: "2px", color: "#0f172a" }}>{assetQrModal.assetName}</div>}
+                  {assetQrModal.asset?.floor && <div style={{ fontSize: "12px", color: "#334155" }}>Floor - {assetQrModal.asset.floor}</div>}
+                  {assetQrModal.asset?.room && <div style={{ fontSize: "12px", color: "#334155" }}>Area - {assetQrModal.asset.room}</div>}
+                  <div style={{ fontSize: "10px", color: "#64748b", marginTop: "6px", marginBottom: "12px" }}>www.catalystsolutions.eco</div>
+                  <div style={{ background: "#0f172a", color: "#fff", padding: "9px 16px", borderRadius: "4px", fontWeight: 800, fontSize: "12px", letterSpacing: "2px" }}>SCAN FOR E-CHECKLIST</div>
                 </div>
               ) : (
                 <p style={{ color: "#94a3b8" }}>Generating QR...</p>
@@ -6638,6 +6751,7 @@ export default function CompanyEmployeePortal() {
           existing={editEmp}
           employees={employees}
           customRoles={customRoles}
+          companyModules={enabledModules}
           currentUserRole={currentUser.role}
           onClose={() => { setShowEmpModal(false); setEditEmp(null); }}
           onSaved={handleEmpSaved}

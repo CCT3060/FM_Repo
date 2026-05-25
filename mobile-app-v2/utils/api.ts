@@ -40,6 +40,7 @@ export interface AppUser {
   supervisorId:     number | null;
   permissions?:     Record<string, unknown>;
   moduleAccess?:    string[];
+  companyEnabledModules?: string[] | null;
   roleCapabilities: RoleCapabilities;
 }
 

@@ -257,6 +257,16 @@ function PhotoInput({
 
 
 
+// Returns background and text color for a boolean option based on positive/negative sentiment
+function getBoolOptColors(opt: string, isSelected: boolean): { bg: string; text: string } {
+  const lower = opt.toLowerCase().trim();
+  const isNegative = lower === 'no' || lower === 'n/a' || lower.startsWith('not ') || lower === 'fail' || lower === 'failed';
+  if (isNegative) {
+    return { bg: isSelected ? '#dc2626' : '#fee2e2', text: isSelected ? '#fff' : '#dc2626' };
+  }
+  return { bg: isSelected ? '#16a34a' : '#dcfce7', text: isSelected ? '#fff' : '#16a34a' };
+}
+
 function FieldInput({ field, value, onChange }: { field: Field; value: any; onChange: (v: any) => void }) {
   const { theme } = useTheme();
 
@@ -265,21 +275,25 @@ function FieldInput({ field, value, onChange }: { field: Field; value: any; onCh
     const labels = field.boolLabels ?? ['Yes', 'No'];
     return (
       <View style={[styles.boolContainer, { backgroundColor: theme.inputBg }]}>
-        {labels.map((opt) => (
-          <TouchableOpacity
-            key={opt}
-            style={[
-              styles.boolBtn,
-              value === opt && { backgroundColor: theme.primary, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.2, shadowRadius: 2, elevation: 3 },
-            ]}
-            onPress={() => onChange(value === opt ? null : opt)}
-            activeOpacity={0.7}
-          >
-            <Text style={[styles.boolBtnText, { color: value === opt ? '#fff' : theme.textSecondary }]}>
-              {opt}
-            </Text>
-          </TouchableOpacity>
-        ))}
+        {labels.map((opt) => {
+          const { bg, text } = getBoolOptColors(opt, value === opt);
+          return (
+            <TouchableOpacity
+              key={opt}
+              style={[
+                styles.boolBtn,
+                { backgroundColor: bg },
+                value === opt && { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.2, shadowRadius: 2, elevation: 3 },
+              ]}
+              onPress={() => onChange(value === opt ? null : opt)}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.boolBtnText, { color: text, fontWeight: value === opt ? '700' : '500' }]}>
+                {opt}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
       </View>
     );
   }

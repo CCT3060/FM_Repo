@@ -116,9 +116,9 @@ router.post("/", async (req, res, next) => {
     }
     const key = req.body.roleKey ? slugify(req.body.roleKey) : slugify(label);
 
-    // Block duplicate active roles
+    // Block duplicate active roles (ignore soft-deleted rows so they can be re-created)
     const [activeExists] = await pool.query(
-      `SELECT id FROM company_roles WHERE company_id = ? AND role_key = ?`,
+      `SELECT id FROM company_roles WHERE company_id = ? AND role_key = ? AND is_active = TRUE`,
       [cid(req), key]
     );
     if (activeExists.length) {

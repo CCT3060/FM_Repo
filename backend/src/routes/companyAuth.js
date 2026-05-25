@@ -41,7 +41,8 @@ router.post(
                 cu.password_hash AS "passwordHash",
                 cu.permissions,
                 cu.module_access AS "moduleAccess",
-                c.company_name  AS "companyName"
+                c.company_name  AS "companyName",
+                c.enabled_modules AS "companyEnabledModules"
          FROM company_users cu
          JOIN companies c ON c.id = cu.company_id
          WHERE cu.email = ?
@@ -75,6 +76,9 @@ router.post(
           role: user.role,
           permissions: user.permissions || {},
           moduleAccess: user.moduleAccess || [],
+          companyEnabledModules: user.companyEnabledModules
+            ? (typeof user.companyEnabledModules === "string" ? JSON.parse(user.companyEnabledModules) : user.companyEnabledModules)
+            : null,
         },
       });
     } catch (err) {

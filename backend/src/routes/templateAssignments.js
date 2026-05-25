@@ -816,6 +816,8 @@ router.post(
               normalized = { operator: "yes_no", triggerValue: "no", severity: rule.severity || "high", autoWorkOrder: rule.action === "create_work_order" };
             } else if (inputType === "ok_not_ok") {
               normalized = { operator: "ok_not_ok", triggerValue: "not_ok", severity: rule.severity || "high", autoWorkOrder: rule.action === "create_work_order" };
+            } else if (inputType === "cleaned_not_cleaned") {
+              normalized = { operator: "cleaned_not_cleaned", triggerValue: "not cleaned", severity: rule.severity || "medium", autoWorkOrder: rule.action === "create_work_order" };
             } else if (inputType === "number" && (rule.minValue !== "" && rule.minValue != null || rule.maxValue !== "" && rule.maxValue != null)) {
               normalized = { operator: "between", minValue: rule.minValue, maxValue: rule.maxValue, severity: rule.severity || "medium", autoWorkOrder: rule.action === "create_work_order" };
             } else if (inputType === "dropdown" && rule.flagOn) {
@@ -1913,27 +1915,10 @@ router.get("/site-score", async (req, res, next) => {
   try {
     const companyId = cid(req);
 
-    // Use service_domain from company_users to determine what the user can see
-    // Default to 'both' so users without explicit domain see all templates
-    let serviceDomain = 'both';
-    try {
-      const [[cuRow]] = await pool.query(
-        `SELECT service_domain AS "serviceDomain" FROM company_users WHERE id = ? LIMIT 1`,
-        [req.companyUser.id]
-      );
-      serviceDomain = (cuRow?.serviceDomain || 'both').toLowerCase();
-    } catch { /* default both */ }
-
-    // Build SQL filter based on domain
-    let softFilter = '';
-    if (serviceDomain === 'technical') {
-      softFilter = `AND LOWER(TRIM(COALESCE(ct.asset_type, ''))) != 'soft service'`;
-    } else if (serviceDomain === 'soft') {
-      softFilter = `AND LOWER(TRIM(COALESCE(ct.asset_type, ''))) = 'soft service'`;
-    }
-    // 'both' → no filter
-
-    const isSoftUser = serviceDomain === 'soft' || serviceDomain === 'both';
+    // Site score is company-wide — always show all templates regardless of the
+    // individual user's service_domain assignment so no one sees all-zero stats.
+    const softFilter = '';
+    const isSoftUser = true; // kept for compatibility, always include open requests
 
     // Total active checklist templates for the company (exclude soft service for tech users)
     const [[{ total }]] = await pool.query(

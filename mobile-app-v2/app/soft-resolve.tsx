@@ -33,9 +33,18 @@ function getFieldType(q: any): string {
 
 function getBoolLabels(q: any): string[] {
   const raw = String(q.answerType || q.inputType || '').toLowerCase();
-  if (raw.includes('ok_not_ok') || raw.includes('ok/not_ok')) return ['OK', 'Not OK', 'N/A'];
-  if (raw.includes('cleaned')) return ['Cleaned', 'Not Cleaned', 'N/A'];
-  return ['Yes', 'No', 'N/A'];
+  if (raw.includes('ok_not_ok') || raw.includes('ok/not_ok')) return ['OK', 'Not OK'];
+  if (raw.includes('cleaned')) return ['Cleaned', 'Not Cleaned'];
+  return ['Yes', 'No'];
+}
+
+function getBoolOptColors(opt: string, isSelected: boolean): { bg: string; text: string } {
+  const lower = opt.toLowerCase().trim();
+  const isNegative = lower === 'no' || lower === 'n/a' || lower.startsWith('not ') || lower === 'fail' || lower === 'failed';
+  if (isNegative) {
+    return { bg: isSelected ? '#dc2626' : '#fee2e2', text: isSelected ? '#fff' : '#dc2626' };
+  }
+  return { bg: isSelected ? '#16a34a' : '#dcfce7', text: isSelected ? '#fff' : '#16a34a' };
 }
 
 function parseOptions(q: any): string[] {
@@ -365,19 +374,23 @@ export default function SoftResolveScreen() {
                 {/* After — catalyst's answer input */}
                 {type === 'boolean' && (
                   <View style={[styles.boolContainer, { backgroundColor: theme.inputBg }]}>
-                    {boolOpts.map((opt) => (
-                      <TouchableOpacity
-                        key={opt}
-                        style={[
-                          styles.boolBtn,
-                          answers[q.id] === opt && { backgroundColor: theme.primary, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.2, shadowRadius: 2, elevation: 3 },
-                        ]}
-                        onPress={() => setAnswers((prev) => ({ ...prev, [q.id]: prev[q.id] === opt ? null : opt }))}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={[styles.boolBtnText, { color: answers[q.id] === opt ? '#fff' : theme.textSecondary }]}>{opt}</Text>
-                      </TouchableOpacity>
-                    ))}
+                    {boolOpts.map((opt) => {
+                      const { bg, text } = getBoolOptColors(opt, answers[q.id] === opt);
+                      return (
+                        <TouchableOpacity
+                          key={opt}
+                          style={[
+                            styles.boolBtn,
+                            { backgroundColor: bg },
+                            answers[q.id] === opt && { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.2, shadowRadius: 2, elevation: 3 },
+                          ]}
+                          onPress={() => setAnswers((prev) => ({ ...prev, [q.id]: prev[q.id] === opt ? null : opt }))}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={[styles.boolBtnText, { color: text, fontWeight: answers[q.id] === opt ? '700' : '500' }]}>{opt}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
                   </View>
                 )}
                 {type === 'select' && selOpts.length > 0 && (
