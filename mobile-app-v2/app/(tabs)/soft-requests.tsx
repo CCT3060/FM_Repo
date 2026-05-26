@@ -87,15 +87,6 @@ export default function SoftRequestsTab() {
         <Text style={[styles.headerTitle, { color: theme.textPrimary }]}>
           {isSoftManager(capabilities) ? 'All Requests' : canResolve ? 'Requests to Resolve' : 'My Requests'}
         </Text>
-        {canRaise ? (
-          <TouchableOpacity
-            style={[styles.raiseBtn, { backgroundColor: theme.primary }]}
-            onPress={() => router.push('/soft-raise')}
-          >
-            <MaterialCommunityIcons name="plus" size={18} color="#fff" />
-            <Text style={styles.raiseBtnText}>Raise</Text>
-          </TouchableOpacity>
-        ) : null}
       </View>
 
       {/* Filter pills */}

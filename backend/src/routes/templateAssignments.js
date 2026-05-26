@@ -1136,11 +1136,20 @@ router.get("/my-today-progress", async (req, res, next) => {
       [userId, userId]
     );
 
-    // Count total assigned templates for this user
+    // Count total assigned templates for this user — only where the template still exists
     const [[{ assignedCount }]] = await pool.query(
       `SELECT COUNT(*) AS "assignedCount"
-       FROM template_user_assignments
-       WHERE assigned_to = ? AND company_id = ?`,
+       FROM template_user_assignments tua
+       WHERE tua.assigned_to = ? AND tua.company_id = ?
+         AND (
+           (tua.template_type = 'checklist' AND EXISTS (
+             SELECT 1 FROM checklist_templates ct WHERE ct.id = tua.template_id AND ct.company_id = tua.company_id
+           ))
+           OR
+           (tua.template_type = 'logsheet' AND EXISTS (
+             SELECT 1 FROM logsheet_templates lt WHERE lt.id = tua.template_id AND lt.company_id = tua.company_id
+           ))
+         )`,
       [userId, companyId]
     );
 
