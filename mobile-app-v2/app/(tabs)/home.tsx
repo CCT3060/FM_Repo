@@ -1,5 +1,5 @@
-import { router } from 'expo-router';
-import React, { useCallback, useEffect, useState } from 'react';
+import { router, useFocusEffect } from 'expo-router';
+import React, { useCallback, useState } from 'react';
 import {
   RefreshControl, ScrollView, StyleSheet, Text,
   TouchableOpacity, View, ActivityIndicator,
@@ -58,7 +58,9 @@ export default function HomeScreen() {
     }
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  // Re-fetch every time this screen comes into focus so counts update
+  // immediately after a checklist submission (no manual pull-to-refresh needed).
+  useFocusEffect(useCallback(() => { void load(); }, [load]));
   const onRefresh = () => { setRefreshing(true); void load(); };
 
   const isSoftMgr  = capabilities.isSoftManager;
