@@ -1,5 +1,5 @@
-import { router } from 'expo-router';
-import React, { useCallback, useEffect, useState } from 'react';
+import { router, useFocusEffect } from 'expo-router';
+import React, { useCallback, useState } from 'react';
 import {
   RefreshControl, ScrollView, StyleSheet, Text,
   TouchableOpacity, View, ActivityIndicator,
@@ -70,7 +70,8 @@ export default function ChecklistsTab() {
     }
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  // Re-fetch on every focus so Done/Pending counts reflect the latest submission.
+  useFocusEffect(useCallback(() => { void load(); }, [load]));
 
   const checklists = items.filter((i) => i.templateType !== 'logsheet');
   const logsheets  = items.filter((i) => i.templateType === 'logsheet');
