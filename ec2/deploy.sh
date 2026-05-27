@@ -35,6 +35,9 @@ done
 
 echo "=== [4/5] Build frontend ==="
 cd "$APP_ROOT/frontend"
+# Remove any .env file that may have VITE_API_URL=http://localhost:4000
+# The production build must use relative paths so nginx can proxy /api/ correctly.
+rm -f .env .env.local .env.development .env.development.local
 npm install
 npm run build
 # Nginx now serves directly from dist/ — no copy needed.
