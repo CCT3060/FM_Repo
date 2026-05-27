@@ -35,7 +35,7 @@ const getDevApiBase = (): string | null => {
 
 export const API_BASE: string =
   (process.env.EXPO_PUBLIC_API_URL as string | undefined) ??
-  (__DEV__ ? (getDevApiBase() ?? 'http://localhost:4000') : 'http://3.110.166.39');
+  (__DEV__ ? (getDevApiBase() ?? 'http://localhost:4000') : 'https://fm.catalystservices.eco');
 
 // ─── Error class ──────────────────────────────────────────────────────────────
 export class ApiError extends Error {
