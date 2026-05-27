@@ -6,6 +6,7 @@
  */
 
 import * as SecureStore from 'expo-secure-store';
+import Constants from 'expo-constants';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as FileSystem from 'expo-file-system';
 import { cacheData, getCachedData, addToOfflineQueue, getOfflineQueue, removeFromOfflineQueue } from './offlineStorage';
@@ -13,9 +14,28 @@ import { notifyNetworkStatus } from './networkStatus';
 import type { RoleCapabilities } from './permissions';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
+const getDevApiBase = (): string | null => {
+  const hostUri =
+    Constants.expoConfig?.hostUri ||
+    Constants.manifest?.hostUri ||
+    // Older/newer Expo manifest shapes
+    Constants.manifest2?.extra?.expoClient?.hostUri ||
+    Constants.manifest?.debuggerHost ||
+    Constants.manifest2?.extra?.expoClient?.debuggerHost ||
+    '';
+
+  if (!hostUri) return null;
+
+  const normalized = hostUri.replace(/^(https?:\/\/|exp:\/\/)/, '');
+  const host = normalized.split(':')[0];
+  if (!host) return null;
+
+  return `http://${host}:4000`;
+};
+
 export const API_BASE: string =
   (process.env.EXPO_PUBLIC_API_URL as string | undefined) ??
-  'http://3.110.166.39';  // EC2 IP — update DNS for catalystservices.eco to point here for HTTPS
+  (__DEV__ ? (getDevApiBase() ?? 'http://localhost:4000') : 'http://3.110.166.39');
 
 // ─── Error class ──────────────────────────────────────────────────────────────
 export class ApiError extends Error {

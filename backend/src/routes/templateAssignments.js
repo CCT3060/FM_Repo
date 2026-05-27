@@ -246,30 +246,6 @@ router.get("/my-assignments", async (req, res, next) => {
            -- Logsheets are recurring so they are ALWAYS shown once assigned
            (tua.template_type = 'logsheet' AND lt.id IS NOT NULL)
          )
-         AND (
-           -- Template has no shift restriction → always visible (also guards against deleted templates)
-           (tua.template_type = 'checklist' AND ct.id IS NOT NULL AND ct.shift_id IS NULL)
-           OR
-           -- Logsheets: always visible -- they are recurring and the technician must be able to fill
-           -- them even outside shift hours (daily logsheets need full-day access)
-           (tua.template_type = 'logsheet' AND lt.id IS NOT NULL)
-           OR
-           -- Checklist belongs to a shift → show if the user is in that shift AND the shift is currently active
-           (tua.template_type = 'checklist' AND ct.shift_id IS NOT NULL AND EXISTS (
-             SELECT 1 FROM employee_shifts es
-             JOIN shifts sh ON sh.id = es.shift_id
-             WHERE es.company_user_id = tua.assigned_to
-               AND es.shift_id = ct.shift_id
-               AND sh.status = 'active'
-               AND (
-                 (sh.start_time <= sh.end_time
-                   AND CURRENT_TIME BETWEEN sh.start_time AND sh.end_time)
-                 OR
-                 (sh.start_time > sh.end_time
-                   AND (CURRENT_TIME >= sh.start_time OR CURRENT_TIME <= sh.end_time))
-               )
-           ))
-         )
        ORDER BY tua.created_at DESC`,
       [req.companyUser.id, cid(req)]
     );
@@ -387,16 +363,8 @@ router.get("/my-assignments", async (req, res, next) => {
         }));
     }
 
-    // Strip soft templates from technical-only users (even if directly assigned).
-    // Strip non-soft templates from soft-only users.
-    let visibleFormatted = formatted;
-    if (serviceDomain === 'technical') {
-      visibleFormatted = formatted.filter(f => !isSoftCode(f.assetType));
-    } else if (serviceDomain === 'soft') {
-      visibleFormatted = formatted.filter(f => isSoftCode(f.assetType) || !f.assetType);
-    }
-
-    res.json([...visibleFormatted, ...softFormatted]);
+    // Explicit assignments should always be visible; service_domain only adds auto-included soft templates.
+    res.json([...formatted, ...softFormatted]);
   } catch (err) {
     next(err);
   }
@@ -2025,23 +1993,8 @@ router.get("/all-templates", async (req, res, next) => {
   try {
     const companyId = cid(req);
 
-    // Determine service domain from company_users record
-    // Default to 'both' so users without explicit domain setting see all templates
-    let serviceDomain = 'both';
-    try {
-      const [[cuRow]] = await pool.query(
-        `SELECT service_domain AS "serviceDomain" FROM company_users WHERE id = ? LIMIT 1`,
-        [req.companyUser.id]
-      );
-      serviceDomain = (cuRow?.serviceDomain || 'both').toLowerCase();
-    } catch { /* default both */ }
-
-    let softFilter = '';
-    if (serviceDomain === 'technical') {
-      softFilter = `AND LOWER(TRIM(COALESCE(ct.asset_type, ''))) != 'soft service'`;
-    } else if (serviceDomain === 'soft') {
-      softFilter = `AND LOWER(TRIM(COALESCE(ct.asset_type, ''))) = 'soft service'`;
-    }
+    // Show all templates for the company (matches Site Dashboard counts).
+    const softFilter = '';
 
     // All active checklist templates
     const [checklists] = await pool.query(

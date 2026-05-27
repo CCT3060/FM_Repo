@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "FM App",
-    "slug": "fmapp-mahesh9911",
+    "name": "softfm",
+    "slug": "softfm",
     "version": "2.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -56,9 +56,9 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "f5d10940-b371-498c-874e-768243da8506"
+        "projectId": "503375e8-87b2-49da-a586-3fed54987ed1"
       }
     },
-    "owner": "mahesh9911"
+    "owner": "rahulcct"
   }
 }
