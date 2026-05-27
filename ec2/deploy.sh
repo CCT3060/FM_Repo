@@ -37,9 +37,17 @@ echo "=== [4/5] Build frontend ==="
 cd "$APP_ROOT/frontend"
 npm install
 npm run build
-# Copy dist output to nginx root
-rm -rf "$FRONTEND_DIR"
-cp -r dist/. "$FRONTEND_DIR/"
+# Sync dist output into nginx root WITHOUT deleting the source directory.
+# (Previous bug: rm -rf deleted the source + dist together before cp could run.)
+rsync -a --delete dist/. "$FRONTEND_DIR/" 2>/dev/null || {
+  # rsync not available — fall back to manual sync
+  find "$FRONTEND_DIR" -maxdepth 1 -mindepth 1 \
+    ! -name 'src' ! -name 'node_modules' ! -name 'dist' ! -name 'public' \
+    ! -name 'package.json' ! -name 'package-lock.json' ! -name 'vite.config.js' \
+    ! -name 'index.html' ! -name 'eslint.config.js' ! -name '.env' ! -name '.env.*' \
+    -exec rm -rf {} + 2>/dev/null || true
+  cp -r dist/. "$FRONTEND_DIR/"
+}
 
 echo "=== [5/5] Restart backend with PM2 ==="
 cd "$BACKEND_DIR"
