@@ -1,4 +1,4 @@
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   RefreshControl, ScrollView, StyleSheet, Text,
@@ -36,7 +36,7 @@ export default function AssetsScreen() {
     } catch { /* silent */ } finally { setLoading(false); setRefreshing(false); }
   }, [assetTypeFilter]);
 
-  useEffect(() => { void load(); }, [load]);
+  useFocusEffect(useCallback(() => { void load(); }, [load]));
 
   const onSearch = (t: string) => { setSearch(t); void load(t); };
 

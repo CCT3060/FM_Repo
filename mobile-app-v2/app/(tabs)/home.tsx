@@ -58,8 +58,11 @@ export default function HomeScreen() {
     }
   }, []);
 
+<<<<<<< HEAD
   // Re-fetch every time this screen comes into focus so counts update
   // immediately after a checklist submission (no manual pull-to-refresh needed).
+=======
+>>>>>>> d054a90 (fix(mobile): auto-refresh screens on focus + pending-only view from home)
   useFocusEffect(useCallback(() => { void load(); }, [load]));
   const onRefresh = () => { setRefreshing(true); void load(); };
 
@@ -114,9 +117,9 @@ export default function HomeScreen() {
         ) : progress ? (
           <View style={[styles.statsRow, { backgroundColor: theme.surface, borderColor: theme.border }]}>
             {[
-              { label: 'Assigned',  value: (progress as any).assigned  ?? 0, color: theme.primary,  route: '/(tabs)/checklists' },
+             // { label: 'Assigned',  value: (progress as any).assigned  ?? 0, color: theme.primary,  route: '/(tabs)/checklists' },
               { label: 'Done',      value: (progress as any).completed ?? 0, color: '#059669',      route: '/history' },
-              { label: 'Pending',   value: (progress as any).pending   ?? 0, color: '#D97706',      route: '/(tabs)/checklists' },
+              { label: 'Pending',   value: (progress as any).pending   ?? 0, color: '#D97706',      route: '/pending-assignments' },
             ].map(({ label, value, color, route }, i, arr) => (
               <TouchableOpacity key={label} onPress={() => router.push(route as any)} activeOpacity={0.7} style={[styles.statItem, i < arr.length - 1 && { borderRightWidth: 1, borderRightColor: theme.border }]}>
                 <Text style={[styles.statValue, { color }]}>{value}</Text>

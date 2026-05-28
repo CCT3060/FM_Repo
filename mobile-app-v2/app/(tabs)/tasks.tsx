@@ -10,7 +10,7 @@
  * Status chips:  All · Pending · Done
  */
 
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -189,7 +189,7 @@ export default function TasksTab() {
     }
   }, [hasSoft, isSoftMgr]);
 
-  useEffect(() => { void load(); }, [load]);
+  useFocusEffect(useCallback(() => { void load(); }, [load]));
 
   // ── Build unified TaskItem list ────────────────────────────────────────────
   const allTasks: TaskItem[] = [

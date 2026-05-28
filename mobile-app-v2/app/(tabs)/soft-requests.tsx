@@ -1,4 +1,4 @@
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   RefreshControl, ScrollView, StyleSheet, Text,
@@ -73,7 +73,7 @@ export default function SoftRequestsTab() {
     }
   }, [showAll]);
 
-  useEffect(() => { void load(); }, [load]);
+  useFocusEffect(useCallback(() => { void load(); }, [load]));
 
   const filtered = items.filter((i) => {
     if (filter === 'open')     return i.status === 'open';

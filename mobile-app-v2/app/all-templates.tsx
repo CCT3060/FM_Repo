@@ -5,7 +5,7 @@
  * the user has an assignment for that template.
  */
 
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator, RefreshControl, ScrollView,
@@ -87,7 +87,7 @@ export default function AllTemplatesScreen() {
     }
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  useFocusEffect(useCallback(() => { void load(); }, [load]));
 
   const onRefresh = () => { setRefreshing(true); void load(); };
 
