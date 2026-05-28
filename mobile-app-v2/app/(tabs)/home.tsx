@@ -58,11 +58,8 @@ export default function HomeScreen() {
     }
   }, []);
 
-<<<<<<< HEAD
   // Re-fetch every time this screen comes into focus so counts update
   // immediately after a checklist submission (no manual pull-to-refresh needed).
-=======
->>>>>>> d054a90 (fix(mobile): auto-refresh screens on focus + pending-only view from home)
   useFocusEffect(useCallback(() => { void load(); }, [load]));
   const onRefresh = () => { setRefreshing(true); void load(); };
 

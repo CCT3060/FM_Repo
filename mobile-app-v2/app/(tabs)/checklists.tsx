@@ -70,10 +70,7 @@ export default function ChecklistsTab() {
     }
   }, []);
 
-<<<<<<< HEAD
   // Re-fetch on every focus so Done/Pending counts reflect the latest submission.
-=======
->>>>>>> d054a90 (fix(mobile): auto-refresh screens on focus + pending-only view from home)
   useFocusEffect(useCallback(() => { void load(); }, [load]));
 
   const checklists = items.filter((i) => i.templateType !== 'logsheet');
