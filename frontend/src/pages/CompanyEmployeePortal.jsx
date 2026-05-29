@@ -1385,10 +1385,15 @@ function ChecklistModal({ existing, assets = [], shifts = [], token, onClose, on
             </div>
             <div>
               <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Asset (optional)</label>
-              <select value={assetId} onChange={(e) => setAssetId(e.target.value)} className="form-select" style={{ width: "100%" }}>
-                <option value="">{filteredAssets.length ? "— Any asset —" : "No assets for this category"}</option>
-                {filteredAssets.map((a) => <option key={a.id} value={a.id}>{a.assetName}</option>)}
-              </select>
+              <SearchableSelect
+                value={assetId}
+                onChange={setAssetId}
+                options={[
+                  { value: "", label: filteredAssets.length ? "— Any asset —" : "No assets for this category" },
+                  ...filteredAssets.map((a) => ({ value: String(a.id), label: a.assetName }))
+                ]}
+                placeholder="Search & select asset…"
+              />
             </div>
             <div>
               <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Checklist Name *</label>

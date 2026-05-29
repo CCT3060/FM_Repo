@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef, memo } from "react";
 import TemplateImportModal from "./TemplateImportModal.jsx";
+import SearchableSelect from "./SearchableSelect.jsx";
 import { getApiBaseUrl } from "../utils/runtimeConfig";
 
 const API_BASE = getApiBaseUrl();
@@ -612,12 +613,15 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
           </div>
           <div>
             <Label>Asset</Label>
-            <Sel value={form.assetId} onChange={(e) => setForm((p) => ({ ...p, assetId: e.target.value }))}>
-              <option value="">— Select asset —</option>
-              {filteredChecklistAssets.map((a) => (
-                <option key={a.id} value={a.id}>{a.assetName || a.asset_name}</option>
-              ))}
-            </Sel>
+            <SearchableSelect
+              value={String(form.assetId ?? "")}
+              onChange={(v) => setForm((p) => ({ ...p, assetId: v }))}
+              options={[
+                { value: "", label: "— Select asset —" },
+                ...filteredChecklistAssets.map((a) => ({ value: String(a.id), label: a.assetName || a.asset_name }))
+              ]}
+              placeholder="Search & select asset…"
+            />
             {assets.length > 0 && filteredChecklistAssets.length === 0 && (
               <p style={{ fontSize: "11px", color: "#f59e0b", marginTop: "4px" }}>No {form.assetType} assets found for this company.</p>
             )}

@@ -25,6 +25,7 @@ export default function SearchableSelect({
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const [dropUp, setDropUp] = useState(false);
   const containerRef = useRef(null);
   const inputRef = useRef(null);
 
@@ -53,6 +54,19 @@ export default function SearchableSelect({
     onChange(String(opt.value));
     setOpen(false);
     setSearch("");
+  };
+
+  // Calculate whether dropdown should open upward
+  const openDropdown = () => {
+    if (disabled) return;
+    if (containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      setDropUp(spaceBelow < 260);
+    }
+    setOpen(true);
+    setSearch("");
+    setTimeout(() => inputRef.current?.select(), 0);
   };
 
   const handleInputKeyDown = (e) => {
@@ -91,7 +105,7 @@ export default function SearchableSelect({
           value={open ? search : (selected?.label ?? "")}
           placeholder={placeholder}
           disabled={disabled}
-          onClick={() => { if (!disabled) { setOpen(true); setSearch(""); setTimeout(() => inputRef.current?.select(), 0); } }}
+          onClick={() => { if (!disabled) { openDropdown(); } }}
           onChange={(e) => { setSearch(e.target.value); setOpen(true); }}
           onKeyDown={handleInputKeyDown}
           style={{
@@ -111,7 +125,7 @@ export default function SearchableSelect({
         />
         {/* Chevron */}
         <span
-          onClick={() => { if (!disabled) { setOpen((v) => !v); setSearch(""); } }}
+          onClick={() => { if (!disabled) { if (open) { setOpen(false); setSearch(""); } else { openDropdown(); } } }}
           style={{
             position: "absolute",
             right: "10px",
@@ -132,7 +146,9 @@ export default function SearchableSelect({
         <div
           style={{
             position: "absolute",
-            top: "calc(100% + 4px)",
+            ...(dropUp
+              ? { bottom: "calc(100% + 4px)", top: "auto" }
+              : { top: "calc(100% + 4px)", bottom: "auto" }),
             left: 0,
             right: 0,
             zIndex: 9999,
