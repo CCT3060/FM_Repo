@@ -43,9 +43,16 @@ function normalizeUrl(value, { preferHttps = false } = {}) {
 }
 
 export function getApiBaseUrl() {
-  const configured = normalizeUrl(import.meta.env.VITE_API_URL || "", { preferHttps: true });
   if (import.meta.env.DEV) return DEV_API_BASE;
-  if (configured) return configured;
+  const configured = normalizeUrl(import.meta.env.VITE_API_URL || "", { preferHttps: true });
+  // Never use a localhost URL in a production bundle — dev .env must not leak into prod builds
+  if (configured) {
+    try {
+      const u = new URL(configured);
+      if (u.hostname === "localhost" || u.hostname === "127.0.0.1") return "";
+    } catch { /* ignore */ }
+    return configured;
+  }
   return "";
 }
 
