@@ -3266,6 +3266,7 @@ export default function CompanyEmployeePortal() {
   const prevWOCount     = useRef(null);   // null = not yet initialised (suppress first-load sound)
   const prevAssignCount = useRef(null);   // null = not yet initialised
   const prevSoftCount   = useRef(null);   // null = not yet initialised (suppress first-load sound)
+  const [openSoftCount, setOpenSoftCount] = useState(0);
 
   // Modular alert sound hook — single shared AudioContext, throttled, localStorage preference
   const {
@@ -3625,6 +3626,7 @@ export default function CompanyEmployeePortal() {
             ringBell();
           }
           prevSoftCount.current = newSoftCount;
+          setOpenSoftCount(newSoftCount);
         } catch (_) { /* silent */ }
       }
     };
@@ -3654,7 +3656,9 @@ export default function CompanyEmployeePortal() {
       }
       // Seed soft request count (no sound on initial load)
       if (srRes != null) {
-        prevSoftCount.current = Array.isArray(srRes) ? srRes.length : (srRes?.total ?? 0);
+        const cnt = Array.isArray(srRes) ? srRes.length : (srRes?.total ?? 0);
+        prevSoftCount.current = cnt;
+        setOpenSoftCount(cnt);
       }
     }).catch(() => {});
 
@@ -3994,7 +3998,12 @@ export default function CompanyEmployeePortal() {
             <button key={item.key} onClick={() => setNav(item.key)}
               style={{ width: "100%", display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px", borderRadius: "8px", border: "none", cursor: "pointer", background: nav === item.key ? "#eff6ff" : "transparent", color: nav === item.key ? "#2563eb" : "#475569", fontWeight: nav === item.key ? 700 : 500, fontSize: "14px", textAlign: "left", marginBottom: "2px", transition: "background 0.15s" }}>
               {item.icon}
-              {item.label}
+              <span style={{ flex: 1 }}>{item.label}</span>
+              {item.key === "softrequests" && openSoftCount > 0 && (
+                <span style={{ background: "#7c3aed", color: "#fff", borderRadius: "10px", fontSize: "10px", fontWeight: 800, padding: "1px 6px", minWidth: "18px", textAlign: "center", lineHeight: "16px" }}>
+                  {openSoftCount > 99 ? "99+" : openSoftCount}
+                </span>
+              )}
             </button>
           ))}
         </nav>
@@ -4452,11 +4461,52 @@ export default function CompanyEmployeePortal() {
             return (
               <div>
                 {/* Header */}
-                <div style={{ marginBottom: "24px" }}>
-                  <h1 style={{ fontSize: "26px", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px", marginBottom: "4px" }}>
-                    Welcome back, {(currentUser.fullName || "").split(" ")[0]} 👋
-                  </h1>
-                  <p style={{ color: "#64748b", fontSize: "14px" }}>{currentUser.companyName} — {new Date().toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}</p>
+                <div style={{ marginBottom: "24px", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "16px", flexWrap: "wrap" }}>
+                  <div>
+                    <h1 style={{ fontSize: "26px", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px", marginBottom: "4px" }}>
+                      Welcome back, {(currentUser.fullName || "").split(" ")[0]} 👋
+                    </h1>
+                    <p style={{ color: "#64748b", fontSize: "14px" }}>{currentUser.companyName} — {new Date().toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}</p>
+                  </div>
+                  <div style={{ display: "flex", gap: "8px", flexShrink: 0 }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const rows = [
+                          ["Metric", "Value"],
+                          ["Active Assets", dashboard?.activeAssets ?? ""],
+                          ["Total Assets", dashboard?.totalAssets ?? ""],
+                          ["Open Requests", dashboard?.openIssues ?? ""],
+                          ["Open Soft Requests", dashboard?.openSoftRequests ?? dashboardSoftRequests.length],
+                          ["Total Warnings", (dashboard?.flags?.open || 0) + (dashboard?.softRequestWarnings || 0)],
+                          ["Critical Flags", dashboard?.flags?.critical ?? 0],
+                          ["Completion Rate (%)", completionRate],
+                          ["Total Submissions", totalSubmissions],
+                          ["Filled Logsheets", cs?.filledLogsheets ?? ""],
+                          ["Pending Logsheets", cs?.pendingLogsheets ?? ""],
+                          ["Filled Checklists", cs?.filledChecklists ?? ""],
+                          ["Pending Checklists", cs?.pendingChecklists ?? ""],
+                        ];
+                        const csv = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+                        const a = document.createElement("a");
+                        a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+                        a.download = `dashboard-${new Date().toISOString().slice(0, 10)}.csv`;
+                        a.click();
+                      }}
+                      style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "8px", fontSize: "13px", fontWeight: 600, cursor: "pointer", border: "1.5px solid #e2e8f0", background: "#fff", color: "#475569" }}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                      Export CSV
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => window.print()}
+                      style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "8px", fontSize: "13px", fontWeight: 600, cursor: "pointer", border: "1.5px solid #e2e8f0", background: "#fff", color: "#475569" }}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                      Print
+                    </button>
+                  </div>
                 </div>
 
                 {loading.dashboard && <p style={{ color: "#94a3b8" }}>Loading dashboard…</p>}

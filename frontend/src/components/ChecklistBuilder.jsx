@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { PlusCircle, ListChecks, AlertCircle, UsersRound } from "lucide-react";
 import { createChecklist, getChecklists, getChecklistAssignees, assignChecklistToUsers } from "../api";
 import ChecklistQuestionRow from "./ChecklistQuestionRow";
@@ -55,6 +55,8 @@ const ChecklistBuilder = ({ token, assets, users = [] }) => {
   const [draggingId, setDraggingId] = useState(null);
   const [assignees, setAssignees] = useState({});
   const [assignSelection, setAssignSelection] = useState({});
+  const [assetSearch, setAssetSearch] = useState("");
+  const questionsTopRef = useRef(null);
 
   const filteredAssets = useMemo(
     () => assets.filter((a) => a.assetType === category),
@@ -111,7 +113,10 @@ const ChecklistBuilder = ({ token, assets, users = [] }) => {
     }
   };
 
-  const handleAddQuestion = () => setQuestions((prev) => [...prev, makeQuestion()]);
+  const handleAddQuestion = () => {
+    setQuestions((prev) => [makeQuestion(), ...prev]);
+    setTimeout(() => questionsTopRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+  };
 
   const handleUpdateQuestion = (id, patch) => {
     setQuestions((prev) => prev.map((q) => (q.id === id ? { ...q, ...patch } : q)));
@@ -242,13 +247,29 @@ const ChecklistBuilder = ({ token, assets, users = [] }) => {
           </div>
           <div>
             <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>Asset</label>
-            <select value={assetId} onChange={(e) => setAssetId(e.target.value)} className="form-select" required style={{ width: "100%" }}>
+            <input
+              value={assetSearch}
+              onChange={(e) => setAssetSearch(e.target.value)}
+              placeholder="Search assets…"
+              className="form-input"
+              style={{ width: "100%", marginBottom: "6px" }}
+            />
+            <select
+              value={assetId}
+              onChange={(e) => setAssetId(e.target.value)}
+              className="form-select"
+              required
+              style={{ width: "100%" }}
+              size={Math.min(6, filteredAssets.filter((a) => !assetSearch || a.assetName.toLowerCase().includes(assetSearch.toLowerCase())).length + 1)}
+            >
               <option value="" disabled>
                 {filteredAssets.length ? "Select asset" : "No assets for this category"}
               </option>
-              {filteredAssets.map((a) => (
-                <option key={a.id} value={a.id}>{a.assetName}</option>
-              ))}
+              {filteredAssets
+                .filter((a) => !assetSearch || a.assetName.toLowerCase().includes(assetSearch.toLowerCase()))
+                .map((a) => (
+                  <option key={a.id} value={a.id}>{a.assetName}</option>
+                ))}
             </select>
           </div>
           <div>
@@ -270,7 +291,7 @@ const ChecklistBuilder = ({ token, assets, users = [] }) => {
               <PlusCircle size={15} /> Add Question
             </button>
           </div>
-          <div style={{ padding: "8px 0" }}>
+          <div style={{ padding: "8px 0" }} ref={questionsTopRef}>
             {questions.map((q) => (
               <ChecklistQuestionRow
                 key={q.id}
