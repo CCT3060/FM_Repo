@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { PlusCircle, ListChecks, AlertCircle, UsersRound } from "lucide-react";
 import { createChecklist, getChecklists, getChecklistAssignees, assignChecklistToUsers } from "../api";
 import ChecklistQuestionRow from "./ChecklistQuestionRow";
+import SearchableSelect from "./SearchableSelect";
 
 const categories = [
   { value: "soft", label: "Soft Services" },
@@ -55,7 +56,6 @@ const ChecklistBuilder = ({ token, assets, users = [] }) => {
   const [draggingId, setDraggingId] = useState(null);
   const [assignees, setAssignees] = useState({});
   const [assignSelection, setAssignSelection] = useState({});
-  const [assetSearch, setAssetSearch] = useState("");
   const questionsTopRef = useRef(null);
 
   const filteredAssets = useMemo(
@@ -246,31 +246,13 @@ const ChecklistBuilder = ({ token, assets, users = [] }) => {
             </select>
           </div>
           <div>
-            <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>Asset</label>
-            <input
-              value={assetSearch}
-              onChange={(e) => setAssetSearch(e.target.value)}
-              placeholder="Search assets…"
-              className="form-input"
-              style={{ width: "100%", marginBottom: "6px" }}
-            />
-            <select
+            <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>Asset<span style={{ color: "#ef4444", marginLeft: "3px" }}>*</span></label>
+            <SearchableSelect
               value={assetId}
-              onChange={(e) => setAssetId(e.target.value)}
-              className="form-select"
-              required
-              style={{ width: "100%" }}
-              size={Math.min(6, filteredAssets.filter((a) => !assetSearch || a.assetName.toLowerCase().includes(assetSearch.toLowerCase())).length + 1)}
-            >
-              <option value="" disabled>
-                {filteredAssets.length ? "Select asset" : "No assets for this category"}
-              </option>
-              {filteredAssets
-                .filter((a) => !assetSearch || a.assetName.toLowerCase().includes(assetSearch.toLowerCase()))
-                .map((a) => (
-                  <option key={a.id} value={a.id}>{a.assetName}</option>
-                ))}
-            </select>
+              onChange={setAssetId}
+              options={filteredAssets.map((a) => ({ value: String(a.id), label: a.assetName }))}
+              placeholder={filteredAssets.length ? "Search & select asset…" : "No assets for this category"}
+            />
           </div>
           <div>
             <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>Checklist Name</label>

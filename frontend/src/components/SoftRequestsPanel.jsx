@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import SearchableSelect from "./SearchableSelect.jsx";
 import {
   getSoftServiceRequestsAll,
   assignSoftServiceRequest,
@@ -50,13 +51,16 @@ function AssignModal({ req, users, token, onClose, onDone }) {
         <p style={{ margin: "0 0 18px", fontSize: "13px", color: "#64748b" }}>{req.assetName} · <span style={{ fontFamily: "monospace", color: "#94a3b8" }}>{req.requestNumber}</span></p>
         {err && <div style={{ background: "#fef2f2", color: "#dc2626", padding: "9px 12px", borderRadius: "7px", marginBottom: "14px", fontSize: "13px" }}>{err}</div>}
         <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Assign To</label>
-        <select value={selected} onChange={(e) => setSelected(e.target.value)}
-          style={{ width: "100%", padding: "9px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13.5px", background: "#fff", marginBottom: "20px" }}>
-          <option value="">— Unassigned —</option>
-          {users.map((u) => (
-            <option key={u.id} value={u.id}>{u.fullName}{u.designation ? ` · ${u.designation}` : ""}</option>
-          ))}
-        </select>
+        <SearchableSelect
+          value={selected}
+          onChange={setSelected}
+          options={[
+            { value: "", label: "— Unassigned —" },
+            ...users.map((u) => ({ value: String(u.id), label: `${u.fullName}${u.designation ? ` · ${u.designation}` : ""}` }))
+          ]}
+          placeholder="Search user…"
+          style={{ marginBottom: "20px" }}
+        />
         <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
           <button onClick={onClose} style={{ padding: "9px 20px", borderRadius: "8px", border: "1px solid #e2e8f0", background: "#fff", color: "#475569", cursor: "pointer", fontWeight: 600 }}>Cancel</button>
           <button onClick={save} disabled={saving} style={{ padding: "9px 20px", borderRadius: "8px", border: "none", background: "#2563eb", color: "#fff", cursor: saving ? "not-allowed" : "pointer", fontWeight: 600, opacity: saving ? 0.7 : 1 }}>
@@ -102,13 +106,16 @@ function CutoffModal({ req, users, token, onClose, onDone }) {
           Escalate To (after cutoff)
           <span style={{ marginLeft: "6px", fontSize: "11px", color: "#94a3b8", fontWeight: 400 }}>— notified when deadline passes</span>
         </label>
-        <select value={escalateUser} onChange={(e) => setEscalateUser(e.target.value)}
-          style={{ width: "100%", padding: "9px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13.5px", background: "#fff", marginBottom: "20px" }}>
-          <option value="">— No escalation —</option>
-          {users.map((u) => (
-            <option key={u.id} value={u.id}>{u.fullName}{u.designation ? ` · ${u.designation}` : ""}</option>
-          ))}
-        </select>
+        <SearchableSelect
+          value={escalateUser}
+          onChange={setEscalateUser}
+          options={[
+            { value: "", label: "— No escalation —" },
+            ...users.map((u) => ({ value: String(u.id), label: `${u.fullName}${u.designation ? ` · ${u.designation}` : ""}` }))
+          ]}
+          placeholder="Search user…"
+          style={{ marginBottom: "20px" }}
+        />
 
         <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
           <button onClick={onClose} style={{ padding: "9px 20px", borderRadius: "8px", border: "1px solid #e2e8f0", background: "#fff", color: "#475569", cursor: "pointer", fontWeight: 600 }}>Cancel</button>

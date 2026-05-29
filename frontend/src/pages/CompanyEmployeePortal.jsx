@@ -12,6 +12,7 @@ import WorkOrdersPanel from "../components/WorkOrdersPanel.jsx";
 import SoftRequestsPanel from "../components/SoftRequestsPanel.jsx";
 import AssetDashboard from "../components/AssetDashboard.jsx";
 import OjtTrainingBuilder, { TrainingPreviewModal, TrainingQRModal } from "../components/OjtTrainingBuilder.jsx";
+import SearchableSelect from "../components/SearchableSelect.jsx";
 import { useAlertSound } from "../hooks/useAlertSound";
 import {
   getCompanyPortalMe,
@@ -538,15 +539,18 @@ function EmployeeModal({ existing, token, employees = [], customRoles = [], curr
                     ⚠ No {parentRoleInfo?.label || parentRole} users found. Add a {parentRoleInfo?.label || parentRole} first.
                   </div>
                 ) : (
-                  <select value={form.supervisorId} onChange={(e) => change("supervisorId", e.target.value)}
-                    style={{ width: "100%", padding: "9px 11px", border: `1px solid ${parentRoleInfo?.border || "#e2e8f0"}`, borderRadius: "7px", fontSize: "13.5px", background: "#fff" }}>
-                    <option value="">— Select {parentRoleInfo?.label || parentRole} —</option>
-                    {parentOptions.map((p) => (
-                      <option key={p.id} value={String(p.id)}>
-                        {p.fullName}{p.shift ? ` · ${p.shift} Shift` : ""}{p.designation ? ` — ${p.designation}` : ""}
-                      </option>
-                    ))}
-                  </select>
+                  <SearchableSelect
+                    value={form.supervisorId}
+                    onChange={(v) => change("supervisorId", v)}
+                    options={[
+                      { value: "", label: `— Select ${parentRoleInfo?.label || parentRole} —` },
+                      ...parentOptions.map((p) => ({
+                        value: String(p.id),
+                        label: `${p.fullName}${p.shift ? ` · ${p.shift} Shift` : ""}${p.designation ? ` — ${p.designation}` : ""}`,
+                      }))
+                    ]}
+                    placeholder={`Select ${parentRoleInfo?.label || parentRole}…`}
+                  />
                 )}
               </div>
             </div>
@@ -555,12 +559,19 @@ function EmployeeModal({ existing, token, employees = [], customRoles = [], curr
           {/* Legacy non-hierarchy supervisor field */}
           {showLegacySupervisor && (
             <div style={{ gridColumn: "span 2" }}>
-              <FSelect label="Supervisor (optional)" value={form.supervisorId} onChange={(e) => change("supervisorId", e.target.value)}>
-                <option value="">— None —</option>
-                {employees.filter((e) => e.role === "supervisor" || e.role === "technical_lead" || e.role === "assistant_manager").map((s) => (
-                  <option key={s.id} value={String(s.id)}>{s.fullName}{s.designation ? ` · ${s.designation}` : ""}</option>
-                ))}
-              </FSelect>
+              <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Supervisor (optional)</label>
+              <SearchableSelect
+                value={form.supervisorId}
+                onChange={(v) => change("supervisorId", v)}
+                options={[
+                  { value: "", label: "— None —" },
+                  ...employees.filter((e) => e.role === "supervisor" || e.role === "technical_lead" || e.role === "assistant_manager").map((s) => ({
+                    value: String(s.id),
+                    label: `${s.fullName}${s.designation ? ` · ${s.designation}` : ""}`,
+                  }))
+                ]}
+                placeholder="Search supervisor…"
+              />
             </div>
           )}
 
@@ -3398,7 +3409,9 @@ export default function CompanyEmployeePortal() {
   const [fleetSubmissionDetail, setFleetSubmissionDetail] = useState(null);
   const [fleetSubmissionDetailLoading, setFleetSubmissionDetailLoading] = useState(false);
   const [assignFleetLogsheet, setAssignFleetLogsheet] = useState(null);
+  const [assignFleetLogsheetEmp, setAssignFleetLogsheetEmp] = useState("");
   const [assignFleetChecklist, setAssignFleetChecklist] = useState(null);
+  const [assignFleetChecklistEmp, setAssignFleetChecklistEmp] = useState("");
   const [showFleetAssetModal, setShowFleetAssetModal] = useState(false);
   const [editFleetAsset, setEditFleetAsset] = useState(null);
   const [viewingFleetAsset, setViewingFleetAsset] = useState(null);
@@ -3977,10 +3990,10 @@ export default function CompanyEmployeePortal() {
       {/* Sidebar */}
       <aside style={{ width: "240px", background: "#fff", borderRight: "1px solid #e2e8f0", display: "flex", flexDirection: "column", position: "fixed", top: 0, bottom: 0, left: 0, zIndex: 10 }}>
         {/* Brand */}
-        <div style={{ padding: "18px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ padding: "12px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "center", minHeight: "68px" }}>
           {companyLogoUrl
-            ? <img src={companyLogoUrl} alt="Company Logo" style={{ maxWidth: "150px", height: "40px", objectFit: "contain" }} />
-            : <img src={logo} alt="Logo" style={{ maxWidth: "150px", height: "40px", objectFit: "contain" }} />
+            ? <img src={companyLogoUrl} alt="Company Logo" style={{ maxWidth: "180px", maxHeight: "56px", width: "auto", height: "auto", objectFit: "contain" }} />
+            : <img src={logo} alt="Logo" style={{ maxWidth: "160px", maxHeight: "48px", width: "auto", height: "auto", objectFit: "contain" }} />
           }
         </div>
 
@@ -4872,15 +4885,15 @@ export default function CompanyEmployeePortal() {
                         <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>
                           Assign To <span style={{ color: "#ef4444" }}>*</span>
                         </label>
-                        <select value={dashWOAssignUser} onChange={(e) => setDashWOAssignUser(e.target.value)}
-                          style={{ width: "100%", padding: "9px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13.5px", background: "#fff" }}>
-                          <option value="">— Select employee —</option>
-                          {dashboardWOUsers.map((u) => (
-                            <option key={u.id} value={u.id}>
-                              {u.fullName} ({u.role}{u.designation ? ` · ${u.designation}` : ""})
-                            </option>
-                          ))}
-                        </select>
+                        <SearchableSelect
+                          value={dashWOAssignUser}
+                          onChange={setDashWOAssignUser}
+                          options={[
+                            { value: "", label: "— Select employee —" },
+                            ...dashboardWOUsers.map((u) => ({ value: String(u.id), label: `${u.fullName} (${u.role}${u.designation ? ` · ${u.designation}` : ""})` }))
+                          ]}
+                          placeholder="Search employee…"
+                        />
                       </div>
                       <div style={{ marginBottom: "20px" }}>
                         <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Note (optional)</label>
@@ -5371,6 +5384,8 @@ export default function CompanyEmployeePortal() {
                       const chainInfo = HIERARCHY_CHAIN.find((h) => h.role === emp.role);
                       const children = childrenOf(emp.id);
                       const empAssignments = assignments.filter((a) => String(a.assignedTo) === String(emp.id));
+                      const empChecklistCount = empAssignments.filter((a) => a.templateType === "checklist").length;
+                      const empLogsheetCount = empAssignments.filter((a) => a.templateType === "logsheet").length;
                       const indent = depth * 28;
                       return (
                         <div key={emp.id} style={{ marginLeft: `${indent}px`, marginBottom: "8px" }}>
@@ -5392,8 +5407,11 @@ export default function CompanyEmployeePortal() {
                                   {emp.shift && (
                                     <span style={{ padding: "2px 8px", borderRadius: "20px", fontSize: "11px", fontWeight: 600, background: "#ede9fe", color: "#5b21b6" }}>{emp.shift} Shift</span>
                                   )}
-                                  {empAssignments.length > 0 && (
-                                    <span style={{ padding: "2px 8px", borderRadius: "20px", fontSize: "11px", fontWeight: 600, background: "#eff6ff", color: "#2563eb" }}>{empAssignments.length} template{empAssignments.length !== 1 ? "s" : ""}</span>
+                                  {empChecklistCount > 0 && (
+                                    <span style={{ padding: "2px 8px", borderRadius: "20px", fontSize: "11px", fontWeight: 600, background: "#eff6ff", color: "#2563eb" }}>{empChecklistCount} checklist{empChecklistCount !== 1 ? "s" : ""}</span>
+                                  )}
+                                  {empLogsheetCount > 0 && (
+                                    <span style={{ padding: "2px 8px", borderRadius: "20px", fontSize: "11px", fontWeight: 600, background: "#ede9fe", color: "#7c3aed" }}>{empLogsheetCount} logsheet{empLogsheetCount !== 1 ? "s" : ""}</span>
                                   )}
                                 </div>
                                 <p style={{ fontSize: "12px", color: "#64748b", margin: 0, marginTop: "1px" }}>
@@ -5815,16 +5833,17 @@ export default function CompanyEmployeePortal() {
                           )}
                           {currentUser.role === "admin" && (
                             <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                              <select
-                                multiple={false}
-                                value={addEmpInput[s.id] || ""}
-                                onChange={(e) => setAddEmpInput((p) => ({ ...p, [s.id]: e.target.value }))}
-                                style={{ flex: 1, padding: "7px 10px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13px" }}>
-                                <option value="">— Select employee to add —</option>
-                                {employees.filter((e) => !(shiftEmployees[s.id] || []).some((ae) => ae.id === e.id)).map((e) => (
-                                  <option key={e.id} value={e.id}>{e.fullName || e.username || e.email}</option>
-                                ))}
-                              </select>
+                              <div style={{ flex: 1 }}>
+                                <SearchableSelect
+                                  value={addEmpInput[s.id] || ""}
+                                  onChange={(v) => setAddEmpInput((p) => ({ ...p, [s.id]: v }))}
+                                  options={[
+                                    { value: "", label: "— Select employee to add —" },
+                                    ...employees.filter((e) => !(shiftEmployees[s.id] || []).some((ae) => ae.id === e.id)).map((e) => ({ value: String(e.id), label: e.fullName || e.username || e.email }))
+                                  ]}
+                                  placeholder="Search employee…"
+                                />
+                              </div>
                               <button onClick={() => handleAssignEmployees(s.id)}
                                 style={{ padding: "7px 14px", background: "#2563eb", color: "#fff", border: "none", borderRadius: "7px", fontWeight: 600, fontSize: "13px", cursor: "pointer" }}>
                                 Add
@@ -6475,21 +6494,25 @@ export default function CompanyEmployeePortal() {
                     <button onClick={() => setAssignFleetLogsheet(null)} style={{ background: "#f1f5f9", border: "none", borderRadius: "8px", padding: "6px 10px", cursor: "pointer", color: "#64748b" }}>✕</button>
                   </div>
                   <p style={{ fontSize: "13px", color: "#64748b", marginBottom: "16px" }}>Select an employee to assign this logsheet to:</p>
-                  <select id="fleet-assign-emp" style={{ width: "100%", padding: "9px 12px", borderRadius: "8px", border: "1px solid #e2e8f0", fontSize: "14px", marginBottom: "16px" }} defaultValue="">
-                    <option value="">— Select Employee —</option>
-                    {employees.map(e => (
-                      <option key={e.id} value={e.id}>{e.fullName} ({e.role})</option>
-                    ))}
-                  </select>
+                  <SearchableSelect
+                    value={assignFleetLogsheetEmp}
+                    onChange={setAssignFleetLogsheetEmp}
+                    options={[
+                      { value: "", label: "— Select Employee —" },
+                      ...employees.map(e => ({ value: String(e.id), label: `${e.fullName} (${e.role})` }))
+                    ]}
+                    placeholder="Search employee…"
+                    style={{ marginBottom: "16px" }}
+                  />
                   <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
                     <button onClick={() => setAssignFleetLogsheet(null)} style={{ padding: "8px 16px", borderRadius: "8px", background: "#f1f5f9", color: "#475569", border: "none", fontWeight: 600, cursor: "pointer" }}>Cancel</button>
                     <button onClick={async () => {
-                      const empId = document.getElementById("fleet-assign-emp")?.value;
+                      const empId = assignFleetLogsheetEmp;
                       if (!empId) { alert("Please select an employee"); return; }
                       try {
                         await createTemplateUserAssignment(token, { templateType: "logsheet", templateId: assignFleetLogsheet.id, assignedTo: Number(empId) });
                         alert("Logsheet assigned successfully!");
-                        setAssignFleetLogsheet(null);
+                        setAssignFleetLogsheet(null); setAssignFleetLogsheetEmp("");
                       } catch (e) { alert(e.message || "Assignment failed"); }
                     }} style={{ padding: "8px 16px", borderRadius: "8px", background: "#2563eb", color: "#fff", border: "none", fontWeight: 600, cursor: "pointer" }}>Assign</button>
                   </div>
@@ -6506,21 +6529,25 @@ export default function CompanyEmployeePortal() {
                     <button onClick={() => setAssignFleetChecklist(null)} style={{ background: "#f1f5f9", border: "none", borderRadius: "8px", padding: "6px 10px", cursor: "pointer", color: "#64748b" }}>✕</button>
                   </div>
                   <p style={{ fontSize: "13px", color: "#64748b", marginBottom: "16px" }}>Select an employee to assign this checklist to:</p>
-                  <select id="fleet-assign-chk-emp" style={{ width: "100%", padding: "9px 12px", borderRadius: "8px", border: "1px solid #e2e8f0", fontSize: "14px", marginBottom: "16px" }} defaultValue="">
-                    <option value="">— Select Employee —</option>
-                    {employees.map(e => (
-                      <option key={e.id} value={e.id}>{e.fullName} ({e.role})</option>
-                    ))}
-                  </select>
+                  <SearchableSelect
+                    value={assignFleetChecklistEmp}
+                    onChange={setAssignFleetChecklistEmp}
+                    options={[
+                      { value: "", label: "— Select Employee —" },
+                      ...employees.map(e => ({ value: String(e.id), label: `${e.fullName} (${e.role})` }))
+                    ]}
+                    placeholder="Search employee…"
+                    style={{ marginBottom: "16px" }}
+                  />
                   <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
                     <button onClick={() => setAssignFleetChecklist(null)} style={{ padding: "8px 16px", borderRadius: "8px", background: "#f1f5f9", color: "#475569", border: "none", fontWeight: 600, cursor: "pointer" }}>Cancel</button>
                     <button onClick={async () => {
-                      const empId = document.getElementById("fleet-assign-chk-emp")?.value;
+                      const empId = assignFleetChecklistEmp;
                       if (!empId) { alert("Please select an employee"); return; }
                       try {
                         await createTemplateUserAssignment(token, { templateType: "checklist", templateId: assignFleetChecklist.id, assignedTo: Number(empId) });
                         alert("Checklist assigned successfully!");
-                        setAssignFleetChecklist(null);
+                        setAssignFleetChecklist(null); setAssignFleetChecklistEmp("");
                       } catch (e) { alert(e.message || "Assignment failed"); }
                     }} style={{ padding: "8px 16px", borderRadius: "8px", background: "#2563eb", color: "#fff", border: "none", fontWeight: 600, cursor: "pointer" }}>Assign</button>
                   </div>
