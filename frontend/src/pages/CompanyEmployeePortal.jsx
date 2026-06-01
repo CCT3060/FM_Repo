@@ -5623,7 +5623,7 @@ export default function CompanyEmployeePortal() {
           <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
             {/* Sub-navigation tabs */}
             <div style={{ display: "flex", gap: "4px", marginBottom: "24px", borderBottom: "2px solid #e2e8f0" }}>
-              {[{ k: "submissions", label: "Submissions & Reports" }].map(({ k, label }) => (
+              {[{ k: "templates", label: "Templates" }, { k: "submissions", label: "Submissions & Reports" }].map(({ k, label }) => (
                 <button key={k} type="button" onClick={() => setChecklistSubNav(k)}
                   style={{ padding: "10px 20px", background: "none", border: "none",
                     borderBottom: checklistSubNav === k ? "3px solid #2563eb" : "3px solid transparent",
