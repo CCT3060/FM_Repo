@@ -2202,6 +2202,7 @@ router.post("/template-user-assignments", async (req, res, next) => {
       const tplData  = { type: "template_assignment", templateType, templateId: String(normalizedTemplateId), screen: "/notifications" };
       if (assignee?.push_token) await sendExpoPush(assignee.push_token, tplTitle, tplBody, tplData);
       if (assignee?.fcm_token)  await sendFCMPush(assignee.fcm_token,  tplTitle, tplBody, tplData);
+      await createInAppNotification(cid(req), normalizedAssignedTo, tplTitle, tplBody, "/notifications");
     } catch { /* Non-fatal */ }
   } catch (err) {
     next(err);
@@ -2281,6 +2282,17 @@ router.get("/template-user-assignments/mine", async (req, res, next) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // WORK ORDERS
 // ─────────────────────────────────────────────────────────────────────────────
+
+/* ── Helper: create in-app notification row (non-fatal) ──────────────────── */
+async function createInAppNotification(companyId, recipientId, title, message, targetScreen = null) {
+  try {
+    await pool.execute(
+      `INSERT INTO notifications (company_id, recipient_id, type, title, message, is_read, created_at, target_screen)
+       VALUES (?, ?, 'push', ?, ?, FALSE, NOW(), ?)`,
+      [companyId, recipientId, title, message, targetScreen]
+    );
+  } catch { /* Non-fatal */ }
+}
 
 /* ── Helper: send Expo push notification (non-fatal) ──────────────────────── */
 async function sendExpoPush(pushToken, title, body, data = {}) {
@@ -2573,6 +2585,7 @@ router.post("/work-orders", async (req, res, next) => {
         if (assignee?.fcm_token) {
           await sendFCMPush(assignee.fcm_token, woTitle, woBody, woData);
         }
+        await createInAppNotification(companyId, assignedTo, woTitle, woBody, "/work-orders");
       } catch { /* Non-fatal */ }
     }
   } catch (err) {

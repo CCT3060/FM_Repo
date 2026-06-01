@@ -4071,11 +4071,12 @@ export default function CompanyEmployeePortal() {
 
   // Build the styled QR card HTML for a single location
   const buildLocQrCardHtml = (qrDataUrl, loc, clientLogoDataUrl, catalystLogoDataUrl) => {
+    const sf = locQrSettings?.showFields ?? ["name","floor","room","building","campus"];
     const details = [
-      loc.floor    ? `Floor - ${loc.floor}`       : null,
-      loc.room     ? `Area - ${loc.room}`          : null,
-      loc.building ? `Building - ${loc.building}` : null,
-      loc.campus   ? `Campus - ${loc.campus}`     : null,
+      sf.includes("floor")    && loc.floor    ? `Floor - ${loc.floor}`       : null,
+      sf.includes("room")     && loc.room     ? `Area - ${loc.room}`          : null,
+      sf.includes("building") && loc.building ? `Building - ${loc.building}` : null,
+      sf.includes("campus")   && loc.campus   ? `Campus - ${loc.campus}`     : null,
     ].filter(Boolean);
     const clientLogoHtml = clientLogoDataUrl
       ? `<img src="${clientLogoDataUrl}" style="max-width:90px;max-height:55px;object-fit:contain;" />`
@@ -4094,7 +4095,7 @@ export default function CompanyEmployeePortal() {
         <div style="background:#f8fafc;padding:10px;border-radius:10px;display:inline-block;margin-bottom:12px;border:1px solid #e2e8f0;">
           <img src="${qrDataUrl}" style="width:200px;height:200px;display:block;" />
         </div>
-        <div style="font-size:13px;font-weight:600;margin-bottom:4px;color:#0f172a;">${loc.name}</div>
+        ${sf.includes("name") ? `<div style="font-size:13px;font-weight:600;margin-bottom:4px;color:#0f172a;">${loc.name}</div>` : ""}
         ${details.map(d => `<div style="font-size:12px;color:#334155;margin-bottom:2px;">${d}</div>`).join("")}
         <div style="font-size:13px;font-weight:700;color:#0f172a;margin-top:8px;">www.catalystsolutions.eco</div>
       </div>`;
@@ -4241,16 +4242,17 @@ export default function CompanyEmployeePortal() {
       ]);
 
       const W = 340, PAD = 24;
+      const sf = locQrSettings?.showFields ?? ["name","floor","room","building","campus"];
       const details = [
-        loc.floor    ? `Floor - ${loc.floor}`       : null,
-        loc.room     ? `Area - ${loc.room}`          : null,
-        loc.building ? `Building - ${loc.building}` : null,
-        loc.campus   ? `Campus - ${loc.campus}`     : null,
+        sf.includes("floor")    && loc.floor    ? `Floor - ${loc.floor}`       : null,
+        sf.includes("room")     && loc.room     ? `Area - ${loc.room}`          : null,
+        sf.includes("building") && loc.building ? `Building - ${loc.building}` : null,
+        sf.includes("campus")   && loc.campus   ? `Campus - ${loc.campus}`     : null,
       ].filter(Boolean);
 
       // Calculate canvas height
       const QR_BOX = 216;
-      let H = PAD + 56 + 14 + 20 + 4 + 14 + 14 + QR_BOX + 14 + 18 + 4 + (details.length * 18) + 8 + 14 + 14 + 40 + PAD;
+      let H = PAD + 56 + 14 + 20 + 4 + 14 + 14 + QR_BOX + 14 + (sf.includes("name") ? 18 + 4 : 0) + (details.length * 18) + 8 + 14 + 14 + 40 + PAD;
 
       const SCALE = 2;
       const canvas = document.createElement("canvas");
@@ -4315,9 +4317,11 @@ export default function CompanyEmployeePortal() {
       y += QR_BOX + 14;
 
       // Location name
-      ctx.fillStyle = "#0f172a"; ctx.font = "bold 13px Arial"; ctx.textAlign = "center";
-      ctx.fillText(loc.name, W / 2, y + 13);
-      y += 18 + 4;
+      if (sf.includes("name")) {
+        ctx.fillStyle = "#0f172a"; ctx.font = "bold 13px Arial"; ctx.textAlign = "center";
+        ctx.fillText(loc.name, W / 2, y + 13);
+        y += 18 + 4;
+      }
 
       // Detail lines
       ctx.fillStyle = "#334155"; ctx.font = "12px Arial";

@@ -1,0 +1,3 @@
+API running on port 4000
+[EscalationJob] Started – per-severity thresholds (critical 2h / high 8h / medium 24h / low 48h). Runs every 30 min
+[WOEscalationJob] Started — runs every 5 min, max level 5.

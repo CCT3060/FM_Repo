@@ -8,6 +8,7 @@ import CompanyPortal from "./pages/CompanyPortal";
 import CompanyLogin from "./pages/CompanyLogin";
 import CompanyEmployeePortal from "./pages/CompanyEmployeePortal";
 import AssetScanPage from "./pages/AssetScanPage";
+import LocationScanPage from "./pages/LocationScanPage";
 import SubmissionsPage from "./pages/SubmissionsPage";
 import "./styles.css";
 import {
@@ -260,6 +261,7 @@ function App() {
       <Route path="/company/portal/*" element={<CompanyEmployeePortal />} />
       <Route path="/company/submissions" element={<SubmissionsPage />} />
       <Route path="/asset-scan/:assetId" element={<AssetScanPage />} />
+      <Route path="/location/:id" element={<LocationScanPage />} />
       <Route path="*" element={isRootAuthed ? <AdminShell onSignOut={handleRootSignOut} /> : <Navigate to="/root-login" replace />} />
     </Routes>
   );

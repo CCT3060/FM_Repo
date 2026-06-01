@@ -20,6 +20,10 @@ import { requireCompanyAuth } from "../middleware/companyAuth.js";
 const router = Router();
 router.use(requireCompanyAuth);
 
+// ── One-time migration: add target_screen column if it doesn't exist ─────────
+pool.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS target_screen VARCHAR(255) DEFAULT NULL`)
+  .catch(() => {}); // Silently ignore if already exists or driver error
+
 // ── GET /notifications ────────────────────────────────────────────────────────
 router.get("/", async (req, res, next) => {
   try {
@@ -38,6 +42,8 @@ router.get("/", async (req, res, next) => {
          n.type,
          n.title,
          n.message,
+         n.message   AS "body",
+         n.target_screen AS "targetScreen",
          n.is_read   AS "isRead",
          n.created_at AS "createdAt",
          -- flag snapshot for quick display
