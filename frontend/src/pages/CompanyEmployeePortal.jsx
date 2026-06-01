@@ -155,6 +155,7 @@ const NAV_ALL = [
   { key: "warnings", label: "Warnings", roles: ["admin","supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> },
   { key: "workorders", label: "Requests", roles: ["admin","supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-4 0v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg> },
   { key: "softrequests", label: "Soft Requests", roles: ["admin","supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> },
+  { key: "locations", label: "Locations", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg> },
   { key: "shifts", label: "Shifts", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> },
   { key: "roles", label: "Manage Roles", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 7h18M3 12h18M3 17h18"/></svg> },
   { key: "asset-types", label: "Asset Types", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg> },
@@ -252,6 +253,7 @@ const ALL_MODULES = [
   { key: "workorders", label: "Requests" },
   { key: "warnings",   label: "Warnings" },
   { key: "assets",     label: "Assets" },
+  { key: "locations",  label: "Locations" },
   { key: "mytasks",    label: "My Tasks" },
   { key: "ojt",        label: "OJT Training" },
   { key: "shifts",     label: "Shifts" },
@@ -850,6 +852,70 @@ function AssignTemplateModal({ employee, token, checklists = [], logsheetTemplat
         <div style={{ padding: "12px 24px", borderTop: "1px solid #e2e8f0", textAlign: "right" }}>
           <Btn onClick={onClose} outline color="#64748b" bg="#fff">Done</Btn>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Location Form (used inside modal) ─────────────────────────── */
+const LocLbl = ({ children }) => <label style={{ fontSize: "12px", fontWeight: 600, color: "#475569", display: "block", marginBottom: "4px" }}>{children}</label>;
+const locInpStyle = { width: "100%", padding: "8px 12px", borderRadius: "8px", border: "1px solid #e2e8f0", fontSize: "13px", outline: "none", boxSizing: "border-box" };
+
+function LocationForm({ initial, onSave, onCancel }) {
+  const [form, setForm] = useState({
+    name: initial?.name || "",
+    campus: initial?.campus || "",
+    building: initial?.building || "",
+    floor: initial?.floor || "",
+    room: initial?.room || "",
+    status: initial?.status || "Active",
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
+  const handleSave = async () => {
+    if (!form.name.trim()) return setError("Location name is required");
+    setSaving(true); setError(null);
+    try { await onSave(form); }
+    catch (err) { setError(err.message || "Save failed"); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+      {error && <div style={{ padding: "10px 14px", background: "#fef2f2", borderRadius: "8px", color: "#dc2626", fontSize: "13px" }}>{error}</div>}
+      <div>
+        <LocLbl>Location Name *</LocLbl>
+        <input value={form.name} onChange={(e) => setForm(p => ({ ...p, name: e.target.value }))} placeholder="e.g. Block A Lobby" style={locInpStyle} />
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+        <div>
+          <LocLbl>Campus</LocLbl>
+          <input value={form.campus} onChange={(e) => setForm(p => ({ ...p, campus: e.target.value }))} placeholder="e.g. Main Campus" style={locInpStyle} />
+        </div>
+        <div>
+          <LocLbl>Building</LocLbl>
+          <input value={form.building} onChange={(e) => setForm(p => ({ ...p, building: e.target.value }))} placeholder="e.g. Building 1" style={locInpStyle} />
+        </div>
+        <div>
+          <LocLbl>Floor</LocLbl>
+          <input value={form.floor} onChange={(e) => setForm(p => ({ ...p, floor: e.target.value }))} placeholder="e.g. Ground Floor" style={locInpStyle} />
+        </div>
+        <div>
+          <LocLbl>Room</LocLbl>
+          <input value={form.room} onChange={(e) => setForm(p => ({ ...p, room: e.target.value }))} placeholder="e.g. Room 101" style={locInpStyle} />
+        </div>
+      </div>
+      <div>
+        <LocLbl>Status</LocLbl>
+        <select value={form.status} onChange={(e) => setForm(p => ({ ...p, status: e.target.value }))} style={{ padding: "8px 12px", borderRadius: "8px", border: "1px solid #e2e8f0", fontSize: "13px", outline: "none" }}>
+          <option value="Active">Active</option>
+          <option value="Inactive">Inactive</option>
+        </select>
+      </div>
+      <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end", paddingTop: "4px" }}>
+        <button type="button" onClick={onCancel} className="btn-cancel">Cancel</button>
+        <button type="button" onClick={handleSave} className="btn-submit" disabled={saving}>{saving ? "Saving…" : "Save Location"}</button>
       </div>
     </div>
   );
@@ -3251,23 +3317,44 @@ export default function CompanyEmployeePortal() {
     // Admin-only management tabs that are always visible for admins regardless of module settings
     const ADMIN_ALWAYS = new Set(["dashboard", "employees"]);
     const ALWAYS_VISIBLE = new Set(["dashboard", "mytasks", "employees"]);
+    // Map nav key to the key used in enabledModules array (softrequests → soft-requests)
+    const toModuleKey = (k) => k === "softrequests" ? "soft-requests" : k;
+
+    // Sort a filtered nav list by the order of enabledModules, keeping ADMIN_ALWAYS first
+    const sortByModuleOrder = (list) => {
+      if (!enabledModules) return list;
+      return [...list].sort((a, b) => {
+        const aAlways = ADMIN_ALWAYS.has(a.key);
+        const bAlways = ADMIN_ALWAYS.has(b.key);
+        if (aAlways && bAlways) return 0;
+        if (aAlways) return -1;
+        if (bAlways) return 1;
+        const ai = enabledModules.indexOf(toModuleKey(a.key));
+        const bi = enabledModules.indexOf(toModuleKey(b.key));
+        if (ai === -1 && bi === -1) return 0;
+        if (ai === -1) return 1;
+        if (bi === -1) return -1;
+        return ai - bi;
+      });
+    };
 
     if (isAdmin) {
       // If no modules restriction set by super-admin, show everything
       if (!enabledModules) return base;
       // Otherwise apply company-level module filter but keep admin management tabs
-      return base.filter((n) => ADMIN_ALWAYS.has(n.key) || enabledModules.includes(n.key) || enabledModules.includes(n.key === 'softrequests' ? 'soft-requests' : n.key));
+      const filtered = base.filter((n) => ADMIN_ALWAYS.has(n.key) || enabledModules.includes(toModuleKey(n.key)));
+      return sortByModuleOrder(filtered);
     }
 
     // Non-admin: filter by company enabledModules first
     const byCompany = !enabledModules
       ? base
-      : base.filter((n) => ALWAYS_VISIBLE.has(n.key) || enabledModules.includes(n.key) || enabledModules.includes(n.key === 'softrequests' ? 'soft-requests' : n.key));
+      : base.filter((n) => ALWAYS_VISIBLE.has(n.key) || enabledModules.includes(toModuleKey(n.key)));
     const userModules = currentUser?.moduleAccess;
     if (!Array.isArray(userModules) || userModules.length === 0) {
-      return byCompany;
+      return sortByModuleOrder(byCompany);
     }
-    return byCompany.filter((n) => ALWAYS_VISIBLE.has(n.key) || userModules.includes(n.key));
+    return sortByModuleOrder(byCompany.filter((n) => ALWAYS_VISIBLE.has(n.key) || userModules.includes(n.key)));
   }, [enabledModules, currentUser?.role, currentUser?.moduleAccess]);
   const [dashboard, setDashboard] = useState(null);
 
@@ -3321,7 +3408,16 @@ export default function CompanyEmployeePortal() {
   const [recentEntriesLoading, setRecentEntriesLoading] = useState(false);
   const [recentChecklists, setRecentChecklists] = useState([]);
   const [recentChecklistsLoading, setRecentChecklistsLoading] = useState(false);
-  const [dashboardRecentTab, setDashboardRecentTab] = useState("logsheets");
+  const [dashboardRecentTab, setDashboardRecentTab] = useState(() =>
+    // Default to checklists if module state not yet loaded — synced by effect below
+    "checklists"
+  );
+  // If logsheets module is enabled, default to logsheets; else stay on checklists
+  useEffect(() => {
+    if (!enabledModules) return;
+    if (enabledModules.includes("logsheets")) setDashboardRecentTab("logsheets");
+    else setDashboardRecentTab("checklists");
+  }, [enabledModules]);
   const [logsheetShowAll, setLogsheetShowAll] = useState(false);
   const [checklistShowAll, setChecklistShowAll] = useState(false);
   // Dashboard quick-view: latest alerts + work orders (admin only)
@@ -3403,6 +3499,16 @@ export default function CompanyEmployeePortal() {
   const [companyLogoUrl, setCompanyLogoUrl] = useState("");
   const [selectedQrIds, setSelectedQrIds] = useState(new Set());
   const [bulkQrPrinting, setBulkQrPrinting] = useState(false);
+  // Locations State
+  const [locations, setLocations] = useState([]);
+  const [locationsLoading, setLocationsLoading] = useState(false);
+  const [locSearch, setLocSearch] = useState("");
+  const [showLocModal, setShowLocModal] = useState(false);
+  const [editLoc, setEditLoc] = useState(null);
+  const [locQrModal, setLocQrModal] = useState(null);
+  const [locQrDataUrl, setLocQrDataUrl] = useState("");
+  const [selectedLocIds, setSelectedLocIds] = useState(new Set());
+  const [bulkLocQrPrinting, setBulkLocQrPrinting] = useState(false);
   // Fleet State
   const [fleetAssets, setFleetAssets] = useState([]);
   const [fleetInspections, setFleetInspections] = useState([]);
@@ -3758,6 +3864,14 @@ export default function CompanyEmployeePortal() {
       if (!logsheetTemplatesList.length) getCompanyPortalLogsheetTemplates(token).then((d) => d && setLogsheetTemplatesList(d)).catch(() => {});
       if (!employees.length) getCompanyPortalEmployees(token).then((d) => d && setEmployees(d)).catch(() => {});
     }
+    if (nav === "locations") {
+      setLocationsLoading(true);
+      fetch("/api/company-portal/locations", { headers: { Authorization: `Bearer ${token}` } })
+        .then((r) => r.json())
+        .then((d) => setLocations(Array.isArray(d) ? d : []))
+        .catch(() => {})
+        .finally(() => setLocationsLoading(false));
+    }
   }, [nav, token, load, assets.length]);
 
   const handleLogout = () => {
@@ -3794,6 +3908,15 @@ export default function CompanyEmployeePortal() {
     [departments, deptSearch]
   );
 
+  // Locations filtered
+  const filteredLocations = useMemo(() =>
+    locations.filter((l) => {
+      const term = locSearch.toLowerCase();
+      return !term || (l.name || "").toLowerCase().includes(term) || (l.building || "").toLowerCase().includes(term) || (l.campus || "").toLowerCase().includes(term);
+    }),
+    [locations, locSearch]
+  );
+
   const handleDeptSaved = (saved, isEdit) => {
     const norm = { ...saved, departmentName: saved.departmentName || saved.name };
     if (isEdit) setDepartments(p => p.map(d => d.id === norm.id ? norm : d));
@@ -3816,6 +3939,52 @@ export default function CompanyEmployeePortal() {
     if (!window.confirm("Delete this asset?")) return;
     try { await deleteCompanyPortalAsset(token, id); setAssets(p => p.filter(a => a.id !== id)); }
     catch (err) { alert(err.message || "Delete failed"); }
+  };
+
+  // ── Location CRUD helpers ─────────────────────────────────────────────────
+  const handleSaveLocation = async (formData) => {
+    const isEdit = !!editLoc;
+    const url = isEdit ? `/api/company-portal/locations/${editLoc.id}` : "/api/company-portal/locations";
+    const method = isEdit ? "PUT" : "POST";
+    const r = await fetch(url, { method, headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify(formData) });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.message || "Save failed");
+    if (isEdit) setLocations(p => p.map(l => l.id === data.id ? data : l));
+    else setLocations(p => [...p, data]);
+    setShowLocModal(false); setEditLoc(null);
+  };
+
+  const handleDeleteLocation = async (id) => {
+    if (!window.confirm("Delete this location?")) return;
+    try {
+      const r = await fetch(`/api/company-portal/locations/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+      if (!r.ok) throw new Error("Delete failed");
+      setLocations(p => p.filter(l => l.id !== id));
+      setSelectedLocIds(prev => { const s = new Set(prev); s.delete(id); return s; });
+    } catch (err) { alert(err.message || "Delete failed"); }
+  };
+
+  const handleDeleteSelectedLocations = async () => {
+    if (selectedLocIds.size === 0) return;
+    if (!window.confirm(`Delete ${selectedLocIds.size} location${selectedLocIds.size > 1 ? "s" : ""}? This cannot be undone.`)) return;
+    try {
+      const r = await fetch("/api/company-portal/locations", {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: [...selectedLocIds] }),
+      });
+      if (!r.ok) throw new Error("Delete failed");
+      setLocations(p => p.filter(l => !selectedLocIds.has(l.id)));
+      setSelectedLocIds(new Set());
+    } catch (err) { alert(err.message || "Delete failed"); }
+  };
+
+  const handleShowLocQr = async (loc) => {
+    setLocQrModal(loc);
+    const url = `${window.location.origin}/location/${loc.id}`;
+    const canvas = document.createElement("canvas");
+    await QRCode.toCanvas(canvas, url, { width: 300, margin: 2, color: { dark: "#0f172a", light: "#ffffff" } });
+    setLocQrDataUrl(canvas.toDataURL("image/png"));
   };
 
   const handleDownloadAssetQR = async (assetId, assetName) => {
@@ -3882,6 +4051,38 @@ export default function CompanyEmployeePortal() {
       </div>`;
   };
 
+  // Build the styled QR card HTML for a single location
+  const buildLocQrCardHtml = (qrDataUrl, loc, clientLogoDataUrl, catalystLogoDataUrl) => {
+    const details = [
+      loc.floor    ? `Floor - ${loc.floor}`       : null,
+      loc.room     ? `Area - ${loc.room}`          : null,
+      loc.building ? `Building - ${loc.building}` : null,
+      loc.campus   ? `Campus - ${loc.campus}`     : null,
+    ].filter(Boolean);
+    const clientLogoHtml = clientLogoDataUrl
+      ? `<img src="${clientLogoDataUrl}" style="max-width:90px;max-height:55px;object-fit:contain;" />`
+      : `<div style="width:90px;"></div>`;
+    const catalystLogoHtml = catalystLogoDataUrl
+      ? `<img src="${catalystLogoDataUrl}" style="max-width:90px;max-height:55px;object-fit:contain;" />`
+      : `<div style="font-size:10px;font-weight:800;color:#1a1a1a;text-align:right;line-height:1.2;">CATALYST<br/><span style="font-size:8px;font-weight:400;">PARTNERING FOR SUSTAINABILITY</span></div>`;
+    return `
+      <div style="background:#ffffff;color:#1a1a1a;padding:24px 20px 20px;border-radius:16px;width:300px;text-align:center;font-family:Arial,sans-serif;box-shadow:0 4px 16px rgba(0,0,0,0.15);border:1px solid #e2e8f0;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+          <div style="width:90px;height:55px;display:flex;align-items:center;justify-content:flex-start;">${clientLogoHtml}</div>
+          <div style="width:90px;height:55px;display:flex;align-items:center;justify-content:flex-end;">${catalystLogoHtml}</div>
+        </div>
+        <div style="font-size:15px;font-weight:800;letter-spacing:2px;margin-bottom:3px;color:#0f172a;">SCAN QR CODE</div>
+        <div style="font-size:11px;color:#475569;margin-bottom:14px;">For Service Excellence</div>
+        <div style="background:#f8fafc;padding:10px;border-radius:10px;display:inline-block;margin-bottom:12px;border:1px solid #e2e8f0;">
+          <img src="${qrDataUrl}" style="width:200px;height:200px;display:block;" />
+        </div>
+        <div style="font-size:13px;font-weight:600;margin-bottom:4px;color:#0f172a;">${loc.name}</div>
+        ${details.map(d => `<div style="font-size:12px;color:#334155;margin-bottom:2px;">${d}</div>`).join("")}
+        <div style="font-size:11px;color:#64748b;margin-top:8px;margin-bottom:14px;">www.catalystsolutions.eco</div>
+        <div style="background:#0f172a;color:#fff;padding:11px 20px;border-radius:4px;font-weight:800;font-size:13px;letter-spacing:2px;">SCAN FOR E-CHECKLIST</div>
+      </div>`;
+  };
+
   // Open a print window with one or more QR cards (one per page)
   const openQrPrintWindow = async (assetsToPrint) => {
     if (!assetsToPrint.length) return;
@@ -3934,6 +4135,195 @@ export default function CompanyEmployeePortal() {
       setAssetQrModal({ assetId: asset.id, assetName: asset.assetName, url, asset });
     } catch (err) {
       alert("QR generation failed: " + err.message);
+    }
+  };
+
+  // Open a print window for multiple location QR cards (bulk)
+  const openBulkLocQrPrintWindow = async (locsToPrint) => {
+    if (!locsToPrint.length) return;
+    setBulkLocQrPrinting(true);
+    try {
+      const catalystLogoDataUrl = await urlToDataUrl(`${window.location.origin}/catalyst-logo.png`);
+      const clientDataUrl = companyLogoUrl
+        ? await urlToDataUrl(`${window.location.origin}${companyLogoUrl.startsWith("/") ? "" : "/"}${companyLogoUrl}`)
+        : null;
+      const cardHtmls = await Promise.all(locsToPrint.map(async (loc) => {
+        const url = `${window.location.origin}/location/${loc.id}`;
+        const qrDataUrl = await QRCode.toDataURL(url, { width: 400, margin: 2 });
+        return buildLocQrCardHtml(qrDataUrl, loc, clientDataUrl, catalystLogoDataUrl);
+      }));
+      const printHtml = `<!DOCTYPE html><html><head><title>Location QR Codes</title>
+        <style>
+          *{margin:0;padding:0;box-sizing:border-box;}
+          body{background:#f8fafc;font-family:Arial,sans-serif;}
+          .page{display:flex;align-items:center;justify-content:center;min-height:100vh;page-break-after:always;}
+          .page:last-child{page-break-after:auto;}
+          @media print{body{background:#fff;}}
+        </style>
+      </head><body>${cardHtmls.map(h => `<div class="page">${h}</div>`).join("")}</body></html>`;
+      const w = window.open("", "_blank");
+      w.document.write(printHtml);
+      w.document.close();
+      w.focus();
+      setTimeout(() => { w.print(); }, 700);
+    } catch (err) {
+      alert("Print failed: " + err.message);
+    } finally {
+      setBulkLocQrPrinting(false);
+    }
+  };
+
+  // Open a print window for a single location QR card
+  const openLocQrPrintWindow = async (loc) => {    try {
+      const catalystLogoDataUrl = await urlToDataUrl(`${window.location.origin}/catalyst-logo.png`);
+      const clientDataUrl = companyLogoUrl
+        ? await urlToDataUrl(`${window.location.origin}${companyLogoUrl.startsWith("/") ? "" : "/"}${companyLogoUrl}`)
+        : null;
+      const url = `${window.location.origin}/location/${loc.id}`;
+      const qrDataUrl = await QRCode.toDataURL(url, { width: 400, margin: 2 });
+      const cardHtml = buildLocQrCardHtml(qrDataUrl, loc, clientDataUrl, catalystLogoDataUrl);
+      const printHtml = `<!DOCTYPE html><html><head><title>Location QR - ${loc.name}</title>
+        <style>
+          *{margin:0;padding:0;box-sizing:border-box;}
+          body{background:#f8fafc;font-family:Arial,sans-serif;}
+          .page{display:flex;align-items:center;justify-content:center;min-height:100vh;}
+          @media print{body{background:#fff;}.page{min-height:100vh;}}
+        </style>
+      </head><body><div class="page">${cardHtml}</div></body></html>`;
+      const w = window.open("", "_blank");
+      w.document.write(printHtml);
+      w.document.close();
+      w.focus();
+      setTimeout(() => { w.print(); }, 700);
+    } catch (err) {
+      alert("Print failed: " + err.message);
+    }
+  };
+
+  // Download the full styled location QR card as a PNG image
+  const downloadLocQrCard = async (loc) => {
+    try {
+      const [catalystDataUrl, clientDataUrl] = await Promise.all([
+        urlToDataUrl(`${window.location.origin}/catalyst-logo.png`),
+        companyLogoUrl
+          ? urlToDataUrl(`${window.location.origin}${companyLogoUrl.startsWith("/") ? "" : "/"}${companyLogoUrl}`)
+          : Promise.resolve(null),
+      ]);
+      const qrUrl = `${window.location.origin}/location/${loc.id}`;
+      const rawQrDataUrl = await QRCode.toDataURL(qrUrl, { width: 400, margin: 2, color: { dark: "#0f172a", light: "#ffffff" } });
+
+      const loadImg = (src) => new Promise((res) => {
+        if (!src) return res(null);
+        const img = new Image();
+        img.onload = () => res(img);
+        img.onerror = () => res(null);
+        img.src = src;
+      });
+      const [qrImg, clientImg, catalystImg] = await Promise.all([
+        loadImg(rawQrDataUrl), loadImg(clientDataUrl), loadImg(catalystDataUrl),
+      ]);
+
+      const W = 340, PAD = 24;
+      const details = [
+        loc.floor    ? `Floor - ${loc.floor}`       : null,
+        loc.room     ? `Area - ${loc.room}`          : null,
+        loc.building ? `Building - ${loc.building}` : null,
+        loc.campus   ? `Campus - ${loc.campus}`     : null,
+      ].filter(Boolean);
+
+      // Calculate canvas height
+      const QR_BOX = 216;
+      let H = PAD + 56 + 14 + 20 + 4 + 14 + 14 + QR_BOX + 14 + 18 + 4 + (details.length * 18) + 8 + 14 + 14 + 40 + PAD;
+
+      const SCALE = 2;
+      const canvas = document.createElement("canvas");
+      canvas.width = W * SCALE;
+      canvas.height = H * SCALE;
+      const ctx = canvas.getContext("2d");
+      ctx.scale(SCALE, SCALE);
+
+      const rr = (x, y, w, h, r) => {
+        ctx.beginPath();
+        ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y);
+        ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+        ctx.lineTo(x + w, y + h - r);
+        ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+        ctx.lineTo(x + r, y + h);
+        ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+        ctx.lineTo(x, y + r);
+        ctx.quadraticCurveTo(x, y, x + r, y);
+        ctx.closePath();
+      };
+
+      // White card background
+      ctx.fillStyle = "#ffffff";
+      rr(0, 0, W, H, 14); ctx.fill();
+      ctx.strokeStyle = "#e2e8f0"; ctx.lineWidth = 1; ctx.stroke();
+
+      let y = PAD;
+
+      // Logo row
+      const LOGO_H = 56, LOGO_W = 90;
+      if (clientImg) {
+        const sc = Math.min(LOGO_W / clientImg.width, LOGO_H / clientImg.height);
+        const dw = clientImg.width * sc, dh = clientImg.height * sc;
+        ctx.drawImage(clientImg, PAD, y + (LOGO_H - dh) / 2, dw, dh);
+      }
+      if (catalystImg) {
+        const sc = Math.min(LOGO_W / catalystImg.width, LOGO_H / catalystImg.height);
+        const dw = catalystImg.width * sc, dh = catalystImg.height * sc;
+        ctx.drawImage(catalystImg, W - PAD - dw, y + (LOGO_H - dh) / 2, dw, dh);
+      }
+      y += LOGO_H + 14;
+
+      // "SCAN QR CODE"
+      ctx.fillStyle = "#0f172a"; ctx.font = "bold 15px Arial"; ctx.textAlign = "center";
+      ctx.fillText("SCAN QR CODE", W / 2, y + 15);
+      y += 20 + 4;
+
+      // "For Service Excellence"
+      ctx.fillStyle = "#475569"; ctx.font = "11px Arial";
+      ctx.fillText("For Service Excellence", W / 2, y + 11);
+      y += 14 + 14;
+
+      // QR box
+      const QR_PAD = 10, qrBoxX = (W - QR_BOX) / 2;
+      ctx.fillStyle = "#f8fafc";
+      rr(qrBoxX, y, QR_BOX, QR_BOX, 10); ctx.fill();
+      ctx.strokeStyle = "#e2e8f0"; ctx.lineWidth = 1; ctx.stroke();
+      if (qrImg) {
+        const inner = QR_BOX - QR_PAD * 2;
+        ctx.drawImage(qrImg, qrBoxX + QR_PAD, y + QR_PAD, inner, inner);
+      }
+      y += QR_BOX + 14;
+
+      // Location name
+      ctx.fillStyle = "#0f172a"; ctx.font = "bold 13px Arial"; ctx.textAlign = "center";
+      ctx.fillText(loc.name, W / 2, y + 13);
+      y += 18 + 4;
+
+      // Detail lines
+      ctx.fillStyle = "#334155"; ctx.font = "12px Arial";
+      for (const d of details) { ctx.fillText(d, W / 2, y + 12); y += 18; }
+      y += 8;
+
+      // Website
+      ctx.fillStyle = "#64748b"; ctx.font = "11px Arial";
+      ctx.fillText("www.catalystsolutions.eco", W / 2, y + 11);
+      y += 14 + 14;
+
+      // Bottom bar
+      ctx.fillStyle = "#0f172a";
+      rr(PAD, y, W - PAD * 2, 40, 4); ctx.fill();
+      ctx.fillStyle = "#ffffff"; ctx.font = "bold 12px Arial";
+      ctx.fillText("SCAN FOR E-CHECKLIST", W / 2, y + 26);
+
+      const link = document.createElement("a");
+      link.download = `QR-Location-${loc.name.replace(/[^a-zA-Z0-9]/g, "_")}-${loc.id}.png`;
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+    } catch (err) {
+      alert("Download failed: " + err.message);
     }
   };
 
@@ -3992,6 +4382,16 @@ export default function CompanyEmployeePortal() {
 
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: "#f1f5f9" }}>
+      {/* Print-specific global styles: hide sidebar, expand content */}
+      <style>{`
+        @media print {
+          aside { display: none !important; }
+          main { margin-left: 0 !important; width: 100% !important; padding: 16px !important; }
+          .no-print { display: none !important; }
+          body { background: #fff !important; }
+          @page { margin: 12mm; size: A4 landscape; }
+        }
+      `}</style>
       {/* Sidebar */}
       <aside style={{ width: "240px", background: "#fff", borderRight: "1px solid #e2e8f0", display: "flex", flexDirection: "column", position: "fixed", top: 0, bottom: 0, left: 0, zIndex: 10 }}>
         {/* Brand */}
@@ -4164,7 +4564,10 @@ export default function CompanyEmployeePortal() {
                   <h2 style={{ fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>Recent Submissions</h2>
                 </div>
                 <div style={{ display: "flex", gap: "4px" }}>
-                  {[{ key: "logsheets", label: "Logsheets" }, { key: "checklists", label: "Checklists" }].map((tab) => (
+                  {[
+                    ...(!enabledModules || enabledModules.includes("logsheets") ? [{ key: "logsheets", label: "Logsheets" }] : []),
+                    { key: "checklists", label: "Checklists" },
+                  ].map((tab) => (
                     <button key={tab.key} onClick={() => setDashboardRecentTab(tab.key)}
                       style={{ padding: "5px 14px", borderRadius: "8px", fontSize: "13px", fontWeight: 600, cursor: "pointer", border: "none",
                         background: dashboardRecentTab === tab.key ? "#7c3aed" : "#f1f5f9",
@@ -4486,7 +4889,7 @@ export default function CompanyEmployeePortal() {
                     </h1>
                     <p style={{ color: "#64748b", fontSize: "14px" }}>{currentUser.companyName} — {new Date().toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}</p>
                   </div>
-                  <div style={{ display: "flex", gap: "8px", flexShrink: 0 }}>
+                  <div style={{ display: "flex", gap: "8px", flexShrink: 0 }} className="no-print">
                     <button
                       type="button"
                       onClick={() => {
@@ -4532,9 +4935,17 @@ export default function CompanyEmployeePortal() {
                 {/* 4 Key stat cards */}
                 {dashboard && (
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "16px", marginBottom: "16px" }}>
+                    {(!enabledModules || enabledModules.includes("assets")) && (
                     <StatCard label="Active Assets" value={dashboard.activeAssets} sub={`${dashboard.totalAssets} total`} subCol="#22c55e"
                       iconBg="#eff6ff" iconCol="#2563eb" onClick={() => setNav("assets")}
                       icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 19.07a10 10 0 0 1 0-14.14"/></svg>} />
+                    )}
+                    {(!enabledModules || enabledModules.includes("locations")) && (
+                    <StatCard label="Active Locations" value={dashboard.totalLocations ?? 0} sub="Location records" subCol="#22c55e"
+                      iconBg="#ecfdf5" iconCol="#059669" onClick={() => setNav("locations")}
+                      icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>} />
+                    )}
+                    {(!enabledModules || enabledModules.includes("workorders") || enabledModules.includes("work-orders")) && (
                     <StatCard label="Open Requests" value={dashboard.openIssues}
                       sub={dashboard.openIssues > 0 ? "Needs attention" : "All clear"}
                       subCol={dashboard.openIssues > 0 ? "#dc2626" : "#22c55e"}
@@ -4542,6 +4953,8 @@ export default function CompanyEmployeePortal() {
                       iconCol={dashboard.openIssues > 0 ? "#dc2626" : "#22c55e"}
                       onClick={() => setNav("workorders")}
                       icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>} />
+                    )}
+                    {(!enabledModules || enabledModules.includes("soft-requests") || enabledModules.includes("softrequests")) && (
                     <StatCard label="Open Soft Requests" value={dashboard.openSoftRequests ?? dashboardSoftRequests.length}
                       sub={(dashboard.openSoftRequests ?? dashboardSoftRequests.length) > 0 ? "Needs attention" : "All clear"}
                       subCol={(dashboard.openSoftRequests ?? dashboardSoftRequests.length) > 0 ? "#7c3aed" : "#22c55e"}
@@ -4549,6 +4962,8 @@ export default function CompanyEmployeePortal() {
                       iconCol={(dashboard.openSoftRequests ?? dashboardSoftRequests.length) > 0 ? "#7c3aed" : "#22c55e"}
                       onClick={() => setNav("softrequests")}
                       icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>} />
+                    )}
+                    {(!enabledModules || enabledModules.includes("warnings") || enabledModules.includes("flags")) && (
                     <StatCard label="Total Warnings" value={(dashboard.flags?.open || 0) + (dashboard.softRequestWarnings || 0)}
                       sub={`${dashboard.flags?.critical || 0} critical flags${dashboard.softRequestWarnings ? ` + ${dashboard.softRequestWarnings} escalated requests` : ""}`}
                       subCol={(dashboard.flags?.critical || 0) > 0 || (dashboard.softRequestWarnings || 0) > 0 ? "#dc2626" : "#64748b"}
@@ -4556,6 +4971,7 @@ export default function CompanyEmployeePortal() {
                       iconCol={(dashboard.flags?.open || 0) + (dashboard.softRequestWarnings || 0) > 0 ? "#ea580c" : "#22c55e"}
                       onClick={() => setNav("warnings")}
                       icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>} />
+                    )}
                   </div>
                 )}
 
@@ -4747,7 +5163,7 @@ export default function CompanyEmployeePortal() {
                             </span>
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <p style={{ margin: 0, fontWeight: 600, fontSize: "12.5px", color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                                {sr.assetName || "Unknown asset"} — Soft Request
+                                {sr.assetName || sr.locationName || "Unknown"} — Soft Request
                               </p>
                               <p style={{ margin: 0, fontSize: "11.5px", color: "#64748b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                                 Raised by {sr.raisedByName || "supervisor"} • Needs resolution
@@ -4850,7 +5266,7 @@ export default function CompanyEmployeePortal() {
                                   SOFT SERVICE
                                 </span>
                                 <p style={{ margin: 0, fontWeight: 700, fontSize: "12.5px", color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                                  {sr.assetName || `Asset #${sr.assetId}`}
+                                  {sr.assetName || sr.locationName || `#${sr.assetId || sr.locationId || '?'}`}
                                 </p>
                               </div>
                               <p style={{ margin: 0, fontSize: "11.5px", color: "#64748b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -5287,6 +5703,251 @@ export default function CompanyEmployeePortal() {
 
         {/* ── Soft Service Requests ─────────────────────────────── */}
         {nav === "softrequests" && <SoftRequestsPanel token={token} currentUser={currentUser} />}
+
+        {/* ── Locations ─────────────────────────────────────────── */}
+        {nav === "locations" && (() => {
+          const isAdmin = currentUser.role === "admin";
+          return (
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "22px" }}>
+                <div>
+                  <h1 style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px", marginBottom: "4px" }}>Locations</h1>
+                  <p style={{ color: "#64748b", fontSize: "13.5px" }}>Manage service locations for {currentUser.companyName}</p>
+                </div>
+                {isAdmin && (
+                  <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+                    {/* Company logo upload */}
+                    <label title="Upload client logo for QR cards" style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "8px", background: companyLogoUrl ? "#f0fdf4" : "#f8fafc", color: companyLogoUrl ? "#16a34a" : "#64748b", border: `1px solid ${companyLogoUrl ? "#bbf7d0" : "#e2e8f0"}`, cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                      {companyLogoUrl ? "Logo ✓" : "Upload Logo"}
+                      <input type="file" accept="image/*" style={{ display: "none" }} onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        const fd = new FormData();
+                        fd.append("logo", file);
+                        try {
+                          const r = await fetch("/api/company-portal/upload-logo", { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: fd });
+                          const data = await r.json();
+                          if (!r.ok) throw new Error(data.message || "Upload failed");
+                          setCompanyLogoUrl(data.url);
+                          alert("Logo uploaded successfully!");
+                        } catch (err) { alert(err.message); }
+                        e.target.value = "";
+                      }} />
+                    </label>
+                    {/* Print selected / Print all QR */}
+                    {selectedLocIds.size > 0 ? (
+                      <button disabled={bulkLocQrPrinting} onClick={() => {
+                        const toPrint = filteredLocations.filter(l => selectedLocIds.has(l.id));
+                        openBulkLocQrPrintWindow(toPrint);
+                      }} style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "8px", background: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                        Print QR ({selectedLocIds.size})
+                      </button>
+                    ) : (
+                      <button disabled={bulkLocQrPrinting || filteredLocations.length === 0} onClick={() => openBulkLocQrPrintWindow(filteredLocations)}
+                        style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "8px", background: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe", cursor: filteredLocations.length === 0 ? "default" : "pointer", fontSize: "13px", fontWeight: 600, opacity: filteredLocations.length === 0 ? 0.5 : 1 }}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                        Print QR
+                      </button>
+                    )}
+                    <Btn onClick={() => { setEditLoc(null); setShowLocModal(true); }}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                      Add Location
+                    </Btn>
+                    {selectedLocIds.size > 0 && (
+                      <button onClick={handleDeleteSelectedLocations}
+                        style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "8px", background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca", cursor: "pointer", fontSize: "13px", fontWeight: 700 }}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                        Delete Selected ({selectedLocIds.size})
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Search */}
+              <div style={{ marginBottom: "16px", maxWidth: "360px" }}>
+                <input
+                  type="text" placeholder="Search locations…" value={locSearch}
+                  onChange={(e) => setLocSearch(e.target.value)}
+                  style={{ width: "100%", padding: "8px 14px", borderRadius: "8px", border: "1px solid #e2e8f0", fontSize: "13px", outline: "none", boxSizing: "border-box" }}
+                />
+              </div>
+
+              {locationsLoading ? (
+                <div style={{ textAlign: "center", padding: "60px 0", color: "#94a3b8" }}>Loading…</div>
+              ) : filteredLocations.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "60px 0", color: "#94a3b8" }}>
+                  <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ marginBottom: "12px" }}><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                  <p>No locations yet. {isAdmin && <button onClick={() => { setEditLoc(null); setShowLocModal(true); }} style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", fontSize: "inherit", textDecoration: "underline" }}>Add one</button>}</p>
+                </div>
+              ) : (
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+                    <thead>
+                      <tr style={{ background: "#f8fafc" }}>
+                        {isAdmin && (
+                          <th style={{ padding: "10px 14px", textAlign: "left", borderBottom: "2px solid #e2e8f0", width: "40px" }}>
+                            <input type="checkbox"
+                              checked={filteredLocations.length > 0 && filteredLocations.every(l => selectedLocIds.has(l.id))}
+                              onChange={(e) => {
+                                if (e.target.checked) setSelectedLocIds(new Set(filteredLocations.map(l => l.id)));
+                                else setSelectedLocIds(new Set());
+                              }}
+                              style={{ cursor: "pointer", width: "15px", height: "15px" }}
+                            />
+                          </th>
+                        )}
+                        {["#", "Name", "Campus", "Building", "Floor", "Room", "Status", "QR", isAdmin ? "Actions" : null].filter(Boolean).map((h) => (
+                          <th key={h} style={{ padding: "10px 14px", textAlign: "left", borderBottom: "2px solid #e2e8f0", color: "#475569", fontWeight: 700, whiteSpace: "nowrap" }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredLocations.map((loc, i) => (
+                        <tr key={loc.id} style={{ borderBottom: "1px solid #f1f5f9", background: selectedLocIds.has(loc.id) ? "#eff6ff" : (i % 2 === 0 ? "#fff" : "#fafafa") }}>
+                          {isAdmin && (
+                            <td style={{ padding: "10px 14px" }}>
+                              <input type="checkbox"
+                                checked={selectedLocIds.has(loc.id)}
+                                onChange={(e) => {
+                                  setSelectedLocIds(prev => {
+                                    const s = new Set(prev);
+                                    e.target.checked ? s.add(loc.id) : s.delete(loc.id);
+                                    return s;
+                                  });
+                                }}
+                                style={{ cursor: "pointer", width: "15px", height: "15px" }}
+                              />
+                            </td>
+                          )}
+                          <td style={{ padding: "10px 14px", color: "#94a3b8" }}>{i + 1}</td>
+                          <td style={{ padding: "10px 14px", fontWeight: 600, color: "#0f172a" }}>{loc.name}</td>
+                          <td style={{ padding: "10px 14px", color: "#475569" }}>{loc.campus || "—"}</td>
+                          <td style={{ padding: "10px 14px", color: "#475569" }}>{loc.building || "—"}</td>
+                          <td style={{ padding: "10px 14px", color: "#475569" }}>{loc.floor || "—"}</td>
+                          <td style={{ padding: "10px 14px", color: "#475569" }}>{loc.room || "—"}</td>
+                          <td style={{ padding: "10px 14px" }}>
+                            <span style={{ padding: "3px 10px", borderRadius: "12px", fontSize: "11px", fontWeight: 600,
+                              background: loc.status === "Active" ? "#dcfce7" : "#fee2e2",
+                              color: loc.status === "Active" ? "#16a34a" : "#dc2626" }}>
+                              {loc.status}
+                            </span>
+                          </td>
+                          <td style={{ padding: "10px 14px" }}>
+                            <button title="View QR" onClick={() => handleShowLocQr(loc)}
+                              style={{ background: "#eff6ff", border: "none", borderRadius: "6px", padding: "5px 8px", cursor: "pointer", color: "#2563eb", display: "inline-flex", alignItems: "center" }}>
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                            </button>
+                          </td>
+                          {isAdmin && (
+                            <td style={{ padding: "10px 14px" }}>
+                              <div style={{ display: "flex", gap: "6px" }}>
+                                <button title="Edit" onClick={() => { setEditLoc(loc); setShowLocModal(true); }}
+                                  style={{ background: "#f0fdf4", border: "none", borderRadius: "6px", padding: "5px 8px", cursor: "pointer", color: "#16a34a", display: "inline-flex", alignItems: "center" }}>
+                                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                                </button>
+                                <button title="Delete" onClick={() => handleDeleteLocation(loc.id)}
+                                  style={{ background: "#fff1f2", border: "none", borderRadius: "6px", padding: "5px 8px", cursor: "pointer", color: "#e11d48", display: "inline-flex", alignItems: "center" }}>
+                                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                                </button>
+                              </div>
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Location Add/Edit Modal */}
+              {showLocModal && (
+                <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.5)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}
+                  onClick={() => { setShowLocModal(false); setEditLoc(null); }}>
+                  <div style={{ background: "#fff", borderRadius: "16px", padding: "28px", maxWidth: "480px", width: "100%", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }} onClick={(e) => e.stopPropagation()}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+                      <h2 style={{ fontSize: "17px", fontWeight: 700, color: "#0f172a" }}>{editLoc ? "Edit Location" : "Add Location"}</h2>
+                      <button onClick={() => { setShowLocModal(false); setEditLoc(null); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: "22px" }}>✕</button>
+                    </div>
+                    <LocationForm initial={editLoc} onSave={handleSaveLocation} onCancel={() => { setShowLocModal(false); setEditLoc(null); }} />
+                  </div>
+                </div>
+              )}
+
+              {/* Location QR Modal */}
+              {locQrModal && (
+                <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
+                  <div style={{ background: "#fff", borderRadius: "16px", width: "100%", maxWidth: "400px", padding: "28px", textAlign: "center", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
+                    <h3 style={{ margin: "0 0 4px", fontSize: "18px", fontWeight: 800, color: "#0f172a" }}>Location QR Code</h3>
+                    <p style={{ margin: "0 0 20px", fontSize: "13px", color: "#64748b" }}>{locQrModal.name}</p>
+
+                    {/* Styled QR Card Preview */}
+                    {locQrDataUrl ? (
+                      <div style={{ display: "inline-block", background: "#ffffff", color: "#1a1a1a", padding: "20px 18px 16px", borderRadius: "14px", textAlign: "center", fontFamily: "Arial, sans-serif", width: "280px", border: "1px solid #e2e8f0", boxShadow: "0 4px 16px rgba(0,0,0,0.08)" }}>
+                        {/* Logo row */}
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+                          <div style={{ width: "80px", height: "48px", display: "flex", alignItems: "center", justifyContent: "flex-start" }}>
+                            {companyLogoUrl
+                              ? <img src={companyLogoUrl} alt="Client" style={{ maxWidth: "80px", maxHeight: "48px", objectFit: "contain" }} />
+                              : <div style={{ width: "80px" }} />}
+                          </div>
+                          <div style={{ width: "80px", height: "48px", display: "flex", alignItems: "center", justifyContent: "flex-end" }}>
+                            <img src="/catalyst-logo.png" alt="Catalyst" style={{ maxWidth: "80px", maxHeight: "48px", objectFit: "contain" }}
+                              onError={(e) => { e.target.style.display = "none"; e.target.nextSibling.style.display = "block"; }}
+                            />
+                            <span style={{ display: "none", fontSize: "9px", fontWeight: 800, color: "#1a1a1a", textAlign: "right", lineHeight: 1.2 }}>CATALYST<br/><span style={{ fontWeight: 400 }}>PARTNERING FOR<br/>SUSTAINABILITY</span></span>
+                          </div>
+                        </div>
+                        {/* Header text */}
+                        <div style={{ fontSize: "13px", fontWeight: 800, letterSpacing: "2px", marginBottom: "2px", color: "#0f172a" }}>SCAN QR CODE</div>
+                        <div style={{ fontSize: "10px", color: "#475569", marginBottom: "12px" }}>For Service Excellence</div>
+                        {/* QR code */}
+                        <div style={{ background: "#f8fafc", padding: "8px", borderRadius: "8px", display: "inline-block", marginBottom: "10px", border: "1px solid #e2e8f0" }}>
+                          <img src={locQrDataUrl} alt="QR" style={{ width: "180px", height: "180px", display: "block" }} />
+                        </div>
+                        {/* Location details */}
+                        <div style={{ fontSize: "12px", fontWeight: 600, marginBottom: "2px", color: "#0f172a" }}>{locQrModal.name}</div>
+                        {locQrModal.floor    && <div style={{ fontSize: "12px", color: "#334155", marginBottom: "2px" }}>Floor - {locQrModal.floor}</div>}
+                        {locQrModal.room     && <div style={{ fontSize: "12px", color: "#334155", marginBottom: "2px" }}>Area - {locQrModal.room}</div>}
+                        {locQrModal.building && <div style={{ fontSize: "12px", color: "#334155", marginBottom: "2px" }}>Building - {locQrModal.building}</div>}
+                        {locQrModal.campus   && <div style={{ fontSize: "12px", color: "#334155", marginBottom: "2px" }}>Campus - {locQrModal.campus}</div>}
+                        <div style={{ fontSize: "10px", color: "#64748b", marginTop: "6px", marginBottom: "12px" }}>www.catalystsolutions.eco</div>
+                        <div style={{ background: "#0f172a", color: "#fff", padding: "9px 16px", borderRadius: "4px", fontWeight: 800, fontSize: "12px", letterSpacing: "2px" }}>SCAN FOR E-CHECKLIST</div>
+                      </div>
+                    ) : (
+                      <p style={{ color: "#94a3b8" }}>Generating QR...</p>
+                    )}
+
+                    {/* Buttons */}
+                    <div style={{ display: "flex", gap: "10px", marginTop: "20px", justifyContent: "center", flexWrap: "wrap" }}>
+                      {locQrDataUrl && (
+                        <button onClick={() => openLocQrPrintWindow(locQrModal)}
+                          style={{ padding: "8px 18px", borderRadius: "8px", background: "#f0fdf4", color: "#16a34a", border: "1px solid #bbf7d0", cursor: "pointer", fontSize: "13px", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                          Print QR
+                        </button>
+                      )}
+                      {locQrDataUrl && (
+                        <button onClick={() => downloadLocQrCard(locQrModal)}
+                          style={{ padding: "8px 18px", borderRadius: "8px", background: "#2563eb", color: "#fff", border: "none", cursor: "pointer", fontSize: "13px", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                          Download QR
+                        </button>
+                      )}
+                      <button onClick={() => { setLocQrModal(null); setLocQrDataUrl(""); }}
+                        style={{ padding: "8px 18px", borderRadius: "8px", background: "#f1f5f9", color: "#475569", border: "none", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
+                        Close
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
         {/* ── Employees ─────────────────────────────────────────── */}
         {nav === "employees" && (() => {
           const canManage = currentUser.role === "admin" || currentUser.role === "supervisor";

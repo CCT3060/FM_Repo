@@ -28,8 +28,12 @@ function RequestCard({ req, canResolve }: { req: SoftRequest; canResolve: boolea
     >
       <View style={styles.cardTop}>
         <View style={{ flex: 1 }}>
-          <Text style={[styles.assetName, { color: theme.textPrimary }]} numberOfLines={1}>{req.assetName}</Text>
-          <Text style={[styles.assetId,   { color: theme.textMuted }]}>{req.assetUniqueId}</Text>
+          <Text style={[styles.assetName, { color: theme.textPrimary }]} numberOfLines={1}>
+            {req.templateName || req.assetName || req.locationName || 'Soft Request'}
+          </Text>
+          <Text style={[styles.assetId, { color: theme.textMuted }]} numberOfLines={1}>
+            {req.assetName || req.locationName || req.assetUniqueId || ''}
+          </Text>
         </View>
         <StatusBadge label={req.status === 'open' ? 'Open' : 'Resolved'} variant={req.status === 'open' ? 'warning' : 'success'} />
       </View>

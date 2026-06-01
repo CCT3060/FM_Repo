@@ -638,6 +638,29 @@ router.get(
   }
 );
 
+// ── DELETE /admin/bulk – bulk delete flags ──────────────────────────────────────
+router.delete(
+  "/admin/bulk",
+  flexCompanyAuth,
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyUser?.companyId;
+      if (!companyId) return res.status(401).json({ message: "Unauthorised" });
+      const { ids } = req.body;
+      if (!Array.isArray(ids) || ids.length === 0)
+        return res.status(400).json({ message: "ids array is required" });
+      const safeIds = ids.map(Number).filter((n) => Number.isFinite(n) && n > 0);
+      if (safeIds.length === 0) return res.status(400).json({ message: "No valid ids" });
+      const placeholders = safeIds.map(() => "?").join(",");
+      await pool.query(
+        `DELETE FROM flags WHERE company_id = ? AND id IN (${placeholders})`,
+        [companyId, ...safeIds]
+      );
+      res.json({ ok: true, deleted: safeIds.length });
+    } catch (err) { next(err); }
+  }
+);
+
 // ── GET /flags/dashboard – aggregate stats for the flag dashboard ─────────────
 router.get("/dashboard", async (req, res, next) => {
   try {

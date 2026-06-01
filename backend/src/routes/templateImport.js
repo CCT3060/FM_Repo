@@ -14,7 +14,7 @@ import { Router }    from "express";
 import multer        from "multer";
 import OpenAI        from "openai";
 import { requireAuth } from "../middleware/auth.js";
-import { parseChecklistBuffer, parseLogsheetBuffer } from "../utils/templateParser.js";
+import { parseChecklistBuffer, parseChecklistBufferBulk, parseLogsheetBuffer } from "../utils/templateParser.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -51,7 +51,7 @@ router.post("/checklist/parse", upload.single("file"), (req, res) => {
     return res.status(400).json({ success: false, error: "No file uploaded. Send file as multipart/form-data field named 'file'." });
   }
   try {
-    const result = parseChecklistBuffer(req.file.buffer, req.file.mimetype, req.file.originalname);
+    const result = parseChecklistBufferBulk(req.file.buffer, req.file.mimetype, req.file.originalname);
     return res.json(result);
   } catch (err) {
     return res.status(422).json({ success: false, error: `Parse error: ${err.message}` });

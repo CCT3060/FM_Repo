@@ -62,6 +62,17 @@ export async function registerForPushNotifications(): Promise<string | null> {
     });
 
     await registerPushToken(token, Platform.OS);
+
+    // Also register the device-level FCM token for direct Firebase pushes
+    try {
+      const deviceTokenResult = await Notifications.getDevicePushTokenAsync();
+      if (deviceTokenResult?.data) {
+        await registerPushToken(token, Platform.OS, deviceTokenResult.data);
+      }
+    } catch {
+      // Non-critical — Expo token already registered above
+    }
+
     return token;
   } catch (err) {
     console.error('[Push] Registration failed:', err);

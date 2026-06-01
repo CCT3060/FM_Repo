@@ -205,6 +205,7 @@ router.get("/verify", async (req, res, next) => {
       `SELECT cu.id, cu.company_id AS "companyId", cu.full_name AS "fullName",
               cu.email, cu.phone, cu.designation, cu.role, cu.status,
               cu.supervisor_id AS "supervisorId",
+              cu.permissions, cu.module_access AS "moduleAccess",
               c.company_name AS "companyName",
               c.enabled_modules AS "companyEnabledModules"
        FROM company_users cu
@@ -225,7 +226,15 @@ router.get("/verify", async (req, res, next) => {
     const companyEnabledModules = user.companyEnabledModules
       ? (typeof user.companyEnabledModules === "string" ? JSON.parse(user.companyEnabledModules) : user.companyEnabledModules)
       : null;
-    res.json({ user: { ...user, companyEnabledModules, roleCapabilities } });
+    res.json({
+      user: {
+        ...user,
+        companyEnabledModules,
+        roleCapabilities,
+        permissions: user.permissions || {},
+        moduleAccess: user.moduleAccess || [],
+      },
+    });
   } catch (err) {
     if (err.name === "JsonWebTokenError" || err.name === "TokenExpiredError") {
       return res.status(401).json({ message: "Invalid or expired token" });
@@ -246,13 +255,28 @@ router.post("/push-token", async (req, res, next) => {
       return res.status(401).json({ message: "Invalid token type" });
     }
 
-    const { token: pushToken, platform } = req.body || {};
-    if (!pushToken) return res.status(400).json({ message: "token is required" });
+    const { token: pushToken, platform, fcmToken } = req.body || {};
+    if (!pushToken && !fcmToken) return res.status(400).json({ message: "token or fcmToken is required" });
 
+    const userId = decoded.sub || decoded.userId;
+
+    // Ensure fcm_token column exists (idempotent migration)
     await pool.query(
-      `UPDATE company_users SET push_token = ?, push_token_platform = ? WHERE id = ?`,
-      [pushToken, platform || null, decoded.sub || decoded.userId]
+      `ALTER TABLE company_users ADD COLUMN IF NOT EXISTS fcm_token TEXT DEFAULT NULL`
     );
+
+    if (pushToken) {
+      await pool.query(
+        `UPDATE company_users SET push_token = ?, push_token_platform = ? WHERE id = ?`,
+        [pushToken, platform || null, userId]
+      );
+    }
+    if (fcmToken) {
+      await pool.query(
+        `UPDATE company_users SET fcm_token = ? WHERE id = ?`,
+        [fcmToken, userId]
+      );
+    }
     res.json({ ok: true });
   } catch (err) {
     if (err.name === "JsonWebTokenError" || err.name === "TokenExpiredError") {

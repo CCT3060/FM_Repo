@@ -311,7 +311,7 @@ router.get("/dashboard", async (req, res, next) => {
     const [
       [assetRows], [deptRows], [empRows], [activeAssets], [issueRows],
       [openFlags], [criticalFlags], [flagsBySeverity], [assetsHealth],
-      [openSoftRows], [softWarnRows],
+      [openSoftRows], [softWarnRows], [locationRows],
     ] = await Promise.all([
       pool.query("SELECT COUNT(*) AS cnt FROM assets WHERE company_id = ?", [companyId]),
       pool.query("SELECT COUNT(*) AS cnt FROM departments WHERE company_id = ?", [companyId]),
@@ -360,6 +360,8 @@ router.get("/dashboard", async (req, res, next) => {
          WHERE company_id = ? AND escalation_level > 0 AND status NOT IN ('closed','resolved')`,
         [companyId]
       ),
+      // Active locations
+      pool.query("SELECT COUNT(*) AS cnt FROM locations WHERE company_id = ?", [companyId]),
     ]);
 
     const severityMap = {};
@@ -376,6 +378,7 @@ router.get("/dashboard", async (req, res, next) => {
       openIssues:       Number(issueRows[0]?.cnt        || 0),
       openSoftRequests: Number(openSoftRows[0]?.cnt    || 0),
       softRequestWarnings: Number(softWarnRows[0]?.cnt || 0),
+      totalLocations:   Number(locationRows[0]?.cnt    || 0),
       flags: {
         open:     Number(openFlags[0]?.cnt     || 0),
         critical: Number(criticalFlags[0]?.cnt || 0),
@@ -841,9 +844,137 @@ router.delete("/assets/:id", async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+/* ── Locations ──────────────────────────────────────────────────────────────── */
+// Inline migration: ensure locations table exists (PostgreSQL-compatible)
+(async () => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS locations (
+        id bigserial PRIMARY KEY,
+        company_id bigint NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        name varchar(200) NOT NULL,
+        campus varchar(160),
+        building varchar(160),
+        floor varchar(80),
+        room varchar(160),
+        qr_code varchar(255),
+        status varchar(16) NOT NULL DEFAULT 'Active',
+        created_by integer,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_locations_company ON locations(company_id)`);
+    // Drop wrong FK on created_by (if table was created with REFERENCES users)
+    await pool.query(`
+      ALTER TABLE locations DROP CONSTRAINT IF EXISTS locations_created_by_fkey
+    `);
+  } catch (e) {
+    console.warn('[companyPortal] locations table migration warning:', e.message);
+  }
+})();
+
+router.get("/locations", async (req, res, next) => {
+  try {
+    const companyId = cid(req);
+    const [rows] = await pool.query(
+      `SELECT id, name, campus, building, floor, room, qr_code AS "qrCode", status, created_at AS "createdAt"
+       FROM locations WHERE company_id = ? ORDER BY name ASC`,
+      [companyId]
+    );
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
+router.get("/locations/:id", async (req, res, next) => {
+  try {
+    const companyId = cid(req);
+    const { id } = req.params;
+    const [rows] = await pool.query(
+      `SELECT id, name, campus, building, floor, room, qr_code AS "qrCode", status, created_at AS "createdAt"
+       FROM locations WHERE id = ? AND company_id = ?`,
+      [id, companyId]
+    );
+    if (!rows.length) return res.status(404).json({ message: "Location not found" });
+    res.json(rows[0]);
+  } catch (err) { next(err); }
+});
+
+router.post("/locations", async (req, res, next) => {
+  try {
+    const companyId = cid(req);
+    const userId = req.companyUser.id;
+    const { name, campus, building, floor, room, status = "Active" } = req.body;
+    if (!name?.trim()) return res.status(400).json({ message: "Location name is required" });
+
+    const [rows] = await pool.query(
+      `INSERT INTO locations (company_id, name, campus, building, floor, room, status, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       RETURNING id, name, campus, building, floor, room, qr_code AS "qrCode", status, created_at AS "createdAt"`,
+      [companyId, name.trim(), campus || null, building || null, floor || null, room || null, status, userId]
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) { next(err); }
+});
+
+router.put("/locations/:id", async (req, res, next) => {
+  try {
+    const companyId = cid(req);
+    const { id } = req.params;
+    const { name, campus, building, floor, room, status } = req.body;
+    if (!name?.trim()) return res.status(400).json({ message: "Location name is required" });
+
+    const [rows] = await pool.query(
+      `UPDATE locations SET name = ?, campus = ?, building = ?, floor = ?, room = ?, status = ?
+       WHERE id = ? AND company_id = ?
+       RETURNING id, name, campus, building, floor, room, qr_code AS "qrCode", status, created_at AS "createdAt"`,
+      [name.trim(), campus || null, building || null, floor || null, room || null, status || "Active", id, companyId]
+    );
+    if (!rows.length) return res.status(404).json({ message: "Location not found" });
+    res.json(rows[0]);
+  } catch (err) { next(err); }
+});
+
+router.delete("/locations/:id", async (req, res, next) => {
+  try {
+    const companyId = cid(req);
+    const { id } = req.params;
+    await pool.query("DELETE FROM locations WHERE id = ? AND company_id = ?", [id, companyId]);
+    res.json({ success: true });
+  } catch (err) { next(err); }
+});
+
+router.delete("/locations", async (req, res, next) => {
+  try {
+    const companyId = cid(req);
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0)
+      return res.status(400).json({ message: "ids array is required" });
+    const safeIds = ids.map(Number).filter((n) => Number.isFinite(n) && n > 0);
+    if (safeIds.length === 0) return res.status(400).json({ message: "No valid ids" });
+    const placeholders = safeIds.map(() => "?").join(",");
+    await pool.query(
+      `DELETE FROM locations WHERE company_id = ? AND id IN (${placeholders})`,
+      [companyId, ...safeIds]
+    );
+    res.json({ ok: true, deleted: safeIds.length });
+  } catch (err) { next(err); }
+});
+
 /* ── Checklists ─────────────────────────────────────────────────────────────── */
+// Inline migration: add service_type and location_id to checklist_templates
+(async () => {
+  try {
+    await pool.query(`ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS service_type varchar(60) NULL`);
+    await pool.query(`ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS location_id bigint NULL`);
+  } catch (e) {
+    console.warn('[companyPortal] checklist_templates migration warning:', e.message);
+  }
+})();
+
 router.get("/checklists", async (req, res, next) => {
   try {
+    // Use COALESCE so the query works even if new columns don't exist yet
     const [rows] = await pool.query(
       `SELECT ct.id, ct.template_name AS "templateName", ct.asset_type AS "assetType",
               ct.asset_id AS "assetId",
@@ -855,8 +986,17 @@ router.get("/checklists", async (req, res, next) => {
        WHERE ct.company_id = ? AND ct.is_active = 1
        ORDER BY ct.template_name`,
       [cid(req)]
-    );
-    res.json(rows);
+    ).catch(() => [[]]);
+    // Fetch new columns separately — graceful if not yet migrated
+    let extraMap = {};
+    try {
+      const [extras] = await pool.query(
+        `SELECT id, service_type AS "serviceType", location_id AS "locationId" FROM checklist_templates WHERE company_id = ? AND is_active = 1`,
+        [cid(req)]
+      );
+      for (const e of extras) extraMap[e.id] = { serviceType: e.serviceType, locationId: e.locationId };
+    } catch (_) { /* columns not yet added — skip */ }
+    res.json((rows || []).map((r) => ({ ...r, ...extraMap[r.id] })));
   } catch (err) {
     next(err);
   }
@@ -865,14 +1005,15 @@ router.get("/checklists", async (req, res, next) => {
 router.post("/checklists", async (req, res, next) => {
   try {
     if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
-    const { templateName, assetType, assetId, category, description, frequency = "Daily", shift, shiftId, status = "active", questions } = req.body;
-    if (!templateName?.trim() || !assetType) return res.status(400).json({ message: "templateName and assetType are required" });
+    const { templateName, assetType, serviceType, assetId, locationId, category, description, frequency = "Daily", shift, shiftId, status = "active", questions } = req.body;
+    if (!templateName?.trim()) return res.status(400).json({ message: "templateName is required" });
+    const resolvedAssetType = assetType || serviceType || null;
     const questionsJson = questions ? JSON.stringify(questions) : null;
     const [rows] = await pool.query(
-      `INSERT INTO checklist_templates (company_id, template_name, asset_type, asset_id, category, description, frequency, shift, shift_id, status, is_active, created_by, questions)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-       RETURNING id, template_name AS "templateName", asset_type AS "assetType", asset_id AS "assetId", category, description, frequency, shift, shift_id AS "shiftId", status, questions, created_at AS "createdAt"`,
-      [cid(req), templateName.trim(), assetType, assetId || null, category || null, description || null, frequency, shift || null, shiftId || null, status, null, questionsJson]
+      `INSERT INTO checklist_templates (company_id, template_name, asset_type, service_type, asset_id, location_id, category, description, frequency, shift, shift_id, status, is_active, created_by, questions)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+       RETURNING id, template_name AS "templateName", asset_type AS "assetType", service_type AS "serviceType", asset_id AS "assetId", location_id AS "locationId", category, description, frequency, shift, shift_id AS "shiftId", status, questions, created_at AS "createdAt"`,
+      [cid(req), templateName.trim(), resolvedAssetType, serviceType || null, assetId || null, locationId || null, category || null, description || null, frequency, shift || null, shiftId || null, status, null, questionsJson]
     );
     res.status(201).json(rows[0]);
   } catch (err) { next(err); }
@@ -882,16 +1023,19 @@ router.put("/checklists/:id", async (req, res, next) => {
   try {
     if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
     const { id } = req.params;
-    const { templateName, assetType, assetId, category, description, frequency, shift, shiftId, status, questions } = req.body;
+    const { templateName, assetType, serviceType, assetId, locationId, category, description, frequency, shift, shiftId, status, questions } = req.body;
     const [[check]] = await pool.query("SELECT id FROM checklist_templates WHERE id = ? AND company_id = ?", [id, cid(req)]);
     if (!check) return res.status(404).json({ message: "Checklist not found" });
     const isActive = status === "active" ? 1 : 0;
     const questionsJson = questions !== undefined ? JSON.stringify(questions) : undefined;
+    const resolvedAssetType = assetType || serviceType || null;
     const [rows] = await pool.query(
       `UPDATE checklist_templates SET
          template_name = COALESCE(?, template_name),
          asset_type = COALESCE(?, asset_type),
+         service_type = ?,
          asset_id = ?,
+         location_id = ?,
          category = COALESCE(?, category),
          description = COALESCE(?, description),
          frequency = COALESCE(?, frequency),
@@ -901,8 +1045,8 @@ router.put("/checklists/:id", async (req, res, next) => {
          is_active = ?,
          questions = COALESCE(?, questions)
        WHERE id = ?
-       RETURNING id, template_name AS "templateName", asset_type AS "assetType", asset_id AS "assetId", category, description, frequency, shift, shift_id AS "shiftId", status, questions, created_at AS "createdAt"`,
-      [templateName || null, assetType || null, assetId || null, category || null, description || null, frequency || null, shift || null, shiftId ?? null, status || null, isActive, questionsJson ?? null, id]
+       RETURNING id, template_name AS "templateName", asset_type AS "assetType", service_type AS "serviceType", asset_id AS "assetId", location_id AS "locationId", category, description, frequency, shift, shift_id AS "shiftId", status, questions, created_at AS "createdAt"`,
+      [templateName || null, resolvedAssetType || null, serviceType ?? null, assetId ?? null, locationId ?? null, category || null, description || null, frequency || null, shift || null, shiftId ?? null, status || null, isActive, questionsJson ?? null, id]
     );
     res.json(rows[0]);
   } catch (err) { next(err); }
@@ -1586,6 +1730,8 @@ router.get("/employees", async (req, res, next) => {
               cu.employee_code AS "employeeCode",
               cu.supervisor_id AS "supervisorId",
               COALESCE(cu.service_domain, 'technical') AS "serviceDomain",
+              cu.permissions,
+              cu.module_access AS "moduleAccess",
               s.full_name AS "supervisorName",
               s.role AS "supervisorRole",
               cu.created_at AS "createdAt"
@@ -1702,7 +1848,7 @@ router.post("/employees", async (req, res, next) => {
 router.put("/employees/:id", async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { fullName, email, phone, designation, role, status, password, username, supervisorId, shift, serviceDomain, employeeCode } = req.body;
+    const { fullName, email, phone, designation, role, status, password, username, supervisorId, shift, serviceDomain, employeeCode, permissions, moduleAccess } = req.body;
 
     if (req.companyUser.role !== "admin" && req.companyUser.role !== "supervisor") {
       return res.status(403).json({ message: "Not authorised" });
@@ -1735,8 +1881,16 @@ router.put("/employees/:id", async (req, res, next) => {
     let supervisorClause = resolvedSupervisorId !== undefined ? ", supervisor_id = ?" : "";
     let shiftClause = shift !== undefined ? ", shift = ?" : "";
     let employeeCodeClause = employeeCode !== undefined ? ", employee_code = ?" : "";
+    let permissionsClause = "";
+    let moduleAccessClause = "";
     if (serviceDomain !== undefined && validDomains.includes(serviceDomain)) {
       serviceDomainClause = ", service_domain = ?";
+    }
+    if (permissions !== undefined) {
+      permissionsClause = ", permissions = ?::jsonb";
+    }
+    if (moduleAccess !== undefined) {
+      moduleAccessClause = ", module_access = ?::jsonb";
     }
     const params = [fullName, email, phone || null, designation || null, role || "employee", status || "Active"];
     if (username !== undefined) params.push(username || null);
@@ -1744,6 +1898,8 @@ router.put("/employees/:id", async (req, res, next) => {
     if (shift !== undefined) params.push(shift || null);
     if (serviceDomainClause) params.push(serviceDomain);
     if (employeeCodeClause) params.push(employeeCode || null);
+    if (permissionsClause) params.push(JSON.stringify(permissions && typeof permissions === 'object' ? permissions : {}));
+    if (moduleAccessClause) params.push(JSON.stringify(Array.isArray(moduleAccess) ? moduleAccess : []));
     if (password) {
       const hash = await bcrypt.hash(password, 10);
       passwordClause = ", password_hash = ?";
@@ -1753,14 +1909,16 @@ router.put("/employees/:id", async (req, res, next) => {
 
     const [rows] = await pool.query(
       `UPDATE company_users
-       SET full_name = ?, email = ?, phone = ?, designation = ?, role = ?, status = ?${usernameClause}${supervisorClause}${shiftClause}${serviceDomainClause}${employeeCodeClause}${passwordClause}, updated_at = NOW()
+       SET full_name = ?, email = ?, phone = ?, designation = ?, role = ?, status = ?${usernameClause}${supervisorClause}${shiftClause}${serviceDomainClause}${employeeCodeClause}${permissionsClause}${moduleAccessClause}${passwordClause}, updated_at = NOW()
        WHERE id = ?
        RETURNING id,
                  full_name      AS "fullName",
                  email, phone, designation, role, shift, status, username,
                  employee_code  AS "employeeCode",
                  supervisor_id  AS "supervisorId",
-                 service_domain AS "serviceDomain"`,
+                 service_domain AS "serviceDomain",
+                 permissions,
+                 module_access  AS "moduleAccess"`,
       params
     );
     res.json(rows[0]);

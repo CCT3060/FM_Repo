@@ -48,7 +48,7 @@ function AssignModal({ req, users, token, onClose, onDone }) {
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center" }}>
       <div style={{ background: "#fff", borderRadius: "14px", padding: "28px", width: "460px", maxWidth: "95vw", boxShadow: "0 20px 60px rgba(0,0,0,0.18)" }}>
         <h3 style={{ margin: "0 0 4px", fontSize: "17px", fontWeight: 700, color: "#0f172a" }}>Assign Request</h3>
-        <p style={{ margin: "0 0 18px", fontSize: "13px", color: "#64748b" }}>{req.assetName} · <span style={{ fontFamily: "monospace", color: "#94a3b8" }}>{req.requestNumber}</span></p>
+        <p style={{ margin: "0 0 18px", fontSize: "13px", color: "#64748b" }}>{req.templateName || req.assetName || req.locationName || 'Request'} · <span style={{ fontFamily: "monospace", color: "#94a3b8" }}>{req.requestNumber}</span></p>
         {err && <div style={{ background: "#fef2f2", color: "#dc2626", padding: "9px 12px", borderRadius: "7px", marginBottom: "14px", fontSize: "13px" }}>{err}</div>}
         <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Assign To</label>
         <SearchableSelect
@@ -95,7 +95,7 @@ function CutoffModal({ req, users, token, onClose, onDone }) {
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center" }}>
       <div style={{ background: "#fff", borderRadius: "14px", padding: "28px", width: "440px", maxWidth: "95vw", boxShadow: "0 20px 60px rgba(0,0,0,0.18)" }}>
         <h3 style={{ margin: "0 0 4px", fontSize: "17px", fontWeight: 700, color: "#0f172a" }}>Set Cutoff Date</h3>
-        <p style={{ margin: "0 0 18px", fontSize: "13px", color: "#64748b" }}>{req.assetName} · <span style={{ fontFamily: "monospace", color: "#94a3b8" }}>{req.requestNumber}</span></p>
+        <p style={{ margin: "0 0 18px", fontSize: "13px", color: "#64748b" }}>{req.templateName || req.assetName || req.locationName || 'Request'} · <span style={{ fontFamily: "monospace", color: "#94a3b8" }}>{req.requestNumber}</span></p>
         {err && <div style={{ background: "#fef2f2", color: "#dc2626", padding: "9px 12px", borderRadius: "7px", marginBottom: "14px", fontSize: "13px" }}>{err}</div>}
 
         <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>Deadline</label>
@@ -152,8 +152,8 @@ function ViewModal({ req, token, onClose }) {
               <span style={{ padding: "3px 10px", borderRadius: "10px", fontSize: "12px", fontWeight: 600, background: ss.bg, color: ss.color }}>{ss.label}</span>
               {req.escalationLevel > 0 && <span style={{ padding: "3px 10px", borderRadius: "10px", fontSize: "12px", fontWeight: 600, background: "#fee2e2", color: "#dc2626" }}>⚠ Escalated L{req.escalationLevel}</span>}
             </div>
-            <h2 style={{ margin: 0, fontSize: "18px", fontWeight: 700, color: "#0f172a" }}>{req.assetName}</h2>
-            {req.assetUniqueId && <p style={{ margin: "2px 0 0", fontSize: "12px", color: "#94a3b8" }}>Asset ID: {req.assetUniqueId}</p>}
+            <h2 style={{ margin: 0, fontSize: "18px", fontWeight: 700, color: "#0f172a" }}>{req.templateName || req.assetName || req.locationName || 'Soft Request'}</h2>
+            {(req.assetName || req.locationName) && <p style={{ margin: "2px 0 0", fontSize: "12px", color: "#94a3b8" }}>{req.assetName ? `Asset: ${req.assetName}` : `Location: ${req.locationName}`}{req.assetUniqueId ? ` · #${req.assetUniqueId}` : ''}</p>}
           </div>
           <button onClick={onClose} style={{ background: "none", border: "none", fontSize: "22px", color: "#94a3b8", cursor: "pointer", lineHeight: 1 }}>✕</button>
         </div>
@@ -318,7 +318,7 @@ export default function SoftRequestsPanel({ token, currentUser }) {
     if (statusFilter !== "all" && r.status !== statusFilter) return false;
     if (search) {
       const q = search.toLowerCase();
-      return (r.assetName || "").toLowerCase().includes(q)
+      return (r.templateName || r.assetName || r.locationName || "").toLowerCase().includes(q)
         || (r.raisedByName || "").toLowerCase().includes(q)
         || (r.assignedToName || "").toLowerCase().includes(q)
         || (r.requestNumber || "").toLowerCase().includes(q);
@@ -406,7 +406,7 @@ export default function SoftRequestsPanel({ token, currentUser }) {
             );
           })}
         </div>
-        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search asset, raised by, request #…"
+        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search checklist, location, raised by, request #…"
           style={{ padding: "7px 12px", border: "1px solid #e2e8f0", borderRadius: "8px", fontSize: "13px", background: "#fff", flex: "1", minWidth: "180px" }} />
         <button onClick={load} style={{ padding: "7px 14px", borderRadius: "8px", border: "1px solid #e2e8f0", background: "#f8fafc", color: "#475569", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
           ↻ Refresh
@@ -438,7 +438,7 @@ export default function SoftRequestsPanel({ token, currentUser }) {
                 onChange={() => setSelected(selected.size === filtered.length ? new Set() : new Set(filtered.map((r) => r.id)))}
                 style={{ cursor: "pointer", width: "14px", height: "14px" }} />
             </span>
-            <span>Req #</span><span>Asset</span><span>Raised By</span><span>Assigned To</span><span>Status</span><span>Raised</span><span>Cutoff</span><span>Actions</span>
+            <span>Req #</span><span>Checklist</span><span>Raised By</span><span>Assigned To</span><span>Status</span><span>Raised</span><span>Cutoff</span><span>Actions</span>
           </div>
 
           {filtered.map((r, i) => {
@@ -460,10 +460,10 @@ export default function SoftRequestsPanel({ token, currentUser }) {
                   {r.requestNumber}
                 </div>
 
-                {/* Asset */}
+                {/* Checklist / Asset */}
                 <div>
-                  <div style={{ fontWeight: 600, fontSize: "13px", color: "#0f172a" }}>{r.assetName || "—"}</div>
-                  {r.assetUniqueId && <div style={{ fontSize: "11px", color: "#94a3b8" }}>#{r.assetUniqueId}</div>}
+                  <div style={{ fontWeight: 600, fontSize: "13px", color: "#0f172a" }}>{r.templateName || r.assetName || r.locationName || "—"}</div>
+                  {(r.assetName || r.locationName) && <div style={{ fontSize: "11px", color: "#94a3b8" }}>{r.assetName || r.locationName}</div>}
                   {r.escalationLevel > 0 && <div style={{ fontSize: "10.5px", color: "#dc2626", fontWeight: 600 }}>⚠ Escalated L{r.escalationLevel}</div>}
                 </div>
 

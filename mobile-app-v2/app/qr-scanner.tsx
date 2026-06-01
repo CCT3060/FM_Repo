@@ -41,6 +41,14 @@ export default function QRScannerScreen() {
     setLoading(true);
 
     try {
+      // Check for location QR first: /location/123
+      const locationMatch = data.match(/\/locations?\/(\d+)/i);
+      if (locationMatch?.[1]) {
+        const locationId = locationMatch[1];
+        router.replace({ pathname: '/location-scan', params: { locationId, fromQR: '1' } } as any);
+        return;
+      }
+
       // Try to extract asset ID from QR data
       // Handles: /asset-scan/123  |  /assets/123  |  plain 123
       const match =
@@ -50,7 +58,7 @@ export default function QRScannerScreen() {
         data.match(/^(\d+)$/);
       const assetId = match?.[1];
       if (!assetId) {
-        Alert.alert('Invalid QR', 'This QR code does not match a known asset.', [
+        Alert.alert('Invalid QR', 'This QR code does not match a known asset or location.', [
           { text: 'Scan Again', onPress: () => setScanned(false) },
         ]);
         return;
@@ -75,7 +83,7 @@ export default function QRScannerScreen() {
           <TouchableOpacity onPress={() => router.back()} style={styles.backBtnScan}>
             <MaterialCommunityIcons name="arrow-left" size={24} color="#fff" />
           </TouchableOpacity>
-          <Text style={styles.scanTitle}>Scan Asset QR Code</Text>
+          <Text style={styles.scanTitle}>Scan QR Code</Text>
         </SafeAreaView>
 
         {/* Viewfinder */}
@@ -88,7 +96,7 @@ export default function QRScannerScreen() {
 
         <View style={styles.bottomOverlay}>
           <Text style={styles.scanHint}>
-            {loading ? 'Looking up asset…' : 'Point the camera at the QR code on the asset'}
+            {loading ? 'Looking up…' : 'Point the camera at a QR code on an asset or location'}
           </Text>
           {scanned && !loading ? (
             <TouchableOpacity style={styles.rescanBtn} onPress={() => setScanned(false)}>

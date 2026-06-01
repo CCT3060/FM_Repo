@@ -129,7 +129,9 @@ export default function HomeScreen() {
         {/* ── Quick actions ─────────────────────────────────────────────── */}
         <Text style={[styles.sectionTitle, { color: theme.textMuted }]}>QUICK ACTIONS</Text>
         <View style={styles.actionsGrid}>
-          <ActionCard icon="package-variant" label="Assets" sublabel="Browse & scan" color={theme.primary} onPress={() => router.push('/assets')} />
+          {(!user?.moduleAccess?.length || user?.moduleAccess?.includes('assets')) ? (
+            <ActionCard icon="package-variant" label="Assets" sublabel="Browse & scan" color={theme.primary} onPress={() => router.push('/assets')} />
+          ) : null}
 
           {hasTechAccess(capabilities) ? (
             <ActionCard icon="clipboard-check-outline" label="Checklists" sublabel="My assignments" color="#059669" onPress={() => router.push('/(tabs)/checklists')} />
@@ -165,6 +167,10 @@ export default function HomeScreen() {
 
           {hasTechAccess(capabilities) && user?.companyEnabledModules?.includes('ojt') ? (
             <ActionCard icon="school-outline" label="Training" sublabel="OJT modules" color="#059669" onPress={() => router.push('/training')} />
+          ) : null}
+
+          {user?.moduleAccess?.includes('locations') ? (
+            <ActionCard icon="map-marker-outline" label="Locations" sublabel="Browse locations" color="#0891B2" onPress={() => router.push('/locations' as any)} />
           ) : null}
         </View>
 

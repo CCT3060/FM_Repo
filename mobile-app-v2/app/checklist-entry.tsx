@@ -400,7 +400,7 @@ function FieldInput({ field, value, onChange }: { field: Field; value: any; onCh
 
 export default function ChecklistEntryScreen() {
   const { theme } = useTheme();
-  const { assetId, templateId, templateType, templateName, assetName, softRaise } =
+  const { assetId, templateId, templateType, templateName, assetName, softRaise, locationId } =
     useLocalSearchParams<{
       assetId: string;
       templateId: string;
@@ -409,6 +409,7 @@ export default function ChecklistEntryScreen() {
       assetName: string;
       assignmentId: string;
       softRaise: string;
+      locationId: string;
     }>();
 
   const isSoftRaise = softRaise === '1';
@@ -499,7 +500,8 @@ export default function ChecklistEntryScreen() {
         });
         const submissionId = (submission as any)?.submissionId ?? (submission as any)?.id ?? undefined;
         await raiseSoftRequest({
-          assetId: aid ?? 0,
+          ...(aid ? { assetId: aid } : {}),
+          ...(locationId && Number(locationId) > 0 ? { locationId: Number(locationId) } : {}),
           templateId: tid,
           submissionId,
           answers: answerArray,
@@ -631,7 +633,7 @@ export default function ChecklistEntryScreen() {
 
           <View style={[styles.footer, { backgroundColor: theme.surface, borderTopColor: theme.border }]}>
             <TouchableOpacity
-              style={[styles.submitBtn, { backgroundColor: submitting ? theme.textMuted : theme.primary }]}
+              style={[styles.submitBtn, { backgroundColor: submitting ? theme.textMuted : (isSoftRaise ? '#dc2626' : theme.primary) }]}
               onPress={handleSubmit}
               disabled={submitting}
               activeOpacity={0.85}
@@ -640,8 +642,8 @@ export default function ChecklistEntryScreen() {
                 <ActivityIndicator color="#fff" />
               ) : (
                 <>
-                  <Text style={styles.submitText}>{isSoftRaise ? 'Submit Request' : 'Submit Checklist'}</Text>
-                  <MaterialCommunityIcons name="send" size={18} color="#fff" />
+                  <Text style={styles.submitText}>{isSoftRaise ? 'Raise Issue' : 'Submit Checklist'}</Text>
+                  <MaterialCommunityIcons name={isSoftRaise ? 'alert-circle-outline' : 'send'} size={18} color="#fff" />
                 </>
               )}
             </TouchableOpacity>

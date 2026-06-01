@@ -148,12 +148,15 @@ router.get(
            cs.id,
            cs.template_id          AS "templateId",
            ct.template_name        AS "templateName",
+           ct.service_type         AS "serviceType",
            cs.asset_id             AS "assetId",
            a.asset_name            AS "assetName",
            a.building              AS "assetBuilding",
            a.floor                 AS "assetFloor",
            a.room                  AS "assetRoom",
-           d.name       AS "assetDepartment",
+           d.name                  AS "assetDepartment",
+           ct.location_id          AS "locationId",
+           loc.name                AS "locationName",
            co.company_name         AS "companyName",
            cs.status,
            cs.submitted_at         AS "submittedAt",
@@ -166,6 +169,7 @@ router.get(
          JOIN companies co           ON co.id = ct.company_id
          LEFT JOIN assets a          ON a.id = cs.asset_id
          LEFT JOIN departments d     ON d.id = a.department_id
+         LEFT JOIN locations loc     ON loc.id = ct.location_id
          LEFT JOIN company_users cu  ON cu.id = cs.company_user_id
          WHERE ${conditions.join(" AND ")}
          ORDER BY cs.submitted_at DESC NULLS LAST

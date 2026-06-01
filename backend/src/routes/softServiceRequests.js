@@ -14,6 +14,7 @@
 import { Router } from "express";
 import pool from "../db.js";
 import { requireCompanyAuth } from "../middleware/companyAuth.js";
+import { sendFCMPush } from "../utils/firebaseService.js";
 
 const router = Router();
 router.use(requireCompanyAuth);
@@ -31,6 +32,11 @@ router.use(requireCompanyAuth);
       ADD COLUMN IF NOT EXISTS cutoff_at TIMESTAMPTZ DEFAULT NULL`);
     await pool.query(`ALTER TABLE soft_service_requests
       ADD COLUMN IF NOT EXISTS cutoff_escalation_user_id BIGINT DEFAULT NULL`);
+    await pool.query(`ALTER TABLE soft_service_requests
+      ADD COLUMN IF NOT EXISTS location_id BIGINT DEFAULT NULL`);
+    // Allow asset_id to be NULL (needed for location-based requests)
+    await pool.query(`ALTER TABLE soft_service_requests
+      ALTER COLUMN asset_id DROP NOT NULL`).catch(() => {});
     // Per-company escalation cutoff table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS soft_escalation_settings (
@@ -53,10 +59,11 @@ async function runEscalationCheck() {
               ssr.raised_by_user_id AS "raisedByUserId",
               ssr.raised_at AS "raisedAt", ssr.escalation_level AS "escalationLevel",
               COALESCE(ses.cutoff_hours, 24) AS "cutoffHours",
-              a.asset_name AS "assetName"
+              COALESCE(a.asset_name, loc.name, 'an item') AS "assetName"
        FROM soft_service_requests ssr
        LEFT JOIN soft_escalation_settings ses ON ses.company_id = ssr.company_id
-       JOIN assets a ON a.id = ssr.asset_id
+       LEFT JOIN assets a ON a.id = ssr.asset_id
+       LEFT JOIN locations loc ON loc.id = ssr.location_id
        WHERE ssr.status = 'open'
          AND ssr.escalation_level < 2`  /* max 2 escalations */
     );
@@ -81,7 +88,7 @@ async function runEscalationCheck() {
       let notifyUsers;
       if (targetCapability) {
         [notifyUsers] = await pool.query(
-          `SELECT cu.id, cu.full_name, cu.push_token
+          `SELECT cu.id, cu.full_name, cu.push_token, cu.fcm_token
            FROM company_users cu
            JOIN company_roles cr ON cr.company_id = cu.company_id AND cr.role_key = cu.role
            WHERE cu.company_id = ?
@@ -92,7 +99,7 @@ async function runEscalationCheck() {
       } else {
         // Level 2: notify anyone who can resolve
         [notifyUsers] = await pool.query(
-          `SELECT cu.id, cu.full_name, cu.push_token
+          `SELECT cu.id, cu.full_name, cu.push_token, cu.fcm_token
            FROM company_users cu
            JOIN company_roles cr ON cr.company_id = cu.company_id AND cr.role_key = cu.role
            WHERE cu.company_id = ?
@@ -118,6 +125,14 @@ async function runEscalationCheck() {
             `⚠️ Escalated Request (Level ${newLevel})`,
             `Request for ${req.assetName} open ${ageLabel}. Needs resolution.`,
             { screen: '/(tabs)/soft-requests', requestId: req.id }
+          );
+        }
+        if (u.fcm_token) {
+          await sendFCMPush(
+            u.fcm_token,
+            `⚠️ Escalated Request (Level ${newLevel})`,
+            `Request for ${req.assetName} open ${ageLabel}. Needs resolution.`,
+            { screen: '/(tabs)/soft-requests', requestId: String(req.id) }
           );
         }
       }
@@ -182,14 +197,14 @@ async function hasCapability(companyId, roleKey, column) {
 /* ── POST /requests ── Raise a soft-service request ─────────────────────── */
 router.post("/requests", async (req, res, next) => {
   try {
-    const { assetId, templateId, templateType = "checklist", submissionId, checklistSubmissionId } = req.body || {};
+    const { assetId, locationId, templateId, templateType = "checklist", submissionId, checklistSubmissionId } = req.body || {};
     const resolvedSubmissionId = submissionId ?? checklistSubmissionId ?? null;
     const userId    = req.companyUser.id;
     const companyId = req.companyUser.companyId;
     const roleKey   = req.companyUser.role;
 
-    if (!assetId || templateId == null) {
-      return res.status(400).json({ message: "assetId and templateId are required" });
+    if ((assetId == null && locationId == null) || templateId == null) {
+      return res.status(400).json({ message: "Either assetId or locationId, and templateId are required" });
     }
 
     // Permission check (pass-through if role not configured yet)
@@ -198,20 +213,33 @@ router.post("/requests", async (req, res, next) => {
       return res.status(403).json({ message: "Your role cannot raise soft-service requests" });
     }
 
-    // Verify asset belongs to this company
-    const [[asset]] = await pool.query(
-      `SELECT a.id FROM assets a WHERE a.id = ? AND a.company_id = ?`,
-      [assetId, companyId]
-    );
-    if (!asset) return res.status(404).json({ message: "Asset not found" });
+    let assetLabel = "an item";
+
+    if (assetId != null) {
+      // Verify asset belongs to this company
+      const [[asset]] = await pool.query(
+        `SELECT a.id, a.asset_name FROM assets a WHERE a.id = ? AND a.company_id = ?`,
+        [assetId, companyId]
+      );
+      if (!asset) return res.status(404).json({ message: "Asset not found" });
+      assetLabel = asset.asset_name || "an asset";
+    } else {
+      // Verify location belongs to this company
+      const [[location]] = await pool.query(
+        `SELECT l.id, l.name FROM locations l WHERE l.id = ? AND l.company_id = ?`,
+        [locationId, companyId]
+      );
+      if (!location) return res.status(404).json({ message: "Location not found" });
+      assetLabel = location.name || "a location";
+    }
 
     // Insert the request
     const [rows] = await pool.query(
       `INSERT INTO soft_service_requests
-         (company_id, asset_id, template_id, template_type, raise_submission_id, raised_by_user_id, status)
-       VALUES (?, ?, ?, ?, ?, ?, 'open')
+         (company_id, asset_id, location_id, template_id, template_type, raise_submission_id, raised_by_user_id, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'open')
        RETURNING id`,
-      [companyId, assetId, templateId, templateType, resolvedSubmissionId, userId]
+      [companyId, assetId ?? null, locationId ?? null, templateId, templateType, resolvedSubmissionId, userId]
     );
 
     const requestId = rows[0]?.id ?? rows.insertId;
@@ -223,13 +251,8 @@ router.post("/requests", async (req, res, next) => {
       );
       const raiserName = raiser?.full_name || 'A user';
 
-      const [[assetRow]] = await pool.query(
-        `SELECT asset_name FROM assets WHERE id = ?`, [assetId]
-      );
-      const assetLabel = assetRow?.asset_name || 'an asset';
-
       const [resolvers] = await pool.query(
-        `SELECT cu.id, cu.push_token
+        `SELECT cu.id, cu.push_token, cu.fcm_token
          FROM company_users cu
          JOIN company_roles cr ON cr.company_id = cu.company_id AND cr.role_key = cu.role
          WHERE cu.company_id = ?
@@ -251,6 +274,14 @@ router.post("/requests", async (req, res, next) => {
             'New Soft Request',
             `${raiserName} raised a request for ${assetLabel}.`,
             { screen: '/(tabs)/soft-requests', requestId }
+          );
+        }
+        if (resolver.fcm_token) {
+          await sendFCMPush(
+            resolver.fcm_token,
+            'New Soft Request',
+            `${raiserName} raised a request for ${assetLabel}.`,
+            { screen: '/(tabs)/soft-requests', requestId: String(requestId) }
           );
         }
       }
@@ -345,14 +376,22 @@ router.get("/requests/my", async (req, res, next) => {
          ssr.asset_id              AS "assetId",
          a.asset_name              AS "assetName",
          a.asset_unique_id         AS "assetUniqueId",
+         ssr.location_id           AS "locationId",
+         loc.name                  AS "locationName",
          ssr.template_id           AS "templateId",
          ssr.template_type         AS "templateType",
+         COALESCE(ct.template_name, lt.template_name) AS "templateName",
          ssr.status,
+         raiser.full_name          AS "raisedByName",
          ssr.raised_at             AS "raisedAt",
          ssr.resolved_at           AS "resolvedAt",
          resolver.full_name        AS "resolvedByName"
        FROM soft_service_requests ssr
-       JOIN assets a ON a.id = ssr.asset_id
+       LEFT JOIN assets a ON a.id = ssr.asset_id
+       LEFT JOIN locations loc ON loc.id = ssr.location_id
+       LEFT JOIN checklist_templates ct ON ssr.template_type = 'checklist' AND ct.id = ssr.template_id
+       LEFT JOIN logsheet_templates lt ON ssr.template_type = 'logsheet' AND lt.id = ssr.template_id
+       LEFT JOIN company_users raiser ON raiser.id = ssr.raised_by_user_id
        LEFT JOIN company_users resolver ON resolver.id = ssr.resolved_by_user_id
        WHERE ssr.company_id = ? AND ssr.raised_by_user_id = ?${whereExtra}
        ORDER BY ssr.raised_at DESC
@@ -372,7 +411,9 @@ router.get("/requests/users", async (req, res, next) => {
     const companyId = req.companyUser.companyId;
     const [rows] = await pool.query(
       `SELECT id, full_name AS "fullName", role, designation
-       FROM company_users WHERE company_id = ? AND status = 'Active' ORDER BY full_name`,
+       FROM company_users WHERE company_id = ? AND status = 'Active'
+         AND LOWER(designation) LIKE '%catalyst supervisor%'
+       ORDER BY full_name`,
       [companyId]
     );
     res.json(rows);
@@ -399,8 +440,11 @@ router.get("/requests/all", async (req, res, next) => {
          ssr.asset_id              AS "assetId",
          a.asset_name              AS "assetName",
          a.asset_unique_id         AS "assetUniqueId",
+         ssr.location_id           AS "locationId",
+         loc.name                  AS "locationName",
          ssr.template_id           AS "templateId",
          ssr.template_type         AS "templateType",
+         COALESCE(ct.template_name, lt.template_name) AS "templateName",
          ssr.status,
          ssr.raised_at             AS "raisedAt",
          raiser.full_name          AS "raisedByName",
@@ -416,7 +460,10 @@ router.get("/requests/all", async (req, res, next) => {
          COALESCE(ses.cutoff_hours, 24) AS "cutoffHours",
          CONCAT('SR-', LPAD(CAST(ssr.id AS VARCHAR), 5, '0')) AS "requestNumber"
        FROM soft_service_requests ssr
-       JOIN assets a ON a.id = ssr.asset_id
+       LEFT JOIN assets a ON a.id = ssr.asset_id
+       LEFT JOIN locations loc ON loc.id = ssr.location_id
+       LEFT JOIN checklist_templates ct ON ssr.template_type = 'checklist' AND ct.id = ssr.template_id
+       LEFT JOIN logsheet_templates lt ON ssr.template_type = 'logsheet' AND lt.id = ssr.template_id
        JOIN company_users raiser ON raiser.id = ssr.raised_by_user_id
        LEFT JOIN company_users resolver ON resolver.id = ssr.resolved_by_user_id
        LEFT JOIN company_users assignee ON assignee.id = ssr.assigned_to_user_id
@@ -446,6 +493,8 @@ router.get("/requests/:id", async (req, res, next) => {
          ssr.id,
          ssr.asset_id                  AS "assetId",
          a.asset_name                  AS "assetName",
+         ssr.location_id               AS "locationId",
+         loc.name                      AS "locationName",
          ssr.template_id               AS "templateId",
          ssr.template_type             AS "templateType",
          ssr.raise_submission_id       AS "raiseSubmissionId",
@@ -480,7 +529,8 @@ router.get("/requests/:id", async (req, res, next) => {
            WHERE csa.submission_id = ssr.raise_submission_id
          )                             AS "beforeAnswers"
        FROM soft_service_requests ssr
-       JOIN assets a ON a.id = ssr.asset_id
+       LEFT JOIN assets a ON a.id = ssr.asset_id
+       LEFT JOIN locations loc ON loc.id = ssr.location_id
        JOIN company_users cu ON cu.id = ssr.raised_by_user_id
        WHERE ssr.id = ? AND ssr.company_id = ?`,
       [requestId, companyId]
@@ -577,7 +627,7 @@ router.put("/requests/:id/assign", async (req, res, next) => {
     // Notify assigned user
     if (assignedToUserId) {
       const [[assignee]] = await pool.query(
-        `SELECT full_name, push_token FROM company_users WHERE id = ? AND company_id = ?`,
+        `SELECT full_name, push_token, fcm_token FROM company_users WHERE id = ? AND company_id = ?`,
         [assignedToUserId, companyId]
       );
       const [[assetRow]] = await pool.query(
@@ -585,9 +635,15 @@ router.put("/requests/:id/assign", async (req, res, next) => {
         [requestId]
       );
       if (assignee) {
+        const notifTitle = "Soft Request Assigned";
+        const notifBody  = `Handle request for ${assetRow?.asset_name || "an asset"}.`;
+        const notifData  = { screen: "/(tabs)/soft-requests" };
         await createInAppNotification(companyId, assignedToUserId, "Soft Request Assigned", `You have been assigned to handle a request for ${assetRow?.asset_name || "an asset"}.`);
         if (assignee.push_token) {
-          await sendExpoPush(assignee.push_token, "Soft Request Assigned", `Handle request for ${assetRow?.asset_name || "an asset"}.`, { screen: "/(tabs)/soft-requests" });
+          await sendExpoPush(assignee.push_token, notifTitle, notifBody, notifData);
+        }
+        if (assignee.fcm_token) {
+          await sendFCMPush(assignee.fcm_token, notifTitle, notifBody, notifData);
         }
       }
     }

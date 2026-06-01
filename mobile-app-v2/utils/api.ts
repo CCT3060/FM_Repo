@@ -75,6 +75,8 @@ export interface SoftRequest {
   assetId:         number;
   assetName:       string;
   assetUniqueId:   string;
+  locationId?:     number;
+  locationName?:   string;
   templateId:      number;
   templateType:    string;
   templateName?:   string;
@@ -268,11 +270,11 @@ export async function clearStoredCompany() {
 }
 
 // ─── Push token ───────────────────────────────────────────────────────────────
-export async function registerPushToken(token: string, platform: string): Promise<void> {
+export async function registerPushToken(token: string, platform: string, fcmToken?: string): Promise<void> {
   try {
     await authenticatedFetch('/api/mobile-auth/push-token', {
       method: 'POST',
-      body: JSON.stringify({ token, platform }),
+      body: JSON.stringify({ token, platform, ...(fcmToken ? { fcmToken } : {}) }),
     });
   } catch { /* non-critical */ }
 }
@@ -293,6 +295,19 @@ export async function fetchAssetById(id: number) {
 
 export async function fetchAssetByQR(assetId: number) {
   return apiGet<unknown>(`/api/asset-qr/${assetId}`);
+}
+
+// ─── Locations ────────────────────────────────────────────────────────────────
+export async function fetchLocations() {
+  return apiGet<any[]>('/api/company-portal/locations');
+}
+
+export async function fetchLocationById(id: number) {
+  return apiGet<any>(`/api/company-portal/locations/${id}`);
+}
+
+export async function fetchLocationTemplates(locationId: number) {
+  return apiGet<{ location: any; templates: any[]; recentSubmission?: any; assignedSoftRequests?: Array<{ id: number; status: string; templateName?: string; raisedAt: string }> }>(`/api/template-assignments/location-templates/${locationId}`);
 }
 
 // ─── Assignments / Templates ─────────────────────────────────────────────────
@@ -483,7 +498,8 @@ export async function fetchAllSoftRequests(): Promise<SoftRequest[]> {
 }
 
 export async function raiseSoftRequest(payload: {
-  assetId: number;
+  assetId?: number;
+  locationId?: number;
   templateId: number;
   submissionId?: number;
   answers: unknown[];
@@ -610,25 +626,34 @@ export async function uploadFile(localUri: string): Promise<string> {
   };
   const mimeType = mimeMap[ext] ?? 'image/jpeg';
 
-  const formData = new FormData();
-  formData.append('file', { uri: compressedUri, name: filename, type: mimeType } as any);
-
   const headers: Record<string, string> = {};
   if (token) headers['Authorization'] = `Bearer ${token}`;
   // Do NOT set Content-Type — native fetch sets it automatically with multipart boundary
 
-  const res = await fetch(`${API_BASE}/api/upload`, {
-    method: 'POST',
-    headers,
-    body: formData,
-  });
-
-  if (!res.ok) {
-    const msg = await res.text().catch(() => 'Upload failed');
-    throw new Error(msg || `Upload failed (${res.status})`);
+  let lastError: Error = new Error('Upload failed');
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const formData = new FormData();
+      formData.append('file', { uri: compressedUri, name: filename, type: mimeType } as any);
+      const res = await fetch(`${API_BASE}/api/upload`, {
+        method: 'POST',
+        headers,
+        body: formData,
+      });
+      if (!res.ok) {
+        const msg = await res.text().catch(() => 'Upload failed');
+        throw new Error(msg || `Upload failed (${res.status})`);
+      }
+      const data = await res.json() as { url: string };
+      return data.url;
+    } catch (err: any) {
+      lastError = err;
+      if (attempt < 3) {
+        await new Promise(r => setTimeout(r, 1000 * attempt)); // 1s, 2s backoff
+      }
+    }
   }
-  const data = await res.json() as { url: string };
-  return data.url;
+  throw lastError;
 }
 
 // ─── Offline sync ────────────────────────────────────────────────────────────

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "231959496107",
+    "project_id": "soft-fm-app",
+    "storage_bucket": "soft-fm-app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:231959496107:android:0ba193f2eb4a7642997eee",
+        "android_client_info": {
+          "package_name": "com.cct123.fmmobilev2"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyACTWQPV2ZJsLcKI3TZ0XyZvI3ZAXB4xJk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

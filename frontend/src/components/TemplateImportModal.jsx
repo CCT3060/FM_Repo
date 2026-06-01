@@ -122,17 +122,49 @@ function downloadSampleCSV(type) {
   URL.revokeObjectURL(url);
 }
 
+/* ── Bulk sample Excel download (multi-sheet) ────────────────────────────── */
+function downloadBulkSampleXLSX() {
+  // Build a simple TSV-based multi-sheet xlsx using a data-URI trick with CSV fallback
+  // Since we don't have SheetJS in the frontend, we produce a ZIP-like XLSX from raw data.
+  // Simplest approach: generate two CSVs in a single "zip" xlsx by using base64 XLSX template.
+  // For practicality, we generate a zip of two named sheets as an ods/xlsx file.
+  // Best approach without SheetJS on frontend: just generate a CSV with a separator row.
+  const headers = ["Question", "Answer Type", "Required", "Section", "Options", "Order"];
+  const sheet1 = [
+    headers,
+    ["Is the area clean?", "yes_no", "Yes", "Cleanliness", "", "1"],
+    ["Are bins emptied?", "yes_no", "Yes", "Cleanliness", "", "2"],
+    ["Floor condition", "dropdown", "Yes", "General", "Good;Fair;Poor", "3"],
+  ];
+  const sheet2 = [
+    headers,
+    ["Washroom soap available?", "yes_no", "Yes", "Washroom", "", "1"],
+    ["Tissue paper stocked?", "yes_no", "Yes", "Washroom", "", "2"],
+    ["Any leakage?", "yes_no", "Yes", "Plumbing", "", "3"],
+  ];
+  // Create two CSV blobs with instructions
+  const sep = "\n\n";
+  const note = `# BULK IMPORT FORMAT — Each sheet in an Excel file becomes one template.\n# Sheet name = Template name.\n# Below are 2 sample templates. In Excel, put each in a separate worksheet named after the template.\n\n`;
+  const toCsv = (rows) => rows.map((r) => r.map((c) => `"${c}"`).join(",")).join("\n");
+  const content = note + `# === TEMPLATE 1: Daily Cleaning Check ===\n` + toCsv(sheet1) + sep + `# === TEMPLATE 2: Washroom Inspection ===\n` + toCsv(sheet2);
+  const blob = new Blob(["\uFEFF" + content], { type: "text/plain;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "bulk-checklist-sample.txt";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 /* ════════════════════════════════════════════════════════════════════════════
    STEP 1 — Upload
 ════════════════════════════════════════════════════════════════════════════ */
 function UploadStep({ type, token, onParsed, onError }) {
-  const [uploadTab, setUploadTab] = useState("file"); // "file" | "image"
   const [dragging,  setDragging]  = useState(false);
   const [file,      setFile]      = useState(null);
   const [loading,   setLoading]   = useState(false);
   const [error,     setError]     = useState(null);
   const fileRef  = useRef();
-  const imageRef = useRef();
 
   /* ── Process spreadsheet ─────────────────────────────────────────────── */
   const processFile = useCallback(async (f) => {
@@ -173,184 +205,26 @@ function UploadStep({ type, token, onParsed, onError }) {
     }
   }, [type, token, onParsed]);
 
-  /* ── Process image via AI Vision ─────────────────────────────────────── */
-  const processImage = useCallback(async (f) => {
-    if (!f) return;
-    const allowed = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
-    if (!allowed.includes(f.type)) {
-      setError("Unsupported image type. Please upload .jpg, .png, or .webp");
-      return;
-    }
-    if (f.size > 10 * 1024 * 1024) {
-      setError("Image too large. Maximum allowed size is 10 MB.");
-      return;
-    }
-    setFile(f);
-    setError(null);
-    setLoading(true);
-
-    const fd = new FormData();
-    fd.append("file", f);
-    fd.append("type", type);
-
-    try {
-      const res  = await fetch(`${API_BASE}/api/template-import/image/parse`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-        body: fd,
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || `Server error ${res.status}`);
-        setLoading(false);
-        return;
-      }
-      /* Normalise AI response into the same shape as XLSX parser output */
-      const aiData = data.data || {};
-      let normalised;
-      if (type === "logsheet") {
-        const sections = (aiData.sections || []).map((s, si) => ({
-          name:  s.sectionName || `Section ${si + 1}`,
-          order: si,
-          questions: (s.fields || []).map((f2, qi) => ({
-            questionText: f2.fieldName || "",
-            answerType:   f2.fieldType || "number",
-            specification: f2.notes || undefined,
-            mandatory:    true,
-            priority:     "medium",
-            order:        qi,
-            unit:         f2.unit || undefined,
-            expectedMin:  f2.expectedMin ?? undefined,
-            expectedMax:  f2.expectedMax ?? undefined,
-          })),
-        }));
-        normalised = {
-          success: true,
-          type: "logsheet",
-          templateName: aiData.templateName || "",
-          frequency: aiData.frequency || "Daily",
-          layoutType: aiData.layoutType || "standard",
-          sections,
-          preview: sections,
-          warnings: [],
-          errors: [],
-          stats: {
-            total: sections.reduce((a, s) => a + s.questions.length, 0),
-            sections: sections.length,
-            withRules: 0,
-          },
-        };
-      } else {
-        /* checklist */
-        let idx = 0;
-        const questions = (aiData.sections || []).flatMap((s) =>
-          (s.items || []).map((item) => ({
-            questionText: item.questionText || "",
-            inputType:    item.inputType || "yes_no",
-            isRequired:   item.isRequired !== false,
-            section:      s.sectionName || "General",
-            orderIndex:   idx++,
-          }))
-        );
-        const sectionMap = {};
-        questions.forEach((q) => {
-          if (!sectionMap[q.section]) sectionMap[q.section] = [];
-          sectionMap[q.section].push(q);
-        });
-        const preview = Object.entries(sectionMap).map(([name, qs]) => ({ name, questions: qs }));
-        normalised = {
-          success: true,
-          type: "checklist",
-          templateName: aiData.templateName || "",
-          frequency: aiData.frequency || "Daily",
-          questions,
-          preview,
-          warnings: [],
-          errors: [],
-          stats: {
-            total: questions.length,
-            sections: preview.length,
-            withFlagRules: 0,
-            withOptions: 0,
-          },
-        };
-      }
-      onParsed(normalised, f.name);
-    } catch (err) {
-      setError(err.message || "Network error — check backend connection");
-    } finally {
-      setLoading(false);
-    }
-  }, [type, token, onParsed]);
-
   const onDrop = (e) => {
     e.preventDefault();
     setDragging(false);
     const f = e.dataTransfer.files[0];
-    if (f) (uploadTab === "image" ? processImage : processFile)(f);
+    if (f) processFile(f);
   };
-
-  /* ── Clipboard paste (Ctrl+V / ⌘V) support for image tab ────────────── */
-  useEffect(() => {
-    if (uploadTab !== "image") return;
-    const handlePaste = (e) => {
-      if (loading) return;
-      const items = e.clipboardData?.items;
-      if (!items) return;
-      for (const item of items) {
-        if (item.kind === "file" && item.type.startsWith("image/")) {
-          const blob = item.getAsFile();
-          if (blob) {
-            // Give it a useful filename so processImage can display it
-            const ext = item.type.split("/")[1] || "png";
-            const named = new File([blob], `pasted-image.${ext}`, { type: item.type });
-            processImage(named);
-          }
-          e.preventDefault();
-          break;
-        }
-      }
-    };
-    window.addEventListener("paste", handlePaste);
-    return () => window.removeEventListener("paste", handlePaste);
-  }, [uploadTab, loading, processImage]);
-
-  /* ── Tab styles ──────────────────────────────────────────────────────── */
-  const tabStyle = (active) => ({
-    padding: "8px 18px",
-    background: active ? "#2563eb" : "#f1f5f9",
-    color: active ? "#fff" : "#475569",
-    border: "none",
-    borderRadius: "8px",
-    cursor: "pointer",
-    fontWeight: 600,
-    fontSize: "13px",
-    transition: "all .15s",
-  });
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-      {/* Tab switcher */}
-      <div style={{ display: "flex", gap: "8px" }}>
-        <button style={tabStyle(uploadTab === "file")}  onClick={() => { setUploadTab("file");  setFile(null); setError(null); }}>📁 From File</button>
-        <button style={tabStyle(uploadTab === "image")} onClick={() => { setUploadTab("image"); setFile(null); setError(null); }}>📷 From Image</button>
-      </div>
-
       {/* Info banner */}
       <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: "10px", padding: "14px 18px", display: "flex", gap: "12px" }}>
-        <span style={{ fontSize: "22px", flexShrink: 0 }}>{uploadTab === "image" ? "🖼️" : "📋"}</span>
+        <span style={{ fontSize: "22px", flexShrink: 0 }}>📋</span>
         <div>
           <div style={{ fontWeight: 700, color: "#1d4ed8", fontSize: "14px", marginBottom: "4px" }}>
-            {uploadTab === "image"
-              ? `Import ${type === "checklist" ? "Checklist" : "Logsheet"} from Photo`
-              : `Import ${type === "checklist" ? "Checklist" : "Logsheet"} Template`}
+            {`Import ${type === "checklist" ? "Checklist" : "Logsheet"} Template`}
           </div>
           <div style={{ fontSize: "13px", color: "#3b82f6", lineHeight: "1.5" }}>
-            {uploadTab === "image"
-              ? "Take a photo or screenshot of an existing paper logsheet/checklist — AI will automatically read and recreate the structure. You can also paste (Ctrl+V) directly from your clipboard."
-              : type === "checklist"
-                ? "Upload an Excel/CSV file with columns: Question, Answer Type, Required, Section, Flag Rule, Flag Reason, Severity, Work Order Required, Min Value, Max Value, Options, Order"
-                : "Upload an Excel/CSV file with columns: Field Name, Field Type, Unit, Section, Required, Min Value, Max Value, Specification, Order"}
+            {type === "checklist"
+              ? "Upload an Excel/CSV file. Use multiple sheets in one Excel file to import multiple templates at once."
+              : "Upload an Excel/CSV file with columns: Field Name, Field Type, Unit, Section, Required, Min Value, Max Value, Specification, Order"}
           </div>
         </div>
       </div>
@@ -360,7 +234,7 @@ function UploadStep({ type, token, onParsed, onError }) {
         onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
         onDragLeave={() => setDragging(false)}
         onDrop={onDrop}
-        onClick={() => !loading && (uploadTab === "image" ? imageRef : fileRef).current?.click()}
+        onClick={() => !loading && fileRef.current?.click()}
         style={{
           border: `2px dashed ${dragging ? "#2563eb" : "#cbd5e1"}`,
           borderRadius: "14px",
@@ -371,21 +245,16 @@ function UploadStep({ type, token, onParsed, onError }) {
           transition: "all .2s",
         }}>
         <input ref={fileRef}  type="file" accept=".xlsx,.xls,.csv"             style={{ display: "none" }} onChange={(e) => processFile(e.target.files[0])} />
-        <input ref={imageRef} type="file" accept="image/jpeg,image/png,image/webp" style={{ display: "none" }} onChange={(e) => processImage(e.target.files[0])} />
 
         {loading ? (
           <div>
             <div style={{ width: "40px", height: "40px", borderRadius: "50%", border: "3px solid #e2e8f0", borderTopColor: "#2563eb", margin: "0 auto 14px", animation: "spin 0.8s linear infinite" }} />
-            <p style={{ color: "#2563eb", fontWeight: 600, fontSize: "14px" }}>
-              {uploadTab === "image" ? "Analyzing image with AI…" : "Parsing file…"}
-            </p>
-            <p style={{ color: "#94a3b8", fontSize: "12.5px" }}>
-              {uploadTab === "image" ? "GPT-4o Vision is reading your form — this may take a few seconds" : "Validating structure and mapping columns"}
-            </p>
+            <p style={{ color: "#2563eb", fontWeight: 600, fontSize: "14px" }}>Parsing file…</p>
+            <p style={{ color: "#94a3b8", fontSize: "12.5px" }}>Validating structure and mapping columns</p>
           </div>
         ) : (
           <div>
-            <div style={{ fontSize: "48px", marginBottom: "12px" }}>{file ? (uploadTab === "image" ? "🖼️" : "📄") : (uploadTab === "image" ? "📷" : "📁")}</div>
+            <div style={{ fontSize: "48px", marginBottom: "12px" }}>{file ? "📄" : "📁"}</div>
             {file ? (
               <div>
                 <p style={{ fontWeight: 700, color: "#0f172a", fontSize: "15px", margin: "0 0 4px" }}>{file.name}</p>
@@ -393,22 +262,8 @@ function UploadStep({ type, token, onParsed, onError }) {
               </div>
             ) : (
               <div>
-                <p style={{ fontWeight: 700, color: "#0f172a", fontSize: "16px", margin: "0 0 6px" }}>
-                  {uploadTab === "image" ? "Drop image here, or click to browse" : "Drop your file here, or click to browse"}
-                </p>
-                <p style={{ color: "#94a3b8", fontSize: "13px", margin: 0 }}>
-                  {uploadTab === "image"
-                    ? "Supported: .jpg, .png, .webp — Max 10 MB"
-                    : "Supported formats: .xlsx, .xls, .csv — Max 5 MB"}
-                </p>
-                {uploadTab === "image" && (
-                  <div style={{ marginTop: "14px", display: "inline-flex", alignItems: "center", gap: "8px", background: "#f1f5f9", border: "1px dashed #94a3b8", borderRadius: "8px", padding: "8px 16px" }}>
-                    <span style={{ fontSize: "16px" }}>📋</span>
-                    <span style={{ fontSize: "13px", color: "#475569", fontWeight: 600 }}>
-                      Or press <kbd style={{ background: "#e2e8f0", border: "1px solid #cbd5e1", borderRadius: "4px", padding: "1px 6px", fontFamily: "monospace", fontSize: "12px" }}>Ctrl+V</kbd> to paste a screenshot
-                    </span>
-                  </div>
-                )}
+                <p style={{ fontWeight: 700, color: "#0f172a", fontSize: "16px", margin: "0 0 6px" }}>Drop your file here, or click to browse</p>
+                <p style={{ color: "#94a3b8", fontSize: "13px", margin: 0 }}>Supported formats: .xlsx, .xls, .csv — Max 5 MB</p>
               </div>
             )}
           </div>
@@ -421,15 +276,18 @@ function UploadStep({ type, token, onParsed, onError }) {
         </div>
       )}
 
-      {/* Sample download — only for file tab */}
-      {uploadTab === "file" && (
-        <div style={{ display: "flex", alignItems: "center", gap: "10px", paddingTop: "4px", borderTop: "1px solid #f1f5f9" }}>
-          <span style={{ fontSize: "13px", color: "#94a3b8" }}>Don't have a file yet?</span>
-          <Btn small outline color="#2563eb" onClick={() => downloadSampleCSV(type)}>
-            ⬇ Download Sample CSV
+      {/* Sample download */}
+      <div style={{ display: "flex", alignItems: "center", gap: "10px", paddingTop: "4px", borderTop: "1px solid #f1f5f9" }}>
+        <span style={{ fontSize: "13px", color: "#94a3b8" }}>Don't have a file yet?</span>
+        <Btn small outline color="#2563eb" onClick={() => downloadSampleCSV(type)}>
+          ⬇ Download Sample CSV
+        </Btn>
+        {type === "checklist" && (
+          <Btn small outline color="#0d9488" onClick={downloadBulkSampleXLSX}>
+            ⬇ Download Bulk Sample (Multi-Sheet)
           </Btn>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
@@ -639,7 +497,6 @@ function ConfigureStep({ type, parsed, token, companies, companyId: defaultCompa
     setError(null);
     if (!form.templateName.trim()) return setError("Template name is required");
     if (!form.companyId)           return setError("Select a company");
-    if (!form.assetId)             return setError("Select an asset to link this template to");
 
     let payload;
 
@@ -658,7 +515,7 @@ function ConfigureStep({ type, parsed, token, companies, companyId: defaultCompa
         companyId:    Number(form.companyId),
         templateName: form.templateName.trim(),
         assetType:    form.assetType,
-        assetId:      Number(form.assetId),
+        assetId:      form.assetId ? Number(form.assetId) : undefined,
         category:     form.category.trim() || undefined,
         description:  form.description.trim() || undefined,
         frequency:    form.frequency,
@@ -686,7 +543,7 @@ function ConfigureStep({ type, parsed, token, companies, companyId: defaultCompa
         companyId:    Number(form.companyId),
         templateName: form.templateName.trim(),
         assetType:    form.assetType,
-        assetId:      Number(form.assetId),
+        assetId:      form.assetId ? Number(form.assetId) : undefined,
         frequency:    form.frequency,
         description:  form.description.trim() || undefined,
         isActive:     true,
@@ -809,20 +666,232 @@ function ConfigureStep({ type, parsed, token, companies, companyId: defaultCompa
 /* ════════════════════════════════════════════════════════════════════════════
    Success screen
 ════════════════════════════════════════════════════════════════════════════ */
-function SuccessStep({ type, onClose, onAnother }) {
+function SuccessStep({ type, onClose, onAnother, count }) {
   return (
     <div style={{ textAlign: "center", padding: "32px 0" }}>
       <div style={{ fontSize: "64px", marginBottom: "16px" }}>🎉</div>
       <h2 style={{ fontSize: "22px", fontWeight: 800, color: "#0f172a", marginBottom: "8px" }}>
-        Template Created!
+        {count > 1 ? `${count} Templates Created!` : "Template Created!"}
       </h2>
       <p style={{ color: "#64748b", fontSize: "14px", maxWidth: "360px", margin: "0 auto 28px" }}>
-        Your {type === "checklist" ? "checklist" : "logsheet"} template has been created successfully.
-        You can now assign it to users and assets.
+        {count > 1
+          ? `${count} ${type === "checklist" ? "checklist" : "logsheet"} templates have been created successfully.`
+          : `Your ${type === "checklist" ? "checklist" : "logsheet"} template has been created successfully.`}
+        {" "}You can now assign them to users and assets.
       </p>
       <div style={{ display: "flex", gap: "12px", justifyContent: "center" }}>
         <Btn outline color="#2563eb" bg="#fff" onClick={onAnother}>Import Another</Btn>
         <Btn onClick={onClose}>Done</Btn>
+      </div>
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   BULK PREVIEW STEP
+════════════════════════════════════════════════════════════════════════════ */
+function BulkPreviewStep({ bulkData, fileName, onBack, onNext }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+      <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "10px", padding: "14px 18px", display: "flex", gap: "12px", alignItems: "center" }}>
+        <span style={{ fontSize: "22px" }}>📦</span>
+        <div>
+          <div style={{ fontWeight: 700, color: "#166534", fontSize: "14px" }}>Bulk import detected</div>
+          <div style={{ color: "#16a34a", fontSize: "13px" }}>
+            {bulkData.stats?.templateCount} templates found in <strong>{fileName}</strong> — {bulkData.stats?.totalQuestions} total questions
+          </div>
+        </div>
+      </div>
+
+      <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
+        <div style={{ padding: "12px 18px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", fontWeight: 700, color: "#0f172a", fontSize: "14px" }}>
+          Templates to Import ({bulkData.templates?.length})
+        </div>
+        <div style={{ maxHeight: "360px", overflowY: "auto" }}>
+          {(bulkData.templates || []).map((t, i) => (
+            <div key={i} style={{ padding: "12px 18px", borderBottom: i < bulkData.templates.length - 1 ? "1px solid #f1f5f9" : "none", display: "flex", alignItems: "center", gap: "12px" }}>
+              <div style={{ width: "28px", height: "28px", borderRadius: "50%", background: t.errors?.length > 0 ? "#fef2f2" : "#eff6ff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <span style={{ fontSize: "13px", fontWeight: 700, color: t.errors?.length > 0 ? "#dc2626" : "#2563eb" }}>{i + 1}</span>
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, color: "#0f172a", fontSize: "13.5px" }}>{t.templateName}</div>
+                <div style={{ fontSize: "12px", color: "#64748b" }}>{t.stats?.total || 0} questions, {t.stats?.sections || 0} section(s)</div>
+                {t.errors?.length > 0 && (
+                  <div style={{ fontSize: "11.5px", color: "#dc2626", marginTop: "2px" }}>⚠ {t.errors[0]}</div>
+                )}
+              </div>
+              <span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "11.5px", fontWeight: 700,
+                background: t.errors?.length > 0 ? "#fef2f2" : (t.stats?.total > 0 ? "#f0fdf4" : "#fffbeb"),
+                color: t.errors?.length > 0 ? "#dc2626" : (t.stats?.total > 0 ? "#16a34a" : "#d97706") }}>
+                {t.errors?.length > 0 ? "Error" : t.stats?.total > 0 ? "Ready" : "Empty"}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "space-between", paddingTop: "8px" }}>
+        <Btn outline color="#64748b" bg="#fff" onClick={onBack}>← Re-upload</Btn>
+        <Btn onClick={onNext} disabled={(bulkData.templates || []).every((t) => (t.stats?.total || 0) === 0)}>
+          Configure & Save All →
+        </Btn>
+      </div>
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   BULK CONFIGURE STEP
+════════════════════════════════════════════════════════════════════════════ */
+function BulkConfigureStep({ bulkData, token, companies, companyId: defaultCompanyId, createTemplate, onBack, onCreated, companyPortalMode = false }) {
+  const firstCompanyId = companies?.[0]?.id || "";
+  const [names, setNames] = useState(() => (bulkData.templates || []).map((t) => t.templateName || ""));
+  const [form, setForm] = useState({
+    companyId: String(defaultCompanyId || firstCompanyId || ""),
+    assetType: "soft",
+    serviceType: "soft_service",
+    frequency: "Daily",
+    description: "",
+  });
+  const [saving, setSaving] = useState(false);
+  const [progress, setProgress] = useState({ done: 0, total: 0, errors: [] });
+  const [error, setError] = useState(null);
+
+  const set = (k, v) => setForm((p) => ({ ...p, [k]: v }));
+
+  const handleSave = async () => {
+    setError(null);
+    if (!form.companyId) return setError("Select a company");
+    const validTemplates = (bulkData.templates || []).filter((t) => (t.stats?.total || 0) > 0);
+    if (validTemplates.length === 0) return setError("No valid templates to import");
+    setSaving(true);
+    setProgress({ done: 0, total: validTemplates.length, errors: [] });
+
+    const errs = [];
+    let done = 0;
+    for (let i = 0; i < validTemplates.length; i++) {
+      const t = validTemplates[i];
+      const questions = (t.questions || []).map((q, idx) => ({
+        questionText: q.questionText,
+        inputType:    q.inputType || "yes_no",
+        isRequired:   q.isRequired ?? true,
+        orderIndex:   q.orderIndex ?? idx,
+        options:      q.options?.length ? q.options : undefined,
+        flagRule:     q.flagRule || undefined,
+      }));
+      const payload = {
+        companyId:    Number(form.companyId),
+        templateName: (names[i] || t.templateName || `Template ${i + 1}`).trim(),
+        assetType:    form.assetType,
+        serviceType:  form.serviceType || undefined,
+        frequency:    form.frequency,
+        description:  form.description.trim() || undefined,
+        status:       "active",
+        questions,
+      };
+      try {
+        await createTemplate(token, payload);
+        done++;
+        setProgress((p) => ({ ...p, done: p.done + 1 }));
+      } catch (err) {
+        errs.push(`"${payload.templateName}": ${err.message || "Failed"}`);
+        setProgress((p) => ({ ...p, done: p.done + 1, errors: [...p.errors, errs[errs.length - 1]] }));
+      }
+    }
+    setSaving(false);
+    if (errs.length === 0 || done > 0) {
+      onCreated(done);
+    } else {
+      setError(`All templates failed to create: ${errs.join("; ")}`);
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+      <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "10px", padding: "12px 18px", display: "flex", gap: "12px", alignItems: "center" }}>
+        <span style={{ fontSize: "20px" }}>✅</span>
+        <div style={{ fontWeight: 700, color: "#166534", fontSize: "13.5px" }}>
+          {bulkData.stats?.templateCount} templates ready — configure shared settings below
+        </div>
+      </div>
+
+      {error && <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: "8px", padding: "12px 16px", color: "#dc2626", fontSize: "13.5px" }}>⚠ {error}</div>}
+
+      {saving && (
+        <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: "8px", padding: "12px 16px" }}>
+          <div style={{ fontWeight: 600, color: "#1d4ed8", fontSize: "13.5px", marginBottom: "6px" }}>
+            Creating templates… {progress.done} / {progress.total}
+          </div>
+          <div style={{ height: "8px", borderRadius: "4px", background: "#e2e8f0", overflow: "hidden" }}>
+            <div style={{ height: "8px", borderRadius: "4px", background: "#2563eb", width: `${Math.round((progress.done / progress.total) * 100)}%`, transition: "width 0.3s" }} />
+          </div>
+        </div>
+      )}
+
+      {/* Shared settings */}
+      <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", padding: "20px 24px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px 20px" }}>
+        <div>
+          <Label>Company *</Label>
+          <Sel value={form.companyId} onChange={(e) => set("companyId", e.target.value)}>
+            <option value="">— Select company —</option>
+            {(companies || []).map((c) => <option key={c.id} value={c.id}>{c.companyName}</option>)}
+          </Sel>
+        </div>
+        <div>
+          <Label>Frequency</Label>
+          <Sel value={form.frequency} onChange={(e) => set("frequency", e.target.value)}>
+            {["Daily", "Weekly", "Monthly", "Custom"].map((f) => <option key={f} value={f}>{f}</option>)}
+          </Sel>
+        </div>
+        <div>
+          <Label>Asset Type</Label>
+          <Sel value={form.assetType} onChange={(e) => set("assetType", e.target.value)}>
+            <option value="soft">Soft Services</option>
+            <option value="technical">Technical</option>
+            <option value="fleet">Fleet</option>
+            <option value="building">Building</option>
+            <option value="generic">Generic</option>
+          </Sel>
+        </div>
+        <div>
+          <Label>Service Type</Label>
+          <Sel value={form.serviceType} onChange={(e) => set("serviceType", e.target.value)}>
+            <option value="">None</option>
+            <option value="soft_service">Soft Service</option>
+          </Sel>
+        </div>
+        <div style={{ gridColumn: "span 2" }}>
+          <Label>Description (shared)</Label>
+          <Inp value={form.description} onChange={(e) => set("description", e.target.value)} placeholder="Brief purpose / scope of these templates" />
+        </div>
+      </div>
+
+      {/* Per-template names */}
+      <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
+        <div style={{ padding: "12px 18px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", fontWeight: 700, color: "#0f172a", fontSize: "14px" }}>
+          Template Names (editable)
+        </div>
+        <div style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: "10px", maxHeight: "260px", overflowY: "auto" }}>
+          {(bulkData.templates || []).map((t, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <span style={{ width: "22px", fontSize: "12px", color: "#94a3b8", fontWeight: 700, flexShrink: 0 }}>{i + 1}.</span>
+              <Inp
+                value={names[i] || ""}
+                onChange={(e) => setNames((prev) => { const n = [...prev]; n[i] = e.target.value; return n; })}
+                placeholder={`Template ${i + 1}`}
+                style={{ flex: 1 }}
+              />
+              <span style={{ fontSize: "12px", color: "#64748b", flexShrink: 0 }}>{t.stats?.total || 0}q</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "space-between", paddingTop: "4px" }}>
+        <Btn outline color="#64748b" bg="#fff" onClick={onBack}>← Preview</Btn>
+        <Btn onClick={handleSave} disabled={saving} style={{ minWidth: "180px", justifyContent: "center" }}>
+          {saving ? `Creating… ${progress.done}/${progress.total}` : `✓ Create All ${bulkData.stats?.templateCount} Templates`}
+        </Btn>
       </div>
     </div>
   );
@@ -841,28 +910,44 @@ export default function TemplateImportModal({
   onCreated,
   companyPortalMode = false,
 }) {
-  const [step,     setStep]     = useState(0); // 0 upload | 1 preview | 2 configure | 3 success
-  const [parsed,   setParsed]   = useState(null);
-  const [fileName, setFileName] = useState("");
+  const [step,       setStep]       = useState(0); // 0 upload | 1 preview | 1b bulk-preview | 2 configure | 2b bulk-configure | 3 success
+  const [parsed,     setParsed]     = useState(null);
+  const [bulkParsed, setBulkParsed] = useState(null);
+  const [fileName,   setFileName]   = useState("");
+  const [createdCount, setCreatedCount] = useState(1);
 
   const STEP_LABELS = ["Upload", "Preview", "Configure", "Done"];
 
   const handleParsed = (data, name) => {
-    setParsed(data);
     setFileName(name);
-    setStep(1);
+    if (data.isBulk) {
+      setBulkParsed(data);
+      setParsed(null);
+      setStep("bulk-preview");
+    } else {
+      setParsed(data);
+      setBulkParsed(null);
+      setStep(1);
+    }
   };
 
   const reset = () => {
     setStep(0);
     setParsed(null);
+    setBulkParsed(null);
     setFileName("");
+    setCreatedCount(1);
   };
 
-  const handleCreated = (id) => {
+  const handleCreated = (countOrId) => {
+    const n = typeof countOrId === "number" && countOrId > 1 ? countOrId : 1;
+    setCreatedCount(n);
     setStep(3);
-    onCreated?.(id);
+    onCreated?.(countOrId);
   };
+
+  const isBulkFlow = step === "bulk-preview" || step === "bulk-configure";
+  const stepIndex = step === 0 ? 0 : step === 1 ? 1 : step === "bulk-preview" ? 1 : step === 2 ? 2 : step === "bulk-configure" ? 2 : 3;
 
   return (
     <>
@@ -904,7 +989,7 @@ export default function TemplateImportModal({
 
           {/* Body */}
           <div style={{ padding: "24px", overflowY: "auto", flex: 1 }}>
-            <Steps current={step} steps={STEP_LABELS} />
+            <Steps current={stepIndex} steps={STEP_LABELS} />
 
             {step === 0 && (
               <UploadStep type={type} token={token} onParsed={handleParsed} />
@@ -916,6 +1001,14 @@ export default function TemplateImportModal({
                 type={type}
                 onBack={reset}
                 onNext={() => setStep(2)}
+              />
+            )}
+            {step === "bulk-preview" && bulkParsed && (
+              <BulkPreviewStep
+                bulkData={bulkParsed}
+                fileName={fileName}
+                onBack={reset}
+                onNext={() => setStep("bulk-configure")}
               />
             )}
             {step === 2 && parsed && (
@@ -931,8 +1024,20 @@ export default function TemplateImportModal({
                 companyPortalMode={companyPortalMode}
               />
             )}
+            {step === "bulk-configure" && bulkParsed && (
+              <BulkConfigureStep
+                bulkData={bulkParsed}
+                token={token}
+                companies={companies}
+                companyId={companyId}
+                createTemplate={createTemplate}
+                onBack={() => setStep("bulk-preview")}
+                onCreated={handleCreated}
+                companyPortalMode={companyPortalMode}
+              />
+            )}
             {step === 3 && (
-              <SuccessStep type={type} onClose={onClose} onAnother={reset} />
+              <SuccessStep type={type} onClose={onClose} onAnother={reset} count={createdCount} />
             )}
           </div>
         </div>

@@ -402,7 +402,9 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
         companyId: source.companyId || companies[0]?.id || "",
         templateName: isClone ? source.templateName : (source.templateName || ""),
         assetType: source.assetType || "generic",
+        serviceType: source.serviceType || "",
         assetId: source.assetId ? String(source.assetId) : "",
+        locationId: source.locationId ? String(source.locationId) : "",
         category: source.category || "",
         description: source.description || "",
         // When cloning, clear frequency so user picks a new one
@@ -416,7 +418,9 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
       companyId: companies[0]?.id || "",
       templateName: "",
       assetType: "generic",
+      serviceType: "",
       assetId: "",
+      locationId: "",
       category: "",
       description: "",
       frequency: "Daily",
@@ -449,6 +453,7 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [assets, setAssets] = useState(assetsProp);
+  const [locations, setLocations] = useState([]);
   // Track latest assets without triggering the reset effect on load
   const assetsRef = useRef(assetsProp);
   // Track previous company/type so reset only fires on explicit user changes
@@ -474,6 +479,15 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
       .catch(() => {});
     return () => { cancelled = true; };
   }, [token, form.companyId]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fetch locations when service type is soft_service
+  useEffect(() => {
+    if (!token || !companyPortalMode || form.serviceType !== "soft_service") return;
+    fetch(`${API_BASE}/api/company-portal/locations`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => r.ok ? r.json() : [])
+      .then((data) => setLocations(Array.isArray(data) ? data : []))
+      .catch(() => {});
+  }, [token, companyPortalMode, form.serviceType]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keep assetsRef in sync so the reset effect always reads the latest list
   useEffect(() => { assetsRef.current = assets; }, [assets]);  // eslint-disable-line react-hooks/exhaustive-deps
@@ -520,7 +534,9 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
     const payload = {
       templateName: form.templateName.trim(),
       assetType: form.assetType,
-      assetId: form.assetId ? Number(form.assetId) : undefined,
+      serviceType: form.serviceType || undefined,
+      assetId: form.serviceType !== "soft_service" && form.assetId ? Number(form.assetId) : undefined,
+      locationId: form.serviceType === "soft_service" && form.locationId ? Number(form.locationId) : undefined,
       category: form.category.trim() || undefined,
       description: form.description.trim() || undefined,
       frequency: form.frequency || "Custom",
@@ -606,27 +622,54 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
             <Inp value={form.templateName} onChange={(e) => setForm((p) => ({ ...p, templateName: e.target.value }))} placeholder='e.g. "Daily Safety Check", "AMC Inspection Form"' />
           </div>
           <div>
-            <Label>Asset Type</Label>
-            <Sel value={form.assetType} onChange={(e) => setForm((p) => ({ ...p, assetType: e.target.value }))}>
-              {ASSET_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-            </Sel>
+            <Label>Select Service Type</Label>
+            <SearchableSelect
+              value={form.serviceType || ""}
+              onChange={(v) => setForm((p) => ({ ...p, serviceType: v, assetType: v || "generic", assetId: "", locationId: "" }))}
+              options={[
+                { value: "", label: "— Select service type —" },
+                { value: "soft_service", label: "Soft Service" },
+                { value: "htm_service", label: "HTM Service" },
+                { value: "technical", label: "Technical Service" },
+                { value: "fleet_service", label: "Fleet Service" },
+              ]}
+              placeholder="Search service type…"
+            />
           </div>
           <div>
-            <Label>Asset</Label>
-            <SearchableSelect
-              value={String(form.assetId ?? "")}
-              onChange={(v) => setForm((p) => ({ ...p, assetId: v }))}
-              options={[
-                { value: "", label: "— Select asset —" },
-                ...filteredChecklistAssets.map((a) => ({ value: String(a.id), label: a.assetName || a.asset_name }))
-              ]}
-              placeholder="Search & select asset…"
-            />
-            {assets.length > 0 && filteredChecklistAssets.length === 0 && (
-              <p style={{ fontSize: "11px", color: "#f59e0b", marginTop: "4px" }}>No {form.assetType} assets found for this company.</p>
-            )}
-            {assets.length === 0 && form.companyId && (
-              <p style={{ fontSize: "11px", color: "#94a3b8", marginTop: "4px" }}>Loading assets…</p>
+            {form.serviceType === "soft_service" ? (
+              <>
+                <Label>Location</Label>
+                <SearchableSelect
+                  value={String(form.locationId ?? "")}
+                  onChange={(v) => setForm((p) => ({ ...p, locationId: v }))}
+                  options={[
+                    { value: "", label: "— Select location —" },
+                    ...locations.map((l) => ({ value: String(l.id), label: l.name + (l.building ? ` (${l.building})` : "") }))
+                  ]}
+                  placeholder="Search & select location…"
+                />
+                {locations.length === 0 && <p style={{ fontSize: "11px", color: "#94a3b8", marginTop: "4px" }}>No locations found. Add locations in the Locations module.</p>}
+              </>
+            ) : (
+              <>
+                <Label>Asset</Label>
+                <SearchableSelect
+                  value={String(form.assetId ?? "")}
+                  onChange={(v) => setForm((p) => ({ ...p, assetId: v }))}
+                  options={[
+                    { value: "", label: "— Select asset —" },
+                    ...filteredChecklistAssets.map((a) => ({ value: String(a.id), label: a.assetName || a.asset_name }))
+                  ]}
+                  placeholder="Search & select asset…"
+                />
+                {assets.length > 0 && filteredChecklistAssets.length === 0 && (
+                  <p style={{ fontSize: "11px", color: "#f59e0b", marginTop: "4px" }}>No {form.assetType} assets found for this company.</p>
+                )}
+                {assets.length === 0 && form.companyId && (
+                  <p style={{ fontSize: "11px", color: "#94a3b8", marginTop: "4px" }}>Loading assets…</p>
+                )}
+              </>
             )}
           </div>
           <div>
@@ -647,13 +690,15 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
               />
             )}
           </div>
-          <div>
-            <Label>Shift (optional)</Label>
-            <Sel value={form.shiftId} onChange={(e) => setForm((p) => ({ ...p, shiftId: e.target.value }))}>
-              <option value="">— Any shift —</option>
-              {shifts.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </Sel>
-          </div>
+          {shifts.length > 0 && (
+            <div>
+              <Label>Shift (optional)</Label>
+              <Sel value={form.shiftId} onChange={(e) => setForm((p) => ({ ...p, shiftId: e.target.value }))}>
+                <option value="">— Any shift —</option>
+                {shifts.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </Sel>
+            </div>
+          )}
           <div>
             <Label>Status</Label>
             <Sel value={form.status} onChange={(e) => setForm((p) => ({ ...p, status: e.target.value }))}>
@@ -863,7 +908,7 @@ const TemplateList = memo(function TemplateList({ token, companies, fetchTemplat
 
   const filtered = useMemo(() =>
     templates.filter((t) => {
-      if (filterType && t.assetType !== filterType) return false;
+      if (filterType && (t.serviceType || t.assetType) !== filterType) return false;
       if (filterFrequency && (t.frequency || "").toLowerCase() !== filterFrequency.toLowerCase()) return false;
       if (filterAsset && String(t.assetId) !== String(filterAsset)) return false;
       if (search && !t.templateName?.toLowerCase().includes(search.toLowerCase())) return false;
@@ -874,6 +919,7 @@ const TemplateList = memo(function TemplateList({ token, companies, fetchTemplat
 
   // Derive unique assets and frequencies from loaded templates for filter dropdowns
   const uniqueFrequencies = useMemo(() => [...new Set(templates.map(t => t.frequency).filter(Boolean))], [templates]);
+  const uniqueServiceTypes = useMemo(() => [...new Set(templates.map(t => t.serviceType || t.assetType).filter(Boolean))], [templates]);
   const uniqueAssets = useMemo(() => {
     const seen = new Map();
     templates.forEach(t => { if (t.assetId && t.assetName && !seen.has(t.assetId)) seen.set(t.assetId, t.assetName); });
@@ -941,8 +987,8 @@ const TemplateList = memo(function TemplateList({ token, companies, fetchTemplat
         <CardHeader>All Templates</CardHeader>
         <div style={{ padding: "10px 16px", borderBottom: "1px solid #e2e8f0", display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
           <Sel value={filterType} onChange={(e) => setFilterType(e.target.value)} style={{ width: "150px" }}>
-            <option value="">All Asset Types</option>
-            {ASSET_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+            <option value="">All Service Types</option>
+            {uniqueServiceTypes.map((v) => <option key={v} value={v}>{v}</option>)}
           </Sel>
           <Sel value={filterAsset} onChange={(e) => setFilterAsset(e.target.value)} style={{ width: "150px" }}>
             <option value="">All Assets</option>
@@ -959,7 +1005,7 @@ const TemplateList = memo(function TemplateList({ token, companies, fetchTemplat
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
             <thead>
               <tr>
-                {["#", "Template Name", "Asset Type", "Category", "Frequency", "Questions", "Status", "Actions"].map((h) => (
+                {["#", "Template Name", "Service Type", "Category", "Frequency", "Questions", "Status", "Actions"].map((h) => (
                   <th key={h} style={{ padding: "12px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.05em", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>{h}</th>
                 ))}
               </tr>
@@ -985,7 +1031,7 @@ const TemplateList = memo(function TemplateList({ token, companies, fetchTemplat
                       {t.description && <div style={{ color: "#94a3b8", fontSize: "12px", marginTop: "2px" }}>{t.description}</div>}
                     </td>
                     <td style={{ padding: "13px 16px" }}>
-                      <Badge bg="#eff6ff" col="#2563eb">{t.assetType}</Badge>
+                      <Badge bg="#eff6ff" col="#2563eb">{t.serviceType || t.assetType}</Badge>
                     </td>
                     <td style={{ padding: "13px 16px", color: "#64748b", fontSize: "13px" }}>{t.category || "—"}</td>
                     <td style={{ padding: "13px 16px", color: "#64748b", fontSize: "13px" }}>{t.frequency || "—"}</td>

@@ -147,6 +147,7 @@ const emptyCompany = {
   premealModule: true,
   deliveryModule: true,
   allowGuestBooking: false, // mapped to OJT training toggle
+  softServiceBundle: false,
   status: "Active",
 };
 
@@ -830,6 +831,7 @@ const CompanyPortal = () => {
   const [modulesModalId, setModulesModalId] = useState(null);
   const [modulesForm, setModulesForm] = useState([]);
   const [modulesSaving, setModulesSaving] = useState(false);
+  const [dragModuleIdx, setDragModuleIdx] = useState(null);
 
   // Logo upload state
   const [logoUploadCompanyId, setLogoUploadCompanyId] = useState(null);
@@ -1297,6 +1299,16 @@ const CompanyPortal = () => {
 
   const handleCompanyChange = (e) => {
     const { name, value, type, checked } = e.target;
+    if (name === "softServiceBundle") {
+      setCompanyForm((prev) => ({
+        ...prev,
+        softServiceBundle: checked,
+        enabledModules: checked
+          ? [...new Set([...(prev.enabledModules || []), "checklists", "locations", "soft-requests", "roles", "workorders", "warnings"])]
+          : prev.enabledModules,
+      }));
+      return;
+    }
     setCompanyForm((prev) => ({ ...prev, [name]: type === "checkbox" ? checked : value }));
   };
 
@@ -1855,6 +1867,7 @@ const CompanyPortal = () => {
     { key: "logsheets", label: "Logsheets" },
     { key: "workorders", label: "Requests" },
     { key: "soft-requests", label: "Soft Requests" },
+    { key: "locations", label: "Locations" },
     { key: "ojt", label: "OJT Training" },
     { key: "fleet", label: "Fleet Management" },
     { key: "warnings", label: "Warnings" },
@@ -1869,7 +1882,16 @@ const CompanyPortal = () => {
   const openModulesModal = (company) => {
     setModulesModalId(company.id);
     const enabled = Array.isArray(company.enabledModules) ? company.enabledModules : ALL_MODULES.map((m) => m.key);
-    setModulesForm(enabled);
+    const enabledSet = new Set(enabled);
+    // Build ordered list: enabled modules in their saved order first, then disabled ones appended
+    const enabledOrdered = enabled
+      .map((k) => ALL_MODULES.find((m) => m.key === k))
+      .filter(Boolean)
+      .map((m) => ({ ...m, enabled: true }));
+    const disabledOnes = ALL_MODULES
+      .filter((m) => !enabledSet.has(m.key))
+      .map((m) => ({ ...m, enabled: false }));
+    setModulesForm([...enabledOrdered, ...disabledOnes]);
   };
 
   const handleSaveModules = async () => {
@@ -1877,8 +1899,10 @@ const CompanyPortal = () => {
     setModulesSaving(true);
     try {
       const company = companies.find((c) => c.id === modulesModalId);
-      const updated = await updateCompany(token, modulesModalId, { ...company, enabledModules: modulesForm });
-      setCompanies((prev) => prev.map((c) => (c.id === modulesModalId ? { ...c, enabledModules: modulesForm, ...updated } : c)));
+      // Save only enabled module keys in their current drag order
+      const orderedEnabled = modulesForm.filter((m) => m.enabled).map((m) => m.key);
+      const updated = await updateCompany(token, modulesModalId, { ...company, enabledModules: orderedEnabled });
+      setCompanies((prev) => prev.map((c) => (c.id === modulesModalId ? { ...c, enabledModules: orderedEnabled, ...updated } : c)));
       setModulesModalId(null);
     } catch (err) {
       alert(err.message || "Could not save module access");
@@ -3109,16 +3133,62 @@ const CompanyPortal = () => {
                 <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }} onClick={() => setModulesModalId(null)}>
                   <div style={{ background: "#fff", borderRadius: "16px", padding: "28px", maxWidth: "480px", width: "100%", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }} onClick={(e) => e.stopPropagation()}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
-                      <h2 style={{ fontSize: "18px", fontWeight: "700", color: "#0f172a" }}>Module Access</h2>
+                      <h2 style={{ fontSize: "18px", fontWeight: "700", color: "#0f172a" }}>Sub Module Access</h2>
                       <button onClick={() => setModulesModalId(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: "22px", lineHeight: 1 }}>✕</button>
                     </div>
-                    <p style={{ color: "#64748b", fontSize: "13px", marginBottom: "16px" }}>Select which modules are visible in the company portal dashboard.</p>
-                    <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginBottom: "24px" }}>
-                      {ALL_MODULES.map((m) => (
-                        <label key={m.key} style={{ display: "flex", alignItems: "center", gap: "12px", cursor: "pointer", padding: "10px 14px", border: "1px solid #e2e8f0", borderRadius: "8px", background: modulesForm.includes(m.key) ? "#eff6ff" : "#fff", transition: "background 0.15s" }}>
-                          <input type="checkbox" checked={modulesForm.includes(m.key)} onChange={() => setModulesForm((prev) => prev.includes(m.key) ? prev.filter((k) => k !== m.key) : [...prev, m.key])} style={{ width: "16px", height: "16px", accentColor: "#2563eb" }} />
-                          <span style={{ fontSize: "14px", fontWeight: "500", color: "#334155" }}>{m.label}</span>
-                        </label>
+                    <p style={{ color: "#64748b", fontSize: "13px", marginBottom: "16px" }}>Check modules to enable them. Drag <svg style={{ verticalAlign: "middle" }} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg> to reorder — the order shown here is the order that appears in the company portal sidebar.</p>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginBottom: "24px", maxHeight: "400px", overflowY: "auto" }}>
+                      {modulesForm.map((m, i) => (
+                        <div
+                          key={m.key}
+                          draggable
+                          onDragStart={() => setDragModuleIdx(i)}
+                          onDragOver={(e) => { e.preventDefault(); }}
+                          onDrop={() => {
+                            if (dragModuleIdx === null || dragModuleIdx === i) return;
+                            const next = [...modulesForm];
+                            const [moved] = next.splice(dragModuleIdx, 1);
+                            next.splice(i, 0, moved);
+                            setModulesForm(next);
+                            setDragModuleIdx(null);
+                          }}
+                          onDragEnd={() => setDragModuleIdx(null)}
+                          style={{
+                            display: "flex", alignItems: "center", gap: "10px",
+                            padding: "10px 14px", border: "1px solid #e2e8f0", borderRadius: "8px",
+                            background: dragModuleIdx === i ? "#f0f9ff" : m.enabled ? "#eff6ff" : "#fff",
+                            transition: "background 0.12s",
+                            opacity: dragModuleIdx === i ? 0.5 : 1,
+                            cursor: "default",
+                          }}
+                        >
+                          {/* Drag handle */}
+                          <span
+                            title="Drag to reorder"
+                            style={{ cursor: "grab", color: "#94a3b8", flexShrink: 0, display: "flex", alignItems: "center", padding: "2px 4px" }}
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <line x1="3" y1="6" x2="21" y2="6"/>
+                              <line x1="3" y1="12" x2="21" y2="12"/>
+                              <line x1="3" y1="18" x2="21" y2="18"/>
+                            </svg>
+                          </span>
+                          {/* Enabled badge (only when enabled) */}
+                          {m.enabled && (
+                            <span style={{ fontSize: "10px", fontWeight: 700, color: "#2563eb", background: "#dbeafe", borderRadius: "10px", padding: "1px 7px", flexShrink: 0 }}>
+                              {modulesForm.filter(x => x.enabled).indexOf(m) + 1}
+                            </span>
+                          )}
+                          <label style={{ display: "flex", alignItems: "center", gap: "10px", cursor: "pointer", flex: 1 }}>
+                            <input
+                              type="checkbox"
+                              checked={m.enabled}
+                              onChange={() => setModulesForm((prev) => prev.map((item, idx) => idx === i ? { ...item, enabled: !item.enabled } : item))}
+                              style={{ width: "16px", height: "16px", accentColor: "#2563eb", flexShrink: 0 }}
+                            />
+                            <span style={{ fontSize: "14px", fontWeight: "500", color: "#334155" }}>{m.label}</span>
+                          </label>
+                        </div>
                       ))}
                     </div>
                     <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
@@ -4100,7 +4170,25 @@ const CompanyPortal = () => {
                 <div style={{ padding: "16px 20px 12px 20px", borderBottom: "1px solid #f1f5f9" }}>
                   <span style={{ fontWeight: 700, fontSize: "14px", color: "#1e293b", letterSpacing: "0.01em" }}>Module Access</span>
                 </div>
-                <div style={{ padding: "20px", display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "14px 24px" }}>
+                <div style={{ padding: "16px 20px 8px 20px" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: "10px", cursor: "pointer", padding: "12px 16px", border: "2px solid", borderColor: companyForm.softServiceBundle ? "#0d9488" : "#e2e8f0", borderRadius: "10px", background: companyForm.softServiceBundle ? "#f0fdfa" : "#f8fafc", transition: "all 0.15s", marginBottom: "14px" }}>
+                    <input
+                      type="checkbox"
+                      name="softServiceBundle"
+                      checked={companyForm.softServiceBundle}
+                      onChange={handleCompanyChange}
+                      style={{ width: "16px", height: "16px", accentColor: "#0d9488", cursor: "pointer", flexShrink: 0 }}
+                    />
+                    <div style={{ flex: 1 }}>
+                      <span style={{ fontSize: "13.5px", fontWeight: 700, color: companyForm.softServiceBundle ? "#0d9488" : "#0f172a" }}>Soft Service Bundle</span>
+                      <span style={{ fontSize: "11.5px", color: "#64748b", display: "block", marginTop: "2px" }}>Auto-enables: Locations, Soft Requests, Checklists, Manage Roles, Work Orders, Warnings</span>
+                    </div>
+                    {companyForm.softServiceBundle && (
+                      <span style={{ padding: "3px 10px", borderRadius: "20px", background: "#ccfbf1", color: "#0d9488", fontSize: "11px", fontWeight: 700, flexShrink: 0 }}>Active</span>
+                    )}
+                  </label>
+                </div>
+                <div style={{ padding: "4px 20px 20px 20px", display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "14px 24px" }}>
                   {[
                     { name: "qsrModule", label: "Asset Management" },
                     { name: "premealModule", label: "FM e Checklist" },

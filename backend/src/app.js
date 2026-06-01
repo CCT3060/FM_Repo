@@ -34,6 +34,15 @@ import companyPortalAssetDashboardRouter from "./routes/companyPortalAssetDashbo
 import uploadRouter from "./routes/upload.js";
 import softServiceRequestsRouter from "./routes/softServiceRequests.js";
 
+// ── Startup migrations ────────────────────────────────────────────────────────
+(async () => {
+  try {
+    await pool.query(`ALTER TABLE company_users ADD COLUMN IF NOT EXISTS fcm_token TEXT DEFAULT NULL`);
+  } catch (e) {
+    console.warn("[startup] fcm_token migration warning:", e.message);
+  }
+})();
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 

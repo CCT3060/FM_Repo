@@ -480,8 +480,14 @@ function DetailModal({ submission, type, onClose }) {
           gridTemplateColumns: "repeat(3, 1fr)", gap: "10px 24px", flexShrink: 0 }}>
           {[
             { label: "Submitted By", value: submission.submittedBy || "—" },
-            { label: "Asset",        value: submission.assetName  || "—" },
-            { label: "Asset Location", value: formatAssetLocation(submission) },
+            ...(submission.assetId || submission.assetName ? [
+              { label: "Asset",        value: submission.assetName  || "—" },
+              { label: "Asset Location", value: formatAssetLocation(submission) },
+            ] : submission.locationId || submission.locationName ? [
+              { label: "Location",     value: submission.locationName || "—" },
+            ] : [
+              { label: "Asset",        value: "—" },
+            ]),
             { label: "Date / Time",  value: fmt(submission.submittedAt) },
             { label: "Status",       value: <StatusBadge status={submission.status} /> },
             ...(submission.locationAddress || (submission.latitude && submission.longitude) ? [
@@ -1451,7 +1457,7 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
   const [userView, setUserView] = useState({ active: false, userName: "", submittedById: null });
 
   /* -- Asset drilldown -- */
-  const [assetView, setAssetView] = useState({ active: false, assetId: null, assetName: "" });
+  const [assetView, setAssetView] = useState({ active: false, templateId: null, templateName: "", assetId: null });
 
   /* -- Filter meta (loaded when advanced panel is opened) -- */
   const [filterMeta, setFilterMeta] = useState({ templates: [], employees: [], assets: [], shifts: [] });
@@ -1560,17 +1566,23 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
     return sortDir === "asc" ? cmp : -cmp;
   });
 
-  /* -- Group submissions by asset -- */
+  /* -- Group submissions by template -- */
   const assetGroups = useMemo(() => {
     const map = new Map();
     for (const r of sorted) {
-      const key = r.assetId ?? r.assetName ?? "unknown";
+      const key = r.templateId ?? r.templateName ?? "unknown";
       if (!map.has(key)) {
+        const hasAsset    = !!(r.assetId || r.assetName);
+        const hasLocation = !!(r.locationId || r.locationName);
         map.set(key, {
-          assetId: r.assetId,
-          assetName: r.assetName || "Unknown Asset",
-          location: formatAssetLocation(r),
-          companyName: r.companyName,
+          templateId:   r.templateId,
+          templateName: r.templateName || "Unknown Template",
+          assetId:      r.assetId,
+          assetName:    r.assetName,
+          locationId:   r.locationId,
+          locationName: r.locationName,
+          location:     hasAsset ? formatAssetLocation(r) : (r.locationName || "—"),
+          companyName:  r.companyName,
           submissions: [],
         });
       }
@@ -1634,11 +1646,11 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
     return (
       <AssetDrilldown
         assetId={assetView.assetId}
-        assetName={assetView.assetName}
+        assetName={assetView.templateName}
         companyId={companyId}
         type={type}
         token={token}
-        onBack={() => setAssetView({ active: false, assetId: null, assetName: "" })}
+        onBack={() => setAssetView({ active: false, templateId: null, templateName: "", assetId: null })}
       />
     );
   }
@@ -1840,7 +1852,7 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
             <span style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a" }}>{panelLabel}</span>
             <span style={{ background: "#eff6ff", color: "#2563eb", borderRadius: "20px",
               padding: "2px 10px", fontSize: "12px", fontWeight: 700 }}>
-              {assetGroups.length} assets
+              {assetGroups.length} templates
             </span>
           </div>
           <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
@@ -1897,7 +1909,7 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13.5px" }}>
               <thead>
                 <tr>
-                  {["#", "Asset", "Location", "Company", "Submissions", "Last Submitted", "Submitted By", ""].map((h, hi) => (
+                  {["#", "Template", "Location", "Company", "Submissions", "Last Submitted", "Submitted By", ""].map((h, hi) => (
                     <th key={hi} style={{ padding: "11px 14px", textAlign: "left", background: "#f8fafc",
                       color: "#475569", fontWeight: 600, fontSize: "11.5px", textTransform: "uppercase",
                       letterSpacing: "0.05em", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>
@@ -1908,7 +1920,7 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
               </thead>
               <tbody>
                 {assetGroups.map((g, i) => (
-                  <tr key={g.assetId ?? g.assetName ?? i}
+                  <tr key={g.templateId ?? g.templateName ?? i}
                     onMouseEnter={(e) => e.currentTarget.style.background = "#f8fafc"}
                     onMouseLeave={(e) => e.currentTarget.style.background = ""}
                     style={{ borderBottom: "1px solid #f1f5f9", transition: "background 0.1s" }}>
@@ -1916,7 +1928,7 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
                       {i + 1}
                     </td>
                     <td style={{ padding: "10px 14px", fontWeight: 700, color: "#0f172a" }}>
-                      {g.assetName}
+                      {g.templateName}
                     </td>
                     <td style={{ padding: "10px 14px", color: "#64748b", fontSize: "12px" }}>
                       {g.location}
@@ -1956,7 +1968,7 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
                     </td>
                     <td style={{ padding: "10px 14px" }}>
                       <button
-                        onClick={() => setAssetView({ active: true, assetId: g.assetId, assetName: g.assetName })}
+                        onClick={() => setAssetView({ active: true, templateId: g.templateId, templateName: g.templateName, assetId: g.assetId })}
                         style={{ padding: "5px 14px", background: "#eff6ff", color: "#2563eb",
                           border: "none", borderRadius: "7px", fontSize: "12.5px", fontWeight: 600, cursor: "pointer" }}>
                         View →
@@ -1973,7 +1985,7 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
         {!loading && !error && sorted.length > 0 && (
           <div style={{ padding: "10px 20px", borderTop: "1px solid #f1f5f9", display: "flex",
             gap: "24px", fontSize: "12px", color: "#94a3b8", background: "#f8fafc", flexWrap: "wrap" }}>
-            <span>Assets: <strong style={{ color: "#475569" }}>{assetGroups.length}</strong></span>
+            <span>Templates: <strong style={{ color: "#475569" }}>{assetGroups.length}</strong></span>
             <span>Total submissions: <strong style={{ color: "#475569" }}>{sorted.length}</strong></span>
             <span>Unique submitters: <strong style={{ color: "#475569" }}>
               {new Set(sorted.map((r) => r.submittedBy).filter(Boolean)).size}

@@ -181,6 +181,7 @@ router.get("/my-assignments", async (req, res, next) => {
          ct.description,
          ct.asset_type AS "assetType",
          ct.asset_id AS "checklistAssetId",
+         ct.location_id AS "checklistLocationId",
          a_ct.asset_name AS "checklistAssetName",
          ct.frequency AS "checklistFrequency",
          ct.shift_id AS "checklistShiftId",
@@ -261,6 +262,7 @@ router.get("/my-assignments", async (req, res, next) => {
       frequency: a.templateType === 'checklist' ? (a.checklistFrequency || null) : (a.logsheetFrequency || null),
       assetId: a.templateType === 'checklist' ? (a.checklistAssetId || null) : (a.logsheetAssetId || null),
       assetName: a.templateType === 'checklist' ? (a.checklistAssetName || null) : (a.logsheetAssetName || null),
+      locationId: a.templateType === 'checklist' ? (a.checklistLocationId || null) : null,
       shiftId: a.templateType === 'checklist' ? (a.checklistShiftId || null) : (a.logsheetShiftId || null),
       shiftName: a.templateType === 'checklist' ? (a.checklistShiftName || null) : (a.logsheetShiftName || null),
       note: a.note,
@@ -363,8 +365,12 @@ router.get("/my-assignments", async (req, res, next) => {
         }));
     }
 
-    // Explicit assignments should always be visible; service_domain only adds auto-included soft templates.
-    res.json([...formatted, ...softFormatted]);
+    // Directly-assigned templates are ALWAYS visible regardless of service domain.
+    // Service domain filtering only controls which templates are AUTO-included (softFormatted).
+    // If a supervisor explicitly assigned a template to a user, it should always appear.
+    const visibleFormatted = formatted;
+
+    res.json([...visibleFormatted, ...softFormatted]);
   } catch (err) {
     next(err);
   }
@@ -1134,6 +1140,107 @@ router.get("/my-today-progress", async (req, res, next) => {
       completed: done,
       pending,
     });
+  } catch (err) { next(err); }
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+   GET /location-templates/:locationId
+   Returns active checklist templates linked to a specific location for the
+   current user — used by the mobile app after scanning a location QR code.
+   ──────────────────────────────────────────────────────────────────────────── */
+router.get("/location-templates/:locationId", async (req, res, next) => {
+  try {
+    const locationId = parseInt(req.params.locationId, 10);
+    if (!locationId) return res.status(400).json({ message: "Invalid locationId" });
+
+    const companyId = cid(req);
+    const userId = req.companyUser.id;
+
+    // Get checklists assigned to this location that are active and belong to the company
+    const [templates] = await pool.query(
+      `SELECT
+         ct.id,
+         ct.template_name AS "templateName",
+         ct.description,
+         ct.asset_type AS "assetType",
+         ct.service_type AS "serviceType",
+         ct.frequency,
+         ct.location_id AS "locationId",
+         -- Check if user has an assignment for this template
+         EXISTS(
+           SELECT 1 FROM template_user_assignments tua
+           WHERE tua.template_id = ct.id
+             AND tua.template_type = 'checklist'
+             AND tua.assigned_to = ?
+             AND tua.company_id = ?
+         ) AS "isAssigned",
+         -- Check if completed today
+         EXISTS(
+           SELECT 1 FROM checklist_submissions cs
+           WHERE cs.template_id = ct.id
+             AND cs.company_user_id = ?
+             AND (
+               (ct.frequency = 'Hourly'  AND cs.submitted_at >= NOW() - INTERVAL '1 hour')
+               OR (ct.frequency = 'Weekly'  AND cs.submitted_at >= date_trunc('week', NOW()))
+               OR (ct.frequency = 'Monthly' AND cs.submitted_at >= date_trunc('month', NOW()))
+               OR (ct.frequency NOT IN ('Hourly','Weekly','Monthly') AND cs.submitted_at >= CURRENT_DATE)
+             )
+         ) AS "completedToday"
+       FROM checklist_templates ct
+       WHERE ct.location_id = ?
+         AND ct.company_id = ?
+         AND ct.is_active = 1
+       ORDER BY ct.template_name`,
+      [userId, companyId, userId, locationId, companyId]
+    );
+
+    // Verify the location belongs to this company
+    const [[loc]] = await pool.query(
+      `SELECT id, name, campus, building, floor, room FROM locations WHERE id = ? AND company_id = ?`,
+      [locationId, companyId]
+    );
+    if (!loc) return res.status(404).json({ message: "Location not found" });
+
+    // Get the most recent submission for any template at this location
+    const [[recentSubmission]] = await pool.query(
+      `SELECT cs.id, cs.submitted_at AS "submittedAt", cs.status,
+              ct.template_name AS "templateName",
+              cu.full_name AS "submittedByName",
+              (
+                SELECT COUNT(*) FROM checklist_submission_answers csa
+                WHERE csa.submission_id = cs.id
+              ) AS "totalAnswers",
+              (
+                SELECT COUNT(*) FROM checklist_submission_answers csa
+                WHERE csa.submission_id = cs.id
+                  AND csa.answer_json IS NOT NULL
+                  AND csa.answer_json->>'value' != ''
+              ) AS "answeredCount"
+       FROM checklist_submissions cs
+       JOIN checklist_templates ct ON ct.id = cs.template_id
+       LEFT JOIN company_users cu ON cu.id = cs.company_user_id
+       WHERE ct.location_id = ? AND ct.company_id = ?
+       ORDER BY cs.submitted_at DESC NULLS LAST
+       LIMIT 1`,
+      [locationId, companyId]
+    );
+
+    // Get open soft requests assigned to this user at this location
+    const [assignedSoftRequests] = await pool.query(
+      `SELECT ssr.id, ssr.status, ssr.created_at AS "raisedAt",
+              COALESCE(ct2.template_name, lt.template_name) AS "templateName"
+       FROM soft_service_requests ssr
+       LEFT JOIN checklist_templates ct2 ON ct2.id = ssr.template_id AND ssr.template_type = 'checklist'
+       LEFT JOIN logsheet_templates lt ON lt.id = ssr.template_id AND ssr.template_type = 'logsheet'
+       WHERE ssr.assigned_to_user_id = ?
+         AND ssr.location_id = ?
+         AND ssr.company_id = ?
+         AND ssr.status NOT IN ('closed', 'resolved')
+       ORDER BY ssr.created_at DESC`,
+      [userId, locationId, companyId]
+    );
+
+    res.json({ location: loc, templates, recentSubmission: recentSubmission || null, assignedSoftRequests: assignedSoftRequests || [] });
   } catch (err) { next(err); }
 });
 
@@ -1993,8 +2100,23 @@ router.get("/all-templates", async (req, res, next) => {
   try {
     const companyId = cid(req);
 
-    // Show all templates for the company (matches Site Dashboard counts).
-    const softFilter = '';
+    // Determine service domain from company_users record
+    // Default to 'both' so users without explicit domain setting see all templates
+    let serviceDomain = 'both';
+    try {
+      const [[cuRow]] = await pool.query(
+        `SELECT service_domain AS "serviceDomain" FROM company_users WHERE id = ? LIMIT 1`,
+        [req.companyUser.id]
+      );
+      serviceDomain = (cuRow?.serviceDomain || 'both').toLowerCase();
+    } catch { /* default both */ }
+
+    let softFilter = '';
+    if (serviceDomain === 'technical') {
+      softFilter = `AND LOWER(TRIM(COALESCE(ct.asset_type, ''))) != 'soft service'`;
+    } else if (serviceDomain === 'soft') {
+      softFilter = `AND LOWER(TRIM(COALESCE(ct.asset_type, ''))) = 'soft service'`;
+    }
 
     // All active checklist templates
     const [checklists] = await pool.query(

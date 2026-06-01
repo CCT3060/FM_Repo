@@ -90,7 +90,6 @@ function bufferToRowObjects(buffer, mimetype, originalname) {
     const ws = wb.Sheets[wb.SheetNames[0]];
     rawRows = utils.sheet_to_json(ws, { header: 1, defval: "" });
   }
-
   if (!rawRows || rawRows.length < 2) return { headers: [], data: [] };
 
   const headers = rawRows[0].map((h) => String(h || "").trim()).filter(Boolean);
@@ -384,4 +383,123 @@ export function parseLogsheetBuffer(buffer, mimetype, originalname) {
       withRules:  sections.reduce((s, sec) => s + sec.questions.filter((q) => q.rule).length, 0),
     },
   };
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BULK CHECKLIST PARSER — multi-sheet Excel support
+   Each worksheet = one template (sheet name = template name)
+═══════════════════════════════════════════════════════════════════════════ */
+
+/** Parse a raw rows array (array-of-arrays) for a single checklist sheet */
+function parseChecklistRows(rawRows, sheetName) {
+  if (!rawRows || rawRows.length < 2) {
+    return { success: false, errors: [`Sheet "${sheetName}": no data`], warnings: [], questions: [], preview: [], templateName: sheetName, stats: { total: 0, sections: 0, withFlagRules: 0, withOptions: 0 } };
+  }
+  const headers = rawRows[0].map((h) => String(h || "").trim()).filter(Boolean);
+  if (!headers.length) {
+    return { success: false, errors: [`Sheet "${sheetName}": no headers`], warnings: [], questions: [], preview: [], templateName: sheetName, stats: { total: 0, sections: 0, withFlagRules: 0, withOptions: 0 } };
+  }
+  const data = rawRows
+    .slice(1)
+    .filter((r) => r.some((c) => c !== "" && c !== null && c !== undefined))
+    .map((r) => {
+      const obj = {};
+      headers.forEach((h, i) => { obj[h] = r[i] !== undefined ? String(r[i]).trim() : ""; });
+      return obj;
+    });
+
+  const lnHeaders = headers.map(normaliseKey);
+  const hasQuestion = lnHeaders.some((h) =>
+    ["question", "questiontext", "question_text", "title", "item", "field"].some((a) => h.includes(normaliseKey(a)))
+  );
+  if (!hasQuestion) {
+    return { success: false, errors: [`Sheet "${sheetName}": missing "Question" column. Found: ${headers.slice(0, 6).join(", ")}`], warnings: [], questions: [], preview: [], templateName: sheetName, stats: { total: 0, sections: 0, withFlagRules: 0, withOptions: 0 } };
+  }
+
+  const questions = [];
+  const rowErrors = [];
+  const warnings = [];
+
+  for (let i = 0; i < data.length; i++) {
+    const row = data[i];
+    const rowNum = i + 2;
+    const questionText = findCol(row, ["question", "question text", "questiontext", "question_text", "title", "item", "field", "field name", "fieldname"]);
+    if (!questionText) { rowErrors.push(`Row ${rowNum}: Missing question text — skipped`); continue; }
+
+    const rawType = findCol(row, ["answer type", "answertype", "answer_type", "input type", "inputtype", "type", "field type"]);
+    const typeKey = normaliseKey(rawType);
+    const inputType = CHECKLIST_TYPE_MAP[typeKey] || Object.entries(CHECKLIST_TYPE_MAP).find(([k]) => typeKey.includes(k) || k.includes(typeKey))?.[1] || "yes_no";
+
+    const isRequired = toBool(findCol(row, ["required", "is required", "isrequired", "mandatory"]), true);
+    const section = findCol(row, ["section", "category", "group", "section name"]) || "General";
+    const orderIdx = toNum(findCol(row, ["order", "order index", "orderindex", "seq", "sequence", "#", "no"]));
+    const optionsRaw = findCol(row, ["options", "choices", "values", "dropdown options"]);
+    const options = optionsRaw ? optionsRaw.split(/[;|]/).map((o) => o.trim()).filter(Boolean) : [];
+
+    const flagOn = findCol(row, ["flag rule", "flagrule", "flag_rule", "flag if", "flagif", "flag condition", "flag on"]);
+    const flagReason = findCol(row, ["flag reason", "flagreason", "reason", "description", "flag message", "alert message"]);
+    const woRequired = toBool(findCol(row, ["work order", "workorder", "wo required", "worequired", "auto work order"]), false);
+    const sevRaw = findCol(row, ["severity", "priority", "alert severity"]).toLowerCase();
+    const severity = ["low", "medium", "high", "critical"].includes(sevRaw) ? sevRaw : "medium";
+    const minVal = toNum(findCol(row, ["min value", "minvalue", "min", "minimum", "min_value"]));
+    const maxVal = toNum(findCol(row, ["max value", "maxvalue", "max", "maximum", "max_value"]));
+
+    let flagRule = null;
+    if (flagOn) {
+      const triggerVal = flagOn.toLowerCase().includes("no") ? "no" : flagOn.toLowerCase().includes("yes") ? "yes" : flagOn.toLowerCase().includes("fail") ? "Fail" : flagOn;
+      flagRule = { enabled: true, operator: "eq", triggerValue: triggerVal, severity, label: flagReason || `Flag when "${triggerVal}"`, autoCreateWo: woRequired, clientVisible: true };
+    }
+    if (inputType === "number" && (minVal !== undefined || maxVal !== undefined)) {
+      flagRule = { ...(flagRule || {}), enabled: true, operator: minVal !== undefined && maxVal !== undefined ? "between" : (minVal !== undefined ? "lt" : "gt"), ...(minVal !== undefined ? { value1: minVal } : {}), ...(maxVal !== undefined ? { value2: maxVal } : {}), severity, label: flagReason || `Out of range (${minVal ?? ""}–${maxVal ?? ""})`, autoCreateWo: woRequired };
+    }
+
+    questions.push({ questionText, inputType, isRequired, section, orderIndex: orderIdx !== undefined ? orderIdx : i, options, flagRule, _rowNum: rowNum });
+    if (rawType && !VALID_CHECKLIST_TYPES.includes(inputType)) warnings.push(`Row ${rowNum}: Unknown answer type "${rawType}", defaulting to yes_no`);
+  }
+
+  const sectionMap = {};
+  for (const q of questions) {
+    if (!sectionMap[q.section]) sectionMap[q.section] = [];
+    sectionMap[q.section].push(q);
+  }
+  const preview = Object.entries(sectionMap).map(([name, qs]) => ({ name, questions: qs }));
+
+  return {
+    success: rowErrors.length === 0 || questions.length > 0,
+    errors: rowErrors.slice(0, 10),
+    warnings: warnings.slice(0, 10),
+    templateName: sheetName,
+    questions,
+    preview,
+    stats: { total: questions.length, sections: Object.keys(sectionMap).length, withFlagRules: questions.filter((q) => q.flagRule).length, withOptions: questions.filter((q) => q.options?.length > 0).length },
+  };
+}
+
+/**
+ * Bulk checklist parser.
+ * - Excel with multiple sheets → isBulk: true, templates: [{templateName, questions, preview, stats, errors, warnings}, ...]
+ * - Single sheet or CSV → isBulk: false, ...parseChecklistBuffer(...)
+ */
+export function parseChecklistBufferBulk(buffer, mimetype, originalname) {
+  const ext = (originalname || "").split(".").pop().toLowerCase();
+
+  if (ext !== "csv" && !(mimetype || "").includes("csv")) {
+    const wb = read(buffer, { type: "buffer" });
+    if (wb.SheetNames.length > 1) {
+      const templates = wb.SheetNames.map((sheetName) => {
+        const ws = wb.Sheets[sheetName];
+        const rawRows = utils.sheet_to_json(ws, { header: 1, defval: "" });
+        return parseChecklistRows(rawRows, sheetName);
+      });
+      const totalQuestions = templates.reduce((s, t) => s + (t.stats?.total || 0), 0);
+      return {
+        isBulk: true,
+        templates,
+        stats: { templateCount: templates.length, totalQuestions },
+      };
+    }
+  }
+
+  // Single sheet / CSV — normal flow
+  return { isBulk: false, ...parseChecklistBuffer(buffer, mimetype, originalname) };
 }

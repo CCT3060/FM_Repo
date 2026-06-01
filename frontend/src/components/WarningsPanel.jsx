@@ -51,6 +51,8 @@ export default function WarningsPanel({ token, companyId: initialCompanyId, comp
   const [loading,    setLoading]    = useState(false);
   const [error,      setError]      = useState(null);
   const [updating,   setUpdating]   = useState(null);
+  const [selected,   setSelected]   = useState(new Set());
+  const [deleting,   setDeleting]   = useState(false);
   const [woModal,    setWoModal]    = useState(null);  // flag being converted → WO
   const [woUsers,    setWoUsers]    = useState([]);
   const [woForm,     setWoForm]     = useState({ priority: "high", assignedTo: "" });
@@ -92,6 +94,34 @@ export default function WarningsPanel({ token, companyId: initialCompanyId, comp
 
   useEffect(() => { loadFlags(); }, [loadFlags]);
   useEffect(() => { setPage(0); }, [filter, companyId]);
+  useEffect(() => { setSelected(new Set()); }, [flags]);
+
+  const toggleSelect = (id) => setSelected((prev) => {
+    const s = new Set(prev);
+    s.has(id) ? s.delete(id) : s.add(id);
+    return s;
+  });
+
+  const toggleSelectAll = (e) => {
+    if (e.target.checked) setSelected(new Set(displayFlags.map((f) => f.id)));
+    else setSelected(new Set());
+  };
+
+  const handleBulkDelete = async () => {
+    if (selected.size === 0) return;
+    if (!window.confirm(`Delete ${selected.size} warning${selected.size > 1 ? "s" : ""}? This cannot be undone.`)) return;
+    setDeleting(true);
+    try {
+      await apiFetch("DELETE", "/api/flags/admin/bulk", { ids: [...selected] }, token);
+      setFlags((prev) => prev.filter((f) => !selected.has(f.id)));
+      setTotal((prev) => Math.max(0, prev - selected.size));
+      setSelected(new Set());
+    } catch (err) {
+      alert("Delete failed: " + err.message);
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const updateStatus = async (id, status) => {
     setUpdating(id);
@@ -189,6 +219,13 @@ export default function WarningsPanel({ token, companyId: initialCompanyId, comp
           </select>
         )}
         <button onClick={() => loadFlags()} style={{ padding: "8px 16px", borderRadius: "8px", border: "1px solid #e2e8f0", background: "#f8fafc", color: "#475569", fontWeight: 600, fontSize: "13px", cursor: "pointer" }}>↻ Refresh</button>
+        {selected.size > 0 && (
+          <button onClick={handleBulkDelete} disabled={deleting}
+            style={{ padding: "8px 16px", borderRadius: "8px", border: "1px solid #fecaca", background: "#fef2f2", color: "#dc2626", fontWeight: 700, fontSize: "13px", cursor: deleting ? "not-allowed" : "pointer", opacity: deleting ? 0.7 : 1, display: "inline-flex", alignItems: "center", gap: "6px" }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+            {deleting ? "Deleting…" : `Delete Selected (${selected.size})`}
+          </button>
+        )}
       </div>
 
       {!companyId && (
@@ -273,6 +310,13 @@ export default function WarningsPanel({ token, companyId: initialCompanyId, comp
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
                   <thead>
                     <tr style={{ background: "#f8fafc" }}>
+                      <th style={{ padding: "11px 14px", borderBottom: "1px solid #e2e8f0", width: "40px" }}>
+                        <input type="checkbox"
+                          checked={displayFlags.length > 0 && displayFlags.every((f) => selected.has(f.id))}
+                          onChange={toggleSelectAll}
+                          style={{ cursor: "pointer", width: "15px", height: "15px" }}
+                        />
+                      </th>
                       {["#","Severity","Asset","Description","Source","Raised By","Status","Raised At","Actions"].map((h) => (
                         <th key={h} style={{ padding: "11px 14px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>{h}</th>
                       ))}
@@ -283,10 +327,15 @@ export default function WarningsPanel({ token, companyId: initialCompanyId, comp
                       const sev  = SEV_STYLES[f.severity]  || SEV_STYLES.medium;
                       const stat = STATUS_STYLES[f.status] || STATUS_STYLES.open;
                       const isUpd = updating === f.id;
+                      const isSel = selected.has(f.id);
                       return (
-                        <tr key={f.id} style={{ borderBottom: "1px solid #f1f5f9" }}
-                          onMouseEnter={(e) => (e.currentTarget.style.background = "#fafafa")}
-                          onMouseLeave={(e) => (e.currentTarget.style.background = "")}>
+                        <tr key={f.id} style={{ borderBottom: "1px solid #f1f5f9", background: isSel ? "#eff6ff" : "" }}
+                          onMouseEnter={(e) => { if (!isSel) e.currentTarget.style.background = "#fafafa"; }}
+                          onMouseLeave={(e) => { if (!isSel) e.currentTarget.style.background = ""; }}>
+                          <td style={{ padding: "12px 14px" }}>
+                            <input type="checkbox" checked={isSel} onChange={() => toggleSelect(f.id)}
+                              style={{ cursor: "pointer", width: "15px", height: "15px" }} />
+                          </td>
                           <td style={{ padding: "12px 14px", color: "#94a3b8", fontWeight: 600, fontSize: "12px" }}>{page * LIMIT + i + 1}</td>
                           <td style={{ padding: "12px 14px" }}>
                             <span style={{ display: "inline-flex", alignItems: "center", gap: "5px", background: sev.bg, color: sev.color, padding: "3px 10px", borderRadius: "20px", fontSize: "11px", fontWeight: 700, textTransform: "capitalize" }}>
