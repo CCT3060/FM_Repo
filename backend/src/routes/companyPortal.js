@@ -2578,7 +2578,7 @@ router.post("/work-orders", async (req, res, next) => {
         );
         const woTitle = "Work Order Assigned";
         const woBody  = `${workOrderNumber}: ${resolvedDescription.slice(0, 80)}`;
-        const woData  = { type: "work_order", workOrderId: String(woId), workOrderNumber };
+        const woData  = { type: "work_order", workOrderId: String(woId), workOrderNumber, screen: "/work-orders" };
         if (assignee?.push_token) {
           await sendExpoPush(assignee.push_token, woTitle, woBody, woData);
         }

@@ -3510,7 +3510,13 @@ export default function CompanyEmployeePortal() {
   const [selectedLocIds, setSelectedLocIds] = useState(new Set());
   const [bulkLocQrPrinting, setBulkLocQrPrinting] = useState(false);
   const [showLocSettings, setShowLocSettings] = useState(false);
-  const [locQrSettings, setLocQrSettings] = useState({ startNumber: 1, showFields: ["name", "floor", "room", "building", "campus"] });
+  const [locQrSettings, setLocQrSettings] = useState(() => {
+    try {
+      const saved = localStorage.getItem('locQrSettings');
+      if (saved) return JSON.parse(saved);
+    } catch { /* ignore */ }
+    return { startNumber: 1, showFields: ["name", "floor", "room", "building", "campus"] };
+  });
   // Fleet State
   const [fleetAssets, setFleetAssets] = useState([]);
   const [fleetInspections, setFleetInspections] = useState([]);
@@ -4411,10 +4417,7 @@ export default function CompanyEmployeePortal() {
       <aside style={{ width: "240px", background: "#fff", borderRight: "1px solid #e2e8f0", display: "flex", flexDirection: "column", position: "fixed", top: 0, bottom: 0, left: 0, zIndex: 10 }}>
         {/* Brand */}
         <div style={{ padding: "12px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "center", minHeight: "68px" }}>
-          {companyLogoUrl
-            ? <img src={companyLogoUrl} alt="Company Logo" style={{ maxWidth: "180px", maxHeight: "56px", width: "auto", height: "auto", objectFit: "contain" }} />
-            : <img src={logo} alt="Logo" style={{ maxWidth: "160px", maxHeight: "48px", width: "auto", height: "auto", objectFit: "contain" }} />
-          }
+          <img src={logo} alt="Logo" style={{ maxWidth: "160px", maxHeight: "48px", width: "auto", height: "auto", objectFit: "contain" }} />
         </div>
 
         {/* Company name */}
@@ -5756,6 +5759,10 @@ export default function CompanyEmployeePortal() {
                         style={{ padding: "8px 20px", borderRadius: "8px", background: "#f1f5f9", color: "#475569", border: "none", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
                         Close
                       </button>
+                      <button onClick={() => { try { localStorage.setItem('locQrSettings', JSON.stringify(locQrSettings)); } catch { /* ignore */ } setShowLocSettings(false); }}
+                        style={{ padding: "8px 20px", borderRadius: "8px", background: "#2563eb", color: "#fff", border: "none", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
+                        Save
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -5963,12 +5970,12 @@ export default function CompanyEmployeePortal() {
                         <div style={{ background: "#f8fafc", padding: "8px", borderRadius: "8px", display: "inline-block", marginBottom: "10px", border: "1px solid #e2e8f0" }}>
                           <img src={locQrDataUrl} alt="QR" style={{ width: "180px", height: "180px", display: "block" }} />
                         </div>
-                        {/* Location details */}
-                        <div style={{ fontSize: "12px", fontWeight: 600, marginBottom: "2px", color: "#0f172a" }}>{locQrModal.name}</div>
-                        {locQrModal.floor    && <div style={{ fontSize: "12px", color: "#334155", marginBottom: "2px" }}>Floor - {locQrModal.floor}</div>}
-                        {locQrModal.room     && <div style={{ fontSize: "12px", color: "#334155", marginBottom: "2px" }}>Area - {locQrModal.room}</div>}
-                        {locQrModal.building && <div style={{ fontSize: "12px", color: "#334155", marginBottom: "2px" }}>Building - {locQrModal.building}</div>}
-                        {locQrModal.campus   && <div style={{ fontSize: "12px", color: "#334155", marginBottom: "2px" }}>Campus - {locQrModal.campus}</div>}
+                        {/* Location details — filtered by QR settings */}
+                        {locQrSettings.showFields.includes("name") && <div style={{ fontSize: "12px", fontWeight: 600, marginBottom: "2px", color: "#0f172a" }}>{locQrModal.name}</div>}
+                        {locQrSettings.showFields.includes("floor")    && locQrModal.floor    && <div style={{ fontSize: "12px", color: "#334155", marginBottom: "2px" }}>Floor - {locQrModal.floor}</div>}
+                        {locQrSettings.showFields.includes("room")     && locQrModal.room     && <div style={{ fontSize: "12px", color: "#334155", marginBottom: "2px" }}>Area - {locQrModal.room}</div>}
+                        {locQrSettings.showFields.includes("building") && locQrModal.building && <div style={{ fontSize: "12px", color: "#334155", marginBottom: "2px" }}>Building - {locQrModal.building}</div>}
+                        {locQrSettings.showFields.includes("campus")   && locQrModal.campus   && <div style={{ fontSize: "12px", color: "#334155", marginBottom: "2px" }}>Campus - {locQrModal.campus}</div>}
                         <div style={{ fontSize: "13px", fontWeight: 700, color: "#0f172a", marginTop: "8px" }}>www.catalystsolutions.eco</div>
                       </div>
                     ) : (
