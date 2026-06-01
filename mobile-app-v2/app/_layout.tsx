@@ -98,6 +98,15 @@ function RootLayoutInner() {
         void registerForPushNotifications();
       });
       void import('expo-notifications').then((Notifications) => {
+        // Handle cold-start: app opened by tapping a notification while killed
+        Notifications.getLastNotificationResponseAsync().then((response) => {
+          if (response?.notification) {
+            const data = response.notification.request.content.data;
+            if (data?.screen) setTimeout(() => router.push(data.screen as any), 500);
+            else setTimeout(() => router.push('/notifications'), 500);
+          }
+        });
+
         notifListener.current = Notifications.addNotificationReceivedListener(() => {});
         responseListener.current = Notifications.addNotificationResponseReceivedListener((response) => {
           const data = response.notification.request.content.data;

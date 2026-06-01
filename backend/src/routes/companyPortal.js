@@ -8,6 +8,7 @@ import pool from "../db.js";
 import { requireCompanyAuth } from "../middleware/companyAuth.js";
 import { evaluateRule, createFlag, detectChecklistFlags } from "../utils/flagsHelper.js";
 import { dispatchFlagNotifications } from "../utils/notificationsHelper.js";
+import { sendFCMPush } from "../utils/firebaseService.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const uploadsDir = path.join(__dirname, "../../uploads");
@@ -2192,18 +2193,15 @@ router.post("/template-user-assignments", async (req, res, next) => {
     // Push notification to the assigned user (non-blocking, fire-and-forget)
     try {
       const [[assignee]] = await pool.query(
-        "SELECT push_token FROM company_users WHERE id = ? AND company_id = ?",
+        "SELECT push_token, fcm_token FROM company_users WHERE id = ? AND company_id = ?",
         [normalizedAssignedTo, cid(req)]
       );
-      if (assignee?.push_token) {
-        const templateLabel = templateType === "checklist" ? "Checklist" : "Logsheet";
-        await sendExpoPush(
-          assignee.push_token,
-          `New ${templateLabel} Assigned`,
-          `A ${templateLabel.toLowerCase()} template has been assigned to you.`,
-          { type: "template_assignment", templateType, templateId: normalizedTemplateId }
-        );
-      }
+      const templateLabel = templateType === "checklist" ? "Checklist" : "Logsheet";
+      const tplTitle = `New ${templateLabel} Assigned`;
+      const tplBody  = `A ${templateLabel.toLowerCase()} template has been assigned to you.`;
+      const tplData  = { type: "template_assignment", templateType, templateId: String(normalizedTemplateId), screen: "/notifications" };
+      if (assignee?.push_token) await sendExpoPush(assignee.push_token, tplTitle, tplBody, tplData);
+      if (assignee?.fcm_token)  await sendFCMPush(assignee.fcm_token,  tplTitle, tplBody, tplData);
     } catch { /* Non-fatal */ }
   } catch (err) {
     next(err);
@@ -2563,16 +2561,17 @@ router.post("/work-orders", async (req, res, next) => {
     if (assignedTo) {
       try {
         const [[assignee]] = await pool.query(
-          "SELECT push_token FROM company_users WHERE id = ? AND company_id = ?",
+          "SELECT push_token, fcm_token FROM company_users WHERE id = ? AND company_id = ?",
           [assignedTo, companyId]
         );
+        const woTitle = "Work Order Assigned";
+        const woBody  = `${workOrderNumber}: ${resolvedDescription.slice(0, 80)}`;
+        const woData  = { type: "work_order", workOrderId: String(woId), workOrderNumber };
         if (assignee?.push_token) {
-          await sendExpoPush(
-            assignee.push_token,
-            "Work Order Assigned",
-            `${workOrderNumber}: ${resolvedDescription.slice(0, 80)}`,
-            { type: "work_order", workOrderId: woId, workOrderNumber }
-          );
+          await sendExpoPush(assignee.push_token, woTitle, woBody, woData);
+        }
+        if (assignee?.fcm_token) {
+          await sendFCMPush(assignee.fcm_token, woTitle, woBody, woData);
         }
       } catch { /* Non-fatal */ }
     }
