@@ -147,11 +147,11 @@ function downloadBulkSampleXLSX() {
   const note = `# BULK IMPORT FORMAT — Each sheet in an Excel file becomes one template.\n# Sheet name = Template name.\n# Below are 2 sample templates. In Excel, put each in a separate worksheet named after the template.\n\n`;
   const toCsv = (rows) => rows.map((r) => r.map((c) => `"${c}"`).join(",")).join("\n");
   const content = note + `# === TEMPLATE 1: Daily Cleaning Check ===\n` + toCsv(sheet1) + sep + `# === TEMPLATE 2: Washroom Inspection ===\n` + toCsv(sheet2);
-  const blob = new Blob(["\uFEFF" + content], { type: "text/plain;charset=utf-8;" });
+  const blob = new Blob(["\uFEFF" + content], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = "bulk-checklist-sample.txt";
+  a.download = "bulk-checklist-sample.csv";
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -284,7 +284,7 @@ function UploadStep({ type, token, onParsed, onError }) {
         </Btn>
         {type === "checklist" && (
           <Btn small outline color="#0d9488" onClick={downloadBulkSampleXLSX}>
-            ⬇ Download Bulk Sample (Multi-Sheet)
+            ⬇ Download Bulk Sample CSV
           </Btn>
         )}
       </div>

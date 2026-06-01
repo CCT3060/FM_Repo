@@ -878,6 +878,12 @@ function UserDrilldown({ userName, companyId, type, token, onBack }) {
 
   useEffect(() => { load(); }, [load]);
 
+  // Auto-refresh every 60 seconds
+  useEffect(() => {
+    const id = setInterval(() => { load(); }, 60000);
+    return () => clearInterval(id);
+  }, [load]);
+
   const openDetail = async (id) => {
     try {
       const qs = companyId ? `?companyId=${companyId}` : "";

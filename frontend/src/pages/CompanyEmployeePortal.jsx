@@ -3480,7 +3480,7 @@ export default function CompanyEmployeePortal() {
   const [editAsset, setEditAsset] = useState(null);
   const [showChecklistModal, setShowChecklistModal] = useState(false);
   const [editChecklist, setEditChecklist] = useState(null);
-  const [checklistSubNav, setChecklistSubNav] = useState("templates");
+  const [checklistSubNav, setChecklistSubNav] = useState("submissions");
   const [logsheetSubNav, setLogsheetSubNav] = useState("templates");
   const [assetSubNav, setAssetSubNav] = useState("dashboard");
   // OJT State
@@ -3509,6 +3509,8 @@ export default function CompanyEmployeePortal() {
   const [locQrDataUrl, setLocQrDataUrl] = useState("");
   const [selectedLocIds, setSelectedLocIds] = useState(new Set());
   const [bulkLocQrPrinting, setBulkLocQrPrinting] = useState(false);
+  const [showLocSettings, setShowLocSettings] = useState(false);
+  const [locQrSettings, setLocQrSettings] = useState({ startNumber: 1, showFields: ["name", "floor", "room", "building", "campus"] });
   // Fleet State
   const [fleetAssets, setFleetAssets] = useState([]);
   const [fleetInspections, setFleetInspections] = useState([]);
@@ -3874,6 +3876,23 @@ export default function CompanyEmployeePortal() {
     }
   }, [nav, token, load, assets.length]);
 
+  // ── Auto-refresh current page data every 60 seconds ──
+  useEffect(() => {
+    if (!token) return;
+    const refresh = () => {
+      if (nav === "warnings") { /* WarningsPanel has its own refresh */ }
+      if (nav === "workorders") load("workorders", () => getCompanyPortalWorkOrders ? getCompanyPortalWorkOrders(token) : Promise.resolve([])).then((d) => d && setDashboardWorkOrders(d));
+      if (nav === "employees") load("employees", () => getCompanyPortalEmployees(token)).then((d) => d && setEmployees(d));
+      if (nav === "locations") {
+        fetch("/api/company-portal/locations", { headers: { Authorization: `Bearer ${token}` } })
+          .then((r) => r.json()).then((d) => setLocations(Array.isArray(d) ? d : [])).catch(() => {});
+      }
+      if (nav === "softrequests") load("softrequests", () => getSoftRequests ? getSoftRequests(token) : Promise.resolve([])).then(() => {});
+    };
+    const id = setInterval(refresh, 60000);
+    return () => clearInterval(id);
+  }, [nav, token, load]);
+
   const handleLogout = () => {
     sessionStorage.removeItem("cp_token");
     sessionStorage.removeItem("cp_user");
@@ -4046,8 +4065,7 @@ export default function CompanyEmployeePortal() {
         ${assetName ? `<div style="font-size:13px;font-weight:600;margin-bottom:2px;color:#0f172a;">${assetName}</div>` : ""}
         ${floor ? `<div style="font-size:13px;margin-top:4px;color:#334155;">Floor - ${floor}</div>` : ""}
         ${room ? `<div style="font-size:13px;color:#334155;">Area - ${room}</div>` : ""}
-        <div style="font-size:11px;color:#64748b;margin-top:8px;margin-bottom:14px;">www.catalystsolutions.eco</div>
-        <div style="background:#0f172a;color:#fff;padding:11px 20px;border-radius:4px;font-weight:800;font-size:13px;letter-spacing:2px;">SCAN FOR E-CHECKLIST</div>
+        <div style="font-size:13px;font-weight:700;color:#0f172a;margin-top:8px;">www.catalystsolutions.eco</div>
       </div>`;
   };
 
@@ -4078,8 +4096,7 @@ export default function CompanyEmployeePortal() {
         </div>
         <div style="font-size:13px;font-weight:600;margin-bottom:4px;color:#0f172a;">${loc.name}</div>
         ${details.map(d => `<div style="font-size:12px;color:#334155;margin-bottom:2px;">${d}</div>`).join("")}
-        <div style="font-size:11px;color:#64748b;margin-top:8px;margin-bottom:14px;">www.catalystsolutions.eco</div>
-        <div style="background:#0f172a;color:#fff;padding:11px 20px;border-radius:4px;font-weight:800;font-size:13px;letter-spacing:2px;">SCAN FOR E-CHECKLIST</div>
+        <div style="font-size:13px;font-weight:700;color:#0f172a;margin-top:8px;">www.catalystsolutions.eco</div>
       </div>`;
   };
 
@@ -4308,15 +4325,9 @@ export default function CompanyEmployeePortal() {
       y += 8;
 
       // Website
-      ctx.fillStyle = "#64748b"; ctx.font = "11px Arial";
+      ctx.fillStyle = "#0f172a"; ctx.font = "bold 13px Arial";
       ctx.fillText("www.catalystsolutions.eco", W / 2, y + 11);
-      y += 14 + 14;
-
-      // Bottom bar
-      ctx.fillStyle = "#0f172a";
-      rr(PAD, y, W - PAD * 2, 40, 4); ctx.fill();
-      ctx.fillStyle = "#ffffff"; ctx.font = "bold 12px Arial";
-      ctx.fillText("SCAN FOR E-CHECKLIST", W / 2, y + 26);
+      y += 24;
 
       const link = document.createElement("a");
       link.download = `QR-Location-${loc.name.replace(/[^a-zA-Z0-9]/g, "_")}-${loc.id}.png`;
@@ -4842,17 +4853,19 @@ export default function CompanyEmployeePortal() {
                 return { ...d, dash, offset, v };
               });
               return (
-                <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
+                <svg width={size} height={size}>
                   <circle cx={cx} cy={cy} r={r} fill="none" stroke="#f1f5f9" strokeWidth={thickness} />
-                  {slices.map((s, i) => s.v > 0 && (
-                    <circle key={i} cx={cx} cy={cy} r={r} fill="none"
-                      stroke={s.color} strokeWidth={thickness}
-                      strokeDasharray={`${s.dash} ${circ - s.dash}`}
-                      strokeDashoffset={s.offset}
-                    />
-                  ))}
-                  <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle"
-                    style={{ transform: "rotate(90deg)", transformOrigin: `${cx}px ${cy}px`, fontSize: "22px", fontWeight: 800 }}
+                  <g transform={`rotate(-90, ${cx}, ${cy})`}>
+                    {slices.map((s, i) => s.v > 0 && (
+                      <circle key={i} cx={cx} cy={cy} r={r} fill="none"
+                        stroke={s.color} strokeWidth={thickness}
+                        strokeDasharray={`${s.dash} ${circ - s.dash}`}
+                        strokeDashoffset={s.offset}
+                      />
+                    ))}
+                  </g>
+                  <text x={cx} y={cy + 8} textAnchor="middle"
+                    fontSize="22" fontWeight="800"
                     fill="#0f172a">{total}</text>
                 </svg>
               );
@@ -5610,7 +5623,7 @@ export default function CompanyEmployeePortal() {
           <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
             {/* Sub-navigation tabs */}
             <div style={{ display: "flex", gap: "4px", marginBottom: "24px", borderBottom: "2px solid #e2e8f0" }}>
-              {[{ k: "templates", label: "Templates" }, { k: "submissions", label: "Submissions & Reports" }].map(({ k, label }) => (
+              {[{ k: "submissions", label: "Submissions & Reports" }].map(({ k, label }) => (
                 <button key={k} type="button" onClick={() => setChecklistSubNav(k)}
                   style={{ padding: "10px 20px", background: "none", border: "none",
                     borderBottom: checklistSubNav === k ? "3px solid #2563eb" : "3px solid transparent",
@@ -5709,6 +5722,40 @@ export default function CompanyEmployeePortal() {
           const isAdmin = currentUser.role === "admin";
           return (
             <div>
+              {/* QR Settings Modal */}
+              {showLocSettings && (
+                <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <div style={{ background: "#fff", borderRadius: "16px", padding: "28px 32px", width: "380px", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
+                    <h2 style={{ fontSize: "18px", fontWeight: 800, color: "#0f172a", marginBottom: "20px" }}>QR Card Settings</h2>
+                    <div style={{ marginBottom: "18px" }}>
+                      <label style={{ fontSize: "13px", fontWeight: 600, color: "#374151", display: "block", marginBottom: "6px" }}>QR ID Number Series (Start Number)</label>
+                      <input type="number" min="1" value={locQrSettings.startNumber}
+                        onChange={(e) => setLocQrSettings(s => ({ ...s, startNumber: Math.max(1, parseInt(e.target.value) || 1) }))}
+                        style={{ width: "100%", padding: "8px 12px", borderRadius: "8px", border: "1px solid #e2e8f0", fontSize: "14px", outline: "none", boxSizing: "border-box" }} />
+                      <p style={{ fontSize: "12px", color: "#94a3b8", marginTop: "4px" }}>QR codes will be labeled QR-{locQrSettings.startNumber}, QR-{locQrSettings.startNumber + 1}, …</p>
+                    </div>
+                    <div style={{ marginBottom: "24px" }}>
+                      <label style={{ fontSize: "13px", fontWeight: 600, color: "#374151", display: "block", marginBottom: "8px" }}>Fields to show on QR Card</label>
+                      {[["name", "Name"], ["floor", "Floor"], ["room", "Room / Area"], ["building", "Building"], ["campus", "Campus"]].map(([field, label]) => (
+                        <label key={field} style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px", cursor: "pointer" }}>
+                          <input type="checkbox" checked={locQrSettings.showFields.includes(field)}
+                            onChange={(e) => setLocQrSettings(s => ({
+                              ...s,
+                              showFields: e.target.checked ? [...s.showFields, field] : s.showFields.filter(f => f !== field)
+                            }))} />
+                          <span style={{ fontSize: "13px", color: "#374151" }}>{label}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
+                      <button onClick={() => setShowLocSettings(false)}
+                        style={{ padding: "8px 20px", borderRadius: "8px", background: "#f1f5f9", color: "#475569", border: "none", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
+                        Close
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "22px" }}>
                 <div>
                   <h1 style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px", marginBottom: "4px" }}>Locations</h1>
@@ -5755,6 +5802,11 @@ export default function CompanyEmployeePortal() {
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                       Add Location
                     </Btn>
+                    <button onClick={() => setShowLocSettings(true)} title="QR Settings"
+                      style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 12px", borderRadius: "8px", background: "#f8fafc", color: "#475569", border: "1px solid #e2e8f0", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 19.07a10 10 0 0 1 0-14.14"/></svg>
+                      QR Settings
+                    </button>
                     {selectedLocIds.size > 0 && (
                       <button onClick={handleDeleteSelectedLocations}
                         style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "8px", background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca", cursor: "pointer", fontSize: "13px", fontWeight: 700 }}>
@@ -5913,8 +5965,7 @@ export default function CompanyEmployeePortal() {
                         {locQrModal.room     && <div style={{ fontSize: "12px", color: "#334155", marginBottom: "2px" }}>Area - {locQrModal.room}</div>}
                         {locQrModal.building && <div style={{ fontSize: "12px", color: "#334155", marginBottom: "2px" }}>Building - {locQrModal.building}</div>}
                         {locQrModal.campus   && <div style={{ fontSize: "12px", color: "#334155", marginBottom: "2px" }}>Campus - {locQrModal.campus}</div>}
-                        <div style={{ fontSize: "10px", color: "#64748b", marginTop: "6px", marginBottom: "12px" }}>www.catalystsolutions.eco</div>
-                        <div style={{ background: "#0f172a", color: "#fff", padding: "9px 16px", borderRadius: "4px", fontWeight: 800, fontSize: "12px", letterSpacing: "2px" }}>SCAN FOR E-CHECKLIST</div>
+                        <div style={{ fontSize: "13px", fontWeight: 700, color: "#0f172a", marginTop: "8px" }}>www.catalystsolutions.eco</div>
                       </div>
                     ) : (
                       <p style={{ color: "#94a3b8" }}>Generating QR...</p>
@@ -6781,8 +6832,7 @@ export default function CompanyEmployeePortal() {
                   {assetQrModal.assetName && <div style={{ fontSize: "12px", fontWeight: 600, marginBottom: "2px", color: "#0f172a" }}>{assetQrModal.assetName}</div>}
                   {assetQrModal.asset?.floor && <div style={{ fontSize: "12px", color: "#334155" }}>Floor - {assetQrModal.asset.floor}</div>}
                   {assetQrModal.asset?.room && <div style={{ fontSize: "12px", color: "#334155" }}>Area - {assetQrModal.asset.room}</div>}
-                  <div style={{ fontSize: "10px", color: "#64748b", marginTop: "6px", marginBottom: "12px" }}>www.catalystsolutions.eco</div>
-                  <div style={{ background: "#0f172a", color: "#fff", padding: "9px 16px", borderRadius: "4px", fontWeight: 800, fontSize: "12px", letterSpacing: "2px" }}>SCAN FOR E-CHECKLIST</div>
+                  <div style={{ fontSize: "13px", fontWeight: 700, color: "#0f172a", marginTop: "8px" }}>www.catalystsolutions.eco</div>
                 </div>
               ) : (
                 <p style={{ color: "#94a3b8" }}>Generating QR...</p>

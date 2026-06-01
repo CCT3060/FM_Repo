@@ -96,6 +96,12 @@ export default function WarningsPanel({ token, companyId: initialCompanyId, comp
   useEffect(() => { setPage(0); }, [filter, companyId]);
   useEffect(() => { setSelected(new Set()); }, [flags]);
 
+  // Auto-refresh every 30 seconds
+  useEffect(() => {
+    const id = setInterval(() => { loadFlags(); }, 30000);
+    return () => clearInterval(id);
+  }, [loadFlags]);
+
   const toggleSelect = (id) => setSelected((prev) => {
     const s = new Set(prev);
     s.has(id) ? s.delete(id) : s.add(id);
