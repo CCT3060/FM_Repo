@@ -57,7 +57,7 @@ jobs:
           rsync -az --delete \
             -e "ssh -i ~/.ssh/fm_ec2.pem -o StrictHostKeyChecking=no" \
             frontend/dist/ \
-            ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/var/www/fmapp/frontend/
+            ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/var/www/fmapp/frontend/dist/
 
       # ── 6. Deploy backend (rsync source, excluding secrets & node_modules) ────
       - name: Deploy backend source
