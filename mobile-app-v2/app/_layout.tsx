@@ -68,7 +68,7 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
       const result = await verifyToken();
       if (result?.user) {
         setUser(result.user);
-        router.replace('/(tabs)/home');
+        router.replace('/(tabs)/dashboard');
       } else {
         // Mark auth as loaded but do NOT navigate — index.tsx owns routing
         // for unauthenticated users. Navigating here causes a race with

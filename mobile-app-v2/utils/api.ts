@@ -57,6 +57,7 @@ export interface AppUser {
   role:        string;
   companyId:   number;
   companyName: string;
+  companyLogoUrl?: string | null;
   supervisorId:     number | null;
   permissions?:     Record<string, unknown>;
   moduleAccess?:    string[];
@@ -85,9 +86,13 @@ export interface SoftRequest {
   raisedByName?:   string;
   resolvedAt?:     string;
   resolvedByName?: string;
+  assignedToId?:   number;
+  assignedToName?: string;
   beforeAnswers?:  unknown;
+  afterAnswers?:   unknown;
   beforeSubmittedAt?: string;
   raiseSubmissionId?: number;
+  resolveSubmissionId?: number;
 }
 
 // ─── Token helpers ────────────────────────────────────────────────────────────
@@ -325,6 +330,8 @@ export interface SiteScore {
   totalFilled:             number;
   percentage:              number;
   openRequests:            number;
+  closedRequests:          number;
+  totalRequests:           number;
   totalChecklistTemplates: number;
   totalLogsheetTemplates:  number;
   totalSubmissionsToday:   number;
@@ -332,6 +339,20 @@ export interface SiteScore {
 
 export async function fetchSiteScore(): Promise<SiteScore> {
   return apiGet<SiteScore>('/api/template-assignments/site-score');
+}
+
+export async function checkLocationFilled(templateId: number, locationId: number): Promise<{
+  filled: boolean;
+  submissionId?: number;
+  submittedAt?: string;
+  submittedByName?: string | null;
+}> {
+  return apiGet<{
+    filled: boolean;
+    submissionId?: number;
+    submittedAt?: string;
+    submittedByName?: string | null;
+  }>(`/api/template-assignments/check-location-filled?templateId=${templateId}&locationId=${locationId}`);
 }
 
 export async function fetchMySubmissionHistory() {

@@ -64,6 +64,7 @@ export default function LocationScanScreen() {
         templateId:   String(t.id),
         templateType: 'checklist',
         templateName: t.templateName,
+        locationId:   String(locationId),
       },
     } as any);
   };
@@ -276,15 +277,17 @@ export default function LocationScanScreen() {
               ) : (
                 templates.map((t) => {
                   const blockedByRequest = isCatalystSupervisor && assignedSoftRequests.length > 0;
-                  const canOpen = t.isAssigned && !blockedByRequest;
+                  // Catalyst supervisors: if any user filled this checklist today, lock it
+                  const filledByAnyone = isCatalystSupervisor && (t.completedTodayByAnyone || t.completedToday);
+                  const canOpen = t.isAssigned && !blockedByRequest && !filledByAnyone;
                   return (
                     <TouchableOpacity
                       key={t.id}
                       style={[
                         styles.templateRow,
                         {
-                          backgroundColor: blockedByRequest ? '#fafafa' : (t.completedToday ? '#f0fdf4' : theme.surface),
-                          borderColor:     blockedByRequest ? '#f1f5f9' : (t.completedToday ? '#86efac' : theme.border),
+                          backgroundColor: blockedByRequest ? '#fafafa' : (filledByAnyone ? '#f0fdf4' : (t.completedToday ? '#f0fdf4' : theme.surface)),
+                          borderColor:     blockedByRequest ? '#f1f5f9' : (filledByAnyone ? '#86efac' : (t.completedToday ? '#86efac' : theme.border)),
                           opacity:         blockedByRequest ? 0.7 : 1,
                         },
                       ]}
@@ -292,8 +295,8 @@ export default function LocationScanScreen() {
                       activeOpacity={canOpen ? 0.7 : 1}
                       disabled={!canOpen}
                     >
-                      <View style={[styles.templateIcon, { backgroundColor: canOpen ? '#2563eb15' : '#94a3b815' }]}>
-                        <MaterialCommunityIcons name="clipboard-check-outline" size={22} color={canOpen ? '#2563eb' : '#94a3b8'} />
+                      <View style={[styles.templateIcon, { backgroundColor: canOpen ? '#2563eb15' : (filledByAnyone ? '#22c55e15' : '#94a3b815') }]}>
+                        <MaterialCommunityIcons name="clipboard-check-outline" size={22} color={canOpen ? '#2563eb' : (filledByAnyone ? '#16a34a' : '#94a3b8')} />
                       </View>
                       <View style={styles.templateBody}>
                         <Text style={[styles.templateName, { color: canOpen ? theme.textPrimary : theme.textMuted }]}>{t.templateName}</Text>
@@ -302,13 +305,15 @@ export default function LocationScanScreen() {
                         ) : null}
                         {blockedByRequest ? (
                           <Text style={[styles.templateSub, { color: '#dc2626' }]}>Resolve open request first</Text>
+                        ) : filledByAnyone ? (
+                          <Text style={[styles.templateSub, { color: '#16a34a', fontWeight: '600' as const }]}>Today's checklist already filled</Text>
                         ) : !t.isAssigned ? (
                           <Text style={[styles.templateSub, { color: '#94a3b8' }]}>Not assigned to you</Text>
                         ) : null}
                       </View>
                       <StatusBadge
-                        label={blockedByRequest ? 'Blocked' : (t.completedToday ? 'Done' : (t.isAssigned ? 'Pending' : 'Locked'))}
-                        variant={blockedByRequest ? 'neutral' : (t.completedToday ? 'success' : (t.isAssigned ? 'warning' : 'neutral'))}
+                        label={blockedByRequest ? 'Blocked' : (filledByAnyone ? 'Done' : (t.completedToday ? 'Done' : (t.isAssigned ? 'Pending' : 'Locked')))}
+                        variant={blockedByRequest ? 'neutral' : (filledByAnyone ? 'success' : (t.completedToday ? 'success' : (t.isAssigned ? 'warning' : 'neutral')))}
                       />
                     </TouchableOpacity>
                   );

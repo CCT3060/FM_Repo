@@ -18,6 +18,7 @@ import {
   getCompanyPortalMe,
   getCompanyPortalDashboard,
   getCompanyPortalChartStats,
+  getCompanyPortalSiteScore,
   getCompanyPortalLogsheetGrid,
   getCompanyPortalDepartments,
   createCompanyPortalDepartment,
@@ -52,6 +53,8 @@ import {
   createCompanyRole,
   updateCompanyRole,
   deleteCompanyRole,
+  getCompanyPortalRolePerms,
+  saveCompanyPortalRolePerms,
   createTemplateUserAssignment,
   getTemplateUserAssignments,
   getMyTemplateAssignments,
@@ -454,16 +457,6 @@ function EmployeeModal({ existing, token, employees = [], customRoles = [], curr
                 ))}
               </div>
             </div>
-            {/* Other roles */}
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-              {ROLES.filter((r) => !HIERARCHY_ROLES.has(r.value) && r.value !== "admin").map((r) => (
-                <button key={r.value} type="button" onClick={() => changeRole(r.value)}
-                  style={{ padding: "5px 12px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: `1.5px solid ${form.role === r.value ? r.color : "#e2e8f0"}`, background: form.role === r.value ? r.bg : "#fff", color: form.role === r.value ? r.color : "#64748b" }}>
-                  {r.label}
-                </button>
-              ))}
-            </div>
-
             {/* Custom company roles */}
             {customRoles.length > 0 && (
               <div style={{ marginTop: "10px" }}>
@@ -768,16 +761,21 @@ function ForwardTemplateModal({ assignment, token, teamMembers = [], existingFor
 }
 
 /* ─── Assign Template Modal ──────────────────────────────────────── */
-function AssignTemplateModal({ employee, token, checklists = [], logsheetTemplates = [], existingAssignments = [], onClose, onAssigned, onRemoved }) {
+function AssignTemplateModal({ employee, token, checklists = [], logsheetTemplates = [], existingAssignments = [], enabledModules = null, onClose, onAssigned, onRemoved }) {
   const [tab, setTab] = useState("checklist");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const allowLogsheets = !enabledModules || enabledModules.includes("logsheets");
+  const tabOptions = allowLogsheets
+    ? [{ key: "checklist", label: "Checklists" }, { key: "logsheet", label: "Logsheets" }]
+    : [{ key: "checklist", label: "Checklists" }];
 
-  const isAssigned = (type, id) =>
-    existingAssignments.some((a) => a.templateType === type && String(a.templateId) === String(id));
+  const isAssigned = (type, templateId) =>
+    existingAssignments.some((a) => a.templateType === type && String(a.templateId) === String(templateId));
 
   const handleToggle = async (type, templateId) => {
-    setSaving(true); setError(null);
+    setSaving(true);
+    setError(null);
     try {
       const existing = existingAssignments.find((a) => a.templateType === type && String(a.templateId) === String(templateId));
       if (existing) {
@@ -787,8 +785,11 @@ function AssignTemplateModal({ employee, token, checklists = [], logsheetTemplat
         const res = await createTemplateUserAssignment(token, { templateType: type, templateId, assignedTo: employee.id });
         onAssigned(res);
       }
-    } catch (err) { setError(err.message || "Failed"); }
-    finally { setSaving(false); }
+    } catch (err) {
+      setError(err.message || "Failed");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const templates = tab === "checklist" ? checklists : logsheetTemplates;
@@ -810,13 +811,10 @@ function AssignTemplateModal({ employee, token, checklists = [], logsheetTemplat
 
         {/* Tabs */}
         <div style={{ padding: "12px 24px 0", display: "flex", gap: "8px", borderBottom: "1px solid #e2e8f0" }}>
-          {[{ key: "checklist", label: "Checklists" }, { key: "logsheet", label: "Logsheet Templates" }].map((t) => (
+          {tabOptions.map((t) => (
             <button key={t.key} onClick={() => setTab(t.key)}
               style={{ padding: "8px 20px", borderRadius: "8px 8px 0 0", border: "1px solid #e2e8f0", borderBottom: tab === t.key ? "2px solid #2563eb" : "1px solid #e2e8f0", background: tab === t.key ? "#eff6ff" : "#f8fafc", color: tab === t.key ? "#2563eb" : "#64748b", fontWeight: tab === t.key ? 700 : 500, fontSize: "13.5px", cursor: "pointer" }}>
               {t.label}
-              <span style={{ marginLeft: "6px", padding: "1px 7px", borderRadius: "20px", fontSize: "11px", fontWeight: 700, background: "#e0e7ff", color: "#4338ca" }}>
-                {existingAssignments.filter((a) => a.templateType === t.key).length}
-              </span>
             </button>
           ))}
         </div>
@@ -864,7 +862,6 @@ const locInpStyle = { width: "100%", padding: "8px 12px", borderRadius: "8px", b
 function LocationForm({ initial, onSave, onCancel }) {
   const [form, setForm] = useState({
     name: initial?.name || "",
-    campus: initial?.campus || "",
     building: initial?.building || "",
     floor: initial?.floor || "",
     room: initial?.room || "",
@@ -889,10 +886,6 @@ function LocationForm({ initial, onSave, onCancel }) {
         <input value={form.name} onChange={(e) => setForm(p => ({ ...p, name: e.target.value }))} placeholder="e.g. Block A Lobby" style={locInpStyle} />
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-        <div>
-          <LocLbl>Campus</LocLbl>
-          <input value={form.campus} onChange={(e) => setForm(p => ({ ...p, campus: e.target.value }))} placeholder="e.g. Main Campus" style={locInpStyle} />
-        </div>
         <div>
           <LocLbl>Building</LocLbl>
           <input value={form.building} onChange={(e) => setForm(p => ({ ...p, building: e.target.value }))} placeholder="e.g. Building 1" style={locInpStyle} />
@@ -2574,8 +2567,20 @@ function FleetMaintModal({ token, fleetAssets, onClose, onSaved }) {
   );
 }
 
+/* ─── Role Permissions Modules ────────────────────────────────────────── */
+const PERM_MODULES = [
+  { key: "assets",       label: "Asset Mgmt",    moduleKey: "assets" },
+  { key: "checklists",   label: "Checklists",    moduleKey: "checklists" },
+  { key: "logsheets",    label: "Logsheets",     moduleKey: "logsheets" },
+  { key: "requests",     label: "Requests",      moduleKey: "requests" },
+  { key: "softRequests", label: "Soft Requests", moduleKey: "soft-requests" },
+  { key: "locations",    label: "Locations",     moduleKey: "locations" },
+  { key: "ojtTraining",  label: "OJT Training",  moduleKey: "ojt-training" },
+  { key: "fleet",        label: "Fleet Mgmt",    moduleKey: "fleet" },
+];
+
 /* ─── Role Management Modal (custom hierarchy) ───────────────────────── */
-function RolesModal({ token, initialRoles, onClose, onSaved, inline = false }) {
+function RolesModal({ token, initialRoles, onClose, onSaved, inline = false, enabledModules }) {
   const [roles, setRoles] = useState(initialRoles || []);
   const [draftLabel, setDraftLabel] = useState("");
   const [draftParent, setDraftParent] = useState("");
@@ -2587,6 +2592,12 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false }) {
   const [draftIsTechnician, setDraftIsTechnician]         = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [rolePerms, setRolePerms] = useState({});
+  const [permsSaving, setPermsSaving] = useState(false);
+  // Filter PERM_MODULES to only show modules enabled for this company
+  const activePermModules = enabledModules
+    ? PERM_MODULES.filter((m) => enabledModules.includes(m.moduleKey))
+    : PERM_MODULES;
   // Edit state
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm]   = useState({});
@@ -2595,6 +2606,9 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false }) {
   useEffect(() => {
     getCompanyRoles(token).then((list) => {
       if (Array.isArray(list)) setRoles(list);
+    }).catch(() => {});
+    getCompanyPortalRolePerms(token).then((p) => {
+      if (p && typeof p === "object") setRolePerms(p);
     }).catch(() => {});
   }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -2745,7 +2759,7 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false }) {
       {/* Existing roles */}
       <div style={{ marginBottom: "16px" }}>
         {roles.length === 0 && (
-          <p style={{ color: "#94a3b8", fontSize: "13px", padding: "16px", textAlign: "center", background: "#f8fafc", borderRadius: "8px" }}>
+          <p style={{ fontSize: "12.5px", color: "#64748b", padding: "10px 4px" }}>
             No roles defined yet. Add roles below to build your hierarchy.
           </p>
         )}
@@ -2851,6 +2865,83 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false }) {
       </div>
       <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0" }}>
         {content}
+        {/* ── Role Permissions Table ── */}
+        <div style={{ padding: "20px 22px", borderTop: "2px solid #e2e8f0" }}>
+          <div style={{ marginBottom: "14px" }}>
+            <p style={{ fontSize: "15px", fontWeight: 700, color: "#0f172a", margin: 0 }}>Role Permissions</p>
+            <p style={{ fontSize: "12.5px", color: "#64748b", margin: "4px 0 0 0" }}>Configure Create / Read / Update / Delete permissions per role and module.</p>
+          </div>
+          {roles.length === 0 ? (
+            <p style={{ color: "#94a3b8", fontSize: "13px" }}>Add roles first to configure permissions.</p>
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ borderCollapse: "collapse", fontSize: "12px", width: "100%" }}>
+                <thead>
+                  <tr>
+                    <th style={{ padding: "8px 12px", textAlign: "left", fontWeight: 700, color: "#475569", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>Role</th>
+                    {activePermModules.map((m) => (
+                      <th key={m.key} style={{ padding: "8px 6px", textAlign: "center", fontWeight: 600, color: "#475569", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", minWidth: "80px" }}>
+                        <div style={{ fontSize: "11px" }}>{m.label}</div>
+                        <div style={{ display: "flex", gap: "2px", justifyContent: "center", marginTop: "4px" }}>
+                          {["C","R","U","D"].map((op) => (
+                            <span key={op} style={{ fontSize: "10px", color: "#94a3b8", fontWeight: 700 }}>{op}</span>
+                          ))}
+                        </div>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {roles.map((r) => (
+                    <tr key={r.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                      <td style={{ padding: "8px 12px", fontWeight: 600, color: "#374151" }}>
+                        <span style={{ padding: "2px 8px", borderRadius: "12px", background: (r.bgColor || "#dbeafe"), color: (r.color || "#2563eb"), fontSize: "11px" }}>{r.label}</span>
+                      </td>
+                      {activePermModules.map((m) => (
+                        <td key={m.key} style={{ padding: "6px", textAlign: "center" }}>
+                          <div style={{ display: "flex", gap: "3px", justifyContent: "center" }}>
+                            {["create","read","update","delete"].map((op) => (
+                              <input key={op} type="checkbox"
+                                checked={!!(rolePerms[r.roleKey] && rolePerms[r.roleKey][m.key] && rolePerms[r.roleKey][m.key][op])}
+                                onChange={(e) => {
+                                  const v = e.target.checked;
+                                  setRolePerms((prev) => ({
+                                    ...prev,
+                                    [r.roleKey]: {
+                                      ...(prev[r.roleKey] || {}),
+                                      [m.key]: {
+                                        ...((prev[r.roleKey] || {})[m.key] || {}),
+                                        [op]: v,
+                                      },
+                                    },
+                                  }));
+                                }}
+                                title={`${op} ${m.label}`}
+                                style={{ cursor: "pointer" }}
+                              />
+                            ))}
+                          </div>
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <div style={{ marginTop: "12px", display: "flex", justifyContent: "flex-end" }}>
+            <Btn onClick={async () => {
+              setPermsSaving(true);
+              try {
+                await saveCompanyPortalRolePerms(token, rolePerms);
+              } catch (err) {
+                setError(err.message || "Failed to save permissions");
+              } finally {
+                setPermsSaving(false);
+              }
+            }} disabled={permsSaving}>{permsSaving ? "Saving…" : "Save Permissions"}</Btn>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -3400,7 +3491,8 @@ export default function CompanyEmployeePortal() {
   // Persist active tab so page refresh returns to the same section
   useEffect(() => { sessionStorage.setItem("cp_nav", nav); }, [nav]);
   const [chartStats, setChartStats] = useState(null);
-  const [chartFilter, setChartFilter] = useState("month"); // day|week|month|year
+  const [todaySiteScore, setTodaySiteScore] = useState(null);
+  const [chartFilter, setChartFilter] = useState("day"); // day|week|month|year
   const [chartCustomStart, setChartCustomStart] = useState("");
   const [chartCustomEnd, setChartCustomEnd] = useState("");
   const [chartError, setChartError] = useState(null);
@@ -3515,7 +3607,7 @@ export default function CompanyEmployeePortal() {
       const saved = localStorage.getItem('locQrSettings');
       if (saved) return JSON.parse(saved);
     } catch { /* ignore */ }
-    return { startNumber: 1, showFields: ["name", "floor", "room", "building", "campus"] };
+    return { startNumber: 1, showFields: ["floor", "room", "area", "building"] };
   });
   // Fleet State
   const [fleetAssets, setFleetAssets] = useState([]);
@@ -3564,6 +3656,7 @@ export default function CompanyEmployeePortal() {
   useEffect(() => {
     if (!token) return;
     load("dashboard", () => getCompanyPortalDashboard(token)).then((d) => d && setDashboard(d));
+    getCompanyPortalSiteScore(token).then((d) => d && setTodaySiteScore(d)).catch(() => {});
     getCompanyPortalMe(token).then((me) => {
       if (me?.enabledModules) setEnabledModules(me.enabledModules);
       if (me?.logoUrl) setCompanyLogoUrl(me.logoUrl);
@@ -3647,6 +3740,7 @@ export default function CompanyEmployeePortal() {
   useEffect(() => {
     if (!token || nav !== "dashboard") return;
     load("dashboard", () => getCompanyPortalDashboard(token)).then((d) => d && setDashboard(d));
+    getCompanyPortalSiteScore(token).then((d) => d && setTodaySiteScore(d)).catch(() => {});
     setRecentEntriesLoading(true);
     getCompanyPortalRecentLogsheetEntries(token)
       .then((d) => d && setRecentEntries(d))
@@ -4058,7 +4152,7 @@ export default function CompanyEmployeePortal() {
       ? `<img src="${catalystLogoDataUrl}" style="max-width:90px;max-height:55px;object-fit:contain;" />`
       : `<div style="font-size:10px;font-weight:800;color:#1a1a1a;text-align:right;line-height:1.2;">CATALYST<br/><span style="font-size:8px;font-weight:400;">PARTNERING FOR SUSTAINABILITY</span></div>`;
     return `
-      <div style="background:#ffffff;color:#1a1a1a;padding:24px 20px 20px;border-radius:16px;width:300px;text-align:center;font-family:Arial,sans-serif;box-shadow:0 4px 16px rgba(0,0,0,0.15);border:1px solid #e2e8f0;">
+      <div style="background:#ffffff;color:#1a1a1a;padding:24px 20px 20px;border-radius:16px;width:300px;text-align:center;font-family:Arial,sans-serif;box-shadow:0 4px 16px rgba(0,0,0,0.15);border:2px solid #2563eb;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
           <div style="width:90px;height:55px;display:flex;align-items:center;justify-content:flex-start;">${clientLogoHtml}</div>
           <div style="width:90px;height:55px;display:flex;align-items:center;justify-content:flex-end;">${catalystLogoHtml}</div>
@@ -4077,12 +4171,12 @@ export default function CompanyEmployeePortal() {
 
   // Build the styled QR card HTML for a single location
   const buildLocQrCardHtml = (qrDataUrl, loc, clientLogoDataUrl, catalystLogoDataUrl) => {
-    const sf = locQrSettings?.showFields ?? ["name","floor","room","building","campus"];
+    const sf = locQrSettings?.showFields ?? ["floor","room","area","building"];
     const details = [
       sf.includes("floor")    && loc.floor    ? `Floor - ${loc.floor}`       : null,
-      sf.includes("room")     && loc.room     ? `Area - ${loc.room}`          : null,
+      sf.includes("room")     && loc.room     ? `Room - ${loc.room}`          : null,
+      sf.includes("area")     && (loc.area || loc.room) ? `Area - ${loc.area || loc.room}` : null,
       sf.includes("building") && loc.building ? `Building - ${loc.building}` : null,
-      sf.includes("campus")   && loc.campus   ? `Campus - ${loc.campus}`     : null,
     ].filter(Boolean);
     const clientLogoHtml = clientLogoDataUrl
       ? `<img src="${clientLogoDataUrl}" style="max-width:90px;max-height:55px;object-fit:contain;" />`
@@ -4091,7 +4185,7 @@ export default function CompanyEmployeePortal() {
       ? `<img src="${catalystLogoDataUrl}" style="max-width:90px;max-height:55px;object-fit:contain;" />`
       : `<div style="font-size:10px;font-weight:800;color:#1a1a1a;text-align:right;line-height:1.2;">CATALYST<br/><span style="font-size:8px;font-weight:400;">PARTNERING FOR SUSTAINABILITY</span></div>`;
     return `
-      <div style="background:#ffffff;color:#1a1a1a;padding:24px 20px 20px;border-radius:16px;width:300px;text-align:center;font-family:Arial,sans-serif;box-shadow:0 4px 16px rgba(0,0,0,0.15);border:1px solid #e2e8f0;">
+      <div style="background:#ffffff;color:#1a1a1a;padding:24px 20px 20px;border-radius:16px;width:300px;text-align:center;font-family:Arial,sans-serif;box-shadow:0 4px 16px rgba(0,0,0,0.15);border:2px solid #2563eb;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
           <div style="width:90px;height:55px;display:flex;align-items:center;justify-content:flex-start;">${clientLogoHtml}</div>
           <div style="width:90px;height:55px;display:flex;align-items:center;justify-content:flex-end;">${catalystLogoHtml}</div>
@@ -4101,7 +4195,6 @@ export default function CompanyEmployeePortal() {
         <div style="background:#f8fafc;padding:10px;border-radius:10px;display:inline-block;margin-bottom:12px;border:1px solid #e2e8f0;">
           <img src="${qrDataUrl}" style="width:200px;height:200px;display:block;" />
         </div>
-        ${sf.includes("name") ? `<div style="font-size:13px;font-weight:600;margin-bottom:4px;color:#0f172a;">${loc.name}</div>` : ""}
         ${details.map(d => `<div style="font-size:12px;color:#334155;margin-bottom:2px;">${d}</div>`).join("")}
         <div style="font-size:13px;font-weight:700;color:#0f172a;margin-top:8px;">www.catalystsolutions.eco</div>
       </div>`;
@@ -4180,11 +4273,16 @@ export default function CompanyEmployeePortal() {
         <style>
           *{margin:0;padding:0;box-sizing:border-box;}
           body{background:#f8fafc;font-family:Arial,sans-serif;}
-          .page{display:flex;align-items:center;justify-content:center;min-height:100vh;page-break-after:always;}
+          .page{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px;page-break-after:always;}
           .page:last-child{page-break-after:auto;}
-          @media print{body{background:#fff;}}
+          .grid{display:grid;grid-template-columns:repeat(2,auto);gap:28px;justify-content:center;align-items:start;}
+          @media print{body{background:#fff;}@page{size:A4 portrait;margin:8mm;}.page{min-height:100vh;padding:16px;}}
         </style>
-      </head><body>${cardHtmls.map(h => `<div class="page">${h}</div>`).join("")}</body></html>`;
+      </head><body>${(() => {
+        const chunks = [];
+        for (let i = 0; i < cardHtmls.length; i += 4) chunks.push(cardHtmls.slice(i, i + 4));
+        return chunks.map(chunk => `<div class="page"><div class="grid">${chunk.join('')}</div></div>`).join('');
+      })()}</body></html>`;
       const w = window.open("", "_blank");
       w.document.write(printHtml);
       w.document.close();
@@ -4248,17 +4346,17 @@ export default function CompanyEmployeePortal() {
       ]);
 
       const W = 340, PAD = 24;
-      const sf = locQrSettings?.showFields ?? ["name","floor","room","building","campus"];
+      const sf = locQrSettings?.showFields ?? ["floor","room","area","building"];
       const details = [
         sf.includes("floor")    && loc.floor    ? `Floor - ${loc.floor}`       : null,
-        sf.includes("room")     && loc.room     ? `Area - ${loc.room}`          : null,
+        sf.includes("room")     && loc.room     ? `Room - ${loc.room}`          : null,
+        sf.includes("area")     && (loc.area || loc.room) ? `Area - ${loc.area || loc.room}` : null,
         sf.includes("building") && loc.building ? `Building - ${loc.building}` : null,
-        sf.includes("campus")   && loc.campus   ? `Campus - ${loc.campus}`     : null,
       ].filter(Boolean);
 
       // Calculate canvas height
       const QR_BOX = 216;
-      let H = PAD + 56 + 14 + 20 + 4 + 14 + 14 + QR_BOX + 14 + (sf.includes("name") ? 18 + 4 : 0) + (details.length * 18) + 8 + 14 + 14 + 40 + PAD;
+      let H = PAD + 56 + 14 + 20 + 4 + 14 + 14 + QR_BOX + 14 + (details.length * 18) + 8 + 14 + 14 + 40 + PAD;
 
       const SCALE = 2;
       const canvas = document.createElement("canvas");
@@ -4283,7 +4381,7 @@ export default function CompanyEmployeePortal() {
       // White card background
       ctx.fillStyle = "#ffffff";
       rr(0, 0, W, H, 14); ctx.fill();
-      ctx.strokeStyle = "#e2e8f0"; ctx.lineWidth = 1; ctx.stroke();
+      ctx.strokeStyle = "#2563eb"; ctx.lineWidth = 2; ctx.stroke();
 
       let y = PAD;
 
@@ -4321,13 +4419,6 @@ export default function CompanyEmployeePortal() {
         ctx.drawImage(qrImg, qrBoxX + QR_PAD, y + QR_PAD, inner, inner);
       }
       y += QR_BOX + 14;
-
-      // Location name
-      if (sf.includes("name")) {
-        ctx.fillStyle = "#0f172a"; ctx.font = "bold 13px Arial"; ctx.textAlign = "center";
-        ctx.fillText(loc.name, W / 2, y + 13);
-        y += 18 + 4;
-      }
 
       // Detail lines
       ctx.fillStyle = "#334155"; ctx.font = "12px Arial";
@@ -4600,7 +4691,7 @@ export default function CompanyEmployeePortal() {
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
                     <thead>
                       <tr style={{ background: "#f8fafc" }}>
-                        {["#","Template","Asset","Period","Frequency","Filled By","Submitted"].map((h) => (
+                        {["#","Template","Location","Period","Frequency","Filled By","Submitted"].map((h) => (
                           <th key={h} style={{ padding: "11px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.04em", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>{h}</th>
                         ))}
                       </tr>
@@ -4620,7 +4711,7 @@ export default function CompanyEmployeePortal() {
                           <tr key={e.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
                             <td style={{ padding: "12px 16px", color: "#94a3b8", fontWeight: 600 }}>{i + 1}</td>
                             <td style={{ padding: "12px 16px", fontWeight: 600, color: "#0f172a" }}>{e.templateName}</td>
-                            <td style={{ padding: "12px 16px", color: "#475569" }}>{e.assetName || "—"}</td>
+                            <td style={{ padding: "12px 16px", color: "#475569" }}>{e.locationName || e.assetName || "—"}</td>
                             <td style={{ padding: "12px 16px", color: "#475569", whiteSpace: "nowrap" }}>{MONTH_NAMES[(e.month || 1) - 1]} {e.year}{e.shift ? ` · Shift ${e.shift}` : ""}</td>
                             <td style={{ padding: "12px 16px" }}><span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: fbg, color: ftx }}>{FREQ_LABELS[freq] || freq}</span></td>
                             <td style={{ padding: "12px 16px", color: "#475569", fontSize: "13px" }}>{e.submittedBy || "—"}</td>
@@ -4634,7 +4725,7 @@ export default function CompanyEmployeePortal() {
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
                     <thead>
                       <tr style={{ background: "#f8fafc" }}>
-                        {["#","Template","Asset","Status","Filled By","Submitted"].map((h) => (
+                        {["#","Template","Location","Status","Filled By","Submitted"].map((h) => (
                           <th key={h} style={{ padding: "11px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.04em", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>{h}</th>
                         ))}
                       </tr>
@@ -4654,7 +4745,7 @@ export default function CompanyEmployeePortal() {
                           <tr key={c.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
                             <td style={{ padding: "12px 16px", color: "#94a3b8", fontWeight: 600 }}>{i + 1}</td>
                             <td style={{ padding: "12px 16px", fontWeight: 600, color: "#0f172a" }}>{c.templateName}</td>
-                            <td style={{ padding: "12px 16px", color: "#475569" }}>{c.assetName || "—"}</td>
+                            <td style={{ padding: "12px 16px", color: "#475569" }}>{c.locationName || c.assetName || "—"}</td>
                             <td style={{ padding: "12px 16px" }}><span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: sbg, color: stx, textTransform: "capitalize" }}>{c.status || "submitted"}</span></td>
                             <td style={{ padding: "12px 16px", color: "#475569", fontSize: "13px" }}>{c.submittedBy || "—"}</td>
                             <td style={{ padding: "12px 16px", color: "#94a3b8", fontSize: "12px", whiteSpace: "nowrap" }}>{c.submittedAt ? new Date(c.submittedAt).toLocaleString() : "—"}</td>
@@ -4837,7 +4928,7 @@ export default function CompanyEmployeePortal() {
           /* ── ADMIN DASHBOARD ── */
           return (() => {
             // SVG Donut Chart helper
-            const DonutChart = ({ data, size = 200, thickness = 38 }) => {
+            const DonutChart = ({ data, size = 200, thickness = 38, centerLabel }) => {
               const vals = data.map((d) => Math.max(0, d.value || 0));
               const total = vals.reduce((s, v) => s + v, 0);
               const r = (size - thickness) / 2;
@@ -4871,9 +4962,12 @@ export default function CompanyEmployeePortal() {
                       />
                     ))}
                   </g>
-                  <text x={cx} y={cy + 8} textAnchor="middle"
-                    fontSize="22" fontWeight="800"
-                    fill="#0f172a">{total}</text>
+                  <text x={cx} y={cy + 2} textAnchor="middle"
+                    fontSize="20" fontWeight="800"
+                    fill="#0f172a">{centerLabel !== undefined ? centerLabel : total}</text>
+                  <text x={cx} y={cy + 18} textAnchor="middle"
+                    fontSize="10" fontWeight="600"
+                    fill="#94a3b8">SITE SCORE</text>
                 </svg>
               );
             };
@@ -4881,8 +4975,6 @@ export default function CompanyEmployeePortal() {
             const PERIOD_LABELS = { day: "Today", week: "This Week", month: "This Month", year: "This Year" };
             const cs = chartStats;
             const chartData = cs ? [
-              { label: "Filled Logsheets",   value: cs.filledLogsheets,   color: "#2563eb" },
-              { label: "Pending Logsheets",  value: cs.pendingLogsheets,  color: "#93c5fd" },
               { label: "Filled Checklists",  value: cs.filledChecklists,  color: "#16a34a" },
               { label: "Pending Checklists", value: cs.pendingChecklists, color: "#86efac" },
             ] : [];
@@ -4895,6 +4987,9 @@ export default function CompanyEmployeePortal() {
               : 0;
             const filledSubmissions = cs ? (cs.filledLogsheets || 0) + (cs.filledChecklists || 0) : 0;
             const completionRate = totalSubmissions > 0 ? Math.round((filledSubmissions / totalSubmissions) * 100) : 0;
+            const checklistTotalToday = cs ? (cs.filledChecklists || 0) + (cs.pendingChecklists || 0) : 0;
+            const checklistRateFromChart = checklistTotalToday > 0 ? Math.round(((cs?.filledChecklists || 0) / checklistTotalToday) * 100) : 0;
+            const siteScoreRate = typeof todaySiteScore?.percentage === "number" ? todaySiteScore.percentage : checklistRateFromChart;
             const openAlertsCount = dashboardAlerts.length;
             const criticalAlertsCount = dashboardAlerts.filter((f) => f.severity === "critical").length;
             const unassignedOpenWorkOrders = dashboardWorkOrders.filter((wo) => !wo.assignedTo).length;
@@ -4922,6 +5017,7 @@ export default function CompanyEmployeePortal() {
                           ["Total Warnings", (dashboard?.flags?.open || 0) + (dashboard?.softRequestWarnings || 0)],
                           ["Critical Flags", dashboard?.flags?.critical ?? 0],
                           ["Completion Rate (%)", completionRate],
+                          ["Today's Site Score (%)", siteScoreRate],
                           ["Total Submissions", totalSubmissions],
                           ["Filled Logsheets", cs?.filledLogsheets ?? ""],
                           ["Pending Logsheets", cs?.pendingLogsheets ?? ""],
@@ -5002,9 +5098,11 @@ export default function CompanyEmployeePortal() {
                   marginBottom: "20px",
                 }}>
                   <div style={{ background: "linear-gradient(135deg, #eff6ff 0%, #f8fafc 100%)", border: "1px solid #bfdbfe", borderRadius: "12px", padding: "12px 14px" }}>
-                    <p style={{ margin: 0, fontSize: "11px", fontWeight: 700, color: "#1d4ed8", letterSpacing: "0.03em", textTransform: "uppercase" }}>Period Health</p>
-                    <p style={{ margin: "6px 0 2px", fontSize: "22px", fontWeight: 800, color: "#0f172a" }}>{completionRate}%</p>
-                    <p style={{ margin: 0, fontSize: "12px", color: "#64748b" }}>Completion rate for {PERIOD_LABELS[chartFilter]?.toLowerCase() || "current period"}</p>
+                    <p style={{ margin: 0, fontSize: "11px", fontWeight: 700, color: "#1d4ed8", letterSpacing: "0.03em", textTransform: "uppercase" }}>Today's Site Score</p>
+                    <p style={{ margin: "6px 0 2px", fontSize: "22px", fontWeight: 800, color: "#0f172a" }}>{siteScoreRate}%</p>
+                    <p style={{ margin: 0, fontSize: "12px", color: "#64748b" }}>
+                      {todaySiteScore ? `${todaySiteScore.filled || 0} of ${todaySiteScore.total || 0} checklists filled today` : "Today's checklist completion rate"}
+                    </p>
                   </div>
                   <div style={{ background: "linear-gradient(135deg, #f0fdf4 0%, #f8fafc 100%)", border: "1px solid #bbf7d0", borderRadius: "12px", padding: "12px 14px" }}>
                     <p style={{ margin: 0, fontSize: "11px", fontWeight: 700, color: "#15803d", letterSpacing: "0.03em", textTransform: "uppercase" }}>Execution Volume</p>
@@ -5101,7 +5199,7 @@ export default function CompanyEmployeePortal() {
                     {/* Donut + Legend */}
                     <div style={{ display: "flex", alignItems: "center", gap: "24px", justifyContent: "center" }}>
                       <div style={{ flexShrink: 0 }}>
-                        <DonutChart data={chartData} size={190} thickness={38} />
+                        <DonutChart data={chartData} size={190} thickness={38} centerLabel={`${siteScoreRate}%`} />
                       </div>
                       <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "10px" }}>
                         {(() => {
@@ -5122,6 +5220,21 @@ export default function CompanyEmployeePortal() {
                             );
                           });
                         })()}
+                        {/* Site Score % */}
+                        <div style={{ marginTop: "6px", borderTop: "1px solid #f1f5f9", paddingTop: "10px" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                            <div style={{ width: "12px", height: "12px", borderRadius: "50%", background: "#2563eb", flexShrink: 0 }} />
+                            <div style={{ flex: 1 }}>
+                              <p style={{ fontSize: "12.5px", color: "#475569", margin: 0 }}>Today's Site Score</p>
+                            </div>
+                            <div style={{ textAlign: "right" }}>
+                              <span style={{ fontWeight: 700, fontSize: "14px", color: "#2563eb", display: "block" }}>{siteScoreRate}%</span>
+                              <span style={{ fontSize: "11px", color: "#94a3b8", fontWeight: 600 }}>
+                                {todaySiteScore ? `${todaySiteScore.filled || 0}/${todaySiteScore.total || 0}` : "—"}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -5743,7 +5856,7 @@ export default function CompanyEmployeePortal() {
                     </div>
                     <div style={{ marginBottom: "24px" }}>
                       <label style={{ fontSize: "13px", fontWeight: 600, color: "#374151", display: "block", marginBottom: "8px" }}>Fields to show on QR Card</label>
-                      {[["name", "Name"], ["floor", "Floor"], ["room", "Room / Area"], ["building", "Building"], ["campus", "Campus"]].map(([field, label]) => (
+                      {[["floor", "Floor"], ["room", "Room"], ["area", "Area"], ["building", "Building"]].map(([field, label]) => (
                         <label key={field} style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px", cursor: "pointer" }}>
                           <input type="checkbox" checked={locQrSettings.showFields.includes(field)}
                             onChange={(e) => setLocQrSettings(s => ({
@@ -5862,7 +5975,7 @@ export default function CompanyEmployeePortal() {
                             />
                           </th>
                         )}
-                        {["#", "Name", "Campus", "Building", "Floor", "Room", "Status", "QR", isAdmin ? "Actions" : null].filter(Boolean).map((h) => (
+                        {["#", "Name", "Building", "Floor", "Room", "Status", "QR", isAdmin ? "Actions" : null].filter(Boolean).map((h) => (
                           <th key={h} style={{ padding: "10px 14px", textAlign: "left", borderBottom: "2px solid #e2e8f0", color: "#475569", fontWeight: 700, whiteSpace: "nowrap" }}>{h}</th>
                         ))}
                       </tr>
@@ -5887,7 +6000,6 @@ export default function CompanyEmployeePortal() {
                           )}
                           <td style={{ padding: "10px 14px", color: "#94a3b8" }}>{i + 1}</td>
                           <td style={{ padding: "10px 14px", fontWeight: 600, color: "#0f172a" }}>{loc.name}</td>
-                          <td style={{ padding: "10px 14px", color: "#475569" }}>{loc.campus || "—"}</td>
                           <td style={{ padding: "10px 14px", color: "#475569" }}>{loc.building || "—"}</td>
                           <td style={{ padding: "10px 14px", color: "#475569" }}>{loc.floor || "—"}</td>
                           <td style={{ padding: "10px 14px", color: "#475569" }}>{loc.room || "—"}</td>
@@ -5948,7 +6060,7 @@ export default function CompanyEmployeePortal() {
 
                     {/* Styled QR Card Preview */}
                     {locQrDataUrl ? (
-                      <div style={{ display: "inline-block", background: "#ffffff", color: "#1a1a1a", padding: "20px 18px 16px", borderRadius: "14px", textAlign: "center", fontFamily: "Arial, sans-serif", width: "280px", border: "1px solid #e2e8f0", boxShadow: "0 4px 16px rgba(0,0,0,0.08)" }}>
+                      <div style={{ display: "inline-block", background: "#ffffff", color: "#1a1a1a", padding: "20px 18px 16px", borderRadius: "14px", textAlign: "center", fontFamily: "Arial, sans-serif", width: "280px", border: "2px solid #2563eb", boxShadow: "0 4px 16px rgba(0,0,0,0.08)" }}>
                         {/* Logo row */}
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
                           <div style={{ width: "80px", height: "48px", display: "flex", alignItems: "center", justifyContent: "flex-start" }}>
@@ -5971,11 +6083,10 @@ export default function CompanyEmployeePortal() {
                           <img src={locQrDataUrl} alt="QR" style={{ width: "180px", height: "180px", display: "block" }} />
                         </div>
                         {/* Location details — filtered by QR settings */}
-                        {locQrSettings.showFields.includes("name") && <div style={{ fontSize: "12px", fontWeight: 600, marginBottom: "2px", color: "#0f172a" }}>{locQrModal.name}</div>}
                         {locQrSettings.showFields.includes("floor")    && locQrModal.floor    && <div style={{ fontSize: "12px", color: "#334155", marginBottom: "2px" }}>Floor - {locQrModal.floor}</div>}
-                        {locQrSettings.showFields.includes("room")     && locQrModal.room     && <div style={{ fontSize: "12px", color: "#334155", marginBottom: "2px" }}>Area - {locQrModal.room}</div>}
+                        {locQrSettings.showFields.includes("room")     && locQrModal.room     && <div style={{ fontSize: "12px", color: "#334155", marginBottom: "2px" }}>Room - {locQrModal.room}</div>}
+                        {locQrSettings.showFields.includes("area")     && (locQrModal.area || locQrModal.room) && <div style={{ fontSize: "12px", color: "#334155", marginBottom: "2px" }}>Area - {locQrModal.area || locQrModal.room}</div>}
                         {locQrSettings.showFields.includes("building") && locQrModal.building && <div style={{ fontSize: "12px", color: "#334155", marginBottom: "2px" }}>Building - {locQrModal.building}</div>}
-                        {locQrSettings.showFields.includes("campus")   && locQrModal.campus   && <div style={{ fontSize: "12px", color: "#334155", marginBottom: "2px" }}>Campus - {locQrModal.campus}</div>}
                         <div style={{ fontSize: "13px", fontWeight: 700, color: "#0f172a", marginTop: "8px" }}>www.catalystsolutions.eco</div>
                       </div>
                     ) : (
@@ -6131,15 +6242,12 @@ export default function CompanyEmployeePortal() {
                               <div style={{ flex: 1, minWidth: 0 }}>
                                 <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
                                   <p style={{ fontWeight: 700, fontSize: "13.5px", color: "#0f172a", margin: 0 }}>{emp.fullName}</p>
-                                  <Badge val={emp.role} />
+                                  {emp.designation
+                                    ? <span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: (chainInfo?.bg || "#f1f5f9"), color: (chainInfo?.color || "#64748b") }}>{emp.designation}</span>
+                                    : <Badge val={emp.role} />
+                                  }
                                   {emp.shift && (
                                     <span style={{ padding: "2px 8px", borderRadius: "20px", fontSize: "11px", fontWeight: 600, background: "#ede9fe", color: "#5b21b6" }}>{emp.shift} Shift</span>
-                                  )}
-                                  {empChecklistCount > 0 && (
-                                    <span style={{ padding: "2px 8px", borderRadius: "20px", fontSize: "11px", fontWeight: 600, background: "#eff6ff", color: "#2563eb" }}>{empChecklistCount} checklist{empChecklistCount !== 1 ? "s" : ""}</span>
-                                  )}
-                                  {empLogsheetCount > 0 && (
-                                    <span style={{ padding: "2px 8px", borderRadius: "20px", fontSize: "11px", fontWeight: 600, background: "#ede9fe", color: "#7c3aed" }}>{empLogsheetCount} logsheet{empLogsheetCount !== 1 ? "s" : ""}</span>
                                   )}
                                 </div>
                                 <p style={{ fontSize: "12px", color: "#64748b", margin: 0, marginTop: "1px" }}>
@@ -6348,6 +6456,7 @@ export default function CompanyEmployeePortal() {
             token={token}
             initialRoles={customRoles}
             inline={true}
+            enabledModules={enabledModules}
             onClose={() => {}}
             onSaved={(list) => {
               setCustomRoles(list);
@@ -6821,7 +6930,7 @@ export default function CompanyEmployeePortal() {
 
               {/* QR Card Preview */}
               {assetQrDataUrl ? (
-                <div style={{ display: "inline-block", background: "#ffffff", color: "#1a1a1a", padding: "20px 18px 16px", borderRadius: "14px", textAlign: "center", fontFamily: "Arial, sans-serif", width: "280px", border: "1px solid #e2e8f0", boxShadow: "0 4px 16px rgba(0,0,0,0.08)" }}>
+                <div style={{ display: "inline-block", background: "#ffffff", color: "#1a1a1a", padding: "20px 18px 16px", borderRadius: "14px", textAlign: "center", fontFamily: "Arial, sans-serif", width: "280px", border: "2px solid #2563eb", boxShadow: "0 4px 16px rgba(0,0,0,0.08)" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
                     <div style={{ width: "80px", height: "48px", display: "flex", alignItems: "center", justifyContent: "flex-start" }}>
                       {companyLogoUrl
@@ -7565,6 +7674,7 @@ export default function CompanyEmployeePortal() {
         <RolesModal
           token={token}
           initialRoles={customRoles}
+          enabledModules={enabledModules}
           onClose={() => setShowRolesModal(false)}
           onSaved={(list) => {
             setCustomRoles(list);
@@ -7579,6 +7689,7 @@ export default function CompanyEmployeePortal() {
           token={token}
           checklists={checklists}
           logsheetTemplates={logsheetTemplatesList}
+          enabledModules={enabledModules}
           existingAssignments={assignments.filter((a) => String(a.assignedTo) === String(assignTarget.id))}
           onClose={() => { setShowAssignModal(false); setAssignTarget(null); }}
           onAssigned={handleAssigned}

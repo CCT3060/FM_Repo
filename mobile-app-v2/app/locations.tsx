@@ -12,6 +12,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { fetchLocations } from '../utils/api';
+import { useAuth } from '../context/AuthContext';
+import { canResolveSoft } from '../utils/permissions';
 import { useTheme, Spacing, Radius } from '../utils/theme';
 import EmptyState from '../components/EmptyState';
 
@@ -49,6 +51,8 @@ function LocationRow({ item, onPress }: { item: Location; onPress: () => void })
 
 export default function LocationsScreen() {
   const { theme } = useTheme();
+  const { capabilities } = useAuth();
+  const isCatalystSupervisor = canResolveSoft(capabilities);
   const [locations,  setLocations]  = useState<Location[]>([]);
   const [loading,    setLoading]    = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -130,7 +134,14 @@ export default function LocationsScreen() {
               <LocationRow
                 key={loc.id}
                 item={loc}
-                onPress={() => router.push({ pathname: '/location-scan', params: { locationId: String(loc.id) } } as any)}
+                onPress={() => {
+                  if (isCatalystSupervisor) {
+                    // Must scan the location QR first before viewing/filling checklists
+                    router.push({ pathname: '/qr-scanner', params: { mode: 'location-verify', expectedLocationId: String(loc.id) } } as any);
+                  } else {
+                    router.push({ pathname: '/location-scan', params: { locationId: String(loc.id) } } as any);
+                  }
+                }}
               />
             ))
           )}

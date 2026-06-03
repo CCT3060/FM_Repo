@@ -1,5 +1,6 @@
-import { router, useFocusEffect } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
+import { useIsFocused } from '@react-navigation/native';
 import {
   RefreshControl, ScrollView, StyleSheet, Text,
   TouchableOpacity, View, ActivityIndicator,
@@ -14,17 +15,27 @@ import StatusBadge from '../../components/StatusBadge';
 import EmptyState from '../../components/EmptyState';
 import type { SoftRequest } from '../../utils/api';
 
-function RequestCard({ req, canResolve }: { req: SoftRequest; canResolve: boolean }) {
+function RequestCard({ req, canResolve, currentUserId }: { req: SoftRequest; canResolve: boolean; currentUserId?: number }) {
   const { theme } = useTheme();
+  const isAssignedToMe = canResolve && req.status === 'open' && !!req.assignedToId && Number(req.assignedToId) === Number(currentUserId);
+  const isUnassignedOpen = canResolve && req.status === 'open' && !req.assignedToId;
+
+  const handlePress = () => {
+    if (isAssignedToMe) {
+      router.push({ pathname: '/soft-resolve', params: { requestId: String(req.id) } });
+    } else if (isUnassignedOpen) {
+      // Must scan the asset QR before resolving
+      router.push({ pathname: '/qr-scanner', params: { mode: 'resolve-request', requestId: String(req.id), expectedAssetId: String(req.assetId ?? '') } } as any);
+    } else {
+      router.push({ pathname: '/soft-resolve', params: { requestId: String(req.id), readOnly: 'true' } });
+    }
+  };
+
   return (
     <TouchableOpacity
       style={[styles.card, { backgroundColor: theme.surface, shadowColor: theme.cardShadow }]}
-      onPress={() => {
-        if (canResolve && req.status === 'open') {
-          router.push({ pathname: '/soft-resolve', params: { requestId: String(req.id) } });
-        }
-      }}
-      activeOpacity={canResolve ? 0.8 : 1}
+      onPress={handlePress}
+      activeOpacity={0.8}
     >
       <View style={styles.cardTop}>
         <View style={{ flex: 1 }}>
@@ -42,13 +53,21 @@ function RequestCard({ req, canResolve }: { req: SoftRequest; canResolve: boolea
           {req.raisedByName ? `Raised by ${req.raisedByName} · ` : ''}
           {new Date(req.raisedAt).toLocaleDateString()}
         </Text>
-        {canResolve && req.status === 'open' ? (
+        {isAssignedToMe ? (
           <TouchableOpacity
             style={[styles.resolveBtn, { backgroundColor: theme.primaryBg }]}
-            onPress={() => router.push({ pathname: '/soft-resolve', params: { requestId: String(req.id) } })}
+            onPress={handlePress}
           >
             <MaterialCommunityIcons name="check-circle-outline" size={16} color={theme.primary} />
             <Text style={[styles.resolveBtnText, { color: theme.primary }]}>Resolve</Text>
+          </TouchableOpacity>
+        ) : isUnassignedOpen ? (
+          <TouchableOpacity
+            style={[styles.resolveBtn, { backgroundColor: '#FEF3C7' }]}
+            onPress={handlePress}
+          >
+            <MaterialCommunityIcons name="qrcode-scan" size={16} color="#D97706" />
+            <Text style={[styles.resolveBtnText, { color: '#D97706' }]}>Scan QR</Text>
           </TouchableOpacity>
         ) : null}
       </View>
@@ -58,7 +77,8 @@ function RequestCard({ req, canResolve }: { req: SoftRequest; canResolve: boolea
 
 export default function SoftRequestsTab() {
   const { theme } = useTheme();
-  const { capabilities } = useAuth();
+  const { capabilities, user } = useAuth();
+  const { initialFilter } = useLocalSearchParams<{ initialFilter?: string }>();
   const [items,      setItems]      = useState<SoftRequest[]>([]);
   const [loading,    setLoading]    = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -77,7 +97,14 @@ export default function SoftRequestsTab() {
     }
   }, [showAll]);
 
-  useFocusEffect(useCallback(() => { void load(); }, [load]));
+  const isFocused = useIsFocused();
+  useEffect(() => {
+    if (!isFocused) return;
+    if (initialFilter === 'open' || initialFilter === 'resolved' || initialFilter === 'all') {
+      setFilter(initialFilter);
+    }
+    void load();
+  }, [isFocused, initialFilter, load]);
 
   const filtered = items.filter((i) => {
     if (filter === 'open')     return i.status === 'open';
@@ -93,21 +120,6 @@ export default function SoftRequestsTab() {
         </Text>
       </View>
 
-      {/* Filter pills */}
-      <View style={[styles.filters, { borderBottomColor: theme.border }]}>
-        {(['all', 'open', 'resolved'] as const).map((f) => (
-          <TouchableOpacity
-            key={f}
-            style={[styles.pill, filter === f && { backgroundColor: theme.primary }]}
-            onPress={() => setFilter(f)}
-          >
-            <Text style={[styles.pillText, { color: filter === f ? '#fff' : theme.textSecondary }]}>
-              {f.charAt(0).toUpperCase() + f.slice(1)}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
       {loading ? (
         <ActivityIndicator color={theme.primary} style={{ marginTop: Spacing.xxl }} />
       ) : (
@@ -118,7 +130,7 @@ export default function SoftRequestsTab() {
         >
           {filtered.length === 0
             ? <EmptyState icon="wrench-outline" title="No requests" message={filter === 'open' ? 'No open requests right now.' : 'Nothing to show.'} />
-            : filtered.map((req) => <RequestCard key={req.id} req={req} canResolve={canResolve} />)
+            : filtered.map((req) => <RequestCard key={req.id} req={req} canResolve={canResolve} currentUserId={user?.id} />)
           }
         </ScrollView>
       )}

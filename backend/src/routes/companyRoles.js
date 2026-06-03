@@ -275,4 +275,35 @@ router.put("/reorder/bulk", async (req, res, next) => {
   }
 });
 
+// ── Role Permissions (CRUD per module) ─────────────────────────────────────
+
+router.get("/role-permissions", async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT role, permissions FROM role_permissions WHERE company_id = ?`,
+      [cid(req)]
+    );
+    const result = {};
+    rows.forEach((r) => {
+      result[r.role] = typeof r.permissions === "string" ? JSON.parse(r.permissions) : r.permissions;
+    });
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
+router.put("/role-permissions", async (req, res, next) => {
+  try {
+    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    for (const [role, perms] of Object.entries(req.body)) {
+      const permJson = JSON.stringify(perms);
+      await pool.query(
+        `INSERT INTO role_permissions (company_id, role, permissions) VALUES (?, ?, ?)
+         ON CONFLICT (company_id, role) DO UPDATE SET permissions = EXCLUDED.permissions`,
+        [cid(req), role, permJson]
+      );
+    }
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
 export default router;

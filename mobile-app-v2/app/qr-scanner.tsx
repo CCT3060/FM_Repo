@@ -4,11 +4,12 @@ import { Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { fetchAssetByQR } from '../utils/api';
+import { fetchAssetByQR, checkLocationFilled } from '../utils/api';
 import { useTheme, Typography, Spacing, Radius } from '../utils/theme';
 
 export default function QRScannerScreen() {
   const { theme } = useTheme();
+  const { templateId, templateName, mode, requestId, expectedAssetId, expectedLocationId } = useLocalSearchParams<{ templateId?: string; templateName?: string; mode?: string; requestId?: string; expectedAssetId?: string; expectedLocationId?: string }>();
   const [permission, requestPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -45,7 +46,53 @@ export default function QRScannerScreen() {
       const locationMatch = data.match(/\/locations?\/(\d+)/i);
       if (locationMatch?.[1]) {
         const locationId = locationMatch[1];
-        router.replace({ pathname: '/location-scan', params: { locationId, fromQR: '1' } } as any);
+        if (mode === 'location-verify' && expectedLocationId) {
+          // Verify scanned location matches the expected one
+          if (String(locationId) !== String(expectedLocationId)) {
+            Alert.alert(
+              'Wrong QR Code',
+              'This QR code does not match the selected location. Please scan the correct QR code.',
+              [{ text: 'Scan Again', onPress: () => setScanned(false) }]
+            );
+            return;
+          }
+          router.replace({ pathname: '/location-scan', params: { locationId, fromQR: '1' } } as any);
+          return;
+        }
+        if (mode === 'checklist-location' && templateId) {
+          // Check if this checklist was already filled today for this location
+          const result = await checkLocationFilled(Number(templateId), Number(locationId));
+          if (result.filled) {
+            const byText = result.submittedByName ? ` by ${result.submittedByName}` : '';
+            Alert.alert(
+              'Already Filled Today',
+              `This checklist has already been filled today${byText}.`,
+              [
+                {
+                  text: 'Tap to View',
+                  onPress: () => {
+                    if (result.submissionId) {
+                      router.replace({
+                        pathname: '/submission-detail',
+                        params: { type: 'checklist', id: String(result.submissionId) },
+                      } as any);
+                    } else {
+                      setScanned(false);
+                    }
+                  },
+                },
+                { text: 'Scan Again', onPress: () => setScanned(false), style: 'cancel' },
+              ]
+            );
+            return;
+          }
+          router.replace({
+            pathname: '/checklist-entry',
+            params: { templateId, templateType: 'checklist', templateName: templateName || '', locationId },
+          } as any);
+        } else {
+          router.replace({ pathname: '/location-scan', params: { locationId, fromQR: '1' } } as any);
+        }
         return;
       }
 
@@ -65,6 +112,21 @@ export default function QRScannerScreen() {
       }
 
       const asset = await fetchAssetByQR(Number(assetId));
+
+      if (mode === 'resolve-request' && requestId) {
+        // Verify the scanned asset matches the expected asset for this request
+        if (expectedAssetId && String(asset.id ?? assetId) !== String(expectedAssetId)) {
+          Alert.alert(
+            'Wrong QR Code',
+            'This QR code does not match the asset for this request. Please scan the correct asset.',
+            [{ text: 'Scan Again', onPress: () => setScanned(false) }]
+          );
+          return;
+        }
+        router.replace({ pathname: '/soft-resolve', params: { requestId } });
+        return;
+      }
+
       router.replace({ pathname: '/asset-details', params: { assetId, fromQR: '1' } });
     } catch {
       Alert.alert('Not Found', 'Could not find an asset for this QR code.', [

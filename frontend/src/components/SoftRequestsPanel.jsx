@@ -179,49 +179,84 @@ function ViewModal({ req, token, onClose }) {
         {/* Submission answers */}
         {loading ? (
           <p style={{ textAlign: "center", padding: "20px", color: "#64748b" }}>Loading details…</p>
-        ) : detail?.beforeAnswers?.length > 0 ? (
-          <div>
-            <p style={{ margin: "0 0 10px", fontSize: "12px", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-              Checklist Answers at Time of Raise
-            </p>
-            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-              {detail.beforeAnswers.map((a, i) => {
-                // answer may be raw JSON if the nested value was an object (e.g. photo+text answers)
-                let displayAnswer = a.answer || a.optionSelected;
-                let photoSrc = a.photoUrl;
-                if (!photoSrc && displayAnswer) {
-                  try {
-                    const parsed = JSON.parse(displayAnswer);
-                    if (parsed && typeof parsed === 'object') {
-                      photoSrc = parsed.photoUrl || parsed.url || parsed.uri || null;
-                      displayAnswer = parsed.value != null ? String(parsed.value) : displayAnswer;
-                    }
-                  } catch { /* not JSON */ }
-                }
-                // Normalize old EC2 http URLs to relative paths
-                if (photoSrc && photoSrc.startsWith('http://3.110.166.39')) {
-                  photoSrc = photoSrc.replace(/^http:\/\/3\.110\.166\.39/, '');
-                }
-                return (
-                <div key={i} style={{ background: "#f8fafc", borderRadius: "8px", padding: "10px 14px", border: "1px solid #e2e8f0" }}>
-                  <p style={{ margin: "0 0 4px", fontSize: "12px", color: "#64748b" }}>{a.questionText}</p>
-                  {photoSrc ? (
-                    <>
-                      {displayAnswer && <p style={{ margin: "0 0 6px", fontSize: "14px", fontWeight: 600, color: "#0f172a" }}>{displayAnswer}</p>}
-                      <img src={photoSrc} alt="submission photo" style={{ maxWidth: "100%", maxHeight: "220px", objectFit: "contain", borderRadius: "6px", border: "1px solid #e2e8f0" }} />
-                    </>
-                  ) : (
-                    <p style={{ margin: 0, fontSize: "14px", fontWeight: 600, color: "#0f172a" }}>
-                      {displayAnswer || <span style={{ color: "#cbd5e1" }}>—</span>}
-                    </p>
-                  )}
-                </div>
-                );
-              })}
-            </div>
-          </div>
         ) : (
-          <p style={{ textAlign: "center", padding: "20px", color: "#94a3b8", fontSize: "13px" }}>No submission answers recorded.</p>
+          (() => {
+            const renderAnswers = (answers) => {
+              if (!answers?.length) return null;
+              return (
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                  {answers.map((a, i) => {
+                    let displayAnswer = a.answer || a.optionSelected;
+                    let photoSrc = a.photoUrl;
+                    if (!photoSrc && displayAnswer) {
+                      try {
+                        const parsed = JSON.parse(displayAnswer);
+                        if (parsed && typeof parsed === 'object') {
+                          photoSrc = parsed.photoUrl || parsed.url || parsed.uri || null;
+                          displayAnswer = parsed.value != null ? String(parsed.value) : displayAnswer;
+                        }
+                      } catch { /* not JSON */ }
+                    }
+                    if (photoSrc && photoSrc.startsWith('http://3.110.166.39')) {
+                      photoSrc = photoSrc.replace(/^http:\/\/3\.110\.166\.39/, '');
+                    }
+                    return (
+                      <div key={i} style={{ background: "#f8fafc", borderRadius: "8px", padding: "10px 14px", border: "1px solid #e2e8f0" }}>
+                        <p style={{ margin: "0 0 4px", fontSize: "12px", color: "#64748b" }}>{a.questionText}</p>
+                        {photoSrc ? (
+                          <>
+                            {displayAnswer && <p style={{ margin: "0 0 6px", fontSize: "14px", fontWeight: 600, color: "#0f172a" }}>{displayAnswer}</p>}
+                            <img src={photoSrc} alt="submission photo" style={{ maxWidth: "100%", maxHeight: "220px", objectFit: "contain", borderRadius: "6px", border: "1px solid #e2e8f0" }} />
+                          </>
+                        ) : (
+                          <p style={{ margin: 0, fontSize: "14px", fontWeight: 600, color: "#0f172a" }}>
+                            {displayAnswer || <span style={{ color: "#cbd5e1" }}>—</span>}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            };
+
+            const hasCatalyst = detail?.catalystAnswers?.length > 0;
+            const hasBefore   = detail?.beforeAnswers?.length > 0;
+            const hasAfter    = detail?.afterAnswers?.length > 0;
+
+            if (!hasCatalyst && !hasBefore && !hasAfter) {
+              return <p style={{ textAlign: "center", padding: "20px", color: "#94a3b8", fontSize: "13px" }}>No submission answers recorded.</p>;
+            }
+
+            return (
+              <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+                {hasCatalyst && (
+                  <div>
+                    <p style={{ margin: "0 0 10px", fontSize: "12px", fontWeight: 700, color: "#2563eb", textTransform: "uppercase", letterSpacing: "0.05em", background: "#eff6ff", padding: "6px 10px", borderRadius: "6px" }}>
+                      Catalyst Supervisor Filled Response
+                    </p>
+                    {renderAnswers(detail.catalystAnswers)}
+                  </div>
+                )}
+                {hasBefore && (
+                  <div>
+                    <p style={{ margin: "0 0 10px", fontSize: "12px", fontWeight: 700, color: "#b45309", textTransform: "uppercase", letterSpacing: "0.05em", background: "#fef3c7", padding: "6px 10px", borderRadius: "6px" }}>
+                      Client Raised Issue Response
+                    </p>
+                    {renderAnswers(detail.beforeAnswers)}
+                  </div>
+                )}
+                {hasAfter && (
+                  <div>
+                    <p style={{ margin: "0 0 10px", fontSize: "12px", fontWeight: 700, color: "#166534", textTransform: "uppercase", letterSpacing: "0.05em", background: "#dcfce7", padding: "6px 10px", borderRadius: "6px" }}>
+                      Resolved Response
+                    </p>
+                    {renderAnswers(detail.afterAnswers)}
+                  </div>
+                )}
+              </div>
+            );
+          })()
         )}
 
         <div style={{ marginTop: "20px", textAlign: "right" }}>

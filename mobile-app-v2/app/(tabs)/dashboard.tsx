@@ -1,7 +1,8 @@
-import { router, useFocusEffect } from 'expo-router';
+import { router } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useIsFocused } from '@react-navigation/native';
 import {
-  Animated, Easing, RefreshControl, ScrollView,
+  Animated, Easing, Image, RefreshControl, ScrollView,
   StyleSheet, Text, TouchableOpacity, View, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -11,51 +12,81 @@ import { fetchSiteScore, logoutUser, getStoredCompany, type SiteScore, ApiError 
 import { hasSoftAccess } from '../../utils/permissions';
 import { useTheme, Spacing, Radius, Typography } from '../../utils/theme';
 
-// ─── Animated arc progress (works without SVG) ────────────────────────────────
-// Uses two half-circle clips to render 0-360° progress correctly.
+// ─── Animated arc progress ────────────────────────────────────────────────────
 const SIZE   = 140;
-const BORDER = 10;
+const BORDER = 12;
+const HALF   = SIZE / 2;
 
+/**
+ * Renders a circular progress ring using the two-half-clip technique.
+ * The container is rotated -90° so the arc starts at 12 o'clock.
+ * Works correctly for any pct in [0, 100] on both iOS and Android.
+ */
 function ScoreArc({ pct, color }: { pct: number; color: string }) {
   const anim = useRef(new Animated.Value(0)).current;
+
   useEffect(() => {
-    Animated.timing(anim, { toValue: pct, duration: 900, easing: Easing.out(Easing.quad), useNativeDriver: false }).start();
+    anim.setValue(0);
+    Animated.timing(anim, {
+      toValue: pct,
+      duration: 900,
+      easing: Easing.out(Easing.quad),
+      useNativeDriver: false,
+    }).start();
   }, [pct]);
 
-  // Left half: rotates from 0→180° to fill left side
-  const leftRot = anim.interpolate({ inputRange: [0, 50, 100], outputRange: ['0deg', '180deg', '180deg'] });
-  // Right half: hidden until > 50%, then fills
-  const rightRot = anim.interpolate({ inputRange: [0, 50, 100], outputRange: ['0deg', '0deg', '180deg'] });
-  const rightOpacity = anim.interpolate({ inputRange: [0, 49.9, 50], outputRange: [0, 0, 1] });
-
-  const half = SIZE / 2;
+  // Right half: fills degrees 0→180 (first 50%)
+  const rightDeg = anim.interpolate({
+    inputRange: [0, 50, 100],
+    outputRange: ['0deg', '180deg', '180deg'],
+    extrapolate: 'clamp',
+  });
+  // Left half: starts filling after 50%
+  const leftDeg = anim.interpolate({
+    inputRange: [0, 50, 100],
+    outputRange: ['0deg', '0deg', '180deg'],
+    extrapolate: 'clamp',
+  });
+  const leftVisible = anim.interpolate({
+    inputRange: [0, 49, 50],
+    outputRange: [0, 0, 1],
+    extrapolate: 'clamp',
+  });
 
   return (
-    <View style={{ width: SIZE, height: SIZE, position: 'relative', alignItems: 'center', justifyContent: 'center' }}>
-      {/* Track */}
-      <View style={{ position: 'absolute', width: SIZE, height: SIZE, borderRadius: half, borderWidth: BORDER, borderColor: color + '22' }} />
+    <View style={{ width: SIZE, height: SIZE, alignItems: 'center', justifyContent: 'center' }}>
+      {/* Track ring */}
+      <View style={{
+        position: 'absolute', width: SIZE, height: SIZE,
+        borderRadius: HALF, borderWidth: BORDER, borderColor: color + '25',
+      }} />
 
-      {/* Fills — rotated 180° so arc starts at 12 o'clock and fills clockwise */}
-      <View style={{ position: 'absolute', width: SIZE, height: SIZE, transform: [{ rotate: '180deg' }] }}>
-        {/* Right half clip */}
-        <View style={{ position: 'absolute', width: SIZE, height: SIZE, overflow: 'hidden' }}>
-          <View style={{ position: 'absolute', right: 0, width: half, height: SIZE, overflow: 'hidden' }}>
-            <Animated.View style={{ position: 'absolute', left: -half, width: SIZE, height: SIZE, borderRadius: half, borderWidth: BORDER, borderColor: color, borderLeftColor: 'transparent', borderBottomColor: 'transparent', transform: [{ rotate: rightRot }], opacity: rightOpacity }} />
-          </View>
+      {/* Arc container: rotate so arc starts from top */}
+      <View style={{ position: 'absolute', width: SIZE, height: SIZE, transform: [{ rotate: '-90deg' }] }}>
+        {/* Right half (fills first 0–180°) */}
+        <View style={{ position: 'absolute', right: 0, width: HALF, height: SIZE, overflow: 'hidden' }}>
+          <Animated.View style={{
+            position: 'absolute', left: -HALF, width: SIZE, height: SIZE,
+            borderRadius: HALF, borderWidth: BORDER, borderColor: color,
+            borderLeftColor: 'transparent', borderBottomColor: 'transparent',
+            transform: [{ rotate: rightDeg }],
+          }} />
         </View>
-
-        {/* Left half clip */}
-        <View style={{ position: 'absolute', width: SIZE, height: SIZE, overflow: 'hidden' }}>
-          <View style={{ position: 'absolute', left: 0, width: half, height: SIZE, overflow: 'hidden' }}>
-            <Animated.View style={{ position: 'absolute', right: -half, width: SIZE, height: SIZE, borderRadius: half, borderWidth: BORDER, borderColor: color, borderRightColor: 'transparent', borderTopColor: 'transparent', transform: [{ rotate: leftRot }] }} />
-          </View>
-        </View>
+        {/* Left half (fills 180–360°) */}
+        <Animated.View style={{ position: 'absolute', left: 0, width: HALF, height: SIZE, overflow: 'hidden', opacity: leftVisible }}>
+          <Animated.View style={{
+            position: 'absolute', right: -HALF, width: SIZE, height: SIZE,
+            borderRadius: HALF, borderWidth: BORDER, borderColor: color,
+            borderRightColor: 'transparent', borderTopColor: 'transparent',
+            transform: [{ rotate: leftDeg }],
+          }} />
+        </Animated.View>
       </View>
 
-      {/* Center */}
+      {/* Center text */}
       <View style={{ alignItems: 'center' }}>
-        <Text style={{ fontSize: 28, fontWeight: '800', color, lineHeight: 34 }}>{pct.toFixed(1)}%</Text>
-        <Text style={{ fontSize: 10, fontWeight: '600', color: '#9CA3AF', letterSpacing: 0.5, textTransform: 'uppercase' }}>Site Score</Text>
+        <Text style={{ fontSize: 26, fontWeight: '800', color, lineHeight: 30 }}>{pct.toFixed(1)}%</Text>
+        <Text style={{ fontSize: 9, fontWeight: '700', color: '#9CA3AF', letterSpacing: 0.8, textTransform: 'uppercase', marginTop: 2 }}>Site Score</Text>
       </View>
     </View>
   );
@@ -117,7 +148,8 @@ export default function DashboardScreen() {
     }
   }, []);
 
-  useFocusEffect(useCallback(() => { void load(); }, [load]));
+  const isFocused = useIsFocused();
+  useEffect(() => { if (isFocused) void load(); }, [isFocused, load]);
   const onRefresh = () => { setRefreshing(true); void load(); };
 
   const pct  = score?.percentage ?? 0;
@@ -132,10 +164,27 @@ export default function DashboardScreen() {
       >
         {/* Header */}
         <View style={styles.header}>
-          <View>
-            <Text style={[styles.title, { color: theme.textPrimary }]}>Site Dashboard</Text>
-            <Text style={[styles.subtitle, { color: theme.textSecondary }]}>{user?.companyName ?? 'Company'}</Text>
-          </View>
+          {/* Catalyst logo – left */}
+          <Image
+            source={require('../../assets/images/catalyst-logo.png')}
+            style={styles.headerLogoLeft}
+            resizeMode="contain"
+          />
+          {/* Spacer */}
+          <View style={{ flex: 1 }} />
+          {/* Client / company logo – right corner */}
+          {user?.companyLogoUrl ? (
+            <Image
+              source={{ uri: user.companyLogoUrl }}
+              style={styles.headerLogoRight}
+              resizeMode="contain"
+            />
+          ) : (
+            <View style={[styles.headerLogoRight, { alignItems: 'flex-end', justifyContent: 'center' }]}>
+              <Text style={[styles.subtitle, { color: theme.textSecondary, textAlign: 'right' }]} numberOfLines={2}>{user?.companyName ?? ''}</Text>
+            </View>
+          )}
+          {/* Refresh button */}
           <TouchableOpacity style={[styles.refreshBtn, { backgroundColor: theme.surface, borderColor: theme.border }]} onPress={onRefresh}>
             <MaterialCommunityIcons name="refresh" size={18} color={theme.primary} />
           </TouchableOpacity>
@@ -160,7 +209,7 @@ export default function DashboardScreen() {
             <View style={[styles.scoreCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
               <ScoreArc pct={pct} color={ring} />
               <View style={styles.scoreSide}>
-                <Text style={[styles.scoreTitle, { color: theme.textPrimary }]}>Today's Progress</Text>
+                <Text style={[styles.scoreTitle, { color: theme.textPrimary }]}>Today's Company Progress</Text>
                 <Text style={[styles.scoreBody, { color: theme.textSecondary }]}>
                   {score?.filled ?? 0} of {score?.total ?? 0} templates filled
                 </Text>
@@ -171,56 +220,61 @@ export default function DashboardScreen() {
               </View>
             </View>
 
-            {/* Key stats — 3-up row */}
-            <Text style={[styles.sectionTitle, { color: theme.textMuted }]}>TODAY'S OVERVIEW</Text>
+            {/* CHECKLISTS section */}
+            <Text style={[styles.sectionTitle, { color: theme.textMuted }]}>CHECKLISTS</Text>
             <View style={styles.statsRow}>
               <StatCard
-                icon="clipboard-check-outline"
-                label="Filled"
-                value={score?.filled ?? 0}
-                color="#059669"
-                onPress={() => router.push('/history')}
+                icon="clipboard-list-outline"
+                label="Total Checklist"
+                value={score?.totalChecklistTemplates ?? 0}
+                color={theme.primary}
+                onPress={() => router.push({ pathname: '/all-templates', params: { initialFilter: 'all', type: 'checklist' } } as any)}
               />
               <StatCard
-                icon="clipboard-list-outline"
-                label="Templates"
-                value={score?.total ?? 0}
-                color={theme.primary}
-                onPress={() => router.push('/all-templates')}
+                icon="clipboard-check-outline"
+                label="Filled Checklist"
+                value={score?.filled ?? 0}
+                color="#059669"
+                onPress={() => router.push({ pathname: '/all-templates', params: { initialFilter: 'done', type: 'checklist' } } as any)}
               />
-              {showSoft ? (
-                <StatCard
-                  icon="wrench-outline"
-                  label="Open Issues"
-                  value={score?.openRequests ?? 0}
-                  color={score && score.openRequests > 0 ? '#EF4444' : '#6B7280'}
-                  onPress={() => router.push('/(tabs)/soft-requests')}
-                />
-              ) : (
-                <StatCard
-                  icon="percent-outline"
-                  label="Score"
-                  value={`${pct.toFixed(0)}%`}
-                  color={ring}
-                />
-              )}
+              <StatCard
+                icon="clipboard-alert-outline"
+                label="Pending Checklist"
+                value={(score?.totalChecklistTemplates ?? 0) - (score?.filled ?? 0)}
+                color="#F59E0B"
+                onPress={() => router.push({ pathname: '/all-templates', params: { initialFilter: 'pending', type: 'checklist' } } as any)}
+              />
             </View>
 
-            {/* Alert banner — only for soft service users with open requests */}
-            {showSoft && score && score.openRequests > 0 ? (
-              <TouchableOpacity
-                style={[styles.alertBanner, { backgroundColor: '#FEF2F2', borderColor: '#FECACA' }]}
-                onPress={() => router.push('/(tabs)/soft-requests')}
-                activeOpacity={0.8}
-              >
-                <MaterialCommunityIcons name="alert-circle-outline" size={18} color="#EF4444" />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.alertTitle}>{score.openRequests} open request{score.openRequests > 1 ? 's' : ''} need attention</Text>
-                  <Text style={styles.alertSub}>Tap to view and resolve</Text>
+            {/* REQUESTS section */}
+            {showSoft && (
+              <>
+                <Text style={[styles.sectionTitle, { color: theme.textMuted }]}>REQUESTS</Text>
+                <View style={styles.statsRow}>
+                  <StatCard
+                    icon="inbox-outline"
+                    label="Total Request"
+                    value={score?.totalRequests ?? 0}
+                    color={theme.primary}
+                    onPress={() => router.push({ pathname: '/(tabs)/soft-requests', params: { initialFilter: 'all' } } as any)}
+                  />
+                  <StatCard
+                    icon="alert-circle-outline"
+                    label="Open Request"
+                    value={score?.openRequests ?? 0}
+                    color={score && score.openRequests > 0 ? '#EF4444' : '#6B7280'}
+                    onPress={() => router.push({ pathname: '/(tabs)/soft-requests', params: { initialFilter: 'open' } } as any)}
+                  />
+                  <StatCard
+                    icon="check-circle-outline"
+                    label="Closed Request"
+                    value={score?.closedRequests ?? 0}
+                    color="#059669"
+                    onPress={() => router.push({ pathname: '/(tabs)/soft-requests', params: { initialFilter: 'resolved' } } as any)}
+                  />
                 </View>
-                <MaterialCommunityIcons name="chevron-right" size={16} color="#EF4444" />
-              </TouchableOpacity>
-            ) : null}
+              </>
+            )}
           </>
         )}
       </ScrollView>
@@ -237,7 +291,9 @@ const styles = StyleSheet.create({
   retryBtn:     { marginTop: Spacing.sm, paddingHorizontal: Spacing.xl, paddingVertical: Spacing.sm, borderRadius: Radius.lg },
   retryText:    { color: '#fff', fontWeight: '700', fontSize: 14 },
 
-  header:       { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+  header:       { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  headerLogoLeft:  { width: 90, height: 36 },
+  headerLogoRight: { width: 80, height: 36 },
   title:        { fontSize: 20, fontWeight: '700' },
   subtitle:     { fontSize: 12, marginTop: 2 },
   refreshBtn:   { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },

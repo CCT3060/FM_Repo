@@ -10,8 +10,9 @@
  * Status chips:  All · Pending · Done
  */
 
-import { router, useFocusEffect } from 'expo-router';
+import { router } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
+import { useIsFocused } from '@react-navigation/native';
 import {
   ActivityIndicator,
   RefreshControl,
@@ -152,7 +153,7 @@ function FilterPill({
 
 export default function TasksTab() {
   const { theme } = useTheme();
-  const { capabilities } = useAuth();
+  const { capabilities, user } = useAuth();
 
   const [templates,  setTemplates]  = useState<any[]>([]);
   const [workOrders, setWorkOrders] = useState<any[]>([]);
@@ -189,7 +190,8 @@ export default function TasksTab() {
     }
   }, [hasSoft, isSoftMgr]);
 
-  useFocusEffect(useCallback(() => { void load(); }, [load]));
+  const isFocused = useIsFocused();
+  useEffect(() => { if (isFocused) void load(); }, [isFocused, load]);
 
   // ── Build unified TaskItem list ────────────────────────────────────────────
   const allTasks: TaskItem[] = [
@@ -257,8 +259,13 @@ export default function TasksTab() {
       color:    '#0284C7',
       icon:     'wrench-outline',
       onPress:  () => {
-        if (r.status === 'open' && capabilities.canResolveSoftIssue) {
+        const canResolveThis = r.status === 'open'
+          && capabilities.canResolveSoftIssue
+          && (!r.assignedToId || Number(r.assignedToId) === Number(user?.id));
+        if (canResolveThis) {
           router.push({ pathname: '/soft-resolve', params: { requestId: String(r.id) } });
+        } else {
+          router.push({ pathname: '/soft-resolve', params: { requestId: String(r.id), readOnly: 'true' } });
         }
       },
     })),

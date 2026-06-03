@@ -117,7 +117,8 @@ router.post("/login", async (req, res, next) => {
               cu.password_hash AS "passwordHash", cu.supervisor_id AS "supervisorId",
               cu.permissions, cu.module_access AS "moduleAccess",
               c.company_name AS "companyName",
-              c.enabled_modules AS "companyEnabledModules"
+              c.enabled_modules AS "companyEnabledModules",
+              c.logo_url AS "companyLogoUrl"
        FROM company_users cu
        JOIN companies c ON c.id = cu.company_id
        WHERE LOWER(cu.username) = LOWER(?)
@@ -171,6 +172,7 @@ router.post("/login", async (req, res, next) => {
         role: user.role,
         companyId: user.companyId,
         companyName: user.companyName,
+        companyLogoUrl: user.companyLogoUrl || null,
         supervisorId: user.supervisorId,
         permissions: user.permissions || {},
         moduleAccess: user.moduleAccess || [],
@@ -207,7 +209,8 @@ router.get("/verify", async (req, res, next) => {
               cu.supervisor_id AS "supervisorId",
               cu.permissions, cu.module_access AS "moduleAccess",
               c.company_name AS "companyName",
-              c.enabled_modules AS "companyEnabledModules"
+              c.enabled_modules AS "companyEnabledModules",
+              c.logo_url AS "companyLogoUrl"
        FROM company_users cu
        JOIN companies c ON c.id = cu.company_id
        WHERE cu.id = ?`,

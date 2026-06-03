@@ -1,5 +1,6 @@
-import { router, useFocusEffect } from 'expo-router';
+import { router } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
+import { useIsFocused } from '@react-navigation/native';
 import {
   RefreshControl, ScrollView, StyleSheet, Text,
   TouchableOpacity, View, ActivityIndicator,
@@ -63,7 +64,8 @@ export default function AssignmentsTab() {
     }
   }, []);
 
-  useFocusEffect(useCallback(() => { void load(); }, [load]));
+  const isFocused = useIsFocused();
+  useEffect(() => { if (isFocused) void load(); }, [isFocused, load]);
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.background }]} edges={['top']}>

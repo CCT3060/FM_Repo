@@ -56,6 +56,33 @@ function parseOptions(q: any): string[] {
   } catch { return []; }
 }
 
+function parseAnswerEntry(entry: any): { text: string | null; photoUrl: string | null } {
+  const rawValue = entry?.answer ?? entry?.optionSelected ?? entry?.value ?? null;
+  let text: string | null = null;
+  let photoUrl: string | null = null;
+
+  if (rawValue !== null && rawValue !== undefined) {
+    const raw = String(rawValue).trim();
+    if (raw.startsWith('{')) {
+      try {
+        const obj = JSON.parse(raw);
+        text = obj?.value != null ? String(obj.value) : null;
+        photoUrl = obj?.photoUrl ?? null;
+      } catch {
+        text = raw || null;
+      }
+    } else {
+      text = raw || null;
+    }
+  }
+
+  if (!photoUrl && entry?.photoUrl) {
+    photoUrl = String(entry.photoUrl);
+  }
+
+  return { text, photoUrl };
+}
+
 // ─── Photo picker (for photo-type questions) ──────────────────────────────────
 function PhotoPicker({ value, onChange, uploading, setUploading }: {
   value: string | null; onChange: (v: string | null) => void;
@@ -107,9 +134,10 @@ function PhotoPicker({ value, onChange, uploading, setUploading }: {
 
 export default function SoftResolveScreen() {
   const { theme } = useTheme();
-  const { requestId, assetId, assetName } = useLocalSearchParams<{
-    requestId: string; assetId?: string; assetName: string;
+  const { requestId, assetId, assetName, readOnly } = useLocalSearchParams<{
+    requestId: string; assetId?: string; assetName: string; readOnly?: string;
   }>();
+  const isReadOnly = readOnly === 'true';
 
   const [request,    setRequest]    = useState<SoftRequest | null>(null);
   const [questions,  setQuestions]  = useState<any[]>([]);
@@ -141,26 +169,35 @@ export default function SoftResolveScreen() {
   const beforeAnswers: any[] = Array.isArray((request as any)?.beforeAnswers)
     ? (request as any).beforeAnswers
     : [];
+  const afterAnswers: any[] = Array.isArray((request as any)?.afterAnswers)
+    ? (request as any).afterAnswers
+    : [];
+  // Catalyst supervisor's original checklist submission (fetched separately by backend)
+  const catalystAnswers: any[] = Array.isArray((request as any)?.catalystAnswers)
+    ? (request as any).catalystAnswers
+    : [];
 
-  // Only keep answers where the client actually provided a non-empty value.
-  // The submission stores ALL questions (even unanswered ones with null), so we
-  // must exclude nulls before filtering the template question list.
-  const actuallyAnswered = beforeAnswers.filter((a: any) => {
+  const filterNonEmpty = (arr: any[]) => arr.filter((a: any) => {
     const raw = a.answer ?? a.optionSelected ?? a.value ?? null;
     if (raw === null || raw === undefined) return false;
     const s = String(raw).trim();
     return s !== '' && s !== 'null';
   });
 
-  // Filter template questions to only those the client actually answered.
-  // This way, if the client filled 2 out of 10 questions, catalyst only sees those 2.
+  // Only keep answers where the user actually provided a non-empty value.
+  const actuallyCatalystAnswered = filterNonEmpty(catalystAnswers);
+  const actuallyAnswered = filterNonEmpty(beforeAnswers); // client raised answers
+  const actuallyResolvedAnswered = filterNonEmpty(afterAnswers);
+
+  // Build the visible question list from all answered sources
+  const combinedAnswered = [...actuallyCatalystAnswered, ...actuallyAnswered, ...actuallyResolvedAnswered];
   const answeredIds = new Set(
-    actuallyAnswered
+    combinedAnswered
       .map((a: any) => (a.questionId != null ? String(a.questionId) : null))
       .filter(Boolean)
   );
   const answeredTexts = new Set(
-    actuallyAnswered
+    combinedAnswered
       .map((a: any) => a.questionText?.trim().toLowerCase())
       .filter(Boolean)
   );
@@ -169,8 +206,17 @@ export default function SoftResolveScreen() {
     const qText = (q.questionText || q.text || '').trim().toLowerCase();
     return answeredIds.has(qId) || answeredTexts.has(qText);
   });
-  // Fall back to all questions if no matching (e.g. template IDs changed)
-  const displayQuestions = visibleQuestions.length > 0 ? visibleQuestions : questions;
+  const derivedQuestions = combinedAnswered.map((a: any, idx: number) => ({
+    id: a.questionId ?? `derived-${idx}`,
+    questionText: a.questionText || `Question ${idx + 1}`,
+    inputType: a.inputType || 'text',
+    options: [],
+    isRequired: false,
+  }));
+  // In read-only mode, prefer question rows derived from submitted answers when template mapping is unavailable.
+  const displayQuestions = visibleQuestions.length > 0
+    ? visibleQuestions
+    : (isReadOnly && derivedQuestions.length > 0 ? derivedQuestions : questions);
 
   const handleSubmit = async () => {
     setSubmitting(true);
@@ -242,13 +288,23 @@ export default function SoftResolveScreen() {
             <Text style={[styles.infoSub, { color: theme.textSecondary }]}>
               {'Raised by '}{(request as any).raisedByName}
               {(request as any).raisedAt
-                ? `  ·  ${new Date((request as any).raisedAt).toLocaleDateString()}`
+                ? `  ·  ${new Date((request as any).raisedAt).toLocaleString()}`
+                : ''}
+            </Text>
+          )}
+          {isReadOnly && (request as any)?.resolvedByName && (
+            <Text style={[styles.infoSub, { color: theme.textSecondary }]}>
+              {'Resolved by '}{(request as any).resolvedByName}
+              {(request as any).resolvedAt
+                ? `  ·  ${new Date((request as any).resolvedAt).toLocaleString()}`
                 : ''}
             </Text>
           )}
         </View>
-        <View style={styles.badge}>
-          <Text style={styles.badgeTxt}>OPEN</Text>
+        <View style={[styles.badge, isReadOnly ? { backgroundColor: '#EFF6FF' } : {}]}>
+          <Text style={[styles.badgeTxt, isReadOnly ? { color: '#1D4ED8' } : {}]}>
+            {isReadOnly ? ((request as any)?.status?.toUpperCase() ?? 'PENDING') : 'OPEN'}
+          </Text>
         </View>
       </View>
 
@@ -277,39 +333,30 @@ export default function SoftResolveScreen() {
             const selOpts  = parseOptions(q);
             const photoVal = photos[q.id] ?? null;
 
-            // Find client's "before" answer for this question
+            // Find catalyst supervisor's original filled answer
+            const catalystEntry = actuallyCatalystAnswered.find((a: any) => {
+              const matchId   = a.questionId != null && String(a.questionId) === String(q.id ?? '');
+              const matchText = a.questionText?.trim().toLowerCase() === (q.questionText || q.text || '').trim().toLowerCase();
+              return matchId || matchText;
+            });
+            // Find client supervisor's raised-issue answer
             const beforeEntry = actuallyAnswered.find((a: any) => {
               const matchId   = a.questionId != null && String(a.questionId) === String(q.id ?? '');
               const matchText = a.questionText?.trim().toLowerCase() === (q.questionText || q.text || '').trim().toLowerCase();
               return matchId || matchText;
             });
-            const beforeValue = beforeEntry
-              ? (beforeEntry.answer ?? beforeEntry.optionSelected ?? beforeEntry.value ?? null)
-              : null;
+            const afterEntry = actuallyResolvedAnswered.find((a: any) => {
+              const matchId   = a.questionId != null && String(a.questionId) === String(q.id ?? '');
+              const matchText = a.questionText?.trim().toLowerCase() === (q.questionText || q.text || '').trim().toLowerCase();
+              return matchId || matchText;
+            });
 
-            // The answer may be stored as a JSON object { value, photoUrl } — parse it
-            let parsedBeforeText: string | null = null;
-            let parsedBeforePhotoUrl: string | null = null;
-            if (beforeValue !== null && beforeValue !== undefined) {
-              const raw = String(beforeValue).trim();
-              if (raw.startsWith('{')) {
-                try {
-                  const obj = JSON.parse(raw);
-                  parsedBeforeText = obj.value != null ? String(obj.value) : null;
-                  parsedBeforePhotoUrl = obj.photoUrl ?? null;
-                } catch {
-                  parsedBeforeText = raw || null;
-                }
-              } else {
-                parsedBeforeText = raw || null;
-              }
-            }
-            // Also check explicit photoUrl field on the entry (legacy path)
-            if (!parsedBeforePhotoUrl && beforeEntry?.photoUrl) {
-              parsedBeforePhotoUrl = beforeEntry.photoUrl;
-            }
+            const { text: catalystDisplay, photoUrl: parsedCatalystPhotoUrl } = parseAnswerEntry(catalystEntry);
+            const { text: beforeDisplay, photoUrl: parsedBeforePhotoUrl } = parseAnswerEntry(beforeEntry);
+            const { text: afterDisplay, photoUrl: parsedAfterPhotoUrl } = parseAnswerEntry(afterEntry);
 
-            const beforeDisplay = parsedBeforeText;
+            const hasCatalyst = catalystDisplay !== null || parsedCatalystPhotoUrl !== null;
+            const hasClientRaised = beforeDisplay !== null || parsedBeforePhotoUrl !== null;
 
             return (
               <View key={String(q.id ?? idx)} style={[styles.fieldCard, { backgroundColor: theme.surface, shadowColor: theme.cardShadow, borderColor: theme.border }]}>
@@ -323,7 +370,7 @@ export default function SoftResolveScreen() {
                     {q.isRequired ? <Text style={{ color: theme.danger }}> *</Text> : null}
                   </Text>
                   {/* Camera icon — top-right */}
-                  {type !== 'photo' && (
+                  {type !== 'photo' && !isReadOnly && (
                     <TouchableOpacity
                       style={[styles.cameraIconBtn, { backgroundColor: theme.primaryBg }]}
                       onPress={async () => {
@@ -344,31 +391,60 @@ export default function SoftResolveScreen() {
                   )}
                 </View>
 
-                {/* BEFORE — client's original answer (read-only) */}
-                {beforeDisplay !== null && (
+                {/* CATALYST SUPERVISOR FILLED RESPONSE — their original checklist answer */}
+                {hasCatalyst && (
                   <View style={[styles.beforeBox, { backgroundColor: theme.inputBg, borderColor: theme.inputBorder }]}>
-                    <Text style={[styles.beforeLabel, { color: theme.textMuted }]}>CLIENT RESPONSE (BEFORE)</Text>
-                    {/* If beforeDisplay is a URL, render as image; otherwise render as text */}
-                    {beforeDisplay && beforeDisplay.startsWith('http') && /\.(jpe?g|png|gif|webp)/i.test(beforeDisplay) ? (
-                      <Image
-                        source={{ uri: beforeDisplay }}
-                        style={{ width: '100%', height: 160, borderRadius: 8, marginTop: 8 }}
-                        resizeMode="cover"
-                      />
+                    <Text style={[styles.beforeLabel, { color: theme.textMuted }]}>CATALYST SUPERVISOR FILLED RESPONSE</Text>
+                    {catalystDisplay && catalystDisplay.startsWith('http') && /\.(jpe?g|png|gif|webp)/i.test(catalystDisplay) ? (
+                      <Image source={{ uri: catalystDisplay }} style={{ width: '100%', height: 160, borderRadius: 8, marginTop: 8 }} resizeMode="cover" />
                     ) : (
-                      <Text style={[styles.beforeValue, { color: theme.textSecondary }]}>{beforeDisplay}</Text>
+                      catalystDisplay !== null ? <Text style={[styles.beforeValue, { color: theme.textSecondary }]}>{catalystDisplay}</Text> : null
                     )}
-                    {parsedBeforePhotoUrl ? (
-                      <Image
-                        source={{ uri: parsedBeforePhotoUrl }}
-                        style={{ width: '100%', height: 160, borderRadius: 8, marginTop: 8 }}
-                        resizeMode="cover"
-                      />
+                    {parsedCatalystPhotoUrl ? (
+                      <Image source={{ uri: parsedCatalystPhotoUrl }} style={{ width: '100%', height: 160, borderRadius: 8, marginTop: 8 }} resizeMode="cover" />
                     ) : null}
                   </View>
                 )}
 
-                {/* AFTER label */}
+                {/* CLIENT RAISED ISSUE RESPONSE — what the client supervisor noted */}
+                {hasClientRaised && (
+                  <View style={[styles.beforeBox, { backgroundColor: theme.inputBg, borderColor: theme.inputBorder }]}>
+                    <Text style={[styles.beforeLabel, { color: theme.textMuted }]}>CLIENT RAISED ISSUE RESPONSE</Text>
+                    {beforeDisplay && beforeDisplay.startsWith('http') && /\.(jpe?g|png|gif|webp)/i.test(beforeDisplay) ? (
+                      <Image source={{ uri: beforeDisplay }} style={{ width: '100%', height: 160, borderRadius: 8, marginTop: 8 }} resizeMode="cover" />
+                    ) : (
+                      beforeDisplay !== null ? <Text style={[styles.beforeValue, { color: theme.textSecondary }]}>{beforeDisplay}</Text> : null
+                    )}
+                    {parsedBeforePhotoUrl ? (
+                      <Image source={{ uri: parsedBeforePhotoUrl }} style={{ width: '100%', height: 160, borderRadius: 8, marginTop: 8 }} resizeMode="cover" />
+                    ) : null}
+                  </View>
+                )}
+
+                {isReadOnly && (request as any)?.status === 'resolved' && (afterDisplay !== null || parsedAfterPhotoUrl) && (
+                  <View style={[styles.beforeBox, { backgroundColor: theme.inputBg, borderColor: theme.inputBorder }]}>
+                    <Text style={[styles.beforeLabel, { color: theme.textMuted }]}>SOLVED RESPONSE</Text>
+                    {afterDisplay && afterDisplay.startsWith('http') && /\.(jpe?g|png|gif|webp)/i.test(afterDisplay) ? (
+                      <Image source={{ uri: afterDisplay }} style={{ width: '100%', height: 160, borderRadius: 8, marginTop: 8 }} resizeMode="cover" />
+                    ) : (
+                      afterDisplay !== null ? <Text style={[styles.beforeValue, { color: theme.textSecondary }]}>{afterDisplay}</Text> : null
+                    )}
+                    {parsedAfterPhotoUrl ? (
+                      <Image source={{ uri: parsedAfterPhotoUrl }} style={{ width: '100%', height: 160, borderRadius: 8, marginTop: 8 }} resizeMode="cover" />
+                    ) : null}
+                  </View>
+                )}
+
+                {/* Fallback: resolved read-only but no responses stored */}
+                {isReadOnly && !hasCatalyst && !hasClientRaised && afterDisplay === null && !parsedAfterPhotoUrl && (
+                  <View style={[styles.beforeBox, { backgroundColor: theme.inputBg, borderColor: theme.inputBorder }]}>
+                    <Text style={[styles.beforeLabel, { color: theme.textMuted }]}>RESPONSE</Text>
+                    <Text style={[styles.beforeValue, { color: theme.textMuted, fontStyle: 'italic' }]}>No response recorded</Text>
+                  </View>
+                )}
+
+                {/* AFTER section — hidden in read-only mode */}
+                {!isReadOnly && (<>
                 <Text style={[styles.afterLabel, { color: theme.textMuted }]}>YOUR RESPONSE (AFTER)</Text>
 
                 {/* After — catalyst's answer input */}
@@ -438,29 +514,32 @@ export default function SoftResolveScreen() {
                     </TouchableOpacity>
                   </View>
                 )}
+                </>)}
               </View>
             );
           })
         )}
       </ScrollView>
 
-      <View style={[styles.footer, { backgroundColor: theme.surface, borderTopColor: theme.border }]}>
-        <TouchableOpacity
-          style={[styles.resolveBtn, { backgroundColor: submitting ? '#6B7280' : '#059669' }]}
-          onPress={handleSubmit}
-          disabled={submitting || uploading}
-          activeOpacity={0.85}
-        >
-          {submitting ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <>
-              <MaterialCommunityIcons name="check-circle" size={22} color="#fff" />
-              <Text style={styles.resolveBtnTxt}>Mark as Resolved</Text>
-            </>
-          )}
-        </TouchableOpacity>
-      </View>
+      {!isReadOnly && (
+        <View style={[styles.footer, { backgroundColor: theme.surface, borderTopColor: theme.border }]}>
+          <TouchableOpacity
+            style={[styles.resolveBtn, { backgroundColor: submitting ? '#6B7280' : '#059669' }]}
+            onPress={handleSubmit}
+            disabled={submitting || uploading}
+            activeOpacity={0.85}
+          >
+            {submitting ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <>
+                <MaterialCommunityIcons name="check-circle" size={22} color="#fff" />
+                <Text style={styles.resolveBtnTxt}>Mark as Resolved</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+      )}
     </SafeAreaView>
   );
 }

@@ -56,7 +56,7 @@ export default function ChecklistHistoryScreen() {
                 />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={[styles.cardTitle, { color: theme.textPrimary }]} numberOfLines={1}>{item.templateName}</Text>
+                <Text style={[styles.cardTitle, { color: theme.textPrimary }]} numberOfLines={2}>{item.templateName}</Text>
                 <Text style={[styles.cardSub, { color: theme.textSecondary }]} numberOfLines={1}>{item.assetName}</Text>
                 <Text style={[styles.cardTime, { color: theme.textMuted }]}>{new Date(item.submittedAt).toLocaleString()}</Text>
               </View>

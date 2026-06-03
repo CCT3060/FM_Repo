@@ -244,50 +244,8 @@ router.post("/requests", async (req, res, next) => {
 
     const requestId = rows[0]?.id ?? rows.insertId;
 
-    // Notify users who can resolve soft issues
-    try {
-      const [[raiser]] = await pool.query(
-        `SELECT full_name FROM company_users WHERE id = ?`, [userId]
-      );
-      const raiserName = raiser?.full_name || 'A user';
-
-      const [resolvers] = await pool.query(
-        `SELECT cu.id, cu.push_token, cu.fcm_token
-         FROM company_users cu
-         JOIN company_roles cr ON cr.company_id = cu.company_id AND cr.role_key = cu.role
-         WHERE cu.company_id = ?
-           AND cr.can_resolve_soft_issue = TRUE
-           AND cr.is_active = TRUE
-           AND cu.id != ?`,
-        [companyId, userId]
-      );
-
-      for (const resolver of resolvers) {
-        await createInAppNotification(
-          companyId, resolver.id,
-          'New Soft Request',
-          `${raiserName} raised a request for ${assetLabel}.`
-        );
-        if (resolver.push_token) {
-          await sendExpoPush(
-            resolver.push_token,
-            'New Soft Request',
-            `${raiserName} raised a request for ${assetLabel}.`,
-            { screen: '/(tabs)/soft-requests', requestId }
-          );
-        }
-        if (resolver.fcm_token) {
-          await sendFCMPush(
-            resolver.fcm_token,
-            'New Soft Request',
-            `${raiserName} raised a request for ${assetLabel}.`,
-            { screen: '/(tabs)/soft-requests', requestId: String(requestId) }
-          );
-        }
-      }
-    } catch {
-      // Non-fatal — don't fail the request creation
-    }
+    // Notification is sent only when the request is assigned to a specific resolver
+    // (handled by PUT /requests/:id/assign). No broadcast to all resolvers on creation.
 
     res.status(201).json({ ok: true, requestId });
   } catch (err) {
@@ -423,12 +381,24 @@ router.get("/requests/users", async (req, res, next) => {
 /* ── GET /requests/all ── Manager sees all requests ─────────────────────── */
 router.get("/requests/all", async (req, res, next) => {
   try {
+    const userId    = req.companyUser.id;
+    const roleKey   = req.companyUser.role;
     const companyId = req.companyUser.companyId;
     const status    = req.query.status;
     const assetId   = req.query.assetId;
 
     const params = [companyId];
     const conditions = [];
+    const isSoftManagerRole = roleKey === "admin"
+      ? true
+      : await hasCapability(companyId, roleKey, "is_soft_manager");
+
+    if (!isSoftManagerRole) {
+      // Resolver users can only act on unassigned requests or those assigned to them.
+      conditions.push("(ssr.assigned_to_user_id IS NULL OR ssr.assigned_to_user_id = ?)");
+      params.push(userId);
+    }
+
     if (status)  { conditions.push("ssr.status = ?");   params.push(status); }
     if (assetId) { conditions.push("ssr.asset_id = ?"); params.push(Number(assetId)); }
 
@@ -498,9 +468,14 @@ router.get("/requests/:id", async (req, res, next) => {
          ssr.template_id               AS "templateId",
          ssr.template_type             AS "templateType",
          ssr.raise_submission_id       AS "raiseSubmissionId",
+         ssr.resolve_submission_id     AS "resolveSubmissionId",
+         ssr.assigned_to_user_id       AS "assignedToId",
          cu.full_name                  AS "raisedByName",
          ssr.raised_at                 AS "raisedAt",
          ssr.status,
+         ssr.resolved_at               AS "resolvedAt",
+         resolver.full_name            AS "resolvedByName",
+         assignee.full_name            AS "assignedToName",
          COALESCE(
            (SELECT ct.template_name FROM checklist_templates ct WHERE ct.id = ssr.template_id AND ssr.template_type = 'checklist' LIMIT 1),
            (SELECT lt.template_name FROM logsheet_templates lt WHERE lt.id = ssr.template_id AND ssr.template_type = 'logsheet' LIMIT 1)
@@ -527,11 +502,74 @@ router.get("/requests/:id", async (req, res, next) => {
            )
            FROM checklist_submission_answers csa
            WHERE csa.submission_id = ssr.raise_submission_id
-         )                             AS "beforeAnswers"
+         )                             AS "beforeAnswers",
+         (
+           SELECT json_agg(
+             json_build_object(
+               'questionId',     csa.question_id,
+               'questionText',   csa.question_text,
+               'inputType',      csa.input_type,
+               'answer',         CASE WHEN jsonb_typeof(csa.answer_json->'value') = 'object'
+                                    THEN csa.answer_json->'value'->>'value'
+                                    ELSE csa.answer_json->>'value'
+                               END,
+               'photoUrl',       COALESCE(
+                                   CASE WHEN jsonb_typeof(csa.answer_json->'value') = 'object'
+                                        THEN csa.answer_json->'value'->>'photoUrl'
+                                        ELSE NULL
+                                   END,
+                                   csa.answer_json->>'photoUrl'
+                                 ),
+               'optionSelected', csa.option_selected
+             ) ORDER BY csa.id
+           )
+           FROM checklist_submission_answers csa
+           WHERE csa.submission_id = ssr.resolve_submission_id
+         )                             AS "afterAnswers",
+         (
+           SELECT json_agg(
+             json_build_object(
+               'questionId',     csa.question_id,
+               'questionText',   csa.question_text,
+               'inputType',      csa.input_type,
+               'answer',         CASE WHEN jsonb_typeof(csa.answer_json->'value') = 'object'
+                                      THEN csa.answer_json->'value'->>'value'
+                                      ELSE csa.answer_json->>'value'
+                                 END,
+               'photoUrl',       COALESCE(
+                                   CASE WHEN jsonb_typeof(csa.answer_json->'value') = 'object'
+                                        THEN csa.answer_json->'value'->>'photoUrl'
+                                        ELSE NULL
+                                   END,
+                                   csa.answer_json->>'photoUrl'
+                                 ),
+               'optionSelected', csa.option_selected
+             ) ORDER BY csa.id
+           )
+           FROM checklist_submission_answers csa
+           WHERE csa.submission_id = (
+             SELECT cs2.id
+             FROM checklist_submissions cs2
+             JOIN company_users cu2 ON cu2.id = cs2.company_user_id
+             JOIN company_roles cr2
+               ON cr2.company_id = cu2.company_id
+              AND cr2.role_key = cu2.role
+              AND cr2.is_active = TRUE
+             WHERE cs2.template_id = ssr.template_id
+               AND cu2.company_id = ssr.company_id
+               AND COALESCE(cr2.can_resolve_soft_issue, FALSE) = TRUE
+               AND cs2.submitted_at <= ssr.raised_at
+               AND cs2.id != COALESCE(ssr.raise_submission_id, 0)
+             ORDER BY cs2.submitted_at DESC
+             LIMIT 1
+           )
+         )                             AS "catalystAnswers"
        FROM soft_service_requests ssr
        LEFT JOIN assets a ON a.id = ssr.asset_id
        LEFT JOIN locations loc ON loc.id = ssr.location_id
        JOIN company_users cu ON cu.id = ssr.raised_by_user_id
+       LEFT JOIN company_users resolver ON resolver.id = ssr.resolved_by_user_id
+       LEFT JOIN company_users assignee ON assignee.id = ssr.assigned_to_user_id
        WHERE ssr.id = ? AND ssr.company_id = ?`,
       [requestId, companyId]
     );
@@ -560,12 +598,17 @@ router.put("/requests/:id/resolve", async (req, res, next) => {
     }
 
     const [[request]] = await pool.query(
-      `SELECT id, status, raised_by_user_id AS "raisedByUserId", asset_id AS "assetId"
+      `SELECT id, status,
+              assigned_to_user_id AS "assignedToUserId",
+              raised_by_user_id AS "raisedByUserId", asset_id AS "assetId"
          FROM soft_service_requests WHERE id = ? AND company_id = ?`,
       [requestId, companyId]
     );
     if (!request) return res.status(404).json({ message: "Request not found" });
     if (request.status === "resolved") return res.status(409).json({ message: "Request already resolved" });
+    if (request.assignedToUserId && Number(request.assignedToUserId) !== Number(userId)) {
+      return res.status(403).json({ message: "This request is assigned to another supervisor" });
+    }
 
     await pool.query(
       `UPDATE soft_service_requests

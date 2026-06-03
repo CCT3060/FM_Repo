@@ -29,7 +29,7 @@ export default function CompanyCodeScreen() {
       const company = await getStoredCompany();
       if (user && company) {
         setUser(user);
-        router.replace('/(tabs)/home');
+        router.replace('/(tabs)/dashboard');
       } else if (company) {
         router.replace({ pathname: '/login', params: { companyId: String(company.companyId), companyName: company.companyName } });
       } else {

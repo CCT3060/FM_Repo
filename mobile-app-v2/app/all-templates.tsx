@@ -5,7 +5,7 @@
  * the user has an assignment for that template.
  */
 
-import { router, useFocusEffect } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator, RefreshControl, ScrollView,
@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { fetchAllTemplates } from '../utils/api';
 import { useTheme, Spacing, Radius, Typography } from '../utils/theme';
+import { useAuth } from '../context/AuthContext';
 import StatusBadge from '../components/StatusBadge';
 import EmptyState from '../components/EmptyState';
 
@@ -32,12 +33,16 @@ const TYPE_CONFIG = {
   logsheet:  { icon: 'table-large',             color: '#7C3AED', label: 'Logsheet'  },
 } as const;
 
-function TemplateRow({ item }: { item: Template }) {
+function TemplateRow({ item, onPress }: { item: Template; onPress?: () => void }) {
   const { theme } = useTheme();
   const cfg = TYPE_CONFIG[item.templateType] ?? TYPE_CONFIG.checklist;
 
   return (
-    <View style={[styles.row, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={onPress ? 0.8 : 1}
+      style={[styles.row, { backgroundColor: theme.surface, borderColor: theme.border }]}
+    >
       <View style={[styles.rowIcon, { backgroundColor: cfg.color + '15' }]}>
         <MaterialCommunityIcons name={cfg.icon as any} size={22} color={cfg.color} />
       </View>
@@ -61,18 +66,22 @@ function TemplateRow({ item }: { item: Template }) {
         label={item.completedToday ? 'Done' : 'Pending'}
         variant={item.completedToday ? 'success' : 'warning'}
       />
-    </View>
+    </TouchableOpacity>
   );
 }
 
 export default function AllTemplatesScreen() {
   const { theme } = useTheme();
+  const { capabilities } = useAuth();
+  const { initialFilter, type: typeFilter } = useLocalSearchParams<{ initialFilter?: string; type?: string }>();
   const [items,      setItems]      = useState<Template[]>([]);
   const [loading,    setLoading]    = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error,      setError]      = useState<string | null>(null);
   const [search,     setSearch]     = useState('');
-  const [filter,     setFilter]     = useState<'all' | 'pending' | 'done'>('all');
+  const [filter,     setFilter]     = useState<'all' | 'pending' | 'done'>(
+    (initialFilter as 'all' | 'pending' | 'done') ?? 'all'
+  );
 
   const load = useCallback(async () => {
     try {
@@ -97,14 +106,18 @@ export default function AllTemplatesScreen() {
     const matchFilter = filter === 'all'
       || (filter === 'done'    &&  t.completedToday)
       || (filter === 'pending' && !t.completedToday);
-    return matchSearch && matchFilter;
+    const matchType = !typeFilter || typeFilter === 'all' || t.templateType === typeFilter;
+    return matchSearch && matchFilter && matchType;
   });
 
   const checklists = filtered.filter((t) => t.templateType === 'checklist');
   const logsheets  = filtered.filter((t) => t.templateType === 'logsheet');
 
-  const doneCount    = items.filter((t) =>  t.completedToday).length;
-  const pendingCount = items.filter((t) => !t.completedToday).length;
+  const typedItems = !typeFilter || typeFilter === 'all'
+    ? items
+    : items.filter((t) => t.templateType === typeFilter);
+  const doneCount    = typedItems.filter((t) =>  t.completedToday).length;
+  const pendingCount = typedItems.filter((t) => !t.completedToday).length;
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.background }]} edges={['top']}>
@@ -116,7 +129,7 @@ export default function AllTemplatesScreen() {
         <View style={styles.headerText}>
           <Text style={[styles.title, { color: theme.textPrimary }]}>All Templates</Text>
           <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
-            {loading ? '…' : `${items.length} total · ${doneCount} done · ${pendingCount} pending`}
+            {loading ? '…' : `${typedItems.length} total · ${doneCount} done · ${pendingCount} pending`}
           </Text>
         </View>
       </View>
@@ -152,7 +165,7 @@ export default function AllTemplatesScreen() {
               {f.charAt(0).toUpperCase() + f.slice(1)}
               {f === 'done'    ? ` (${doneCount})`    : ''}
               {f === 'pending' ? ` (${pendingCount})` : ''}
-              {f === 'all'     ? ` (${items.length})` : ''}
+              {f === 'all'     ? ` (${typedItems.length})` : ''}
             </Text>
           </TouchableOpacity>
         ))}
@@ -179,7 +192,7 @@ export default function AllTemplatesScreen() {
           showsVerticalScrollIndicator={false}
         >
           {filtered.length === 0 ? (
-            <EmptyState icon="clipboard-text-off-outline" title="No templates found" subtitle="Try adjusting your search or filter." />
+            <EmptyState icon="clipboard-text-off-outline" title="No templates found" message="Try adjusting your search or filter." />
           ) : (
             <>
               {checklists.length > 0 && (
@@ -191,7 +204,15 @@ export default function AllTemplatesScreen() {
                       <Text style={[styles.badgeText, { color: '#2563EB' }]}>{checklists.length}</Text>
                     </View>
                   </View>
-                  {checklists.map((t) => <TemplateRow key={`c-${t.id}`} item={t} />)}
+                  {checklists.map((t) => {
+                    let onPress: (() => void) | undefined;
+                    if (capabilities.isTechnicalSupervisor) {
+                      onPress = () => router.push({ pathname: '/qr-scanner', params: { templateId: String(t.id), templateName: t.templateName, mode: 'checklist-location' } } as any);
+                    } else if (capabilities.isTechnician) {
+                      onPress = () => router.push({ pathname: '/checklist-entry', params: { templateId: String(t.id), templateType: 'checklist', templateName: t.templateName } } as any);
+                    }
+                    return <TemplateRow key={`c-${t.id}`} item={t} onPress={onPress} />;
+                  })}
                 </>
               )}
 

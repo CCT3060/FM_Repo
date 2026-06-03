@@ -1,5 +1,6 @@
-import { router, useFocusEffect } from 'expo-router';
-import React, { useCallback, useState } from 'react';
+import { router } from 'expo-router';
+import React, { useCallback, useEffect, useState } from 'react';
+import { useIsFocused } from '@react-navigation/native';
 import {
   RefreshControl, ScrollView, StyleSheet, Text,
   TouchableOpacity, View, ActivityIndicator,
@@ -71,7 +72,8 @@ export default function ChecklistsTab() {
   }, []);
 
   // Re-fetch on every focus so Done/Pending counts reflect the latest submission.
-  useFocusEffect(useCallback(() => { void load(); }, [load]));
+  const isFocused = useIsFocused();
+  useEffect(() => { if (isFocused) void load(); }, [isFocused, load]);
 
   const checklists = items.filter((i) => i.templateType !== 'logsheet');
   const logsheets  = items.filter((i) => i.templateType === 'logsheet');

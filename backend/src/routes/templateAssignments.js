@@ -1185,7 +1185,18 @@ router.get("/location-templates/:locationId", async (req, res, next) => {
                OR (ct.frequency = 'Monthly' AND cs.submitted_at >= date_trunc('month', NOW()))
                OR (ct.frequency NOT IN ('Hourly','Weekly','Monthly') AND cs.submitted_at >= CURRENT_DATE)
              )
-         ) AS "completedToday"
+         ) AS "completedToday",
+         -- Check if completed today by ANY user in the company (for catalyst supervisor lock)
+         EXISTS(
+           SELECT 1 FROM checklist_submissions cs2
+           WHERE cs2.template_id = ct.id
+             AND (
+               (ct.frequency = 'Hourly'  AND cs2.submitted_at >= NOW() - INTERVAL '1 hour')
+               OR (ct.frequency = 'Weekly'  AND cs2.submitted_at >= date_trunc('week', NOW()))
+               OR (ct.frequency = 'Monthly' AND cs2.submitted_at >= date_trunc('month', NOW()))
+               OR (ct.frequency NOT IN ('Hourly','Weekly','Monthly') AND cs2.submitted_at >= CURRENT_DATE)
+             )
+         ) AS "completedTodayByAnyone"
        FROM checklist_templates ct
        WHERE ct.location_id = ?
          AND ct.company_id = ?
@@ -1241,6 +1252,57 @@ router.get("/location-templates/:locationId", async (req, res, next) => {
     );
 
     res.json({ location: loc, templates, recentSubmission: recentSubmission || null, assignedSoftRequests: assignedSoftRequests || [] });
+  } catch (err) { next(err); }
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+   GET /check-location-filled  – check if a checklist was filled today for a location
+   Used by mobile app to prevent catalyst supervisors from re-filling.
+   Query params: templateId, locationId
+   ──────────────────────────────────────────────────────────────────────────── */
+router.get("/check-location-filled", async (req, res, next) => {
+  try {
+    const { templateId, locationId } = req.query;
+    if (!templateId || !locationId) return res.status(400).json({ message: "Missing templateId or locationId" });
+    const companyId = cid(req);
+
+    // Verify template belongs to this company and is linked to this location
+    const [[tmpl]] = await pool.query(
+      `SELECT id, frequency FROM checklist_templates WHERE id = ? AND company_id = ? AND location_id = ?`,
+      [Number(templateId), companyId, Number(locationId)]
+    );
+    if (!tmpl) return res.json({ filled: false });
+
+    const freq = tmpl.frequency;
+    const [rows] = await pool.query(
+      `SELECT cs.id AS "submissionId",
+              cs.submitted_at AS "submittedAt",
+              cu.full_name AS "submittedByName"
+       FROM checklist_submissions cs
+       JOIN checklist_templates ct ON ct.id = cs.template_id
+       LEFT JOIN company_users cu ON cu.id = cs.company_user_id
+       WHERE cs.template_id = ?
+         AND ct.company_id = ?
+         AND ct.location_id = ?
+         AND (
+           (? = 'Hourly'  AND cs.submitted_at >= NOW() - INTERVAL '1 hour')
+           OR (? = 'Weekly'  AND cs.submitted_at >= date_trunc('week', NOW()))
+           OR (? = 'Monthly' AND cs.submitted_at >= date_trunc('month', NOW()))
+           OR (? NOT IN ('Hourly','Weekly','Monthly') AND cs.submitted_at >= CURRENT_DATE)
+         )
+       ORDER BY cs.submitted_at DESC
+       LIMIT 1`,
+      [Number(templateId), companyId, Number(locationId), freq, freq, freq, freq]
+    );
+    if (!rows || rows.length === 0) {
+      return res.json({ filled: false });
+    }
+    res.json({
+      filled: true,
+      submissionId: rows[0].submissionId,
+      submittedAt: rows[0].submittedAt,
+      submittedByName: rows[0].submittedByName || null,
+    });
   } catch (err) { next(err); }
 });
 
@@ -2041,6 +2103,24 @@ router.get("/site-score", async (req, res, next) => {
     );
     const openN = Number(openRequests) || 0;
 
+    // Closed soft-service requests
+    const [[{ closedRequests }]] = await pool.query(
+      `SELECT COUNT(*) AS "closedRequests"
+       FROM soft_service_requests
+       WHERE company_id = ? AND status = 'resolved'`,
+      [companyId]
+    );
+    const closedN = Number(closedRequests) || 0;
+
+    // Total soft-service requests
+    const [[{ totalRequests }]] = await pool.query(
+      `SELECT COUNT(*) AS "totalRequests"
+       FROM soft_service_requests
+       WHERE company_id = ?`,
+      [companyId]
+    );
+    const totalRequestsN = Number(totalRequests) || 0;
+
     // Total checklist templates (active, filtered)
     const [[{ totalChecklistTemplates }]] = await pool.query(
       `SELECT COUNT(*) AS "totalChecklistTemplates"
@@ -2085,6 +2165,8 @@ router.get("/site-score", async (req, res, next) => {
       totalFilled:             totalFilledN,
       percentage,
       openRequests:            openN,
+      closedRequests:          closedN,
+      totalRequests:           totalRequestsN,
       totalChecklistTemplates: checklistTemplatesN,
       totalLogsheetTemplates:  logsheetTemplatesN,
       totalSubmissionsToday:   totalSubmissionsTodayN,
@@ -2100,24 +2182,6 @@ router.get("/all-templates", async (req, res, next) => {
   try {
     const companyId = cid(req);
 
-    // Determine service domain from company_users record
-    // Default to 'both' so users without explicit domain setting see all templates
-    let serviceDomain = 'both';
-    try {
-      const [[cuRow]] = await pool.query(
-        `SELECT service_domain AS "serviceDomain" FROM company_users WHERE id = ? LIMIT 1`,
-        [req.companyUser.id]
-      );
-      serviceDomain = (cuRow?.serviceDomain || 'both').toLowerCase();
-    } catch { /* default both */ }
-
-    let softFilter = '';
-    if (serviceDomain === 'technical') {
-      softFilter = `AND LOWER(TRIM(COALESCE(ct.asset_type, ''))) != 'soft service'`;
-    } else if (serviceDomain === 'soft') {
-      softFilter = `AND LOWER(TRIM(COALESCE(ct.asset_type, ''))) = 'soft service'`;
-    }
-
     // All active checklist templates
     const [checklists] = await pool.query(
       `SELECT
@@ -2132,7 +2196,7 @@ router.get("/all-templates", async (req, res, next) => {
            WHERE cs.template_id = ct.id AND cs.submitted_at >= CURRENT_DATE
          ) AS "completedToday"
        FROM checklist_templates ct
-       WHERE ct.company_id = ? AND ct.is_active = 1 ${softFilter}
+       WHERE ct.company_id = ? AND ct.is_active = 1
        ORDER BY ct.template_name`,
       [companyId]
     );

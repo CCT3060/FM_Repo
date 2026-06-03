@@ -29,14 +29,14 @@ export default function LoginScreen() {
 
   const pwdRef = useRef<TextInput>(null);
 
-  // Check biometric availability on mount
-  useEffect(() => {
-    (async () => {
-      const compatible = await LocalAuthentication.hasHardwareAsync();
-      const enrolled   = await LocalAuthentication.isEnrolledAsync();
-      setHasBiometric(compatible && enrolled);
-    })();
-  }, []);
+  // // Check biometric availability on mount
+  // useEffect(() => {
+  //   (async () => {
+  //     const compatible = await LocalAuthentication.hasHardwareAsync();
+  //     const enrolled   = await LocalAuthentication.isEnrolledAsync();
+  //     setHasBiometric(compatible && enrolled);
+  //   })();
+  // }, []);
 
   const handleLogin = async () => {
     if (!employeeId.trim() || !password) {
@@ -51,7 +51,7 @@ export default function LoginScreen() {
       if (Constants.appOwnership !== 'expo') {
         void import('../utils/notifications').then(m => m.registerForPushNotifications());
       }
-      router.replace('/(tabs)/home');
+      router.replace('/(tabs)/dashboard');
     } catch (err: any) {
       Alert.alert('Login Failed', err.message ?? 'Invalid credentials. Please try again.');
     } finally {
@@ -59,7 +59,7 @@ export default function LoginScreen() {
     }
   };
 
-  const handleBiometric = useCallback(async () => {
+  {/*const handleBiometric = useCallback(async () => {
     try {
       const result = await LocalAuthentication.authenticateAsync({
         promptMessage: 'Sign in with biometrics',
@@ -78,7 +78,7 @@ export default function LoginScreen() {
       Alert.alert('Biometric Error', 'Could not authenticate. Please try again.');
     }
   }, []);
-
+*/}
   const handleChangeCompany = useCallback(async () => {
     // Clear stored company so index.tsx does NOT auto-redirect back to this login screen
     await clearStoredCompany();
@@ -142,9 +142,9 @@ export default function LoginScreen() {
             {/* Password label row */}
             <View style={styles.labelRow}>
               <Text style={[styles.label, { color: theme.textSecondary }]}>Password</Text>
-              <TouchableOpacity hitSlop={{ top: 8, left: 8, right: 8, bottom: 8 }}>
+              {/* <TouchableOpacity hitSlop={{ top: 8, left: 8, right: 8, bottom: 8 }}>
                 <Text style={[styles.forgotText, { color: theme.primary }]}>Forgot?</Text>
-              </TouchableOpacity>
+              </TouchableOpacity> */}
             </View>
             <View style={[styles.inputWrap, { backgroundColor: theme.inputBg, borderColor: theme.inputBorder }]}>
               <MaterialCommunityIcons name="lock-outline" size={20} color={theme.textMuted} style={styles.inputIcon} />
@@ -194,7 +194,7 @@ export default function LoginScreen() {
             </TouchableOpacity>
 
             {/* Biometric divider + button */}
-            {hasBiometric && (
+            {/* {hasBiometric && (
               <>
                 <View style={styles.divider}>
                   <View style={[styles.divLine, { backgroundColor: theme.border }]} />
@@ -210,7 +210,7 @@ export default function LoginScreen() {
                   <Text style={[styles.biometricText, { color: theme.textSecondary }]}>Biometric Sign In</Text>
                 </TouchableOpacity>
               </>
-            )}
+            )} */}
           </View>
 
           {/* ─── Footer ──────────────────────────────────────────── */}
@@ -220,7 +220,7 @@ export default function LoginScreen() {
               <Text style={{ color: theme.primary, fontWeight: '700' }}>Contact Facility IT Support</Text>
             </Text>
             <Text style={[styles.footerCopy, { color: theme.textMuted }]}>
-              © {new Date().getFullYear()} FM Central Enterprise. All rights reserved.
+              © {new Date().getFullYear()} Catalyst Service Solutions. All rights reserved.
             </Text>
           </View>
         </ScrollView>

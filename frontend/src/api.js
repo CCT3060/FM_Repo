@@ -119,6 +119,7 @@ export const getCompanyPortalChartStats = (token, params = {}) => {
   const q = new URLSearchParams(params).toString();
   return request("GET", `/api/company-portal/dashboard/chart-stats${q ? "?" + q : ""}`, null, { authToken: token });
 };
+export const getCompanyPortalSiteScore = (token) => request("GET", "/api/template-assignments/site-score", undefined, { authToken: token });
 export const getCompanyPortalDashboard = (token) => request("GET", "/api/company-portal/dashboard", undefined, { authToken: token });
 export const getCompanyPortalDepartments = (token) => request("GET", "/api/company-portal/departments", undefined, { authToken: token });
 export const createCompanyPortalDepartment = (token, data) => request("POST", "/api/company-portal/departments", data, { authToken: token });
@@ -156,6 +157,8 @@ export const createCompanyRole  = (token, data) => request("POST", "/api/company
 export const updateCompanyRole  = (token, id, data) => request("PUT", `/api/company-portal/roles/${id}`, data, { authToken: token });
 export const deleteCompanyRole  = (token, id) => request("DELETE", `/api/company-portal/roles/${id}`, undefined, { authToken: token });
 export const reorderCompanyRoles = (token, items) => request("PUT", "/api/company-portal/roles/reorder/bulk", { items }, { authToken: token });
+export const getCompanyPortalRolePerms  = (token) => request("GET", "/api/company-portal/roles/role-permissions", undefined, { authToken: token });
+export const saveCompanyPortalRolePerms = (token, data) => request("PUT", "/api/company-portal/roles/role-permissions", data, { authToken: token });
 export const createTemplateUserAssignment = (token, data) => request("POST", "/api/company-portal/template-user-assignments", data, { authToken: token });
 export const getTemplateUserAssignments = (token) => request("GET", "/api/company-portal/template-user-assignments", undefined, { authToken: token });
 export const getMyTemplateAssignments = (token) => request("GET", "/api/company-portal/template-user-assignments/mine", undefined, { authToken: token });

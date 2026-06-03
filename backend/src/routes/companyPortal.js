@@ -435,6 +435,10 @@ router.get("/dashboard/chart-stats", async (req, res, next) => {
       }
     }
 
+    const fromDateObj = new Date(`${dateFrom}T00:00:00`);
+    const toDateObj = new Date(`${dateTo}T00:00:00`);
+    const daySpan = Math.max(1, Math.floor((toDateObj.getTime() - fromDateObj.getTime()) / 86400000) + 1);
+
     // Run all 4 queries separately so one failure doesn't kill the rest
     const safe = async (fn) => { try { return await fn(); } catch (e) { console.error("[chart-stats]", e.message); return [[{ cnt: 0 }]]; } };
 
@@ -443,7 +447,10 @@ router.get("/dashboard/chart-stats", async (req, res, next) => {
       [companyId]
     ));
     const [[ctRows]]  = await safe(() => pool.query(
-      `SELECT COUNT(*) AS cnt FROM checklist_templates WHERE company_id = ?`,
+      `SELECT COUNT(*) AS cnt
+         FROM checklist_templates
+        WHERE company_id = ?
+          AND LOWER(TRIM(COALESCE(frequency, 'daily'))) = 'daily'`,
       [companyId]
     ));
     const [[subLSRows]] = await safe(() => pool.query(
@@ -456,19 +463,20 @@ router.get("/dashboard/chart-stats", async (req, res, next) => {
       [companyId, dateFrom, dateTo]
     ));
     const [[subCSRows]] = await safe(() => pool.query(
-      // checklist_submissions.submitted_at IS nullable — fall back to created_at
-      `SELECT COUNT(*) AS cnt
-       FROM checklist_submissions cs
-       JOIN checklist_templates ct ON ct.id = cs.template_id
-       WHERE ct.company_id = ?
-         AND COALESCE(cs.submitted_at, cs.created_at)::date BETWEEN ? AND ?`,
+      // Count one fill per template per day for daily checklist templates.
+      `SELECT COUNT(DISTINCT (cs.template_id::text || '|' || COALESCE(cs.submitted_at, cs.created_at)::date::text)) AS cnt
+         FROM checklist_submissions cs
+         JOIN checklist_templates ct ON ct.id = cs.template_id
+        WHERE ct.company_id = ?
+          AND LOWER(TRIM(COALESCE(ct.frequency, 'daily'))) = 'daily'
+          AND COALESCE(cs.submitted_at, cs.created_at)::date BETWEEN ? AND ?`,
       [companyId, dateFrom, dateTo]
     ));
 
     const totalLogsheets   = Number(ltRows?.cnt   || 0);
-    const totalChecklists  = Number(ctRows?.cnt   || 0);
+    const totalChecklists  = Number(ctRows?.cnt || 0) * daySpan;
     const filledLogsheets  = Number(subLSRows?.cnt || 0);
-    const filledChecklists = Number(subCSRows?.cnt || 0);
+    const filledChecklists = Math.min(totalChecklists, Number(subCSRows?.cnt || 0));
 
     res.json({
       totalLogsheets,
@@ -1016,6 +1024,32 @@ router.post("/checklists", async (req, res, next) => {
        RETURNING id, template_name AS "templateName", asset_type AS "assetType", service_type AS "serviceType", asset_id AS "assetId", location_id AS "locationId", category, description, frequency, shift, shift_id AS "shiftId", status, questions, created_at AS "createdAt"`,
       [cid(req), templateName.trim(), resolvedAssetType, serviceType || null, assetId || null, locationId || null, category || null, description || null, frequency, shift || null, shiftId || null, status, null, questionsJson]
     );
+    // Auto-assign new checklist to all active catalyst supervisors (can_resolve_soft_issue) of this company
+    try {
+      const newId = rows[0].id;
+      const [supervisors] = await pool.query(
+        `SELECT cu.id
+         FROM company_users cu
+         JOIN company_roles cr
+           ON cr.company_id = cu.company_id
+          AND cr.role_key = cu.role
+          AND cr.is_active = TRUE
+         WHERE cu.company_id = ?
+           AND cu.status = 'Active'
+           AND COALESCE(cr.can_resolve_soft_issue, FALSE) = TRUE`,
+        [cid(req)]
+      );
+      for (const sup of supervisors) {
+        await pool.query(
+          `INSERT INTO template_user_assignments (company_id, template_type, template_id, assigned_to, assigned_by, note)
+           VALUES (?, 'checklist', ?, ?, ?, 'Auto-assigned on creation')
+           ON CONFLICT (template_type, template_id, assigned_to) DO NOTHING`,
+          [cid(req), newId, sup.id, req.companyUser.id]
+        );
+      }
+    } catch (assignErr) {
+      console.error('[auto-assign supervisors]', assignErr.message);
+    }
     res.status(201).json(rows[0]);
   } catch (err) { next(err); }
 });
@@ -1836,7 +1870,32 @@ router.post("/employees", async (req, res, next) => {
                  created_at     AS "createdAt"`,
       [cid(req), fullName, email, phone || null, designation || null, role, shift || null, status, passwordHash, username || null, resolvedSupervisorId, resolvedDomain, employeeCode || null]
     );
-    res.status(201).json(rows[0]);
+    const newEmployee = rows[0];
+    // Auto-assign all active checklist templates if the new employee is a catalyst supervisor
+    try {
+      const [[roleRow]] = await pool.query(
+        `SELECT can_resolve_soft_issue FROM company_roles
+         WHERE company_id = ? AND role_key = ? AND is_active = TRUE LIMIT 1`,
+        [cid(req), role]
+      );
+      if (roleRow?.can_resolve_soft_issue) {
+        const [templates] = await pool.query(
+          `SELECT id FROM checklist_templates WHERE company_id = ? AND is_active = 1`,
+          [cid(req)]
+        );
+        for (const tpl of templates) {
+          await pool.query(
+            `INSERT INTO template_user_assignments (company_id, template_type, template_id, assigned_to, assigned_by, note)
+             VALUES (?, 'checklist', ?, ?, ?, 'Auto-assigned on creation')
+             ON CONFLICT (template_type, template_id, assigned_to) DO NOTHING`,
+            [cid(req), tpl.id, newEmployee.id, req.companyUser.id]
+          );
+        }
+      }
+    } catch (assignErr) {
+      console.error('[auto-assign new catalyst supervisor]', assignErr.message);
+    }
+    res.status(201).json(newEmployee);
   } catch (err) {
     if (err.code === "23505") {
       if (err.constraint === "uq_company_users_username") return res.status(409).json({ message: "Username already exists" });
@@ -2017,11 +2076,13 @@ router.get("/logsheet-templates/entries/recent", async (req, res, next) => {
               le.submitted_at AS "submittedAt",
               lt.template_name AS "templateName", lt.frequency, lt.id AS "templateId",
               a.asset_name AS "assetName", a.id AS "assetId",
+              COALESCE(loc.name, NULLIF(TRIM(CONCAT_WS(', ', a.building, a.floor, a.room)), '')) AS "locationName",
               COALESCE(le.company_user_id, le.submitted_by) AS "submittedById",
               cu.full_name AS "submittedBy"
        FROM logsheet_entries le
        LEFT JOIN logsheet_templates lt ON lt.id = le.template_id
        LEFT JOIN assets a ON a.id = le.asset_id
+       LEFT JOIN locations loc ON loc.id = lt.location_id
        LEFT JOIN company_users cu ON cu.id = COALESCE(le.company_user_id, le.submitted_by)
        WHERE lt.company_id = ?
        ORDER BY le.submitted_at DESC NULLS LAST
@@ -2042,12 +2103,14 @@ router.get("/checklist-submissions/recent", async (req, res, next) => {
             `SELECT cs.id, cs.submitted_at AS "submittedAt",
               ct.template_name AS "templateName", ct.id AS "templateId",
               a.asset_name AS "assetName", a.id AS "assetId",
+              COALESCE(loc.name, NULLIF(TRIM(CONCAT_WS(', ', a.building, a.floor, a.room)), '')) AS "locationName",
               cs.status, cs.completion_pct AS "completionPct",
               COALESCE(cs.company_user_id, cs.submitted_by) AS "submittedById",
               cu.full_name AS "submittedBy"
        FROM checklist_submissions cs
        LEFT JOIN checklist_templates ct ON ct.id = cs.template_id
        LEFT JOIN assets a ON a.id = cs.asset_id
+       LEFT JOIN locations loc ON loc.id = ct.location_id
        LEFT JOIN company_users cu ON cu.id = COALESCE(cs.company_user_id, cs.submitted_by)
        WHERE ct.company_id = ?
        ORDER BY cs.submitted_at DESC NULLS LAST
@@ -2210,6 +2273,29 @@ router.post("/template-user-assignments", async (req, res, next) => {
 });
 router.get("/template-user-assignments", async (req, res, next) => {
   try {
+    // Keep catalyst-supervisor assignments in sync: every active daily checklist
+    // should exist for every active technical supervisor.
+    try {
+      await pool.query(
+        `INSERT INTO template_user_assignments (company_id, template_type, template_id, assigned_to, assigned_by, note)
+         SELECT ?, 'checklist', ct.id, cu.id, ?, 'Auto-assigned checklist'
+         FROM checklist_templates ct
+         JOIN company_users cu ON cu.company_id = ct.company_id
+         JOIN company_roles cr
+           ON cr.company_id = cu.company_id
+          AND cr.role_key = cu.role
+          AND cr.is_active = TRUE
+         WHERE ct.company_id = ?
+           AND ct.is_active = 1
+           AND cu.status = 'Active'
+           AND COALESCE(cr.can_resolve_soft_issue, FALSE) = TRUE
+         ON CONFLICT (template_type, template_id, assigned_to) DO NOTHING`,
+        [cid(req), req.companyUser.id, cid(req)]
+      );
+    } catch (syncErr) {
+      console.error('[sync checklist assignments]', syncErr.message);
+    }
+
     const role = req.companyUser.role;
     let rows;
     if (role === "admin") {
