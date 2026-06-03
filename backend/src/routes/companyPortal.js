@@ -989,13 +989,20 @@ router.get("/checklists", async (req, res, next) => {
               ct.asset_id AS "assetId",
               ct.category, ct.description, ct.frequency, ct.shift, ct.status,
               ct.shift_id AS "shiftId", s.name AS "shiftName",
-              ct.questions, ct.created_at AS "createdAt"
+              ct.questions, ct.created_at AS "createdAt",
+              (CASE WHEN ct.questions IS NOT NULL
+                 THEN jsonb_array_length(ct.questions)
+                 ELSE (SELECT COUNT(*)::int FROM checklist_template_questions ctq WHERE ctq.template_id = ct.id)
+               END) AS "questionCount"
        FROM checklist_templates ct
        LEFT JOIN shifts s ON s.id = ct.shift_id
        WHERE ct.company_id = ? AND ct.is_active = 1
        ORDER BY ct.template_name`,
       [cid(req)]
     ).catch(() => [[]]);
+
+    const allRows = rows || [];
+
     // Fetch new columns separately — graceful if not yet migrated
     let extraMap = {};
     try {
@@ -1005,7 +1012,44 @@ router.get("/checklists", async (req, res, next) => {
       );
       for (const e of extras) extraMap[e.id] = { serviceType: e.serviceType, locationId: e.locationId };
     } catch (_) { /* columns not yet added — skip */ }
-    res.json((rows || []).map((r) => ({ ...r, ...extraMap[r.id] })));
+
+    // For templates where JSONB questions is null/empty, fetch from checklist_template_questions
+    const needQIds = allRows.filter((r) => !Array.isArray(r.questions) || r.questions.length === 0).map((r) => r.id);
+    let qFromTable = {};
+    if (needQIds.length > 0) {
+      try {
+        const [qRows] = await pool.query(
+          `SELECT template_id AS "templateId", question_text AS "questionText", input_type AS "inputType",
+                  is_required AS "isRequired", order_index AS "orderIndex",
+                  options_json AS "optionsJson", reference_image_url AS "referenceImageUrl",
+                  question_image_url AS "questionImageUrl"
+           FROM checklist_template_questions
+           WHERE template_id = ANY(?)
+           ORDER BY template_id, order_index ASC, id ASC`,
+          [needQIds]
+        );
+        for (const q of (qRows || [])) {
+          if (!qFromTable[q.templateId]) qFromTable[q.templateId] = [];
+          const opts = q.optionsJson ? (typeof q.optionsJson === "string" ? JSON.parse(q.optionsJson) : q.optionsJson) : [];
+          qFromTable[q.templateId].push({
+            questionText: q.questionText,
+            inputType: q.inputType,
+            isRequired: !!q.isRequired,
+            orderIndex: q.orderIndex,
+            options: opts,
+            referenceImageUrl: q.referenceImageUrl || null,
+            questionImageUrl: q.questionImageUrl || null,
+          });
+        }
+      } catch (_) { /* checklist_template_questions may not exist */ }
+    }
+
+    res.json(allRows.map((r) => {
+      const questions = Array.isArray(r.questions) && r.questions.length > 0
+        ? r.questions
+        : (qFromTable[r.id] || []);
+      return { ...r, ...extraMap[r.id], questions };
+    }));
   } catch (err) {
     next(err);
   }
@@ -1084,6 +1128,23 @@ router.put("/checklists/:id", async (req, res, next) => {
       [templateName || null, resolvedAssetType || null, serviceType ?? null, assetId ?? null, locationId ?? null, category || null, description || null, frequency || null, shift || null, shiftId ?? null, status || null, isActive, questionsJson ?? null, id]
     );
     res.json(rows[0]);
+  } catch (err) { next(err); }
+});
+
+router.delete("/checklists", async (req, res, next) => {
+  try {
+    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ message: "ids array required" });
+    const numIds = ids.map(Number).filter((n) => Number.isFinite(n) && n > 0);
+    if (numIds.length === 0) return res.status(400).json({ message: "Invalid ids" });
+    const [verified] = await pool.query(
+      "SELECT id FROM checklist_templates WHERE id = ANY(?) AND company_id = ?",
+      [numIds, cid(req)]
+    );
+    if (verified.length === 0) return res.status(404).json({ message: "No matching templates found" });
+    await pool.query("DELETE FROM checklist_templates WHERE id = ANY(?) AND company_id = ?", [numIds, cid(req)]);
+    res.json({ deleted: verified.length });
   } catch (err) { next(err); }
 });
 

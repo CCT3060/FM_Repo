@@ -876,13 +876,103 @@ function AssignModal({ token, companyId, template, templateType, onClose, compan
 }
 
 /* ─────────────────────────────────────────────────────────────────
+   Variant Modal  (clone template with new frequency + location)
+───────────────────────────────────────────────────────────────── */
+function VariantModal({ template, token, onClose, onCreate }) {
+  const [frequency, setFrequency] = useState("Daily");
+  const [locationId, setLocationId] = useState("");
+  const [locations, setLocations] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState(null);
+
+  useEffect(() => {
+    if (!token) return;
+    fetch(`${API_BASE}/api/company-portal/locations`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => r.ok ? r.json() : [])
+      .then((data) => setLocations(Array.isArray(data) ? data : []))
+      .catch(() => {});
+  }, [token]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleCreate = async () => {
+    setSaving(true);
+    setErr(null);
+    try {
+      const payload = {
+        templateName: template.templateName,
+        assetType: template.assetType,
+        serviceType: template.serviceType || template.assetType || undefined,
+        category: template.category || undefined,
+        description: template.description || undefined,
+        frequency,
+        locationId: locationId ? Number(locationId) : undefined,
+        questions: Array.isArray(template.questions) ? template.questions : [],
+      };
+      await onCreate(payload);
+      onClose();
+    } catch (e) {
+      setErr(e.message || "Failed to create variant");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const questionCount = Array.isArray(template.questions) ? template.questions.length : 0;
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }} onClick={onClose}>
+      <div style={{ background: "#fff", borderRadius: "14px", width: "100%", maxWidth: "480px", padding: "28px 32px", boxShadow: "0 25px 60px rgba(0,0,0,0.2)" }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+          <h3 style={{ margin: 0, fontSize: "18px", fontWeight: 800, color: "#0f172a" }}>⎘ Create Variant</h3>
+          <button onClick={onClose} style={{ background: "#f1f5f9", border: "none", borderRadius: "8px", width: "32px", height: "32px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <p style={{ color: "#64748b", fontSize: "13px", margin: "0 0 22px" }}>
+          Clone <strong>"{template.templateName}"</strong> with a different frequency and/or location.
+          {questionCount > 0 && <span style={{ color: "#16a34a", fontWeight: 600 }}> All {questionCount} question{questionCount !== 1 ? "s" : ""} will be copied.</span>}
+        </p>
+
+        <div style={{ marginBottom: "16px" }}>
+          <Label required>Frequency</Label>
+          <Sel value={frequency} onChange={(e) => setFrequency(e.target.value)}>
+            {["Hourly", "Daily", "Weekly", "Monthly", "Custom"].map((f) => <option key={f} value={f}>{f}</option>)}
+          </Sel>
+        </div>
+
+        <div style={{ marginBottom: "22px" }}>
+          <Label>Location <span style={{ fontWeight: 400, color: "#94a3b8", fontSize: "11px" }}>(optional)</span></Label>
+          <Sel value={locationId} onChange={(e) => setLocationId(e.target.value)}>
+            <option value="">— No specific location —</option>
+            {locations.map((l) => (
+              <option key={l.id} value={l.id}>{l.name}{l.building ? ` (${l.building})` : ""}</option>
+            ))}
+          </Sel>
+          {locations.length === 0 && <p style={{ fontSize: "11px", color: "#94a3b8", marginTop: "4px" }}>No locations configured yet.</p>}
+        </div>
+
+        {err && <Alert type="error">{err}</Alert>}
+
+        <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
+          <SBtn onClick={onClose} outline color="#64748b" bg="#fff">Cancel</SBtn>
+          <SBtn onClick={handleCreate} disabled={saving} bg="#059669">
+            {saving ? "Creating…" : "⎘ Create Variant"}
+          </SBtn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────
    Template List
 ───────────────────────────────────────────────────────────────── */
-const TemplateList = memo(function TemplateList({ token, companies, fetchTemplates, onBuild, onImport, onEdit, onDelete, canBuild, companyId, companyPortalMode = false, refreshKey = 0 }) {
+const TemplateList = memo(function TemplateList({ token, companies, fetchTemplates, onBuild, onImport, onEdit, onDelete, canBuild, companyId, companyPortalMode = false, refreshKey = 0, createTemplate }) {
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [search, setSearch] = useState("");
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [variantTarget, setVariantTarget] = useState(null);
   const [filterType, setFilterType] = useState("");
   const [viewTemplate, setViewTemplate] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
@@ -926,6 +1016,38 @@ const TemplateList = memo(function TemplateList({ token, companies, fetchTemplat
     return [...seen.entries()].map(([id, name]) => ({ id, name }));
   }, [templates]);
 
+  const allSelected = filtered.length > 0 && filtered.every((t) => selectedIds.has(t.id));
+
+  const handleToggleSelect = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const handleSelectAll = () => {
+    if (allSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filtered.map((t) => t.id)));
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0 || !onDelete) return;
+    if (!window.confirm(`Delete ${selectedIds.size} selected template(s)? This cannot be undone.`)) return;
+    const ids = [...selectedIds];
+    try {
+      await Promise.all(ids.map((id) => onDelete(id)));
+      setTemplates((prev) => prev.filter((t) => !ids.includes(t.id)));
+      setSelectedIds(new Set());
+    } catch (err) {
+      alert(err.message || "Some templates could not be deleted");
+      loadTemplates();
+    }
+  };
+
   const handleDelete = async (id, name) => {
     if (!onDelete) return;
     if (!window.confirm(`Delete checklist template "${name}"? This cannot be undone.`)) return;
@@ -933,6 +1055,7 @@ const TemplateList = memo(function TemplateList({ token, companies, fetchTemplat
     try {
       await onDelete(id);
       setTemplates((prev) => prev.filter((t) => t.id !== id));
+      setSelectedIds((prev) => { const next = new Set(prev); next.delete(id); return next; });
     } catch (err) {
       alert(err.message || "Could not delete template");
     } finally {
@@ -944,6 +1067,19 @@ const TemplateList = memo(function TemplateList({ token, companies, fetchTemplat
     <div>
       {viewTemplate && <ViewModal template={viewTemplate} onClose={() => setViewTemplate(null)} />}
       {assignTarget && <AssignModal token={token} companyId={companyId} template={assignTarget} templateType="checklist" onClose={() => setAssignTarget(null)} companyPortalMode={companyPortalMode} />}
+      {variantTarget && (
+        <VariantModal
+          template={variantTarget}
+          token={token}
+          onClose={() => setVariantTarget(null)}
+          onCreate={async (payload) => {
+            if (!createTemplate) throw new Error("createTemplate not available");
+            await createTemplate(token, payload);
+            setVariantTarget(null);
+            loadTemplates();
+          }}
+        />
+      )}
       {/* Header */}
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "22px" }}>
         <div>
@@ -973,7 +1109,7 @@ const TemplateList = memo(function TemplateList({ token, companies, fetchTemplat
         {[
           { label: "Total Templates", value: templates.length, bg: "#eff6ff", col: "#2563eb" },
           { label: "Active", value: templates.filter((t) => t.status === "active" || t.isActive).length, bg: "#f0fdf4", col: "#16a34a" },
-          { label: "Total Questions", value: templates.reduce((acc, t) => acc + (Array.isArray(t.questions) ? t.questions.length : 0), 0), bg: "#fffbeb", col: "#d97706" },
+          { label: "Total Questions", value: templates.reduce((acc, t) => acc + (t.questionCount != null ? t.questionCount : (Array.isArray(t.questions) ? t.questions.length : 0)), 0), bg: "#fffbeb", col: "#d97706" },
         ].map((s) => (
           <div key={s.label} style={{ background: "#fff", borderRadius: "12px", padding: "18px 22px", border: "1px solid #e2e8f0" }}>
             <p style={{ color: "#64748b", fontSize: "13px", marginBottom: "8px", fontWeight: 500 }}>{s.label}</p>
@@ -986,6 +1122,12 @@ const TemplateList = memo(function TemplateList({ token, companies, fetchTemplat
       <Card>
         <CardHeader>All Templates</CardHeader>
         <div style={{ padding: "10px 16px", borderBottom: "1px solid #e2e8f0", display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+          {canBuild && onDelete && selectedIds.size > 0 && (
+            <SBtn onClick={handleBulkDelete} bg="#dc2626" style={{ marginRight: "4px" }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+              Delete Selected ({selectedIds.size})
+            </SBtn>
+          )}
           <Sel value={filterType} onChange={(e) => setFilterType(e.target.value)} style={{ width: "150px" }}>
             <option value="">All Service Types</option>
             {uniqueServiceTypes.map((v) => <option key={v} value={v}>{v}</option>)}
@@ -1005,6 +1147,11 @@ const TemplateList = memo(function TemplateList({ token, companies, fetchTemplat
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
             <thead>
               <tr>
+                {canBuild && onDelete && (
+                  <th style={{ padding: "12px 16px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", width: "40px" }}>
+                    <input type="checkbox" checked={allSelected} onChange={handleSelectAll} style={{ cursor: "pointer", width: "15px", height: "15px" }} title={allSelected ? "Deselect all" : "Select all"} />
+                  </th>
+                )}
                 {["#", "Template Name", "Service Type", "Category", "Frequency", "Questions", "Status", "Actions"].map((h) => (
                   <th key={h} style={{ padding: "12px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.05em", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>{h}</th>
                 ))}
@@ -1012,10 +1159,10 @@ const TemplateList = memo(function TemplateList({ token, companies, fetchTemplat
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan="8" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>Loading templates…</td></tr>
+                <tr><td colSpan="9" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>Loading templates…</td></tr>
               )}
               {!loading && filtered.length === 0 && (
-                <tr><td colSpan="8" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>
+                <tr><td colSpan="9" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>
                   No checklist templates found.{canBuild && onBuild && (
                     <> <button onClick={onBuild} style={{ color: "#2563eb", background: "none", border: "none", cursor: "pointer", fontWeight: 600, fontSize: "14px" }}>Create your first →</button></>
                   )}
@@ -1023,8 +1170,14 @@ const TemplateList = memo(function TemplateList({ token, companies, fetchTemplat
               )}
               {!loading && filtered.map((t, i) => {
                 const qs = Array.isArray(t.questions) ? t.questions : [];
+                const qCount = t.questionCount != null ? t.questionCount : qs.length;
                 return (
-                  <tr key={t.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                  <tr key={t.id} style={{ borderBottom: "1px solid #f1f5f9", background: selectedIds.has(t.id) ? "#f0f9ff" : undefined }}>
+                    {canBuild && onDelete && (
+                      <td style={{ padding: "13px 16px" }}>
+                        <input type="checkbox" checked={selectedIds.has(t.id)} onChange={() => handleToggleSelect(t.id)} style={{ cursor: "pointer", width: "15px", height: "15px" }} />
+                      </td>
+                    )}
                     <td style={{ padding: "13px 16px", color: "#64748b" }}>{i + 1}</td>
                     <td style={{ padding: "13px 16px" }}>
                       <div style={{ fontWeight: 700, color: "#0f172a" }}>{t.templateName}</div>
@@ -1035,7 +1188,7 @@ const TemplateList = memo(function TemplateList({ token, companies, fetchTemplat
                     </td>
                     <td style={{ padding: "13px 16px", color: "#64748b", fontSize: "13px" }}>{t.category || "—"}</td>
                     <td style={{ padding: "13px 16px", color: "#64748b", fontSize: "13px" }}>{t.frequency || "—"}</td>
-                    <td style={{ padding: "13px 16px", color: "#475569" }}>{qs.length}</td>
+                    <td style={{ padding: "13px 16px", color: "#475569" }}>{qCount}</td>
                     <td style={{ padding: "13px 16px" }}>
                       <Badge
                         bg={(t.status === "active" || t.isActive) ? "#f0fdf4" : "#fef2f2"}
@@ -1072,8 +1225,8 @@ const TemplateList = memo(function TemplateList({ token, companies, fetchTemplat
                           </button>
                         )}
                         {/* Clone for frequency */}
-                        {canBuild && onBuild && (
-                          <button onClick={() => onBuild(t)} title="Clone for different frequency"
+                        {canBuild && (companyPortalMode ? createTemplate : onBuild) && (
+                          <button onClick={() => companyPortalMode ? setVariantTarget(t) : onBuild && onBuild(t)} title="Clone for different frequency / location"
                             style={{ padding: "5px 9px", background: "#f0fdf4", color: "#059669", border: "1px solid #6ee7b7", borderRadius: "6px", fontSize: "12px", cursor: "pointer", fontWeight: 600 }}>
                             ⎘ Variant
                           </button>
@@ -1187,6 +1340,7 @@ export default function ChecklistTemplateModule({
         fetchTemplates={fetchTemplates}
         companyId={companyId}
         refreshKey={refreshKey}
+        createTemplate={createTemplate}
         onBuild={canBuild && createTemplate ? (t) => {
           if (t && t.id) { setCloneTarget(t); setView("clone"); }
           else setView("builder");
