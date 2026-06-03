@@ -859,7 +859,8 @@ function AssignTemplateModal({ employee, token, checklists = [], logsheetTemplat
 const LocLbl = ({ children }) => <label style={{ fontSize: "12px", fontWeight: 600, color: "#475569", display: "block", marginBottom: "4px" }}>{children}</label>;
 const locInpStyle = { width: "100%", padding: "8px 12px", borderRadius: "8px", border: "1px solid #e2e8f0", fontSize: "13px", outline: "none", boxSizing: "border-box" };
 
-function LocationForm({ initial, onSave, onCancel }) {
+function LocationForm({ initial, onSave, onSaveBulk, onCancel }) {
+  const isEdit = !!initial;
   const [form, setForm] = useState({
     name: initial?.name || "",
     building: initial?.building || "",
@@ -867,16 +868,43 @@ function LocationForm({ initial, onSave, onCancel }) {
     room: initial?.room || "",
     status: initial?.status || "Active",
   });
+  const [multiRoom, setMultiRoom] = useState(false);
+  const [roomPrefix, setRoomPrefix] = useState("Room ");
+  const [roomFrom, setRoomFrom] = useState("");
+  const [roomTo, setRoomTo] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
   const handleSave = async () => {
     if (!form.name.trim()) return setError("Location name is required");
-    setSaving(true); setError(null);
-    try { await onSave(form); }
-    catch (err) { setError(err.message || "Save failed"); }
-    finally { setSaving(false); }
+    if (!isEdit && multiRoom) {
+      const from = parseInt(roomFrom, 10);
+      const to   = parseInt(roomTo, 10);
+      if (isNaN(from) || isNaN(to) || from > to) return setError("Enter a valid room number range (From ≤ To)");
+      if (to - from > 499) return setError("Range too large — max 500 rooms at once");
+      setSaving(true); setError(null);
+      try {
+        const locations = [];
+        for (let n = from; n <= to; n++) {
+          const roomLabel = `${roomPrefix}${n}`.trim();
+          locations.push({ name: `${form.name} ${roomLabel}`.trim(), building: form.building, floor: form.floor, room: roomLabel, status: form.status });
+        }
+        await onSaveBulk(locations);
+      } catch (err) { setError(err.message || "Save failed"); }
+      finally { setSaving(false); }
+    } else {
+      setSaving(true); setError(null);
+      try { await onSave(form); }
+      catch (err) { setError(err.message || "Save failed"); }
+      finally { setSaving(false); }
+    }
   };
+
+  const roomCount = (() => {
+    const f = parseInt(roomFrom, 10), t = parseInt(roomTo, 10);
+    if (!isNaN(f) && !isNaN(t) && t >= f) return t - f + 1;
+    return 0;
+  })();
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
@@ -894,11 +922,51 @@ function LocationForm({ initial, onSave, onCancel }) {
           <LocLbl>Floor</LocLbl>
           <input value={form.floor} onChange={(e) => setForm(p => ({ ...p, floor: e.target.value }))} placeholder="e.g. Ground Floor" style={locInpStyle} />
         </div>
-        <div>
-          <LocLbl>Room</LocLbl>
-          <input value={form.room} onChange={(e) => setForm(p => ({ ...p, room: e.target.value }))} placeholder="e.g. Room 101" style={locInpStyle} />
-        </div>
+        {(!isEdit && !multiRoom) && (
+          <div>
+            <LocLbl>Room</LocLbl>
+            <input value={form.room} onChange={(e) => setForm(p => ({ ...p, room: e.target.value }))} placeholder="e.g. Room 101" style={locInpStyle} />
+          </div>
+        )}
       </div>
+
+      {/* Multiple rooms toggle (add mode only) */}
+      {!isEdit && (
+        <div style={{ background: "#f8fafc", borderRadius: "10px", padding: "12px 14px", border: "1px solid #e2e8f0" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: "10px", cursor: "pointer", userSelect: "none" }}>
+            <input type="checkbox" checked={multiRoom} onChange={(e) => setMultiRoom(e.target.checked)}
+              style={{ width: "16px", height: "16px", accentColor: "#2563eb", cursor: "pointer" }} />
+            <span style={{ fontSize: "13px", fontWeight: 600, color: "#374151" }}>Create multiple rooms?</span>
+          </label>
+          {multiRoom && (
+            <div style={{ marginTop: "12px", display: "flex", flexDirection: "column", gap: "10px" }}>
+              <div style={{ fontSize: "12px", color: "#64748b" }}>
+                Each room will be created as a separate location: <strong>"{form.name || "Location"} {roomPrefix || ""}{"<number>"}"</strong>
+              </div>
+              <div>
+                <LocLbl>Room Label Prefix</LocLbl>
+                <input value={roomPrefix} onChange={(e) => setRoomPrefix(e.target.value)} placeholder="e.g. Room " style={locInpStyle} />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                <div>
+                  <LocLbl>From Room #</LocLbl>
+                  <input type="number" value={roomFrom} onChange={(e) => setRoomFrom(e.target.value)} placeholder="e.g. 601" style={locInpStyle} min="1" />
+                </div>
+                <div>
+                  <LocLbl>To Room #</LocLbl>
+                  <input type="number" value={roomTo} onChange={(e) => setRoomTo(e.target.value)} placeholder="e.g. 620" style={locInpStyle} min="1" />
+                </div>
+              </div>
+              {roomCount > 0 && (
+                <div style={{ padding: "8px 12px", background: "#eff6ff", borderRadius: "7px", fontSize: "12.5px", color: "#2563eb", fontWeight: 600 }}>
+                  Will create {roomCount} location{roomCount !== 1 ? "s" : ""}: {form.name || "Location"} {roomPrefix}{roomFrom} → {form.name || "Location"} {roomPrefix}{roomTo}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       <div>
         <LocLbl>Status</LocLbl>
         <select value={form.status} onChange={(e) => setForm(p => ({ ...p, status: e.target.value }))} style={{ padding: "8px 12px", borderRadius: "8px", border: "1px solid #e2e8f0", fontSize: "13px", outline: "none" }}>
@@ -908,7 +976,9 @@ function LocationForm({ initial, onSave, onCancel }) {
       </div>
       <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end", paddingTop: "4px" }}>
         <button type="button" onClick={onCancel} className="btn-cancel">Cancel</button>
-        <button type="button" onClick={handleSave} className="btn-submit" disabled={saving}>{saving ? "Saving…" : "Save Location"}</button>
+        <button type="button" onClick={handleSave} className="btn-submit" disabled={saving}>
+          {saving ? "Saving…" : (multiRoom && roomCount > 0 ? `Create ${roomCount} Rooms` : "Save Location")}
+        </button>
       </div>
     </div>
   );
@@ -3602,6 +3672,7 @@ export default function CompanyEmployeePortal() {
   const [selectedLocIds, setSelectedLocIds] = useState(new Set());
   const [bulkLocQrPrinting, setBulkLocQrPrinting] = useState(false);
   const [showLocSettings, setShowLocSettings] = useState(false);
+  const [showLocImport, setShowLocImport] = useState(false);
   const [locQrSettings, setLocQrSettings] = useState(() => {
     try {
       const saved = localStorage.getItem('locQrSettings');
@@ -4071,6 +4142,50 @@ export default function CompanyEmployeePortal() {
     if (isEdit) setLocations(p => p.map(l => l.id === data.id ? data : l));
     else setLocations(p => [...p, data]);
     setShowLocModal(false); setEditLoc(null);
+  };
+
+  const handleBulkSaveLocations = async (locations) => {
+    const r = await fetch("/api/company-portal/locations/bulk", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ locations }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.message || "Bulk save failed");
+    setLocations(p => [...p, ...data.created]);
+    setShowLocModal(false); setEditLoc(null);
+    alert(`✓ ${data.count} location${data.count !== 1 ? "s" : ""} created successfully!`);
+  };
+
+  const handleExportLocations = async () => {
+    try {
+      const r = await fetch("/api/company-portal/locations/export", { headers: { Authorization: `Bearer ${token}` } });
+      if (!r.ok) throw new Error("Export failed");
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = "locations.xlsx"; a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) { alert(err.message || "Export failed"); }
+  };
+
+  const handleImportLocations = async (file) => {
+    if (!file) return;
+    const fd = new FormData();
+    fd.append("file", file);
+    try {
+      const r = await fetch("/api/company-portal/locations/bulk-import", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: fd,
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.message || "Import failed");
+      setLocations(p => [...p, ...data.created]);
+      let msg = `✓ ${data.count} location${data.count !== 1 ? "s" : ""} imported successfully!`;
+      if (data.errors?.length) msg += `\n\nWarnings:\n${data.errors.join("\n")}`;
+      alert(msg);
+    } catch (err) { alert(err.message || "Import failed"); }
   };
 
   const handleDeleteLocation = async (id) => {
@@ -5926,6 +6041,18 @@ export default function CompanyEmployeePortal() {
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                       Add Location
                     </Btn>
+                    {/* Bulk Import */}
+                    <button onClick={() => setShowLocImport(true)} title="Bulk Import Locations"
+                      style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 12px", borderRadius: "8px", background: "#fffbeb", color: "#b45309", border: "1px solid #fde68a", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                      Bulk Import
+                    </button>
+                    {/* Bulk Export */}
+                    <button onClick={handleExportLocations} title="Export Locations to Excel"
+                      style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 12px", borderRadius: "8px", background: "#f0fdf4", color: "#16a34a", border: "1px solid #bbf7d0", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                      Bulk Export
+                    </button>
                     <button onClick={() => setShowLocSettings(true)} title="QR Settings"
                       style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 12px", borderRadius: "8px", background: "#f8fafc", color: "#475569", border: "1px solid #e2e8f0", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 19.07a10 10 0 0 1 0-14.14"/></svg>
@@ -6041,12 +6168,71 @@ export default function CompanyEmployeePortal() {
               {showLocModal && (
                 <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.5)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}
                   onClick={() => { setShowLocModal(false); setEditLoc(null); }}>
-                  <div style={{ background: "#fff", borderRadius: "16px", padding: "28px", maxWidth: "480px", width: "100%", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }} onClick={(e) => e.stopPropagation()}>
+                  <div style={{ background: "#fff", borderRadius: "16px", padding: "28px", maxWidth: "520px", width: "100%", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }} onClick={(e) => e.stopPropagation()}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
                       <h2 style={{ fontSize: "17px", fontWeight: 700, color: "#0f172a" }}>{editLoc ? "Edit Location" : "Add Location"}</h2>
                       <button onClick={() => { setShowLocModal(false); setEditLoc(null); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: "22px" }}>✕</button>
                     </div>
-                    <LocationForm initial={editLoc} onSave={handleSaveLocation} onCancel={() => { setShowLocModal(false); setEditLoc(null); }} />
+                    <LocationForm initial={editLoc} onSave={handleSaveLocation} onSaveBulk={handleBulkSaveLocations} onCancel={() => { setShowLocModal(false); setEditLoc(null); }} />
+                  </div>
+                </div>
+              )}
+
+              {/* Bulk Import Modal */}
+              {showLocImport && (
+                <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.5)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}
+                  onClick={() => setShowLocImport(false)}>
+                  <div style={{ background: "#fff", borderRadius: "16px", padding: "28px", maxWidth: "560px", width: "100%", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }} onClick={(e) => e.stopPropagation()}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+                      <h2 style={{ fontSize: "17px", fontWeight: 700, color: "#0f172a" }}>Bulk Import Locations</h2>
+                      <button onClick={() => setShowLocImport(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: "22px" }}>✕</button>
+                    </div>
+                    {/* Format guide */}
+                    <div style={{ background: "#f8fafc", borderRadius: "10px", padding: "14px", marginBottom: "16px", border: "1px solid #e2e8f0" }}>
+                      <p style={{ fontWeight: 700, fontSize: "12.5px", color: "#374151", marginBottom: "8px" }}>📋 Required Excel / CSV Format:</p>
+                      <div style={{ overflowX: "auto" }}>
+                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
+                          <thead>
+                            <tr style={{ background: "#2563eb", color: "#fff" }}>
+                              {["Location Name *", "Campus", "Building", "Floor", "Room", "Status"].map(h => (
+                                <th key={h} style={{ padding: "6px 10px", textAlign: "left", whiteSpace: "nowrap" }}>{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {[
+                              ["Room 601", "Mirayee", "Building A", "6", "601", "Active"],
+                              ["Room 602", "Mirayee", "Building A", "6", "602", "Active"],
+                              ["Lobby", "", "Main Block", "G", "", "Active"],
+                            ].map((row, i) => (
+                              <tr key={i} style={{ borderBottom: "1px solid #e2e8f0", background: i % 2 === 0 ? "#fff" : "#f8fafc" }}>
+                                {row.map((cell, j) => <td key={j} style={{ padding: "5px 10px", color: "#374151" }}>{cell}</td>)}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <p style={{ fontSize: "11.5px", color: "#64748b", marginTop: "8px" }}>* <strong>Location Name</strong> is required. All other columns are optional. Status must be <em>Active</em> or <em>Inactive</em>.</p>
+                    </div>
+                    <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+                      <button onClick={handleExportLocations}
+                        style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "8px", background: "#f0fdf4", color: "#16a34a", border: "1px solid #bbf7d0", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        Download Template
+                      </button>
+                      <label style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "8px", background: "#2563eb", color: "#fff", border: "none", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                        Upload File (.xlsx / .csv)
+                        <input type="file" accept=".xlsx,.xls,.csv" style={{ display: "none" }}
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            await handleImportLocations(file);
+                            e.target.value = "";
+                            setShowLocImport(false);
+                          }} />
+                      </label>
+                    </div>
                   </div>
                 </div>
               )}

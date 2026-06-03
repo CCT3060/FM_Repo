@@ -4,6 +4,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
 import multer from "multer";
+import * as XLSX from "xlsx";
 import pool from "../db.js";
 import { requireCompanyAuth } from "../middleware/companyAuth.js";
 import { evaluateRule, createFlag, detectChecklistFlags } from "../utils/flagsHelper.js";
@@ -967,6 +968,103 @@ router.delete("/locations", async (req, res, next) => {
       [companyId, ...safeIds]
     );
     res.json({ ok: true, deleted: safeIds.length });
+  } catch (err) { next(err); }
+});
+
+/* ── Locations: Bulk create (multiple rooms) ─────────────────────────────── */
+router.post("/locations/bulk", async (req, res, next) => {
+  try {
+    const companyId = cid(req);
+    const userId = req.companyUser.id;
+    const { locations } = req.body;
+    if (!Array.isArray(locations) || locations.length === 0)
+      return res.status(400).json({ message: "locations array is required" });
+
+    const created = [];
+    for (const loc of locations) {
+      const { name, campus, building, floor, room, status = "Active" } = loc;
+      if (!name?.trim()) continue;
+      const [rows] = await pool.query(
+        `INSERT INTO locations (company_id, name, campus, building, floor, room, status, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         RETURNING id, name, campus, building, floor, room, qr_code AS "qrCode", status, created_at AS "createdAt"`,
+        [companyId, name.trim(), campus || null, building || null, floor || null, room || null, status, userId]
+      );
+      if (rows[0]) created.push(rows[0]);
+    }
+    res.status(201).json({ created, count: created.length });
+  } catch (err) { next(err); }
+});
+
+/* ── Locations: Export to Excel ─────────────────────────────────────────── */
+router.get("/locations/export", async (req, res, next) => {
+  try {
+    const companyId = cid(req);
+    const [rows] = await pool.query(
+      `SELECT name AS "Location Name", campus AS "Campus", building AS "Building",
+              floor AS "Floor", room AS "Room", status AS "Status"
+       FROM locations WHERE company_id = ? ORDER BY name ASC`,
+      [companyId]
+    );
+    const ws = XLSX.utils.json_to_sheet(rows.length ? rows : [
+      { "Location Name": "", Campus: "", Building: "", Floor: "", Room: "", Status: "Active" }
+    ]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Locations");
+    const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+    res.setHeader("Content-Disposition", "attachment; filename=locations.xlsx");
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.send(buf);
+  } catch (err) { next(err); }
+});
+
+/* ── Locations: Bulk import from Excel/CSV ──────────────────────────────── */
+const locImportStorage = multer.memoryStorage();
+const uploadLocImport = multer({
+  storage: locImportStorage,
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (/\.(xlsx|xls|csv)$/i.test(file.originalname)) cb(null, true);
+    else cb(new Error("Only Excel (.xlsx, .xls) or CSV files are allowed"));
+  },
+});
+
+router.post("/locations/bulk-import", uploadLocImport.single("file"), async (req, res, next) => {
+  try {
+    const companyId = cid(req);
+    const userId = req.companyUser.id;
+    if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+
+    const wb = XLSX.read(req.file.buffer, { type: "buffer" });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const data = XLSX.utils.sheet_to_json(ws, { defval: "" });
+
+    if (!data.length) return res.status(400).json({ message: "File is empty" });
+
+    const created = [];
+    const errors = [];
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const name = (row["Location Name"] || row["name"] || "").toString().trim();
+      if (!name) { errors.push(`Row ${i + 2}: Location Name is required`); continue; }
+      const campus   = (row["Campus"]   || row["campus"]   || "").toString().trim() || null;
+      const building = (row["Building"] || row["building"] || "").toString().trim() || null;
+      const floor    = (row["Floor"]    || row["floor"]    || "").toString().trim() || null;
+      const room     = (row["Room"]     || row["room"]     || "").toString().trim() || null;
+      const status   = (row["Status"]   || row["status"]   || "Active").toString().trim();
+      try {
+        const [rows] = await pool.query(
+          `INSERT INTO locations (company_id, name, campus, building, floor, room, status, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           RETURNING id, name, campus, building, floor, room, qr_code AS "qrCode", status, created_at AS "createdAt"`,
+          [companyId, name, campus, building, floor, room, status, userId]
+        );
+        if (rows[0]) created.push(rows[0]);
+      } catch (e) {
+        errors.push(`Row ${i + 2}: ${e.message}`);
+      }
+    }
+    res.json({ created, count: created.length, errors });
   } catch (err) { next(err); }
 });
 

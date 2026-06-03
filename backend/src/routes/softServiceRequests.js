@@ -606,7 +606,9 @@ router.put("/requests/:id/resolve", async (req, res, next) => {
     );
     if (!request) return res.status(404).json({ message: "Request not found" });
     if (request.status === "resolved") return res.status(409).json({ message: "Request already resolved" });
-    if (request.assignedToUserId && Number(request.assignedToUserId) !== Number(userId)) {
+    // Admins can resolve any request; non-admins can only resolve requests assigned to themselves or unassigned
+    const isAdmin = roleKey === "admin";
+    if (!isAdmin && request.assignedToUserId && Number(request.assignedToUserId) !== Number(userId)) {
       return res.status(403).json({ message: "This request is assigned to another supervisor" });
     }
 
