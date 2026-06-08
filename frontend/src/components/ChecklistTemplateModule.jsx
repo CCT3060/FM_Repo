@@ -36,6 +36,7 @@ const emptyQuestion = () => ({
   _id: Math.random().toString(36).slice(2),
   questionText: "",
   inputType: "yes_no",
+  inputTypes: ["yes_no"],
   isRequired: true,
   options: [],
   _optionsText: "",
@@ -177,6 +178,39 @@ function QuestionRow({ q, idx, onChange, onRemove, token, apiBase }) {
   const updateRule = (field, val) => update("rule", { ...(q.rule || {}), [field]: val });
   const [imgUploading, setImgUploading] = useState(false);
   const [qImgUploading, setQImgUploading] = useState(false);
+  const [inputTypeOpen, setInputTypeOpen] = useState(false);
+  const inputTypeRef = useRef(null);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    if (!inputTypeOpen) return;
+    const handler = (e) => {
+      if (inputTypeRef.current && !inputTypeRef.current.contains(e.target)) {
+        setInputTypeOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [inputTypeOpen]);
+
+  // Helper: compute selected types array
+  const selectedTypes = Array.isArray(q.inputTypes) && q.inputTypes.length > 0
+    ? q.inputTypes
+    : [q.inputType || "yes_no"];
+
+  const toggleType = (value) => {
+    const already = selectedTypes.includes(value);
+    let next;
+    if (already) {
+      if (selectedTypes.length === 1) return; // must keep at least one
+      next = selectedTypes.filter((v) => v !== value);
+    } else {
+      next = [...selectedTypes, value];
+    }
+    // Single onChange call — two separate update() calls each spread the OLD q,
+    // so the second would stomp the first. Merge both fields in one shot.
+    onChange(idx, { ...q, inputTypes: next, inputType: next[0] });
+  };
 
   const uploadImage = async (file, onDone, setUploading) => {
     if (!file || !token) return;
@@ -247,11 +281,65 @@ function QuestionRow({ q, idx, onChange, onRemove, token, apiBase }) {
             )}
           </div>
         </div>
-        <div>
+        <div style={{ position: "relative" }} ref={inputTypeRef}>
           <Label>Input Type</Label>
-          <Sel value={q.inputType} onChange={(e) => update("inputType", e.target.value)}>
-            {INPUT_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-          </Sel>
+          {/* Trigger button — looks like a select, opens multiselect panel */}
+          <button
+            type="button"
+            onClick={() => setInputTypeOpen((o) => !o)}
+            style={{
+              width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between",
+              padding: "7px 10px", border: "1px solid #e2e8f0", borderRadius: "7px",
+              background: "#fff", cursor: "pointer", fontSize: "13px", color: "#0f172a",
+              textAlign: "left", gap: "6px", minHeight: "36px",
+              boxShadow: inputTypeOpen ? "0 0 0 2px #bfdbfe" : "none",
+              outline: "none",
+            }}
+          >
+            <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {selectedTypes.length === 1
+                ? (INPUT_TYPES.find((t) => t.value === selectedTypes[0])?.label || selectedTypes[0])
+                : `${INPUT_TYPES.find((t) => t.value === selectedTypes[0])?.label || selectedTypes[0]} +${selectedTypes.length - 1} more`
+              }
+            </span>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2.5"
+              style={{ flexShrink: 0, transform: inputTypeOpen ? "rotate(180deg)" : "none", transition: "transform .15s" }}>
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+          {/* Dropdown panel */}
+          {inputTypeOpen && (
+            <div style={{
+              position: "absolute", zIndex: 200, top: "calc(100% + 4px)", left: 0, right: 0,
+              background: "#fff", border: "1px solid #e2e8f0", borderRadius: "8px",
+              boxShadow: "0 8px 24px rgba(0,0,0,.12)", padding: "4px",
+              maxHeight: "220px", overflowY: "auto",
+            }}>
+              {INPUT_TYPES.map((t) => {
+                const checked = selectedTypes.includes(t.value);
+                const isPrimary = selectedTypes[0] === t.value;
+                return (
+                  <label key={t.value} style={{
+                    display: "flex", alignItems: "center", gap: "8px", padding: "6px 10px",
+                    cursor: "pointer", borderRadius: "6px", userSelect: "none",
+                    background: checked ? "#eff6ff" : "transparent",
+                    color: checked ? "#2563eb" : "#374151",
+                    fontSize: "13px", fontWeight: checked ? 600 : 400,
+                  }}>
+                    <input
+                      type="checkbox" checked={checked}
+                      onChange={() => toggleType(t.value)}
+                      style={{ accentColor: "#2563eb", cursor: "pointer", width: "14px", height: "14px", flexShrink: 0 }}
+                    />
+                    <span style={{ flex: 1 }}>{t.label}</span>
+                    {isPrimary && selectedTypes.length > 1 && (
+                      <span style={{ fontSize: "10px", color: "#94a3b8", background: "#f1f5f9", borderRadius: "4px", padding: "1px 5px" }}>primary</span>
+                    )}
+                  </label>
+                );
+              })}
+            </div>
+          )}
         </div>
         <div>
           <Label>Required</Label>
@@ -405,13 +493,19 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
         serviceType: source.serviceType || "",
         assetId: source.assetId ? String(source.assetId) : "",
         locationId: source.locationId ? String(source.locationId) : "",
+        buildingId: source.buildingId ? String(source.buildingId) : "",
+        floorId: source.floorId ? String(source.floorId) : "",
+        roomId: source.roomId ? String(source.roomId) : "",
         category: source.category || "",
         description: source.description || "",
         // When cloning, clear frequency so user picks a new one
         frequency: isClone ? "" : (source.frequency || "Daily"),
         customHours: isClone ? [] : (Array.isArray(source.customHours) ? source.customHours : []),
+        weekDays: isClone ? [] : (Array.isArray(source.weekDays) ? source.weekDays : []),
+        hourlyInterval: source.hourlyInterval ?? 1,
         shiftId: source.shiftId ? String(source.shiftId) : "",
         status: source.status || "active",
+        hasRemark: source.hasRemark != null ? !!source.hasRemark : true,
       };
     }
     return {
@@ -421,12 +515,18 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
       serviceType: "",
       assetId: "",
       locationId: "",
+      buildingId: "",
+      floorId: "",
+      roomId: "",
       category: "",
       description: "",
       frequency: "Daily",
       customHours: [],
+      weekDays: [],
+      hourlyInterval: 1,
       shiftId: "",
       status: "active",
+      hasRemark: true,
     };
   });
 
@@ -437,6 +537,7 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
         _id: Math.random().toString(36).slice(2),
         questionText: q.questionText || "",
         inputType: q.inputType || "yes_no",
+        inputTypes: Array.isArray(q.inputTypes) ? q.inputTypes : [q.inputType || "yes_no"],
         isRequired: q.isRequired ?? q.is_required ?? true,
         options: q.options || [],
         _optionsText: Array.isArray(q.options) ? q.options.join(", ") : "",
@@ -454,6 +555,9 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
   const [error, setError] = useState(null);
   const [assets, setAssets] = useState(assetsProp);
   const [locations, setLocations] = useState([]);
+  const [buildings, setBuildings] = useState([]);
+  const [bldgFloors, setBldgFloors] = useState([]);   // all floors
+  const [bldgRooms, setBldgRooms] = useState([]);     // all rooms
   // Track latest assets without triggering the reset effect on load
   const assetsRef = useRef(assetsProp);
   // Track previous company/type so reset only fires on explicit user changes
@@ -480,13 +584,19 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
     return () => { cancelled = true; };
   }, [token, form.companyId]);  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Fetch locations when service type is soft_service
+  // Fetch locations and building hierarchy when service type is soft_service
   useEffect(() => {
     if (!token || !companyPortalMode || form.serviceType !== "soft_service") return;
     fetch(`${API_BASE}/api/company-portal/locations`, { headers: { Authorization: `Bearer ${token}` } })
       .then((r) => r.ok ? r.json() : [])
       .then((data) => setLocations(Array.isArray(data) ? data : []))
       .catch(() => {});
+    fetch(`${API_BASE}/api/company-portal/buildings`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => r.ok ? r.json() : []).then((d) => setBuildings(Array.isArray(d) ? d : [])).catch(() => {});
+    fetch(`${API_BASE}/api/company-portal/floors`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => r.ok ? r.json() : []).then((d) => setBldgFloors(Array.isArray(d) ? d : [])).catch(() => {});
+    fetch(`${API_BASE}/api/company-portal/rooms`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => r.ok ? r.json() : []).then((d) => setBldgRooms(Array.isArray(d) ? d : [])).catch(() => {});
   }, [token, companyPortalMode, form.serviceType]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keep assetsRef in sync so the reset effect always reads the latest list
@@ -537,15 +647,22 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
       serviceType: form.serviceType || undefined,
       assetId: form.serviceType !== "soft_service" && form.assetId ? Number(form.assetId) : undefined,
       locationId: form.serviceType === "soft_service" && form.locationId ? Number(form.locationId) : undefined,
+      buildingId: form.serviceType === "soft_service" && form.buildingId ? Number(form.buildingId) : undefined,
+      floorId: form.serviceType === "soft_service" && form.floorId ? Number(form.floorId) : undefined,
+      roomId: form.serviceType === "soft_service" && form.roomId ? Number(form.roomId) : undefined,
       category: form.category.trim() || undefined,
       description: form.description.trim() || undefined,
       frequency: form.frequency || "Custom",
       customHours: (form.frequency === "" || form.frequency === "Custom") ? (form.customHours || []) : undefined,
+      weekDays: form.frequency === "Weekly" ? (form.weekDays || []) : undefined,
+      hourlyInterval: form.frequency === "Hourly" ? (form.hourlyInterval || 1) : undefined,
       shiftId: form.shiftId ? Number(form.shiftId) : undefined,
       status: form.status,
+      hasRemark: !!form.hasRemark,
       questions: questions.map((q, idx) => ({
         questionText: q.questionText.trim() || (q.questionImageUrl ? "[Photo Question]" : ""),
         inputType: q.inputType,
+        inputTypes: q.inputTypes || [q.inputType],
         isRequired: q.isRequired,
         orderIndex: idx,
         referenceImageUrl: q.referenceImageUrl || undefined,
@@ -625,7 +742,7 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
             <Label>Select Service Type</Label>
             <SearchableSelect
               value={form.serviceType || ""}
-              onChange={(v) => setForm((p) => ({ ...p, serviceType: v, assetType: v || "generic", assetId: "", locationId: "" }))}
+              onChange={(v) => setForm((p) => ({ ...p, serviceType: v, assetType: v || "generic", assetId: "", locationId: "", buildingId: "", floorId: "", roomId: "" }))}
               options={[
                 { value: "", label: "— Select service type —" },
                 { value: "soft_service", label: "Soft Service" },
@@ -636,42 +753,70 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
               placeholder="Search service type…"
             />
           </div>
-          <div>
-            {form.serviceType === "soft_service" ? (
-              <>
-                <Label>Location</Label>
+          {form.serviceType === "soft_service" ? (
+            <>
+              {/* ── Cascading Building → Floor → Room dropdowns (each a grid cell) ── */}
+              <div>
+                <Label>Building</Label>
                 <SearchableSelect
-                  value={String(form.locationId ?? "")}
-                  onChange={(v) => setForm((p) => ({ ...p, locationId: v }))}
+                  value={String(form.buildingId ?? "")}
+                  onChange={(v) => setForm((p) => ({ ...p, buildingId: v, floorId: "", roomId: "" }))}
                   options={[
-                    { value: "", label: "— Select location —" },
-                    ...locations.map((l) => ({ value: String(l.id), label: l.name + (l.building ? ` (${l.building})` : "") }))
+                    { value: "", label: "— Select building —" },
+                    ...buildings.map((b) => ({ value: String(b.id), label: b.name }))
                   ]}
-                  placeholder="Search & select location…"
+                  placeholder="Search building…"
                 />
-                {locations.length === 0 && <p style={{ fontSize: "11px", color: "#94a3b8", marginTop: "4px" }}>No locations found. Add locations in the Locations module.</p>}
-              </>
-            ) : (
-              <>
-                <Label>Asset</Label>
+                {buildings.length === 0 && <p style={{ fontSize: "11px", color: "#94a3b8", marginTop: "4px" }}>No buildings — add in Locations → Buildings.</p>}
+              </div>
+              <div>
+                <Label>Floor</Label>
                 <SearchableSelect
-                  value={String(form.assetId ?? "")}
-                  onChange={(v) => setForm((p) => ({ ...p, assetId: v }))}
+                  value={String(form.floorId ?? "")}
+                  onChange={(v) => setForm((p) => ({ ...p, floorId: v, roomId: "" }))}
                   options={[
-                    { value: "", label: "— Select asset —" },
-                    ...filteredChecklistAssets.map((a) => ({ value: String(a.id), label: a.assetName || a.asset_name }))
+                    { value: "", label: "— Select floor —" },
+                    ...bldgFloors.filter((f) => !form.buildingId || String(f.buildingId) === String(form.buildingId))
+                      .map((f) => ({ value: String(f.id), label: `Floor ${f.floorNumber}` }))
                   ]}
-                  placeholder="Search & select asset…"
+                  placeholder="Search floor…"
                 />
+              </div>
+              <div>
+                <Label>Room</Label>
+                <SearchableSelect
+                  value={String(form.roomId ?? "")}
+                  onChange={(v) => setForm((p) => ({ ...p, roomId: v }))}
+                  options={[
+                    { value: "", label: "— Select room —" },
+                    ...bldgRooms.filter((r) => !form.floorId || String(r.floorId) === String(form.floorId))
+                      .map((r) => ({ value: String(r.id), label: r.roomName }))
+                  ]}
+                  placeholder="Search room…"
+                />
+                {bldgRooms.length === 0 && form.floorId && <p style={{ fontSize: "11px", color: "#94a3b8", marginTop: "4px" }}>No rooms — add in Locations → Rooms.</p>}
+              </div>
+            </>
+          ) : (
+            <div>
+              <Label>Asset</Label>
+              <SearchableSelect
+                value={String(form.assetId ?? "")}
+                onChange={(v) => setForm((p) => ({ ...p, assetId: v }))}
+                options={[
+                  { value: "", label: "— Select asset —" },
+                  ...filteredChecklistAssets.map((a) => ({ value: String(a.id), label: a.assetName || a.asset_name }))
+                ]}
+                placeholder="Search & select asset…"
+              />
                 {assets.length > 0 && filteredChecklistAssets.length === 0 && (
                   <p style={{ fontSize: "11px", color: "#f59e0b", marginTop: "4px" }}>No {form.assetType} assets found for this company.</p>
                 )}
                 {assets.length === 0 && form.companyId && (
                   <p style={{ fontSize: "11px", color: "#94a3b8", marginTop: "4px" }}>Loading assets…</p>
                 )}
-              </>
-            )}
-          </div>
+            </div>
+          )}
           <div>
             <Label>Category</Label>
             <Inp value={form.category} onChange={(e) => setForm((p) => ({ ...p, category: e.target.value }))} placeholder="e.g. Safety, Preventive, AMC" />
@@ -750,9 +895,69 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
               )}
             </div>
           )}
+          {/* Hourly — interval picker */}
+          {form.frequency === "Hourly" && (
+            <div style={{ gridColumn: "span 3" }}>
+              <Label>Repeat every <span style={{ color: "#94a3b8", fontWeight: 400 }}>(hours)</span></Label>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginTop: "8px" }}>
+                {[1, 2, 3, 4, 6, 8, 12].map((h) => {
+                  const sel = (form.hourlyInterval || 1) === h;
+                  return (
+                    <button key={h} type="button"
+                      onClick={() => setForm((p) => ({ ...p, hourlyInterval: h }))}
+                      style={{ padding: "8px 18px", borderRadius: "8px", fontSize: "13px", fontWeight: sel ? 700 : 400, cursor: "pointer", border: sel ? "2px solid #2563eb" : "1px solid #cbd5e1", background: sel ? "#eff6ff" : "#f8fafc", color: sel ? "#1e40af" : "#64748b", transition: "all 0.1s" }}>
+                      Every {h}h
+                    </button>
+                  );
+                })}
+              </div>
+              <p style={{ fontSize: "12px", color: "#2563eb", marginTop: "8px", fontWeight: 600 }}>
+                Checklist repeats every {form.hourlyInterval || 1} hour{(form.hourlyInterval || 1) > 1 ? "s" : ""}
+              </p>
+            </div>
+          )}
+          {/* Weekly — day selector */}
+          {form.frequency === "Weekly" && (
+            <div style={{ gridColumn: "span 3" }}>
+              <Label>Select days of the week</Label>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginTop: "8px" }}>
+                {["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map((day) => {
+                  const sel = (form.weekDays || []).includes(day);
+                  return (
+                    <button key={day} type="button"
+                      onClick={() => setForm((p) => ({ ...p, weekDays: sel ? (p.weekDays||[]).filter(d => d !== day) : [...(p.weekDays||[]), day] }))}
+                      style={{ padding: "8px 16px", borderRadius: "8px", fontSize: "13px", fontWeight: sel ? 700 : 400, cursor: "pointer", border: sel ? "2px solid #2563eb" : "1px solid #cbd5e1", background: sel ? "#eff6ff" : "#f8fafc", color: sel ? "#1e40af" : "#64748b", transition: "all 0.1s" }}>
+                      {day}
+                    </button>
+                  );
+                })}
+              </div>
+              {(form.weekDays || []).length > 0 ? (
+                <p style={{ fontSize: "12px", color: "#2563eb", marginTop: "8px", fontWeight: 600 }}>
+                  Active on: {(form.weekDays || []).join(", ")}
+                </p>
+              ) : (
+                <p style={{ fontSize: "12px", color: "#94a3b8", marginTop: "8px" }}>No days selected — active every day.</p>
+              )}
+            </div>
+          )}
           <div style={{ gridColumn: "span 3" }}>
             <Label>Description</Label>
             <Inp value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} placeholder="Purpose / scope of this checklist" />
+          </div>
+          {/* Remark field toggle */}
+          <div style={{ gridColumn: "span 3", display: "flex", alignItems: "center", gap: "10px", padding: "10px 14px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+            <input
+              type="checkbox"
+              id="has-remark-cb"
+              checked={!!form.hasRemark}
+              onChange={(e) => setForm((p) => ({ ...p, hasRemark: e.target.checked }))}
+              style={{ width: "16px", height: "16px", accentColor: "#2563eb", cursor: "pointer" }}
+            />
+            <label htmlFor="has-remark-cb" style={{ fontSize: "13px", fontWeight: 600, color: "#374151", cursor: "pointer", userSelect: "none" }}>
+              Enable overall remark field
+              <span style={{ fontWeight: 400, color: "#64748b", marginLeft: "6px" }}>— shows a free-text remark box at the end of this checklist</span>
+            </label>
           </div>
         </div>
       </Card>
@@ -979,6 +1184,9 @@ const TemplateList = memo(function TemplateList({ token, companies, fetchTemplat
   const [assignTarget, setAssignTarget] = useState(null);
   const [filterFrequency, setFilterFrequency] = useState("");
   const [filterAsset, setFilterAsset] = useState("");
+  const [filterBuilding, setFilterBuilding] = useState("");
+  const [filterFloor, setFilterFloor] = useState("");
+  const [filterRoom, setFilterRoom] = useState("");
 
   const loadTemplates = useCallback(async () => {
     setLoading(true);
@@ -1001,13 +1209,17 @@ const TemplateList = memo(function TemplateList({ token, companies, fetchTemplat
       if (filterType && (t.serviceType || t.assetType) !== filterType) return false;
       if (filterFrequency && (t.frequency || "").toLowerCase() !== filterFrequency.toLowerCase()) return false;
       if (filterAsset && String(t.assetId) !== String(filterAsset)) return false;
+      // Soft service location filters
+      if (filterBuilding && String(t.buildingId) !== String(filterBuilding)) return false;
+      if (filterFloor && String(t.floorId) !== String(filterFloor)) return false;
+      if (filterRoom && String(t.roomId) !== String(filterRoom)) return false;
       if (search && !t.templateName?.toLowerCase().includes(search.toLowerCase())) return false;
       return true;
     }),
-    [templates, search, filterType, filterFrequency, filterAsset]
+    [templates, search, filterType, filterFrequency, filterAsset, filterBuilding, filterFloor, filterRoom]
   );
 
-  // Derive unique assets and frequencies from loaded templates for filter dropdowns
+  // Derive unique values for filter dropdowns
   const uniqueFrequencies = useMemo(() => [...new Set(templates.map(t => t.frequency).filter(Boolean))], [templates]);
   const uniqueServiceTypes = useMemo(() => [...new Set(templates.map(t => t.serviceType || t.assetType).filter(Boolean))], [templates]);
   const uniqueAssets = useMemo(() => {
@@ -1015,6 +1227,24 @@ const TemplateList = memo(function TemplateList({ token, companies, fetchTemplat
     templates.forEach(t => { if (t.assetId && t.assetName && !seen.has(t.assetId)) seen.set(t.assetId, t.assetName); });
     return [...seen.entries()].map(([id, name]) => ({ id, name }));
   }, [templates]);
+  // Derive unique buildings, floors (filtered by building), rooms (filtered by floor)
+  const uniqueBuildings = useMemo(() => {
+    const seen = new Map();
+    templates.forEach(t => { if (t.buildingId && t.buildingName && !seen.has(t.buildingId)) seen.set(t.buildingId, t.buildingName); });
+    return [...seen.entries()].map(([id, name]) => ({ id, name }));
+  }, [templates]);
+  const uniqueFloors = useMemo(() => {
+    const seen = new Map();
+    templates.filter(t => !filterBuilding || String(t.buildingId) === String(filterBuilding))
+      .forEach(t => { if (t.floorId && t.floorName && !seen.has(t.floorId)) seen.set(t.floorId, t.floorName); });
+    return [...seen.entries()].map(([id, name]) => ({ id, name }));
+  }, [templates, filterBuilding]);
+  const uniqueRooms = useMemo(() => {
+    const seen = new Map();
+    templates.filter(t => (!filterBuilding || String(t.buildingId) === String(filterBuilding)) && (!filterFloor || String(t.floorId) === String(filterFloor)))
+      .forEach(t => { if (t.roomId && t.roomName && !seen.has(t.roomId)) seen.set(t.roomId, t.roomName); });
+    return [...seen.entries()].map(([id, name]) => ({ id, name }));
+  }, [templates, filterBuilding, filterFloor]);
 
   const allSelected = filtered.length > 0 && filtered.every((t) => selectedIds.has(t.id));
 
@@ -1128,14 +1358,36 @@ const TemplateList = memo(function TemplateList({ token, companies, fetchTemplat
               Delete Selected ({selectedIds.size})
             </SBtn>
           )}
-          <Sel value={filterType} onChange={(e) => setFilterType(e.target.value)} style={{ width: "150px" }}>
+          <Sel value={filterType} onChange={(e) => { setFilterType(e.target.value); setFilterBuilding(""); setFilterFloor(""); setFilterRoom(""); setFilterAsset(""); }} style={{ width: "150px" }}>
             <option value="">All Service Types</option>
             {uniqueServiceTypes.map((v) => <option key={v} value={v}>{v}</option>)}
           </Sel>
-          <Sel value={filterAsset} onChange={(e) => setFilterAsset(e.target.value)} style={{ width: "150px" }}>
-            <option value="">All Assets</option>
-            {uniqueAssets.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-          </Sel>
+          {/* If soft_service selected, show building/floor/room cascading; otherwise show asset */}
+          {filterType === "soft_service" ? (
+            <>
+              <Sel value={filterBuilding} onChange={(e) => { setFilterBuilding(e.target.value); setFilterFloor(""); setFilterRoom(""); }} style={{ width: "140px" }}>
+                <option value="">All Buildings</option>
+                {uniqueBuildings.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+              </Sel>
+              {filterBuilding && (
+                <Sel value={filterFloor} onChange={(e) => { setFilterFloor(e.target.value); setFilterRoom(""); }} style={{ width: "130px" }}>
+                  <option value="">All Floors</option>
+                  {uniqueFloors.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+                </Sel>
+              )}
+              {filterFloor && (
+                <Sel value={filterRoom} onChange={(e) => setFilterRoom(e.target.value)} style={{ width: "130px" }}>
+                  <option value="">All Rooms</option>
+                  {uniqueRooms.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                </Sel>
+              )}
+            </>
+          ) : (
+            <Sel value={filterAsset} onChange={(e) => setFilterAsset(e.target.value)} style={{ width: "150px" }}>
+              <option value="">All Assets</option>
+              {uniqueAssets.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </Sel>
+          )}
           <Sel value={filterFrequency} onChange={(e) => setFilterFrequency(e.target.value)} style={{ width: "130px" }}>
             <option value="">All Frequencies</option>
             {uniqueFrequencies.map((f) => <option key={f} value={f}>{f}</option>)}

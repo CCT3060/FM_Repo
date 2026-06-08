@@ -1,6 +1,7 @@
 ﻿import { useState, useEffect, useCallback, useRef, useMemo, memo } from "react";
 import * as XLSX from "xlsx";
 import { getApiBaseUrl } from "../utils/runtimeConfig";
+import SearchableSelect from "./SearchableSelect.jsx";
 
 const API_BASE = getApiBaseUrl();
 
@@ -203,6 +204,22 @@ function renderAnswerValue(val) {
 
   // Handle already-parsed objects (JSONB from PostgreSQL arrives as object, not string)
   if (val !== null && typeof val === "object" && !Array.isArray(val)) {
+    // Multi-type answer: { value, remark?, photoUrl? } from multiselect templates
+    if ("value" in val && ("remark" in val || ("photoUrl" in val && val.photoUrl))) {
+      return (
+        <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+          {val.value != null && val.value !== "" && (
+            <span style={{ fontWeight: 600, color: "#0f172a" }}>{String(val.value)}</span>
+          )}
+          {val.remark != null && val.remark !== "" && (
+            <span style={{ color: "#475569", fontStyle: "italic", fontSize: "12px" }}>
+              &#128172; {String(val.remark)}
+            </span>
+          )}
+          {val.photoUrl && <PhotoAnswer src={val.photoUrl} />}
+        </div>
+      );
+    }
     // Object with both a text value AND a photo
     if ("photoUrl" in val && val.photoUrl) {
       return (
@@ -480,14 +497,10 @@ function DetailModal({ submission, type, onClose }) {
           gridTemplateColumns: "repeat(3, 1fr)", gap: "10px 24px", flexShrink: 0 }}>
           {[
             { label: "Submitted By", value: submission.submittedBy || "—" },
-            ...(submission.assetId || submission.assetName ? [
-              { label: "Asset",        value: submission.assetName  || "—" },
-              { label: "Asset Location", value: formatAssetLocation(submission) },
-            ] : submission.locationId || submission.locationName ? [
-              { label: "Location",     value: submission.locationName || "—" },
-            ] : [
-              { label: "Asset",        value: "—" },
-            ]),
+            { label: "Company",      value: submission.companyName || "—" },
+            { label: "Building",     value: submission.buildingName || (submission.assetId ? formatAssetLocation(submission) : "—") },
+            { label: "Floor",        value: submission.floorName || "—" },
+            { label: "Room",         value: submission.roomName || submission.assetName || "—" },
             { label: "Date / Time",  value: fmt(submission.submittedAt) },
             { label: "Status",       value: <StatusBadge status={submission.status} /> },
             ...(submission.locationAddress || (submission.latitude && submission.longitude) ? [
@@ -495,7 +508,7 @@ function DetailModal({ submission, type, onClose }) {
                   || `${Number(submission.latitude).toFixed(5)}, ${Number(submission.longitude).toFixed(5)}` },
             ] : []),
             ...(submission.deviceIp ? [
-              { label: "Device IP", value: submission.deviceIp },
+              { label: "Device IP", value: (submission.deviceIp || "").replace(/^::ffff:/i, "") },
             ] : []),
             ...(type === "logsheets" ? [
               { label: "Period", value: submission.month
@@ -573,6 +586,17 @@ function DetailModal({ submission, type, onClose }) {
             <TabularView />
           ) : (
             <p style={{ color: "#94a3b8", fontSize: "14px" }}>No recorded answers for this submission.</p>
+          )}
+          {/* Overall remark */}
+          {submission.overallRemark && (
+            <div style={{ marginTop: "16px" }}>
+              <div style={{ fontSize: "11px", fontWeight: 700, color: "#64748b", letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: "6px" }}>
+                Overall Remark
+              </div>
+              <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "9px", padding: "12px 16px", fontSize: "14px", color: "#0f172a", whiteSpace: "pre-wrap" }}>
+                {submission.overallRemark}
+              </div>
+            </div>
           )}
         </div>
       </div>
@@ -1037,7 +1061,8 @@ function UserDrilldown({ userName, companyId, type, token, onBack }) {
                 <tr>
                   {["#", "Template",
                     ...(type === "logsheets" ? ["Type"] : []),
-                    "Asset", "Location",
+                    "Asset / Location",
+                    ...(type === "logsheets" ? [] : ["Remark"]),
                     ...(type === "logsheets" ? ["Period", "Shift"] : []),
                     "Date & Time", "Status", ""].map((h, hi) => (
                     <th key={hi} style={{ padding: "11px 14px", textAlign: "left", background: "#f8fafc",
@@ -1065,8 +1090,25 @@ function UserDrilldown({ userName, companyId, type, token, onBack }) {
                         </span>
                       </td>
                     )}
-                    <td style={{ padding: "10px 14px", color: "#475569" }}>{r.assetName || "—"}</td>
-                    <td style={{ padding: "10px 14px", color: "#64748b", fontSize: "12px" }}>{formatAssetLocation(r)}</td>
+                    <td style={{ padding: "10px 14px", color: "#475569" }}>
+                      {r.assetName
+                        ? <><div style={{ fontWeight: 600 }}>{r.assetName}</div><div style={{ fontSize: "11px", color: "#94a3b8" }}>{formatAssetLocation(r)}</div></>
+                        : (() => {
+                            const loc = [r.buildingName, r.floorName, r.roomName].filter(Boolean).join(" › ");
+                            return loc || "—";
+                          })()
+                      }
+                    </td>
+                    {type !== "logsheets" && (
+                      <td style={{ padding: "10px 14px", color: "#64748b", fontSize: "12px", maxWidth: "180px" }}>
+                        {r.overallRemark
+                          ? <span title={r.overallRemark} style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {r.overallRemark.length > 60 ? r.overallRemark.slice(0, 58) + "…" : r.overallRemark}
+                            </span>
+                          : <span style={{ color: "#cbd5e1" }}>—</span>
+                        }
+                      </td>
+                    )}
                     {type === "logsheets" && (
                       <>
                         <td style={{ padding: "10px 14px", color: "#475569", whiteSpace: "nowrap" }}>
@@ -1579,15 +1621,23 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
       const key = r.templateId ?? r.templateName ?? "unknown";
       if (!map.has(key)) {
         const hasAsset    = !!(r.assetId || r.assetName);
-        const hasLocation = !!(r.locationId || r.locationName);
+        const hasHierarchy = !!(r.buildingName || r.floorName || r.roomName);
+        const locationStr = hasAsset
+          ? formatAssetLocation(r)
+          : hasHierarchy
+            ? [r.buildingName, r.floorName, r.roomName].filter(Boolean).join(" › ")
+            : (r.locationName || "—");
         map.set(key, {
           templateId:   r.templateId,
           templateName: r.templateName || "Unknown Template",
           assetId:      r.assetId,
           assetName:    r.assetName,
+          buildingName: r.buildingName,
+          floorName:    r.floorName,
+          roomName:     r.roomName,
           locationId:   r.locationId,
           locationName: r.locationName,
-          location:     hasAsset ? formatAssetLocation(r) : (r.locationName || "—"),
+          location:     locationStr,
           companyName:  r.companyName,
           submissions: [],
         });
@@ -1747,59 +1797,60 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
             <div>
               <label style={{ fontSize: "11px", fontWeight: 600, color: "#64748b",
                 display: "block", marginBottom: "4px" }}>Template</label>
-              <select value={fTemplate} onChange={(e) => setFTemplate(e.target.value)} style={inputStyle}>
-                <option value="">All Templates</option>
-                {filterMeta.templates.map((t) => (
-                  <option key={t.id} value={String(t.id)}>{t.templateName}</option>
-                ))}
-              </select>
+              <SearchableSelect
+                value={fTemplate}
+                onChange={(v) => setFTemplate(v)}
+                options={[{ value: "", label: "All Templates" }, ...filterMeta.templates.map((t) => ({ value: String(t.id), label: t.templateName }))]}
+                placeholder="All Templates"
+              />
             </div>
 
             <div>
               <label style={{ fontSize: "11px", fontWeight: 600, color: "#64748b",
                 display: "block", marginBottom: "4px" }}>Asset</label>
-              <select value={fAsset} onChange={(e) => setFAsset(e.target.value)} style={inputStyle}>
-                <option value="">All Assets</option>
-                {filterMeta.assets.map((a) => (
-                  <option key={a.id} value={String(a.id)}>{a.assetName}</option>
-                ))}
-              </select>
+              <SearchableSelect
+                value={fAsset}
+                onChange={(v) => setFAsset(v)}
+                options={[{ value: "", label: "All Assets" }, ...filterMeta.assets.map((a) => ({ value: String(a.id), label: a.assetName }))]}
+                placeholder="All Assets"
+              />
             </div>
 
             <div>
               <label style={{ fontSize: "11px", fontWeight: 600, color: "#64748b",
                 display: "block", marginBottom: "4px" }}>Employee</label>
-              <select value={fEmployee} onChange={(e) => setFEmployee(e.target.value)} style={inputStyle}>
-                <option value="">All Employees</option>
-                {filterMeta.employees.map((e) => (
-                  <option key={e.id} value={e.fullName}>{e.fullName}</option>
-                ))}
-              </select>
+              <SearchableSelect
+                value={fEmployee}
+                onChange={(v) => setFEmployee(v)}
+                options={[{ value: "", label: "All Employees" }, ...filterMeta.employees.map((e) => ({ value: e.fullName, label: e.fullName }))]}
+                placeholder="All Employees"
+              />
             </div>
 
             <div>
               <label style={{ fontSize: "11px", fontWeight: 600, color: "#64748b",
                 display: "block", marginBottom: "4px" }}>Status</label>
-              <select value={fStatus} onChange={(e) => setFStatus(e.target.value)} style={inputStyle}>
-                {STATUS_OPTIONS.map((s) => (
-                  <option key={s.value} value={s.value}>{s.label}</option>
-                ))}
-              </select>
+              <SearchableSelect
+                value={fStatus}
+                onChange={(v) => setFStatus(v)}
+                options={STATUS_OPTIONS.map((s) => ({ value: s.value, label: s.label }))}
+                placeholder="All Statuses"
+              />
             </div>
 
             {type === "logsheets" && (
               <div>
                 <label style={{ fontSize: "11px", fontWeight: 600, color: "#64748b",
                   display: "block", marginBottom: "4px" }}>Shift</label>
-                <select value={fShift} onChange={(e) => setFShift(e.target.value)} style={inputStyle}>
-                  <option value="">All Shifts</option>
-                  {(filterMeta.shifts.length > 0
+                <SearchableSelect
+                  value={fShift}
+                  onChange={(v) => setFShift(v)}
+                  options={[{ value: "", label: "All Shifts" }, ...(filterMeta.shifts.length > 0
                     ? filterMeta.shifts
                     : ["1", "2", "3", "Morning", "Afternoon", "Night"]
-                  ).map((s) => (
-                    <option key={String(s)} value={String(s)}>{String(s)}</option>
-                  ))}
-                </select>
+                  ).map((s) => ({ value: String(s), label: String(s) }))]}
+                  placeholder="All Shifts"
+                />
               </div>
             )}
 

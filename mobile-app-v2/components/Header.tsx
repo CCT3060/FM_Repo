@@ -25,7 +25,7 @@ export default function Header({ title, subtitle, showBack = false, right }: Pro
           </TouchableOpacity>
         ) : null}
         <View style={styles.titleWrap}>
-          <Text style={[styles.title, { color: theme.headerText }]} numberOfLines={2}>{title}</Text>
+          <Text style={[styles.title, { color: theme.headerText }]} numberOfLines={3}>{title}</Text>
           {subtitle ? <Text style={[styles.sub, { color: theme.textSecondary }]} numberOfLines={1}>{subtitle}</Text> : null}
         </View>
         {right ? <View style={styles.right}>{right}</View> : null}

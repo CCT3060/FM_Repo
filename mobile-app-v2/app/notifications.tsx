@@ -13,12 +13,16 @@ export default function NotificationsScreen() {
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
+      setError(null);
       const data = await fetchNotifications();
       setItems(data as any[]);
-    } catch { /* silent */ } finally { setLoading(false); setRefreshing(false); }
+    } catch (e: any) {
+      setError(e?.message || 'Failed to load notifications');
+    } finally { setLoading(false); setRefreshing(false); }
   }, []);
 
   useFocusEffect(useCallback(() => { void load(); }, [load]));
@@ -42,6 +46,8 @@ export default function NotificationsScreen() {
 
       {loading ? (
         <ActivityIndicator color={theme.primary} style={{ marginTop: Spacing.xxl }} />
+      ) : error ? (
+        <EmptyState icon="alert-circle-outline" title="Could not load notifications" message={error} />
       ) : (
         <ScrollView
           contentContainerStyle={items.length === 0 ? { flex: 1 } : styles.list}

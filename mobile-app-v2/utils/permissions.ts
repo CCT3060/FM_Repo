@@ -80,9 +80,9 @@ export const canViewAssets = (c?: RoleCapabilities | null) => true; // all roles
 export const canViewWarnings = (c?: RoleCapabilities | null) =>
   !!(c?.isTechnicalSupervisor || c?.isTechnician);
 
-/** Access to notifications */
-export const canViewNotifications = (c?: RoleCapabilities | null) =>
-  hasTechAccess(c);
+/** Access to notifications — all authenticated company users can receive notifications */
+export const canViewNotifications = (_c?: RoleCapabilities | null) =>
+  true;
 
 // ─── Home screen routing ─────────────────────────────────────────────────────
 /**

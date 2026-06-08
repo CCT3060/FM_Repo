@@ -35,6 +35,8 @@ interface Field {
   id:                number | string;
   label:             string;
   type:              FieldType;
+  additionalTypes?:  FieldType[];      // extra input types (multiselect template)
+  inputTypes?:       string[];         // raw type strings (for boolLabels computation in render)
   required?:         boolean;
   options?:          string[];
   unit?:             string;
@@ -49,9 +51,11 @@ interface Field {
 // and enriches each field with label/options from the raw API shape.
 
 function normalizeField(q: any, idx: number): Field {
-  const rawType = String(q.answerType || q.inputType || 'text')
-    .toLowerCase()
-    .trim();
+  // Support inputTypes[] array (multiselect); primary type is always first element
+  const primaryRaw = (Array.isArray(q.inputTypes) && q.inputTypes.length > 0)
+    ? q.inputTypes[0]
+    : (q.answerType || q.inputType || 'text');
+  const rawType = String(primaryRaw).toLowerCase().trim();
 
   let type: FieldType;
   let boolLabels: [string, string] | undefined;
@@ -120,10 +124,53 @@ function normalizeField(q: any, idx: number): Field {
     }
   }
 
+  // Parse additional input types from inputTypes[] array (multiselect)
+  let additionalTypes: FieldType[] | undefined;
+  const rawInputTypes = Array.isArray(q.inputTypes) ? (q.inputTypes as string[]) : null;
+  if (rawInputTypes && rawInputTypes.length > 1) {
+    const toFieldType = (t: string): FieldType => {
+      switch (t.toLowerCase().trim()) {
+        case 'yes_no':
+        case 'yes/no':
+        case 'ok_not_ok':
+        case 'ok/not_ok':
+        case 'cleaned_not_cleaned':
+        case 'cleaned/not_cleaned':
+          return 'boolean';
+        case 'remark':
+        case 'textarea':
+        case 'long_text':
+          return 'textarea';
+        case 'photo':
+        case 'photo_upload':
+        case 'image':
+          return 'photo';
+        case 'number':
+          return 'number';
+        case 'dropdown':
+        case 'custom_options':
+        case 'single_select':
+          return 'select';
+        case 'signature':
+          return 'signature';
+        case 'date':
+        case 'datetime':
+          return 'date';
+        case 'text':
+          return 'text';
+        default:
+          return 'textarea';
+      }
+    };
+    additionalTypes = rawInputTypes.slice(1).map(toFieldType);
+  }
+
   return {
     id:                q.id ?? idx,
     label:             q.questionText || q.text || q.label || `Question ${idx + 1}`,
     type,
+    additionalTypes:   additionalTypes?.length ? additionalTypes : undefined,
+    inputTypes:        rawInputTypes ?? undefined,
     boolLabels,
     required:          !!(q.isRequired ?? q.is_required ?? q.required),
     options,
@@ -421,6 +468,8 @@ export default function ChecklistEntryScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [uploading,  setUploading]  = useState(false);
   const [templateDesc, setTemplateDesc] = useState<string | null>(null);
+  const [hasRemark,  setHasRemark]  = useState(false);
+  const [overallRemark, setOverallRemark] = useState('');
 
   // Location captured silently in background
   const locationRef = useRef<{ latitude: number; longitude: number; address?: string } | null>(null);
@@ -457,6 +506,7 @@ export default function ChecklistEntryScreen() {
         const normalized = rawQuestions.map((q, idx) => normalizeField(q, idx));
         setFields(normalized);
         setTemplateDesc(data?.description || null);
+        setHasRemark(data?.hasRemark === true);
       })
       .catch(() => { /* empty state handles this */ })
       .finally(() => setLoading(false));
@@ -481,6 +531,20 @@ export default function ChecklistEntryScreen() {
       const answerArray = fields.map((f) => {
         const mainVal  = answers[f.id] ?? null;
         const photoUrl = photos[String(f.id)] ?? null;
+
+        // Multi-type question: combine primary + extra answers
+        if (f.additionalTypes?.length) {
+          const combined: Record<string, any> = { value: mainVal };
+          f.additionalTypes.forEach((addType, addIdx) => {
+            const addVal = answers[`${f.id}_extra_${addIdx}`] ?? null;
+            if (addType === 'textarea')  combined.remark  = addVal;
+            else if (addType === 'photo') combined.photoUrl = addVal;
+            else                          combined[addType]  = addVal;
+          });
+          if (photoUrl) combined.photoUrl = photoUrl;
+          return { questionId: f.id, answer: combined };
+        }
+
         const finalVal = f.type === 'photo'
           ? mainVal
           : (photoUrl ? { value: mainVal, photoUrl } : mainVal);
@@ -497,6 +561,7 @@ export default function ChecklistEntryScreen() {
           templateId: tid, assetId: aid, answers: answerArray,
           latitude: loc?.latitude ?? null, longitude: loc?.longitude ?? null,
           locationAddress: loc?.address ?? null,
+          overallRemark: overallRemark.trim() || undefined,
         });
         const submissionId = (submission as any)?.submissionId ?? (submission as any)?.id ?? undefined;
         await raiseSoftRequest({
@@ -523,6 +588,7 @@ export default function ChecklistEntryScreen() {
           templateId: tid, assetId: aid, answers: answerArray,
           latitude: loc?.latitude ?? null, longitude: loc?.longitude ?? null,
           locationAddress: loc?.address ?? null,
+          overallRemark: overallRemark.trim() || undefined,
         });
         Alert.alert('Submitted!', 'Your response has been recorded.', [
           { text: 'Done', onPress: () => router.back() },
@@ -624,10 +690,77 @@ export default function ChecklistEntryScreen() {
                         value={answers[field.id]}
                         onChange={(v) => setAnswer(field.id, v)}
                       />
+                      {/* Additional input types (multiselect template) */}
+                      {field.additionalTypes?.map((addType, addIdx) => {
+                        const addKey = `${field.id}_extra_${addIdx}`;
+                        // Derive boolLabels from the raw inputTypes entry stored on field
+                        const rawAddType = (field.inputTypes?.[addIdx + 1] ?? '').toLowerCase();
+                        const addBoolLabels: [string, string] | undefined =
+                          rawAddType === 'yes_no' || rawAddType === 'yes/no'             ? ['Yes', 'No']
+                          : rawAddType === 'ok_not_ok' || rawAddType === 'ok/not_ok'     ? ['OK', 'Not OK']
+                          : rawAddType === 'cleaned_not_cleaned'                         ? ['Cleaned', 'Not Cleaned']
+                          : undefined;
+                        const addLabel =
+                          addType === 'textarea'  ? 'Remark'
+                          : addType === 'photo'   ? 'Photo Evidence'
+                          : addType === 'number'  ? 'Reading'
+                          : addType === 'text'    ? 'Additional Text'
+                          : addType === 'boolean' ? (addBoolLabels ? addBoolLabels.join(' / ') : 'Yes / No')
+                          : 'Additional';
+                        const addField: Field = {
+                          ...field,
+                          id: addKey,
+                          type: addType,
+                          label: addLabel,
+                          required: false,
+                          additionalTypes: undefined,
+                          inputTypes: undefined,
+                          boolLabels: addBoolLabels,
+                        };
+                        return (
+                          <View key={addIdx} style={{ marginTop: 8 }}>
+                            <Text style={{ fontSize: 11, color: theme.textMuted, marginBottom: 4, fontWeight: '600' }}>
+                              {addLabel}
+                            </Text>
+                            <FieldInput
+                              field={addField}
+                              value={answers[addKey]}
+                              onChange={(v) => setAnswer(addKey, v)}
+                            />
+                          </View>
+                        );
+                      })}
                     </View>
                   </React.Fragment>
                 );
               })
+            )}
+            {/* Overall remark field — only shown if template has_remark=true */}
+            {hasRemark && (
+              <View style={[styles.fieldCard, { backgroundColor: theme.surface, shadowColor: theme.cardShadow, borderColor: theme.inputBorder }]}>
+                <Text style={[styles.fieldLabel, { color: theme.textPrimary, marginBottom: 8 }]}>
+                  Overall Remark <Text style={{ color: theme.textMuted, fontWeight: '400', fontSize: 12 }}>(optional)</Text>
+                </Text>
+                <TextInput
+                  value={overallRemark}
+                  onChangeText={setOverallRemark}
+                  placeholder="Add an overall remark..."
+                  placeholderTextColor={theme.textMuted}
+                  multiline
+                  numberOfLines={3}
+                  style={{
+                    borderWidth: 1,
+                    borderColor: theme.inputBorder,
+                    borderRadius: 8,
+                    padding: 10,
+                    color: theme.textPrimary,
+                    backgroundColor: theme.background,
+                    fontSize: 14,
+                    minHeight: 72,
+                    textAlignVertical: 'top',
+                  }}
+                />
+              </View>
             )}
           </ScrollView>
 

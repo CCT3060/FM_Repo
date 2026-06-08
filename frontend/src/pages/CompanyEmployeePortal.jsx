@@ -214,12 +214,22 @@ const FInput = ({ label, required, ...props }) => (
     <input {...props} style={{ width: "100%", boxSizing: "border-box", padding: "8px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13.5px", outline: "none" }} />
   </div>
 );
-const FSelect = ({ label, required, children, ...props }) => (
+const FSelect = ({ label, required, children, options, value, onChange, placeholder, disabled, ...props }) => (
   <div>
     <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>
       {label}{required && <span style={{ color: "#ef4444", marginLeft: "3px" }}>*</span>}
     </label>
-    <select {...props} style={{ width: "100%", boxSizing: "border-box", padding: "8px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13.5px", background: "#fff", outline: "none" }}>{children}</select>
+    {options ? (
+      <SearchableSelect
+        options={options}
+        value={value ?? ""}
+        onChange={onChange}
+        placeholder={placeholder || `Select ${label}…`}
+        disabled={disabled}
+      />
+    ) : (
+      <select value={value} onChange={onChange} disabled={disabled} {...props} style={{ width: "100%", boxSizing: "border-box", padding: "8px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13.5px", background: "#fff", outline: "none" }}>{children}</select>
+    )}
   </div>
 );
 
@@ -855,11 +865,268 @@ function AssignTemplateModal({ employee, token, checklists = [], logsheetTemplat
   );
 }
 
+/* ─── Reusable Building / Floor / Room Management Modal ─────────────────────
+   Generic list + inline add/edit panel for buildings, floors, and rooms.
+   Props:
+     title, accentColor/Bg/Border, items[], editItem, setEditItem, onClose,
+     onSave(state, editId), onDelete(id), renderRow(item), columnHeaders[],
+     renderForm(state, setState)
+──────────────────────────────────────────────────────────────────────────── */
+function BldgFlrRoomModal({ title, accentColor, accentBg, accentBorder, items, editItem, setEditItem, onClose, onSave, onDelete, renderRow, columnHeaders, renderForm, allowBulk = false, onSaveBulk }) {
+  const [formState, setFormState] = useState(() => editItem
+    ? { ...(editItem.name !== undefined ? { name: editItem.name } : {}), buildingId: String(editItem.buildingId || ""), floorNumber: editItem.floorNumber || "", floorId: String(editItem.floorId || ""), roomName: editItem.roomName || "" }
+    : { name: "", buildingId: "", floorNumber: "", floorId: "", roomName: "" }
+  );
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  const [showForm, setShowForm] = useState(!!editItem);
+  // Bulk-room state (only used when allowBulk=true)
+  const [multiAdd, setMultiAdd] = useState(false);
+  const [roomPrefix, setRoomPrefix] = useState("Room ");
+  const [roomFrom, setRoomFrom]   = useState("");
+  const [roomTo,   setRoomTo]     = useState("");
+
+  const bulkCount = (() => {
+    const f = parseInt(roomFrom, 10), t = parseInt(roomTo, 10);
+    return (!isNaN(f) && !isNaN(t) && t >= f) ? t - f + 1 : 0;
+  })();
+
+  // When editItem changes (user clicks edit on a row), populate the form
+  useEffect(() => {
+    if (editItem) {
+      setFormState({ name: editItem.name || "", buildingId: String(editItem.buildingId || ""), floorNumber: editItem.floorNumber || "", floorId: String(editItem.floorId || ""), roomName: editItem.roomName || "" });
+      setShowForm(true);
+      setMultiAdd(false);
+    } else {
+      setFormState({ name: "", buildingId: "", floorNumber: "", floorId: "", roomName: "" });
+    }
+  }, [editItem]);
+
+  const resetForm = () => {
+    setShowForm(false); setEditItem(null); setErr("");
+    setFormState({ name: "", buildingId: "", floorNumber: "", floorId: "", roomName: "" });
+    setMultiAdd(false); setRoomPrefix("Room "); setRoomFrom(""); setRoomTo("");
+  };
+
+  const handleSubmit = async () => {
+    setErr("");
+    // Bulk mode
+    if (allowBulk && multiAdd && !editItem) {
+      if (!formState.buildingId) return setErr("Select a building");
+      if (!formState.floorId)    return setErr("Select a floor");
+      const from = parseInt(roomFrom, 10), to = parseInt(roomTo, 10);
+      if (isNaN(from) || isNaN(to) || from > to) return setErr("Enter a valid range (From ≤ To)");
+      if (to - from > 499) return setErr("Range too large — max 500 rooms at once");
+      setSaving(true);
+      try {
+        const names = [];
+        for (let n = from; n <= to; n++) names.push(`${roomPrefix}${n}`.trim());
+        await onSaveBulk(formState, names);
+        resetForm();
+      } catch (e) { setErr(e.message || "Save failed"); }
+      finally { setSaving(false); }
+      return;
+    }
+    // Single mode
+    setSaving(true);
+    try {
+      await onSave(formState, editItem?.id ?? null);
+      resetForm();
+    } catch (e) { setErr(e.message || "Save failed"); }
+    finally { setSaving(false); }
+  };
+
+  const selStyle = { width: "100%", padding: "7px 10px", borderRadius: "7px", border: "1px solid #e2e8f0", fontSize: "13px", outline: "none", background: "#fff" };
+  const inpStyle = { width: "100%", padding: "7px 10px", borderRadius: "7px", border: "1px solid #e2e8f0", fontSize: "13px", outline: "none", boxSizing: "border-box" };
+
+  const saveLabel = saving ? "Saving…" : editItem ? "Update" :
+    (allowBulk && multiAdd && bulkCount > 0) ? `Create ${bulkCount} Room${bulkCount !== 1 ? "s" : ""}` : "Save";
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.55)", zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}
+      onClick={onClose}>
+      <div style={{ background: "#fff", borderRadius: "16px", width: "100%", maxWidth: "640px", maxHeight: "90vh", overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: "0 24px 64px rgba(0,0,0,0.18)" }}
+        onClick={(e) => e.stopPropagation()}>
+        {/* Header */}
+        <div style={{ padding: "20px 24px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center", background: accentBg }}>
+          <h2 style={{ margin: 0, fontSize: "17px", fontWeight: 700, color: accentColor }}>Manage {title}</h2>
+          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+            {!showForm && (
+              <button onClick={() => { setEditItem(null); setShowForm(true); setFormState({ name: "", buildingId: "", floorNumber: "", floorId: "", roomName: "" }); }}
+                style={{ display: "inline-flex", alignItems: "center", gap: "5px", padding: "6px 14px", borderRadius: "7px", background: accentColor, color: "#fff", border: "none", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                Add {title.replace(/s$/, "")}
+              </button>
+            )}
+            <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: "20px", lineHeight: 1 }}>✕</button>
+          </div>
+        </div>
+
+        <div style={{ overflowY: "auto", flex: 1, padding: "20px 24px" }}>
+          {/* Inline add/edit form */}
+          {showForm && (
+            <div style={{ background: accentBg, border: `1px solid ${accentBorder}`, borderRadius: "10px", padding: "16px", marginBottom: "18px" }}>
+              <p style={{ fontWeight: 700, fontSize: "13px", color: accentColor, marginBottom: "12px" }}>
+                {editItem ? `Edit ${title.replace(/s$/, "")}` : `Add New ${title.replace(/s$/, "")}`}
+              </p>
+              {renderForm(formState, setFormState, { selStyle, inpStyle })}
+
+              {/* Multi-room toggle — only for Room modal in add mode */}
+              {allowBulk && !editItem && (
+                <div style={{ marginTop: "12px", background: "#f8fafc", borderRadius: "8px", padding: "10px 12px", border: "1px solid #e2e8f0" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", userSelect: "none" }}>
+                    <input type="checkbox" checked={multiAdd} onChange={(e) => setMultiAdd(e.target.checked)}
+                      style={{ width: "15px", height: "15px", accentColor: accentColor, cursor: "pointer" }} />
+                    <span style={{ fontSize: "13px", fontWeight: 600, color: "#374151" }}>Create multiple rooms?</span>
+                  </label>
+                  {multiAdd && (
+                    <div style={{ marginTop: "10px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                      <div>
+                        <label style={{ fontSize: "11px", fontWeight: 600, color: "#64748b", display: "block", marginBottom: "3px" }}>Room Label Prefix</label>
+                        <input value={roomPrefix} onChange={(e) => setRoomPrefix(e.target.value)} placeholder="e.g. Room " style={inpStyle} />
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                        <div>
+                          <label style={{ fontSize: "11px", fontWeight: 600, color: "#64748b", display: "block", marginBottom: "3px" }}>From #</label>
+                          <input type="number" value={roomFrom} onChange={(e) => setRoomFrom(e.target.value)} placeholder="e.g. 601" style={inpStyle} min="1" />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: "11px", fontWeight: 600, color: "#64748b", display: "block", marginBottom: "3px" }}>To #</label>
+                          <input type="number" value={roomTo} onChange={(e) => setRoomTo(e.target.value)} placeholder="e.g. 620" style={inpStyle} min="1" />
+                        </div>
+                      </div>
+                      {bulkCount > 0 && (
+                        <div style={{ padding: "6px 10px", background: "#fff7ed", borderRadius: "6px", fontSize: "12px", color: accentColor, fontWeight: 600 }}>
+                          Will create {bulkCount} room{bulkCount !== 1 ? "s" : ""}: {roomPrefix}{roomFrom} → {roomPrefix}{roomTo}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {err && <p style={{ color: "#dc2626", fontSize: "12px", marginTop: "8px" }}>{err}</p>}
+              <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
+                <button onClick={handleSubmit} disabled={saving}
+                  style={{ padding: "7px 20px", borderRadius: "7px", background: accentColor, color: "#fff", border: "none", cursor: "pointer", fontSize: "13px", fontWeight: 600, opacity: saving ? 0.7 : 1 }}>
+                  {saveLabel}
+                </button>
+                <button onClick={resetForm}
+                  style={{ padding: "7px 16px", borderRadius: "7px", background: "#f1f5f9", color: "#475569", border: "none", cursor: "pointer", fontSize: "13px" }}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* List */}
+          {items.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "40px 0", color: "#94a3b8" }}>
+              <p>No {title.toLowerCase()} added yet.</p>
+            </div>
+          ) : (
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+              <thead>
+                <tr style={{ background: "#f8fafc" }}>
+                  {columnHeaders.map((h) => <th key={h} style={{ padding: "8px 12px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "11.5px", textTransform: "uppercase", borderBottom: "2px solid #e2e8f0" }}>{h}</th>)}
+                  <th style={{ padding: "8px 12px", textAlign: "right", color: "#475569", fontWeight: 600, fontSize: "11.5px", textTransform: "uppercase", borderBottom: "2px solid #e2e8f0" }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((item) => (
+                  <tr key={item.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                    <td colSpan={columnHeaders.length} style={{ padding: "10px 12px" }}>{renderRow(item)}</td>
+                    <td style={{ padding: "10px 12px", textAlign: "right" }}>
+                      <div style={{ display: "inline-flex", gap: "6px" }}>
+                        <button onClick={() => { setEditItem(item); }}
+                          style={{ background: "#f0fdf4", border: "none", borderRadius: "6px", padding: "5px 8px", cursor: "pointer", color: "#16a34a" }}>
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                        </button>
+                        <button onClick={() => onDelete(item.id)}
+                          style={{ background: "#fff1f2", border: "none", borderRadius: "6px", padding: "5px 8px", cursor: "pointer", color: "#e11d48" }}>
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BldgForm({ state, setState, styles: s }) {
+  const inpStyle = s?.inpStyle || { width: "100%", padding: "7px 10px", borderRadius: "7px", border: "1px solid #e2e8f0", fontSize: "13px", outline: "none", boxSizing: "border-box" };
+  return (
+    <div>
+      <label style={{ fontSize: "12px", fontWeight: 600, color: "#374151", display: "block", marginBottom: "4px" }}>Building Name *</label>
+      <input value={state.name} onChange={(e) => setState((p) => ({ ...p, name: e.target.value }))} placeholder="e.g. Block A, Main Building" style={inpStyle} />
+    </div>
+  );
+}
+
+function FloorForm({ state, setState, buildings, styles: s }) {
+  const inpStyle = s?.inpStyle || { width: "100%", padding: "7px 10px", borderRadius: "7px", border: "1px solid #e2e8f0", fontSize: "13px", outline: "none", boxSizing: "border-box" };
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+      <div>
+        <label style={{ fontSize: "12px", fontWeight: 600, color: "#374151", display: "block", marginBottom: "4px" }}>Building *</label>
+        <SearchableSelect
+          value={String(state.buildingId ?? "")}
+          onChange={(v) => setState((p) => ({ ...p, buildingId: v }))}
+          options={[{ value: "", label: "— Select building —" }, ...buildings.map((b) => ({ value: String(b.id), label: b.name }))]}
+          placeholder="Search building…"
+        />
+      </div>
+      <div>
+        <label style={{ fontSize: "12px", fontWeight: 600, color: "#374151", display: "block", marginBottom: "4px" }}>Floor Number *</label>
+        <input value={state.floorNumber} onChange={(e) => setState((p) => ({ ...p, floorNumber: e.target.value }))} placeholder="e.g. G, 1, 2, Basement" style={inpStyle} />
+      </div>
+    </div>
+  );
+}
+
+function RoomForm({ state, setState, buildings, floors, styles: s }) {
+  const inpStyle = s?.inpStyle || { width: "100%", padding: "7px 10px", borderRadius: "7px", border: "1px solid #e2e8f0", fontSize: "13px", outline: "none", boxSizing: "border-box" };
+  const filteredFloors = floors.filter((f) => !state.buildingId || String(f.buildingId) === String(state.buildingId));
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "12px" }}>
+      <div>
+        <label style={{ fontSize: "12px", fontWeight: 600, color: "#374151", display: "block", marginBottom: "4px" }}>Building *</label>
+        <SearchableSelect
+          value={String(state.buildingId ?? "")}
+          onChange={(v) => setState((p) => ({ ...p, buildingId: v, floorId: "" }))}
+          options={[{ value: "", label: "— Select —" }, ...buildings.map((b) => ({ value: String(b.id), label: b.name }))]}
+          placeholder="Search building…"
+        />
+      </div>
+      <div>
+        <label style={{ fontSize: "12px", fontWeight: 600, color: "#374151", display: "block", marginBottom: "4px" }}>Floor *</label>
+        <SearchableSelect
+          value={String(state.floorId ?? "")}
+          onChange={(v) => setState((p) => ({ ...p, floorId: v }))}
+          options={[{ value: "", label: "— Select —" }, ...filteredFloors.map((f) => ({ value: String(f.id), label: `Floor ${f.floorNumber}` }))]}
+          placeholder="Search floor…"
+          disabled={!state.buildingId}
+        />
+      </div>
+      <div>
+        <label style={{ fontSize: "12px", fontWeight: 600, color: "#374151", display: "block", marginBottom: "4px" }}>Room Name *</label>
+        <input value={state.roomName} onChange={(e) => setState((p) => ({ ...p, roomName: e.target.value }))} placeholder="e.g. Room 101" style={inpStyle} />
+      </div>
+    </div>
+  );
+}
+
 /* ─── Location Form (used inside modal) ─────────────────────────── */
 const LocLbl = ({ children }) => <label style={{ fontSize: "12px", fontWeight: 600, color: "#475569", display: "block", marginBottom: "4px" }}>{children}</label>;
 const locInpStyle = { width: "100%", padding: "8px 12px", borderRadius: "8px", border: "1px solid #e2e8f0", fontSize: "13px", outline: "none", boxSizing: "border-box" };
 
-function LocationForm({ initial, onSave, onSaveBulk, onCancel }) {
+function LocationForm({ initial, onSave, onSaveBulk, onCancel, buildings = [], floors = [] }) {
   const isEdit = !!initial;
   const [form, setForm] = useState({
     name: initial?.name || "",
@@ -916,11 +1183,28 @@ function LocationForm({ initial, onSave, onSaveBulk, onCancel }) {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
         <div>
           <LocLbl>Building</LocLbl>
-          <input value={form.building} onChange={(e) => setForm(p => ({ ...p, building: e.target.value }))} placeholder="e.g. Building 1" style={locInpStyle} />
+          <input list="loc-buildings-dl" value={form.building} onChange={(e) => setForm(p => ({ ...p, building: e.target.value, floor: "" }))} placeholder="Select or type building" style={locInpStyle} />
+          {buildings.length > 0 && (
+            <datalist id="loc-buildings-dl">
+              {buildings.map(b => <option key={b.id} value={b.name} />)}
+            </datalist>
+          )}
         </div>
         <div>
           <LocLbl>Floor</LocLbl>
-          <input value={form.floor} onChange={(e) => setForm(p => ({ ...p, floor: e.target.value }))} placeholder="e.g. Ground Floor" style={locInpStyle} />
+          <input list="loc-floors-dl" value={form.floor} onChange={(e) => setForm(p => ({ ...p, floor: e.target.value }))} placeholder="Select or type floor" style={locInpStyle} />
+          {floors.length > 0 && (
+            <datalist id="loc-floors-dl">
+              {floors
+                .filter(f => {
+                  if (!form.building) return true;
+                  const b = buildings.find(bx => bx.name === form.building);
+                  return !b || String(f.buildingId) === String(b.id);
+                })
+                .map(f => <option key={f.id} value={f.floorNumber} />)
+              }
+            </datalist>
+          )}
         </div>
         {(!isEdit && !multiRoom) && (
           <div>
@@ -3673,6 +3957,17 @@ export default function CompanyEmployeePortal() {
   const [bulkLocQrPrinting, setBulkLocQrPrinting] = useState(false);
   const [showLocSettings, setShowLocSettings] = useState(false);
   const [showLocImport, setShowLocImport] = useState(false);
+
+  // Buildings / Floors / Rooms state
+  const [buildings, setBuildings] = useState([]);
+  const [floors, setFloors] = useState([]);
+  const [rooms, setRooms] = useState([]);
+  const [showBuildingModal, setShowBuildingModal] = useState(false);
+  const [showFloorModal, setShowFloorModal]   = useState(false);
+  const [showRoomModal, setShowRoomModal]     = useState(false);
+  const [editBuilding, setEditBuilding] = useState(null);
+  const [editFloor, setEditFloor]       = useState(null);
+  const [editRoom, setEditRoom]         = useState(null);
   const [locQrSettings, setLocQrSettings] = useState(() => {
     try {
       const saved = localStorage.getItem('locQrSettings');
@@ -4044,6 +4339,13 @@ export default function CompanyEmployeePortal() {
         .then((d) => setLocations(Array.isArray(d) ? d : []))
         .catch(() => {})
         .finally(() => setLocationsLoading(false));
+      // Also load building/floor/room hierarchy
+      fetch("/api/company-portal/buildings", { headers: { Authorization: `Bearer ${token}` } })
+        .then((r) => r.json()).then((d) => setBuildings(Array.isArray(d) ? d : [])).catch(() => {});
+      fetch("/api/company-portal/floors", { headers: { Authorization: `Bearer ${token}` } })
+        .then((r) => r.json()).then((d) => setFloors(Array.isArray(d) ? d : [])).catch(() => {});
+      fetch("/api/company-portal/rooms", { headers: { Authorization: `Bearer ${token}` } })
+        .then((r) => r.json()).then((d) => setRooms(Array.isArray(d) ? d : [])).catch(() => {});
     }
   }, [nav, token, load, assets.length]);
 
@@ -4219,6 +4521,127 @@ export default function CompanyEmployeePortal() {
     const canvas = document.createElement("canvas");
     await QRCode.toCanvas(canvas, url, { width: 300, margin: 2, color: { dark: "#0f172a", light: "#ffffff" } });
     setLocQrDataUrl(canvas.toDataURL("image/png"));
+  };
+
+  // ── Building CRUD helpers ─────────────────────────────────────────────────
+  const reloadBuildings = () =>
+    fetch("/api/company-portal/buildings", { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => r.json()).then((d) => setBuildings(Array.isArray(d) ? d : [])).catch(() => {});
+
+  const handleSaveBuilding = async (name, editId) => {
+    const url = editId ? `/api/company-portal/buildings/${editId}` : "/api/company-portal/buildings";
+    const r = await fetch(url, { method: editId ? "PUT" : "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.message || "Save failed");
+    await reloadBuildings();
+  };
+
+  const handleDeleteBuilding = async (id) => {
+    if (!window.confirm("Delete this building? All its floors and rooms will also be deleted.")) return;
+    await fetch(`/api/company-portal/buildings/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+    await reloadBuildings();
+    setFloors((p) => p.filter((f) => f.buildingId !== id));
+    setRooms((p) => p.filter((r) => r.buildingId !== id));
+  };
+
+  // ── Floor CRUD helpers ────────────────────────────────────────────────────
+  const reloadFloors = () =>
+    fetch("/api/company-portal/floors", { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => r.json()).then((d) => setFloors(Array.isArray(d) ? d : [])).catch(() => {});
+
+  const handleSaveFloor = async (buildingId, floorNumber, editId) => {
+    const url = editId ? `/api/company-portal/floors/${editId}` : "/api/company-portal/floors";
+    const r = await fetch(url, { method: editId ? "PUT" : "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ buildingId, floorNumber }) });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.message || "Save failed");
+    await reloadFloors();
+  };
+
+  const handleDeleteFloor = async (id) => {
+    if (!window.confirm("Delete this floor? All its rooms will also be deleted.")) return;
+    await fetch(`/api/company-portal/floors/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+    await reloadFloors();
+    setRooms((p) => p.filter((rm) => rm.floorId !== id));
+  };
+
+  // ── Room CRUD helpers ─────────────────────────────────────────────────────
+  const reloadRooms = async () => {
+    const r = await fetch("/api/company-portal/rooms", { headers: { Authorization: `Bearer ${token}` } });
+    const d = await r.json();
+    if (Array.isArray(d)) setRooms(d);
+  };
+
+  const handleSaveRoom = async (buildingId, floorId, roomName, editId) => {
+    const url = editId ? `/api/company-portal/rooms/${editId}` : "/api/company-portal/rooms";
+    const r = await fetch(url, { method: editId ? "PUT" : "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ buildingId, floorId, roomName }) });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.message || "Save failed");
+    // Optimistically update list immediately, then sync from server
+    if (editId) {
+      setRooms((p) => p.map((rm) => rm.id === data.id ? { ...rm, ...data } : rm));
+    } else {
+      // Also auto-create a location so it appears in the Locations list
+      const bldg = buildings.find((b) => String(b.id) === String(buildingId));
+      const fl   = floors.find((f) => String(f.id) === String(floorId));
+      if (bldg && fl) {
+        await fetch("/api/company-portal/locations", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: roomName.trim(),
+            building: bldg.name,
+            floor: fl.floorNumber,
+            room: roomName.trim(),
+            status: "Active",
+          }),
+        }).then(async (lr) => {
+          if (lr.ok) {
+            const loc = await lr.json();
+            setLocations((p) => [...p, loc]);
+          }
+        }).catch(() => {});
+      }
+      await reloadRooms();
+    }
+  };
+
+  const handleSaveBulkRooms = async (state, roomNames) => {
+    const { buildingId, floorId } = state;
+    const bldg = buildings.find((b) => String(b.id) === String(buildingId));
+    const fl   = floors.find((f) => String(f.id) === String(floorId));
+    for (const roomName of roomNames) {
+      const r = await fetch("/api/company-portal/rooms", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ buildingId, floorId, roomName }),
+      });
+      if (!r.ok) { const d = await r.json(); throw new Error(d.message || "Save failed"); }
+      // Also auto-create a corresponding location
+      if (bldg && fl) {
+        await fetch("/api/company-portal/locations", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: roomName.trim(),
+            building: bldg.name,
+            floor: fl.floorNumber,
+            room: roomName.trim(),
+            status: "Active",
+          }),
+        }).catch(() => {});
+      }
+    }
+    // Reload both rooms and locations after bulk save
+    await reloadRooms();
+    const lr = await fetch("/api/company-portal/locations", { headers: { Authorization: `Bearer ${token}` } });
+    const ld = await lr.json();
+    if (Array.isArray(ld)) setLocations(ld);
+  };
+
+  const handleDeleteRoom = async (id) => {
+    if (!window.confirm("Delete this room?")) return;
+    await fetch(`/api/company-portal/rooms/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+    setRooms((p) => p.filter((rm) => rm.id !== id));
   };
 
   const handleDownloadAssetQR = async (assetId, assetName) => {
@@ -6002,7 +6425,23 @@ export default function CompanyEmployeePortal() {
                 </div>
                 {isAdmin && (
                   <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
-                    {/* Company logo upload */}
+                    {/* ── Building / Floor / Room management buttons ── */}
+                    <button onClick={() => { setEditBuilding(null); setShowBuildingModal(true); }}
+                      style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 13px", borderRadius: "8px", background: "#f0f9ff", color: "#0369a1", border: "1px solid #bae6fd", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="3" width="20" height="18" rx="1"/><path d="M9 21V9h6v12"/></svg>
+                      Buildings
+                    </button>
+                    <button onClick={() => { setEditFloor(null); setShowFloorModal(true); }}
+                      style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 13px", borderRadius: "8px", background: "#faf5ff", color: "#7c3aed", border: "1px solid #ddd6fe", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="7" width="20" height="14" rx="1"/><path d="M16 7V5a2 2 0 0 0-4 0v2"/></svg>
+                      Floors
+                    </button>
+                    <button onClick={() => { setEditRoom(null); setShowRoomModal(true); }}
+                      style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 13px", borderRadius: "8px", background: "#fff7ed", color: "#c2410c", border: "1px solid #fed7aa", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+                      Rooms
+                    </button>
+                    <div style={{ width: "1px", height: "28px", background: "#e2e8f0" }} />
                     <label title="Upload client logo for QR cards" style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "8px", background: companyLogoUrl ? "#f0fdf4" : "#f8fafc", color: companyLogoUrl ? "#16a34a" : "#64748b", border: `1px solid ${companyLogoUrl ? "#bbf7d0" : "#e2e8f0"}`, cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
                       {companyLogoUrl ? "Logo ✓" : "Upload Logo"}
@@ -6165,6 +6604,65 @@ export default function CompanyEmployeePortal() {
               )}
 
               {/* Location Add/Edit Modal */}
+              {/* ── Building Management Modal ── */}
+              {showBuildingModal && (
+                <BldgFlrRoomModal
+                  title="Buildings"
+                  accentColor="#0369a1" accentBg="#f0f9ff" accentBorder="#bae6fd"
+                  items={buildings}
+                  editItem={editBuilding}
+                  setEditItem={setEditBuilding}
+                  onClose={() => { setShowBuildingModal(false); setEditBuilding(null); }}
+                  renderForm={(state, setState, saving, setSaving, err, setErr) => (
+                    <BldgForm state={state} setState={setState} />
+                  )}
+                  onSave={async (state, editId) => { await handleSaveBuilding(state.name, editId); }}
+                  onDelete={handleDeleteBuilding}
+                  renderRow={(b) => <><span style={{ fontWeight: 600, color: "#0f172a" }}>{b.name}</span></>}
+                  columnHeaders={["Building Name"]}
+                />
+              )}
+
+              {/* ── Floor Management Modal ── */}
+              {showFloorModal && (
+                <BldgFlrRoomModal
+                  title="Floors"
+                  accentColor="#7c3aed" accentBg="#faf5ff" accentBorder="#ddd6fe"
+                  items={floors}
+                  editItem={editFloor}
+                  setEditItem={setEditFloor}
+                  onClose={() => { setShowFloorModal(false); setEditFloor(null); }}
+                  onSave={async (state, editId) => { await handleSaveFloor(state.buildingId, state.floorNumber, editId); }}
+                  onDelete={handleDeleteFloor}
+                  renderRow={(f) => <><span style={{ fontWeight: 600, color: "#0f172a" }}>{f.floorNumber}</span><span style={{ color: "#64748b", marginLeft: 8 }}>— {f.buildingName}</span></>}
+                  columnHeaders={["Floor", "Building"]}
+                  renderForm={(state, setState) => (
+                    <FloorForm state={state} setState={setState} buildings={buildings} />
+                  )}
+                />
+              )}
+
+              {/* ── Room Management Modal ── */}
+              {showRoomModal && (
+                <BldgFlrRoomModal
+                  title="Rooms"
+                  accentColor="#c2410c" accentBg="#fff7ed" accentBorder="#fed7aa"
+                  items={rooms}
+                  editItem={editRoom}
+                  setEditItem={setEditRoom}
+                  onClose={() => { setShowRoomModal(false); setEditRoom(null); }}
+                  onSave={async (state, editId) => { await handleSaveRoom(state.buildingId, state.floorId, state.roomName, editId); }}
+                  onDelete={handleDeleteRoom}
+                  renderRow={(rm) => <><span style={{ fontWeight: 600, color: "#0f172a" }}>{rm.roomName}</span><span style={{ color: "#64748b", marginLeft: 8 }}>— Floor {rm.floorNumber}, {rm.buildingName}</span></>}
+                  columnHeaders={["Room", "Floor / Building"]}
+                  renderForm={(state, setState) => (
+                    <RoomForm state={state} setState={setState} buildings={buildings} floors={floors} />
+                  )}
+                  allowBulk={true}
+                  onSaveBulk={handleSaveBulkRooms}
+                />
+              )}
+
               {showLocModal && (
                 <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.5)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}
                   onClick={() => { setShowLocModal(false); setEditLoc(null); }}>
@@ -6173,7 +6671,7 @@ export default function CompanyEmployeePortal() {
                       <h2 style={{ fontSize: "17px", fontWeight: 700, color: "#0f172a" }}>{editLoc ? "Edit Location" : "Add Location"}</h2>
                       <button onClick={() => { setShowLocModal(false); setEditLoc(null); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: "22px" }}>✕</button>
                     </div>
-                    <LocationForm initial={editLoc} onSave={handleSaveLocation} onSaveBulk={handleBulkSaveLocations} onCancel={() => { setShowLocModal(false); setEditLoc(null); }} />
+                    <LocationForm initial={editLoc} onSave={handleSaveLocation} onSaveBulk={handleBulkSaveLocations} onCancel={() => { setShowLocModal(false); setEditLoc(null); }} buildings={buildings} floors={floors} />
                   </div>
                 </div>
               )}

@@ -7,82 +7,59 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import Svg, { Circle } from 'react-native-svg';
 import { useAuth } from '../../context/AuthContext';
 import { fetchSiteScore, logoutUser, getStoredCompany, type SiteScore, ApiError } from '../../utils/api';
 import { hasSoftAccess } from '../../utils/permissions';
 import { useTheme, Spacing, Radius, Typography } from '../../utils/theme';
 
-// ─── Animated arc progress ────────────────────────────────────────────────────
+// ─── SVG arc progress ────────────────────────────────────────────────────────
 const SIZE   = 140;
-const BORDER = 12;
-const HALF   = SIZE / 2;
+const STROKE = 12;
+const RADIUS = (SIZE - STROKE) / 2;
+const CIRC   = 2 * Math.PI * RADIUS;
 
 /**
- * Renders a circular progress ring using the two-half-clip technique.
- * The container is rotated -90° so the arc starts at 12 o'clock.
- * Works correctly for any pct in [0, 100] on both iOS and Android.
+ * Clockwise circular progress ring using SVG strokeDashoffset.
+ * No two-half-clip, no visual break at 50%, starts at 12 o'clock.
  */
 function ScoreArc({ pct, color }: { pct: number; color: string }) {
-  const anim = useRef(new Animated.Value(0)).current;
+  const animVal = useRef(new Animated.Value(0)).current;
+  const [dashOffset, setDashOffset] = useState(CIRC);
 
   useEffect(() => {
-    anim.setValue(0);
-    Animated.timing(anim, {
+    animVal.setValue(0);
+    const listenerId = animVal.addListener(({ value }) => {
+      setDashOffset(CIRC * (1 - value / 100));
+    });
+    Animated.timing(animVal, {
       toValue: pct,
       duration: 900,
       easing: Easing.out(Easing.quad),
       useNativeDriver: false,
     }).start();
+    return () => { animVal.removeListener(listenerId); };
   }, [pct]);
-
-  // Right half: fills degrees 0→180 (first 50%)
-  const rightDeg = anim.interpolate({
-    inputRange: [0, 50, 100],
-    outputRange: ['0deg', '180deg', '180deg'],
-    extrapolate: 'clamp',
-  });
-  // Left half: starts filling after 50%
-  const leftDeg = anim.interpolate({
-    inputRange: [0, 50, 100],
-    outputRange: ['0deg', '0deg', '180deg'],
-    extrapolate: 'clamp',
-  });
-  const leftVisible = anim.interpolate({
-    inputRange: [0, 49, 50],
-    outputRange: [0, 0, 1],
-    extrapolate: 'clamp',
-  });
 
   return (
     <View style={{ width: SIZE, height: SIZE, alignItems: 'center', justifyContent: 'center' }}>
-      {/* Track ring */}
-      <View style={{
-        position: 'absolute', width: SIZE, height: SIZE,
-        borderRadius: HALF, borderWidth: BORDER, borderColor: color + '25',
-      }} />
-
-      {/* Arc container: rotate so arc starts from top */}
-      <View style={{ position: 'absolute', width: SIZE, height: SIZE, transform: [{ rotate: '-90deg' }] }}>
-        {/* Right half (fills first 0–180°) */}
-        <View style={{ position: 'absolute', right: 0, width: HALF, height: SIZE, overflow: 'hidden' }}>
-          <Animated.View style={{
-            position: 'absolute', left: -HALF, width: SIZE, height: SIZE,
-            borderRadius: HALF, borderWidth: BORDER, borderColor: color,
-            borderLeftColor: 'transparent', borderBottomColor: 'transparent',
-            transform: [{ rotate: rightDeg }],
-          }} />
-        </View>
-        {/* Left half (fills 180–360°) */}
-        <Animated.View style={{ position: 'absolute', left: 0, width: HALF, height: SIZE, overflow: 'hidden', opacity: leftVisible }}>
-          <Animated.View style={{
-            position: 'absolute', right: -HALF, width: SIZE, height: SIZE,
-            borderRadius: HALF, borderWidth: BORDER, borderColor: color,
-            borderRightColor: 'transparent', borderTopColor: 'transparent',
-            transform: [{ rotate: leftDeg }],
-          }} />
-        </Animated.View>
-      </View>
-
+      {/* SVG rotated -90° so arc starts at 12 o'clock going clockwise */}
+      <Svg width={SIZE} height={SIZE}
+        style={{ position: 'absolute', transform: [{ rotate: '-90deg' }] }}>
+        {/* Track */}
+        <Circle
+          cx={SIZE / 2} cy={SIZE / 2} r={RADIUS}
+          stroke={color + '30'} strokeWidth={STROKE} fill="none"
+        />
+        {/* Progress arc */}
+        <Circle
+          cx={SIZE / 2} cy={SIZE / 2} r={RADIUS}
+          stroke={color} strokeWidth={STROKE} fill="none"
+          strokeDasharray={`${CIRC} ${CIRC}`}
+          strokeDashoffset={dashOffset}
+          strokeLinecap="round"
+        />
+      </Svg>
       {/* Center text */}
       <View style={{ alignItems: 'center' }}>
         <Text style={{ fontSize: 26, fontWeight: '800', color, lineHeight: 30 }}>{pct.toFixed(1)}%</Text>

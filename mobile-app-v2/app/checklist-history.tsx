@@ -55,12 +55,12 @@ export default function ChecklistHistoryScreen() {
                   color={theme.primary}
                 />
               </View>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.cardTitle, { color: theme.textPrimary }]} numberOfLines={2}>{item.templateName}</Text>
-                <Text style={[styles.cardSub, { color: theme.textSecondary }]} numberOfLines={1}>{item.assetName}</Text>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={[styles.cardTitle, { color: theme.textPrimary }]}>{item.templateName}</Text>
+                <Text style={[styles.cardSub, { color: theme.textSecondary }]}>{item.assetName}</Text>
                 <Text style={[styles.cardTime, { color: theme.textMuted }]}>{new Date(item.submittedAt).toLocaleString()}</Text>
               </View>
-              <View style={{ alignItems: 'flex-end', gap: 4 }}>
+              <View style={{ alignItems: 'flex-end', gap: 4, flexShrink: 0 }}>
                 <StatusBadge label={item.hasFlagged ? 'Flagged' : 'OK'} variant={item.hasFlagged ? 'warning' : 'success'} />
                 <Text style={[styles.userName, { color: theme.textMuted }]}>{item.submittedBy}</Text>
               </View>
@@ -75,7 +75,7 @@ export default function ChecklistHistoryScreen() {
 const styles = StyleSheet.create({
   safe:     { flex: 1 },
   list:     { padding: Spacing.lg, gap: Spacing.md },
-  card:     { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.md, borderRadius: Radius.lg, padding: Spacing.lg, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 6, elevation: 3 },
+  card:     { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.md, borderRadius: Radius.lg, padding: Spacing.lg, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 6, elevation: 3, overflow: 'hidden' },
   iconBg:   { width: 42, height: 42, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },
   cardTitle:{ ...Typography.h4 },
   cardSub:  { ...Typography.bodyS, marginTop: 2 },

@@ -52,12 +52,12 @@ export default function HistoryScreen() {
                   color={item.type === 'logsheet' ? '#7C3AED' : theme.primary}
                 />
               </View>
-              <View style={styles.body}>
-                <Text style={[styles.title, { color: theme.textPrimary }]} numberOfLines={1}>{item.templateName}</Text>
+              <View style={[styles.body, { flex: 1, minWidth: 0 }]}>
+                <Text style={[styles.title, { color: theme.textPrimary }]}>{item.templateName}</Text>
                 <Text style={[styles.sub, { color: theme.textSecondary }]} numberOfLines={1}>{item.assetName}</Text>
                 <Text style={[styles.date, { color: theme.textMuted }]}>{new Date(item.submittedAt).toLocaleString()}</Text>
               </View>
-              <View style={styles.right}>
+              <View style={[styles.right, { flexShrink: 0 }]}>
                 <StatusBadge label={item.status ?? 'Submitted'} variant={item.hasFlagged ? 'warning' : 'success'} />
                 <MaterialCommunityIcons name="chevron-right" size={20} color={theme.textMuted} style={{ marginTop: 4 }} />
               </View>
@@ -72,11 +72,11 @@ export default function HistoryScreen() {
 const styles = StyleSheet.create({
   safe:  { flex: 1 },
   list:  { padding: Spacing.lg, gap: Spacing.md },
-  card:  { flexDirection: 'row', alignItems: 'center', borderRadius: Radius.lg, padding: Spacing.lg, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 6, elevation: 3 },
-  icon:  { width: 44, height: 44, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center', marginRight: Spacing.md },
+  card:  { flexDirection: 'row', alignItems: 'flex-start', borderRadius: Radius.lg, padding: Spacing.lg, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 6, elevation: 3 },
+  icon:  { width: 44, height: 44, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center', marginRight: Spacing.md, flexShrink: 0 },
   body:  { flex: 1, gap: 2 },
   title: { ...Typography.h4 },
   sub:   { ...Typography.bodyS },
   date:  { ...Typography.micro },
-  right: { alignItems: 'flex-end', gap: 2 },
+  right: { alignItems: 'flex-end', gap: 2, flexShrink: 0, marginLeft: Spacing.sm },
 });

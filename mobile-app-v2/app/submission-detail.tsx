@@ -141,6 +141,14 @@ export default function SubmissionDetailScreen() {
             ) : null}
           </View>
         ))}
+        {detail.overallRemark ? (
+          <>
+            <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>OVERALL REMARK</Text>
+            <View style={[styles.answerCard, { backgroundColor: theme.surface, shadowColor: theme.cardShadow, borderLeftColor: theme.border, borderLeftWidth: 1 }]}>
+              <Text style={[styles.answer, { color: theme.textPrimary }]}>{detail.overallRemark}</Text>
+            </View>
+          </>
+        ) : null}
       </ScrollView>
     </SafeAreaView>
   );

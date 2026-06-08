@@ -464,11 +464,24 @@ router.get(
                   ct.asset_type     AS "assetType",
                   ct.asset_id       AS "assetId",
                   a.asset_name      AS "assetName",
+                  ct.building_id    AS "buildingId",
+                  b.name            AS "buildingName",
+                  ct.floor_id       AS "floorId",
+                  f.floor_number    AS "floorName",
+                  ct.room_id        AS "roomId",
+                  r.room_name       AS "roomName",
                   ct.shift_id       AS "shiftId",
                   s.name            AS "shiftName",
-                  ct.questions
+                  ct.questions,
+                  ct.frequency,
+                  ct.week_days      AS "weekDays",
+                  ct.hourly_interval AS "hourlyInterval",
+                  COALESCE(ct.has_remark, false) AS "hasRemark"
            FROM checklist_templates ct
            LEFT JOIN assets a ON ct.asset_id = a.id
+           LEFT JOIN buildings b ON b.id = ct.building_id
+           LEFT JOIN floors f ON f.id = ct.floor_id
+           LEFT JOIN rooms r ON r.id = ct.room_id
            LEFT JOIN shifts s ON s.id = ct.shift_id
            WHERE ct.id = ? AND ct.company_id = ?`,
           [id, cid(req)]
@@ -514,6 +527,8 @@ router.get(
           id:               q.id ?? idx,
           questionText:     q.questionText || q.text || '',
           answerType:       normalizeInputType(q.inputType || q.answerType || 'text'),
+          inputType:        q.inputType || q.answerType || 'text',
+          inputTypes:       Array.isArray(q.inputTypes) && q.inputTypes.length > 0 ? q.inputTypes : undefined,
           isRequired:       q.isRequired ?? q.is_required ?? false,
           options:          Array.isArray(q.options) ? q.options : [],
           displayOrder:     q.orderIndex ?? q.order ?? idx,
@@ -617,9 +632,10 @@ router.post(
   ]),
   async (req, res, next) => {
     try {
-      const { templateId, assetId, answers, latitude, longitude, locationAddress } = req.body;
-      // Capture device IP from request headers (proxied through nginx)
-      const deviceIp = (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').split(',')[0].trim() || null;
+      const { templateId, assetId, answers, latitude, longitude, locationAddress, overallRemark } = req.body;
+      // Capture device IP from request headers (proxied through nginx); strip IPv4-mapped IPv6 prefix
+      const rawIp1 = (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').split(',')[0].trim();
+      const deviceIp = rawIp1.replace(/^::ffff:/i, '') || null;
 
       // Supervisors, admins, and users with any soft-service capability can fill
       // any company checklist directly; regular employees need an explicit assignment.
@@ -719,24 +735,24 @@ router.post(
         submissionId = existingChecklistSub.id;
         await pool.query(
           `UPDATE checklist_submissions SET asset_id = ?, status = 'submitted', completion_pct = 100, submitted_at = NOW(),
-           latitude = ?, longitude = ?, device_ip = ?, location_address = ? WHERE id = ?`,
-          [effectiveAssetId, latitude ?? null, longitude ?? null, deviceIp, locationAddress ?? null, submissionId]
+           latitude = ?, longitude = ?, device_ip = ?, location_address = ?, overall_remark = ? WHERE id = ?`,
+          [effectiveAssetId, latitude ?? null, longitude ?? null, deviceIp, locationAddress ?? null, overallRemark ?? null, submissionId]
         );
         await pool.query(`DELETE FROM checklist_submission_answers WHERE submission_id = ?`, [submissionId]);
       } else {
         const [csResult] = await pool.query(
           `INSERT INTO checklist_submissions
-           (template_id, asset_id, submitted_by, company_user_id, status, completion_pct, submitted_at, latitude, longitude, device_ip, location_address)
-           VALUES (?, ?, NULL, ?, 'submitted', 100, NOW(), ?, ?, ?, ?)
+           (template_id, asset_id, submitted_by, company_user_id, status, completion_pct, submitted_at, latitude, longitude, device_ip, location_address, overall_remark)
+           VALUES (?, ?, NULL, ?, 'submitted', 100, NOW(), ?, ?, ?, ?, ?)
            RETURNING id`,
-          [templateId, effectiveAssetId, req.companyUser.id, latitude ?? null, longitude ?? null, deviceIp, locationAddress ?? null]
+          [templateId, effectiveAssetId, req.companyUser.id, latitude ?? null, longitude ?? null, deviceIp, locationAddress ?? null, overallRemark ?? null]
         ).catch(() =>
           pool.query(
             `INSERT INTO checklist_submissions
-             (template_id, asset_id, submitted_by, status, completion_pct, submitted_at, latitude, longitude, device_ip, location_address)
-             VALUES (?, ?, NULL, 'submitted', 100, NOW(), ?, ?, ?, ?)
+             (template_id, asset_id, submitted_by, status, completion_pct, submitted_at, latitude, longitude, device_ip, location_address, overall_remark)
+             VALUES (?, ?, NULL, 'submitted', 100, NOW(), ?, ?, ?, ?, ?)
              RETURNING id`,
-            [templateId, effectiveAssetId, latitude ?? null, longitude ?? null, deviceIp, locationAddress ?? null]
+            [templateId, effectiveAssetId, latitude ?? null, longitude ?? null, deviceIp, locationAddress ?? null, overallRemark ?? null]
           )
         );
         submissionId = csResult.insertId || csResult[0]?.id;
@@ -770,6 +786,15 @@ router.post(
             )
           );
         }
+      }
+      // If an overall remark was provided, also save it as a special answer row
+      if (submissionId && overallRemark?.trim()) {
+        await pool.query(
+          `INSERT INTO checklist_submission_answers
+           (submission_id, question_id, question_text, input_type, answer_json, option_selected)
+           VALUES (?, NULL, 'Overall Remark', 'remark', ?, ?)`,
+          [submissionId, JSON.stringify({ value: overallRemark.trim() }), overallRemark.trim().slice(0, 255)]
+        ).catch(() => {});
       }
 
       // ── Flag & Alert Engine (checklist) ─────────────────────────────────
@@ -892,7 +917,8 @@ router.post(
   async (req, res, next) => {
     try {
       const { templateId, assetId, answers, latitude, longitude, locationAddress } = req.body;
-      const deviceIp = (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').split(',')[0].trim() || null;
+      const rawIp2 = (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').split(',')[0].trim();
+      const deviceIp = rawIp2.replace(/^::ffff:/i, '') || null;
 
       // Supervisors, admins, and users with any soft-service capability can fill
       // any company logsheet directly; regular employees need an explicit assignment.
@@ -1156,7 +1182,11 @@ router.get("/location-templates/:locationId", async (req, res, next) => {
     const companyId = cid(req);
     const userId = req.companyUser.id;
 
-    // Get checklists assigned to this location that are active and belong to the company
+    // Get checklists assigned to this location that are active and belong to the company.
+    // Matches by:
+    //   1) ct.location_id = the scanned location id (direct link), OR
+    //   2) ct.building_id / floor_id / room_id match the location's building/floor/room text
+    //      via the hierarchy tables — used when checklist was created with hierarchy dropdowns
     const [templates] = await pool.query(
       `SELECT
          ct.id,
@@ -1198,11 +1228,36 @@ router.get("/location-templates/:locationId", async (req, res, next) => {
              )
          ) AS "completedTodayByAnyone"
        FROM checklist_templates ct
-       WHERE ct.location_id = ?
-         AND ct.company_id = ?
+       WHERE ct.company_id = ?
          AND ct.is_active = 1
+         AND (
+           -- Direct location_id link (legacy / hard-service templates)
+           ct.location_id = ?
+           OR
+           -- Hierarchy match: building_id + floor_id + room_id match location's text values
+           (
+             ct.building_id IS NOT NULL
+             AND ct.floor_id   IS NOT NULL
+             AND ct.room_id    IS NOT NULL
+             AND ct.building_id IN (
+               SELECT b.id FROM buildings b
+               JOIN locations l ON l.id = ?
+               WHERE b.company_id = ct.company_id AND b.name = TRIM(l.building)
+             )
+             AND ct.floor_id IN (
+               SELECT f.id FROM floors f
+               JOIN locations l ON l.id = ?
+               WHERE f.company_id = ct.company_id AND f.floor_number = TRIM(l.floor)
+             )
+             AND ct.room_id IN (
+               SELECT r.id FROM rooms r
+               JOIN locations l ON l.id = ?
+               WHERE r.company_id = ct.company_id AND r.room_name = TRIM(l.room)
+             )
+           )
+         )
        ORDER BY ct.template_name`,
-      [userId, companyId, userId, locationId, companyId]
+      [userId, companyId, userId, companyId, locationId, locationId, locationId, locationId]
     );
 
     // Verify the location belongs to this company
@@ -1230,10 +1285,16 @@ router.get("/location-templates/:locationId", async (req, res, next) => {
        FROM checklist_submissions cs
        JOIN checklist_templates ct ON ct.id = cs.template_id
        LEFT JOIN company_users cu ON cu.id = cs.company_user_id
-       WHERE ct.location_id = ? AND ct.company_id = ?
+       WHERE ct.company_id = ?
+         AND (
+           ct.location_id = ?
+           OR (ct.building_id IN (SELECT b.id FROM buildings b JOIN locations l ON l.id = ? WHERE b.company_id = ct.company_id AND b.name = TRIM(l.building))
+               AND ct.floor_id IN (SELECT f.id FROM floors f JOIN locations l ON l.id = ? WHERE f.company_id = ct.company_id AND f.floor_number = TRIM(l.floor))
+               AND ct.room_id  IN (SELECT r.id FROM rooms  r JOIN locations l ON l.id = ? WHERE r.company_id = ct.company_id AND r.room_name = TRIM(l.room)))
+         )
        ORDER BY cs.submitted_at DESC NULLS LAST
        LIMIT 1`,
-      [locationId, companyId]
+      [companyId, locationId, locationId, locationId, locationId]
     );
 
     // Get open soft requests assigned to this user at this location
@@ -1266,10 +1327,17 @@ router.get("/check-location-filled", async (req, res, next) => {
     if (!templateId || !locationId) return res.status(400).json({ message: "Missing templateId or locationId" });
     const companyId = cid(req);
 
-    // Verify template belongs to this company and is linked to this location
+    // Verify template belongs to this company and is linked to this location (direct or hierarchy)
     const [[tmpl]] = await pool.query(
-      `SELECT id, frequency FROM checklist_templates WHERE id = ? AND company_id = ? AND location_id = ?`,
-      [Number(templateId), companyId, Number(locationId)]
+      `SELECT id, frequency FROM checklist_templates
+       WHERE id = ? AND company_id = ?
+         AND (
+           location_id = ?
+           OR (building_id IN (SELECT b.id FROM buildings b JOIN locations l ON l.id = ? WHERE b.company_id = company_id AND b.name = TRIM(l.building))
+               AND floor_id IN (SELECT f.id FROM floors f JOIN locations l ON l.id = ? WHERE f.company_id = company_id AND f.floor_number = TRIM(l.floor))
+               AND room_id  IN (SELECT r.id FROM rooms  r JOIN locations l ON l.id = ? WHERE r.company_id = company_id AND r.room_name = TRIM(l.room)))
+         )`,
+      [Number(templateId), companyId, Number(locationId), Number(locationId), Number(locationId), Number(locationId)]
     );
     if (!tmpl) return res.json({ filled: false });
 
@@ -1453,10 +1521,11 @@ router.get("/my-submission-detail/:type/:id", async (req, res, next) => {
 
     if (type === "checklist") {
       const [[sub]] = await pool.query(
-        `SELECT cs.id, ct.template_name AS name, a.asset_name AS "assetName",
+        `SELECT cs.id, ct.template_name AS "templateName", a.asset_name AS "assetName",
                 cs.status, cs.completion_pct AS "completionPct",
                 COALESCE(cs.submitted_at, cs.created_at) AS "submittedAt",
-                cs.shift, cu.full_name AS "submittedByName"
+                cs.shift, cu.full_name AS "submittedByName",
+                cs.overall_remark AS "overallRemark"
          FROM checklist_submissions cs
          JOIN checklist_templates ct ON ct.id = cs.template_id
          LEFT JOIN assets a ON a.id = cs.asset_id
@@ -1468,7 +1537,10 @@ router.get("/my-submission-detail/:type/:id", async (req, res, next) => {
       const [answers] = await pool.query(
         `SELECT question_text AS question, input_type AS "inputType",
                 answer_json AS "answerJson", option_selected AS answer
-         FROM checklist_submission_answers WHERE submission_id = ? ORDER BY id`,
+         FROM checklist_submission_answers
+         WHERE submission_id = ?
+           AND COALESCE(input_type, '') != 'remark'
+         ORDER BY id`,
         [id]
       ).catch(() => [[]]);
       const mapped = answers.map(a => {
@@ -1592,12 +1664,23 @@ router.get("/submissions/checklists", async (req, res, next) => {
          ct.template_name        AS "templateName",
          cs.asset_id             AS "assetId",
          a.asset_name            AS "assetName",
+         ct.building_id          AS "buildingId",
+         COALESCE(b.name,        loc.building) AS "buildingName",
+         ct.floor_id             AS "floorId",
+         COALESCE(f.floor_number, loc.floor)   AS "floorName",
+         ct.room_id              AS "roomId",
+         COALESCE(r.room_name, loc.room, a.asset_name) AS "roomName",
+         cs.overall_remark       AS "overallRemark",
          cs.status,
          cs.submitted_at         AS "submittedAt",
          cu.full_name            AS "submittedBy"
        FROM checklist_submissions cs
        JOIN checklist_templates ct ON cs.template_id = ct.id
        LEFT JOIN assets a ON cs.asset_id = a.id
+       LEFT JOIN buildings b ON b.id = ct.building_id
+       LEFT JOIN floors f ON f.id = ct.floor_id
+       LEFT JOIN rooms r ON r.id = ct.room_id
+       LEFT JOIN locations loc ON loc.id = ct.location_id
        LEFT JOIN company_users cu ON cs.company_user_id = cu.id
        WHERE ${conditions.join(" AND ")}
        ORDER BY cs.submitted_at DESC NULLS LAST
@@ -1662,31 +1745,68 @@ router.get("/submissions/checklists/:id", param("id").isInt(), async (req, res, 
     const [[submission]] = await pool.query(
       `SELECT
          cs.id,
-         cs.template_id       AS "templateId",
-         ct.template_name     AS "templateName",
-         cs.asset_id          AS "assetId",
-         a.asset_name         AS "assetName",
+         cs.template_id                           AS "templateId",
+         ct.template_name                         AS "templateName",
+         cs.asset_id                              AS "assetId",
+         a.asset_name                             AS "assetName",
+         -- Company: join via template company_id with fallback via the submitting user
+         COALESCE(co.company_name, co2.company_name) AS "companyName",
+         -- Building: from direct hierarchy first, then from linked location row
+         ct.building_id                           AS "buildingId",
+         COALESCE(b.name,        loc.building)    AS "buildingName",
+         -- Floor: from direct hierarchy first, then from linked location row
+         ct.floor_id                              AS "floorId",
+         COALESCE(f.floor_number, loc.floor)      AS "floorName",
+         -- Room: from direct hierarchy, then from linked location, then asset name
+         ct.room_id                               AS "roomId",
+         COALESCE(r.room_name, loc.room, a.asset_name) AS "roomName",
          cs.status,
          cs.submitted_at      AS "submittedAt",
-         cu.full_name         AS "submittedBy"
+         cu.full_name         AS "submittedBy",
+         cs.overall_remark    AS "overallRemark",
+         cs.device_ip         AS "deviceIp",
+         cs.location_address  AS "locationAddress",
+         cs.latitude,
+         cs.longitude
        FROM checklist_submissions cs
        JOIN checklist_templates ct ON cs.template_id = ct.id
+       LEFT JOIN companies co  ON co.id = ct.company_id
        LEFT JOIN assets a ON cs.asset_id = a.id
+       LEFT JOIN buildings b ON b.id = ct.building_id
+       LEFT JOIN floors f ON f.id = ct.floor_id
+       LEFT JOIN rooms r ON r.id = ct.room_id
+       LEFT JOIN locations loc ON loc.id = ct.location_id
        LEFT JOIN company_users cu ON cs.company_user_id = cu.id
+       LEFT JOIN companies co2 ON co2.id = cu.company_id
        WHERE cs.id = ? AND ct.company_id = ?`,
       [id, cid(req)]
     );
     if (!submission) return res.status(404).json({ message: "Submission not found" });
 
+    // If companyName is still null (table structure mismatch), fetch it directly
+    if (!submission.companyName) {
+      const [[coRow]] = await pool.query(
+        `SELECT company_name AS "companyName" FROM companies WHERE id = ?`,
+        [cid(req)]
+      ).catch(() => [[null]]);
+      if (coRow?.companyName) submission.companyName = coRow.companyName;
+    }
+
+    // Sanitise deviceIp — strip IPv4-mapped IPv6 prefix from stored values
+    if (submission.deviceIp) {
+      submission.deviceIp = submission.deviceIp.replace(/^::ffff:/i, '');
+    }
+
     const [answers] = await pool.query(
       `SELECT
          csa.id,
-         csa.question_text  AS "questionText",
-         csa.input_type     AS "answerType",
-         csa.answer_json    AS "answerJson",
+         csa.question_text   AS "questionText",
+         csa.input_type      AS "answerType",
+         csa.answer_json     AS "answerJson",
          csa.option_selected AS "answerValue"
        FROM checklist_submission_answers csa
        WHERE csa.submission_id = ?
+         AND COALESCE(csa.input_type, '') != 'remark'
        ORDER BY csa.id ASC`,
       [id]
     );

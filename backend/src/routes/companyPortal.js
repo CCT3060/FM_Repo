@@ -113,13 +113,29 @@ const safeParse = (v) => {
 
 // Ensure questions column exists (safe to run on every start)
 pool.query("ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS questions JSONB NULL").catch(() => {});
+// Ensure has_remark column exists (template-level remark field toggle)
+pool.query("ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS has_remark BOOLEAN NOT NULL DEFAULT FALSE").catch(() => {});
+// Ensure overall_remark column exists on checklist_submissions
+pool.query("ALTER TABLE checklist_submissions ADD COLUMN IF NOT EXISTS overall_remark TEXT NULL").catch(() => {});
+// Ensure week_days and hourly_interval columns exist for frequency scheduling
+pool.query("ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS week_days JSONB NULL").catch(() => {});
+pool.query("ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS hourly_interval SMALLINT NOT NULL DEFAULT 1").catch(() => {});
 // Ensure reference_image_url column exists on checklist_template_questions
 pool.query("ALTER TABLE checklist_template_questions ADD COLUMN IF NOT EXISTS reference_image_url TEXT NULL").catch(() => {});
 // Ensure question_image_url column exists (photo-as-question feature)
 pool.query("ALTER TABLE checklist_template_questions ADD COLUMN IF NOT EXISTS question_image_url TEXT NULL").catch(() => {});
 
+// ── Notifications fixes ───────────────────────────────────────────────────────
+// The original notifications table had user_id NOT NULL, but createNotification
+// does not supply it — make it nullable so all notification inserts succeed.
+pool.query("ALTER TABLE notifications ALTER COLUMN user_id DROP NOT NULL").catch(() => {});
+// Ensure push token columns exist on company_users for device push notifications
+pool.query("ALTER TABLE company_users ADD COLUMN IF NOT EXISTS push_token TEXT NULL").catch(() => {});
+pool.query("ALTER TABLE company_users ADD COLUMN IF NOT EXISTS push_token_platform VARCHAR(20) NULL").catch(() => {});
+
 // Ensure tabular-logsheet columns exist (migration 2026-03-02-tabular-logsheet)
 pool.query("ALTER TABLE logsheet_templates ADD COLUMN IF NOT EXISTS layout_type VARCHAR(20) NOT NULL DEFAULT 'standard'").catch(() => {});
+pool.query("ALTER TABLE logsheet_templates ADD COLUMN IF NOT EXISTS location_id BIGINT NULL").catch(() => {});
 pool.query("ALTER TABLE logsheet_entries ADD COLUMN IF NOT EXISTS data JSONB").catch(() => {});
 // Ensure company_user_id column exists (migration 2026-02-28-logsheet-company-user)
 pool.query("ALTER TABLE logsheet_entries ADD COLUMN IF NOT EXISTS company_user_id BIGINT REFERENCES company_users(id) ON DELETE SET NULL").catch(() => {});
@@ -1021,6 +1037,36 @@ router.post("/locations", async (req, res, next) => {
        RETURNING id, name, campus, building, floor, room, qr_code AS "qrCode", status, created_at AS "createdAt"`,
       [companyId, name.trim(), campus || null, building || null, floor || null, room || null, status, userId]
     );
+
+    // Sync building/floor/room hierarchy tables so they appear in template dropdowns
+    if (building?.trim() && floor?.trim()) {
+      try {
+        const [bldgRows] = await pool.query(
+          `INSERT INTO buildings (company_id, name) VALUES (?, ?)
+           ON CONFLICT (company_id, name) DO UPDATE SET name = EXCLUDED.name
+           RETURNING id`,
+          [companyId, building.trim()]
+        );
+        const bldgId = bldgRows[0]?.id;
+        if (bldgId) {
+          const [flRows] = await pool.query(
+            `INSERT INTO floors (company_id, building_id, floor_number) VALUES (?, ?, ?)
+             ON CONFLICT (company_id, building_id, floor_number) DO UPDATE SET floor_number = EXCLUDED.floor_number
+             RETURNING id`,
+            [companyId, bldgId, floor.trim()]
+          );
+          const flId = flRows[0]?.id;
+          if (flId && room?.trim()) {
+            await pool.query(
+              `INSERT INTO rooms (company_id, building_id, floor_id, room_name) VALUES (?, ?, ?, ?)
+               ON CONFLICT (company_id, floor_id, room_name) DO NOTHING`,
+              [companyId, bldgId, flId, room.trim()]
+            );
+          }
+        }
+      } catch { /* non-critical hierarchy sync */ }
+    }
+
     res.status(201).json(rows[0]);
   } catch (err) { next(err); }
 });
@@ -1039,6 +1085,36 @@ router.put("/locations/:id", async (req, res, next) => {
       [name.trim(), campus || null, building || null, floor || null, room || null, status || "Active", id, companyId]
     );
     if (!rows.length) return res.status(404).json({ message: "Location not found" });
+
+    // Sync hierarchy tables
+    if (building?.trim() && floor?.trim()) {
+      try {
+        const [bldgRows] = await pool.query(
+          `INSERT INTO buildings (company_id, name) VALUES (?, ?)
+           ON CONFLICT (company_id, name) DO UPDATE SET name = EXCLUDED.name
+           RETURNING id`,
+          [companyId, building.trim()]
+        );
+        const bldgId = bldgRows[0]?.id;
+        if (bldgId) {
+          const [flRows] = await pool.query(
+            `INSERT INTO floors (company_id, building_id, floor_number) VALUES (?, ?, ?)
+             ON CONFLICT (company_id, building_id, floor_number) DO UPDATE SET floor_number = EXCLUDED.floor_number
+             RETURNING id`,
+            [companyId, bldgId, floor.trim()]
+          );
+          const flId = flRows[0]?.id;
+          if (flId && room?.trim()) {
+            await pool.query(
+              `INSERT INTO rooms (company_id, building_id, floor_id, room_name) VALUES (?, ?, ?, ?)
+               ON CONFLICT (company_id, floor_id, room_name) DO NOTHING`,
+              [companyId, bldgId, flId, room.trim()]
+            );
+          }
+        }
+      } catch { /* non-critical */ }
+    }
+
     res.json(rows[0]);
   } catch (err) { next(err); }
 });
@@ -1069,12 +1145,271 @@ router.delete("/locations", async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+/* ── Buildings / Floors / Rooms ──────────────────────────────────────────────
+   Separate hierarchy tables: buildings → floors → rooms.
+   These are independent of the legacy `locations` table — no existing data changed.
+─────────────────────────────────────────────────────────────────────────────── */
+(async () => {
+  // ── Phase 1: Create tables ────────────────────────────────────────────────
+  try {
+    await pool.query(`CREATE TABLE IF NOT EXISTS buildings (
+      id         SERIAL PRIMARY KEY,
+      company_id INTEGER NOT NULL,
+      name       VARCHAR(255) NOT NULL,
+      created_at TIMESTAMP DEFAULT NOW()
+    )`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS floors (
+      id           SERIAL PRIMARY KEY,
+      company_id   INTEGER NOT NULL,
+      building_id  INTEGER NOT NULL,
+      floor_number VARCHAR(50) NOT NULL,
+      created_at   TIMESTAMP DEFAULT NOW()
+    )`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS rooms (
+      id          SERIAL PRIMARY KEY,
+      company_id  INTEGER NOT NULL,
+      building_id INTEGER NOT NULL,
+      floor_id    INTEGER NOT NULL,
+      room_name   VARCHAR(255) NOT NULL,
+      created_at  TIMESTAMP DEFAULT NOW()
+    )`);
+  } catch (e) { console.warn('[hierarchy] create tables:', e.message); }
+
+  // ── Phase 2: Deduplicate — rooms first (references floors), then floors, then buildings.
+  //    Keep the row with the lowest id for each unique key. QR codes are never touched.
+  try {
+    await pool.query(`
+      DELETE FROM rooms
+      WHERE id NOT IN (
+        SELECT MIN(id) FROM rooms GROUP BY company_id, floor_id, room_name
+      )
+    `);
+    await pool.query(`
+      DELETE FROM floors
+      WHERE id NOT IN (
+        SELECT MIN(id) FROM floors GROUP BY company_id, building_id, floor_number
+      )
+    `);
+    await pool.query(`
+      DELETE FROM buildings
+      WHERE id NOT IN (
+        SELECT MIN(id) FROM buildings GROUP BY company_id, name
+      )
+    `);
+  } catch (e) { console.warn('[hierarchy] dedup:', e.message); }
+
+  // ── Phase 3: Unique indexes (safe after dedup removes dupes) ─────────────
+  try {
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_buildings_co_name    ON buildings(company_id, name)`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_floors_co_bldg_floor ON floors(company_id, building_id, floor_number)`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_rooms_co_floor_name  ON rooms(company_id, floor_id, room_name)`);
+  } catch (e) { console.warn('[hierarchy] indexes:', e.message); }
+
+  // ── Phase 4: Seed from existing locations text columns ───────────────────
+  try {
+    await pool.query(`
+      INSERT INTO buildings (company_id, name)
+      SELECT DISTINCT l.company_id, TRIM(l.building)
+      FROM locations l
+      WHERE l.building IS NOT NULL AND TRIM(l.building) <> ''
+        AND NOT EXISTS (SELECT 1 FROM buildings b2 WHERE b2.company_id = l.company_id)
+      ON CONFLICT (company_id, name) DO NOTHING
+    `);
+    await pool.query(`
+      INSERT INTO floors (company_id, building_id, floor_number)
+      SELECT DISTINCT l.company_id, b.id, TRIM(l.floor)
+      FROM locations l
+      JOIN buildings b ON b.company_id = l.company_id AND b.name = TRIM(l.building)
+      WHERE l.floor IS NOT NULL AND TRIM(l.floor) <> ''
+        AND NOT EXISTS (SELECT 1 FROM floors f2 WHERE f2.company_id = l.company_id)
+      ON CONFLICT (company_id, building_id, floor_number) DO NOTHING
+    `);
+    await pool.query(`
+      INSERT INTO rooms (company_id, building_id, floor_id, room_name)
+      SELECT DISTINCT l.company_id, b.id, f.id, TRIM(l.room)
+      FROM locations l
+      JOIN buildings b ON b.company_id = l.company_id AND b.name = TRIM(l.building)
+      JOIN floors    f ON f.company_id  = l.company_id
+                       AND f.building_id = b.id
+                       AND f.floor_number = TRIM(l.floor)
+      WHERE l.room IS NOT NULL AND TRIM(l.room) <> ''
+        AND NOT EXISTS (SELECT 1 FROM rooms r2 WHERE r2.company_id = l.company_id)
+      ON CONFLICT (company_id, floor_id, room_name) DO NOTHING
+    `);
+    console.log('[hierarchy] ready — tables created, deduped, seeded from locations.');
+  } catch (e) { console.warn('[hierarchy] seed:', e.message); }
+})();
+
+// ─── Buildings ───────────────────────────────────────────────────────────────
+router.get("/buildings", async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT id, name, created_at AS "createdAt" FROM buildings WHERE company_id = ? ORDER BY name ASC`,
+      [cid(req)]
+    );
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
+router.post("/buildings", async (req, res, next) => {
+  try {
+    const { name } = req.body;
+    if (!name?.trim()) return res.status(400).json({ message: "Building name is required" });
+    const [rows] = await pool.query(
+      `INSERT INTO buildings (company_id, name) VALUES (?, ?) RETURNING id, name, created_at AS "createdAt"`,
+      [cid(req), name.trim()]
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) { next(err); }
+});
+
+router.put("/buildings/:id", async (req, res, next) => {
+  try {
+    const { name } = req.body;
+    if (!name?.trim()) return res.status(400).json({ message: "Building name is required" });
+    const [rows] = await pool.query(
+      `UPDATE buildings SET name = ? WHERE id = ? AND company_id = ? RETURNING id, name, created_at AS "createdAt"`,
+      [name.trim(), req.params.id, cid(req)]
+    );
+    if (!rows.length) return res.status(404).json({ message: "Building not found" });
+    res.json(rows[0]);
+  } catch (err) { next(err); }
+});
+
+router.delete("/buildings/:id", async (req, res, next) => {
+  try {
+    await pool.query("DELETE FROM buildings WHERE id = ? AND company_id = ?", [req.params.id, cid(req)]);
+    res.json({ success: true });
+  } catch (err) { next(err); }
+});
+
+// ─── Floors ──────────────────────────────────────────────────────────────────
+router.get("/floors", async (req, res, next) => {
+  try {
+    const { buildingId } = req.query;
+    const params = [cid(req)];
+    let extra = "";
+    if (buildingId) { extra = "AND f.building_id = ?"; params.push(buildingId); }
+    const [rows] = await pool.query(
+      `SELECT f.id, f.building_id AS "buildingId", b.name AS "buildingName",
+              f.floor_number AS "floorNumber", f.created_at AS "createdAt"
+       FROM floors f JOIN buildings b ON b.id = f.building_id
+       WHERE f.company_id = ? ${extra}
+       ORDER BY b.name ASC, f.floor_number ASC`,
+      params
+    );
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
+router.post("/floors", async (req, res, next) => {
+  try {
+    const { buildingId, floorNumber } = req.body;
+    if (!buildingId) return res.status(400).json({ message: "buildingId is required" });
+    if (!String(floorNumber ?? "").trim()) return res.status(400).json({ message: "Floor number is required" });
+    const [rows] = await pool.query(
+      `INSERT INTO floors (company_id, building_id, floor_number) VALUES (?, ?, ?)
+       RETURNING id, building_id AS "buildingId", floor_number AS "floorNumber", created_at AS "createdAt"`,
+      [cid(req), buildingId, String(floorNumber).trim()]
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) { next(err); }
+});
+
+router.put("/floors/:id", async (req, res, next) => {
+  try {
+    const { buildingId, floorNumber } = req.body;
+    if (!String(floorNumber ?? "").trim()) return res.status(400).json({ message: "Floor number is required" });
+    const [rows] = await pool.query(
+      `UPDATE floors SET building_id = COALESCE(?, building_id), floor_number = ?
+       WHERE id = ? AND company_id = ?
+       RETURNING id, building_id AS "buildingId", floor_number AS "floorNumber", created_at AS "createdAt"`,
+      [buildingId || null, String(floorNumber).trim(), req.params.id, cid(req)]
+    );
+    if (!rows.length) return res.status(404).json({ message: "Floor not found" });
+    res.json(rows[0]);
+  } catch (err) { next(err); }
+});
+
+router.delete("/floors/:id", async (req, res, next) => {
+  try {
+    await pool.query("DELETE FROM floors WHERE id = ? AND company_id = ?", [req.params.id, cid(req)]);
+    res.json({ success: true });
+  } catch (err) { next(err); }
+});
+
+// ─── Rooms ───────────────────────────────────────────────────────────────────
+router.get("/rooms", async (req, res, next) => {
+  try {
+    const { buildingId, floorId } = req.query;
+    const params = [cid(req)];
+    let extra = "";
+    if (buildingId) { extra += " AND r.building_id = ?"; params.push(buildingId); }
+    if (floorId)    { extra += " AND r.floor_id = ?";    params.push(floorId); }
+    const [rows] = await pool.query(
+      `SELECT r.id, r.building_id AS "buildingId", b.name AS "buildingName",
+              r.floor_id AS "floorId", f.floor_number AS "floorNumber",
+              r.room_name AS "roomName", r.created_at AS "createdAt"
+       FROM rooms r
+       JOIN buildings b ON b.id = r.building_id
+       JOIN floors   f ON f.id = r.floor_id
+       WHERE r.company_id = ?${extra}
+       ORDER BY b.name ASC, f.floor_number ASC, r.room_name ASC`,
+      params
+    );
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
+router.post("/rooms", async (req, res, next) => {
+  try {
+    const { buildingId, floorId, roomName } = req.body;
+    if (!buildingId) return res.status(400).json({ message: "buildingId is required" });
+    if (!floorId)    return res.status(400).json({ message: "floorId is required" });
+    if (!roomName?.trim()) return res.status(400).json({ message: "Room name is required" });
+    const [rows] = await pool.query(
+      `INSERT INTO rooms (company_id, building_id, floor_id, room_name) VALUES (?, ?, ?, ?)
+       RETURNING id, building_id AS "buildingId", floor_id AS "floorId", room_name AS "roomName", created_at AS "createdAt"`,
+      [cid(req), buildingId, floorId, roomName.trim()]
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) { next(err); }
+});
+
+router.put("/rooms/:id", async (req, res, next) => {
+  try {
+    const { buildingId, floorId, roomName } = req.body;
+    if (!roomName?.trim()) return res.status(400).json({ message: "Room name is required" });
+    const [rows] = await pool.query(
+      `UPDATE rooms SET
+         building_id = COALESCE(?, building_id),
+         floor_id    = COALESCE(?, floor_id),
+         room_name   = ?
+       WHERE id = ? AND company_id = ?
+       RETURNING id, building_id AS "buildingId", floor_id AS "floorId", room_name AS "roomName", created_at AS "createdAt"`,
+      [buildingId || null, floorId || null, roomName.trim(), req.params.id, cid(req)]
+    );
+    if (!rows.length) return res.status(404).json({ message: "Room not found" });
+    res.json(rows[0]);
+  } catch (err) { next(err); }
+});
+
+router.delete("/rooms/:id", async (req, res, next) => {
+  try {
+    await pool.query("DELETE FROM rooms WHERE id = ? AND company_id = ?", [req.params.id, cid(req)]);
+    res.json({ success: true });
+  } catch (err) { next(err); }
+});
+
 /* ── Checklists ─────────────────────────────────────────────────────────────── */
 // Inline migration: add service_type and location_id to checklist_templates
 (async () => {
   try {
     await pool.query(`ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS service_type varchar(60) NULL`);
     await pool.query(`ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS location_id bigint NULL`);
+    await pool.query(`ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS building_id bigint NULL`);
+    await pool.query(`ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS floor_id bigint NULL`);
+    await pool.query(`ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS room_id bigint NULL`);
   } catch (e) {
     console.warn('[companyPortal] checklist_templates migration warning:', e.message);
   }
@@ -1106,10 +1441,26 @@ router.get("/checklists", async (req, res, next) => {
     let extraMap = {};
     try {
       const [extras] = await pool.query(
-        `SELECT id, service_type AS "serviceType", location_id AS "locationId" FROM checklist_templates WHERE company_id = ? AND is_active = 1`,
+        `SELECT ct.id, ct.service_type AS "serviceType", ct.location_id AS "locationId",
+                ct.building_id AS "buildingId", ct.floor_id AS "floorId", ct.room_id AS "roomId",
+                ct.has_remark AS "hasRemark",
+                COALESCE(ct.custom_hours::text, '[]') AS "customHoursRaw",
+                ct.week_days AS "weekDaysRaw", ct.hourly_interval AS "hourlyInterval",
+                b.name AS "buildingName", f.floor_number AS "floorName", r.room_name AS "roomName"
+         FROM checklist_templates ct
+         LEFT JOIN buildings b ON b.id = ct.building_id
+         LEFT JOIN floors f ON f.id = ct.floor_id
+         LEFT JOIN rooms r ON r.id = ct.room_id
+         WHERE ct.company_id = ? AND ct.is_active = 1`,
         [cid(req)]
       );
-      for (const e of extras) extraMap[e.id] = { serviceType: e.serviceType, locationId: e.locationId };
+      for (const e of extras) {
+        let customHours = [];
+        try { customHours = JSON.parse(e.customHoursRaw || '[]'); } catch { customHours = []; }
+        let weekDays = [];
+        try { weekDays = typeof e.weekDaysRaw === 'string' ? JSON.parse(e.weekDaysRaw) : (e.weekDaysRaw || []); } catch { weekDays = []; }
+        extraMap[e.id] = { serviceType: e.serviceType, locationId: e.locationId, buildingId: e.buildingId, floorId: e.floorId, roomId: e.roomId, hasRemark: !!e.hasRemark, buildingName: e.buildingName, floorName: e.floorName, roomName: e.roomName, customHours, weekDays, hourlyInterval: e.hourlyInterval || 1 };
+      }
     } catch (_) { /* columns not yet added — skip */ }
 
     // For templates where JSONB questions is null/empty, fetch from checklist_template_questions
@@ -1157,15 +1508,16 @@ router.get("/checklists", async (req, res, next) => {
 router.post("/checklists", async (req, res, next) => {
   try {
     if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
-    const { templateName, assetType, serviceType, assetId, locationId, category, description, frequency = "Daily", shift, shiftId, status = "active", questions } = req.body;
+    const { templateName, assetType, serviceType, assetId, locationId, buildingId, floorId, roomId, category, description, frequency = "Daily", shift, shiftId, status = "active", questions, hasRemark, weekDays, hourlyInterval } = req.body;
     if (!templateName?.trim()) return res.status(400).json({ message: "templateName is required" });
     const resolvedAssetType = assetType || serviceType || null;
     const questionsJson = questions ? JSON.stringify(questions) : null;
+    const weekDaysJson = Array.isArray(weekDays) && weekDays.length > 0 ? JSON.stringify(weekDays) : null;
     const [rows] = await pool.query(
-      `INSERT INTO checklist_templates (company_id, template_name, asset_type, service_type, asset_id, location_id, category, description, frequency, shift, shift_id, status, is_active, created_by, questions)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-       RETURNING id, template_name AS "templateName", asset_type AS "assetType", service_type AS "serviceType", asset_id AS "assetId", location_id AS "locationId", category, description, frequency, shift, shift_id AS "shiftId", status, questions, created_at AS "createdAt"`,
-      [cid(req), templateName.trim(), resolvedAssetType, serviceType || null, assetId || null, locationId || null, category || null, description || null, frequency, shift || null, shiftId || null, status, null, questionsJson]
+      `INSERT INTO checklist_templates (company_id, template_name, asset_type, service_type, asset_id, location_id, building_id, floor_id, room_id, category, description, frequency, shift, shift_id, status, is_active, created_by, questions, has_remark, week_days, hourly_interval)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+       RETURNING id, template_name AS "templateName", asset_type AS "assetType", service_type AS "serviceType", asset_id AS "assetId", location_id AS "locationId", building_id AS "buildingId", floor_id AS "floorId", room_id AS "roomId", category, description, frequency, shift, shift_id AS "shiftId", status, questions, has_remark AS "hasRemark", week_days AS "weekDays", hourly_interval AS "hourlyInterval", created_at AS "createdAt"`,
+      [cid(req), templateName.trim(), resolvedAssetType, serviceType || null, assetId || null, locationId || null, buildingId || null, floorId || null, roomId || null, category || null, description || null, frequency, shift || null, shiftId || null, status, null, questionsJson, hasRemark ? true : false, weekDaysJson, hourlyInterval || 1]
     );
     // Auto-assign new checklist to all active catalyst supervisors (can_resolve_soft_issue) of this company
     try {
@@ -1201,12 +1553,13 @@ router.put("/checklists/:id", async (req, res, next) => {
   try {
     if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
     const { id } = req.params;
-    const { templateName, assetType, serviceType, assetId, locationId, category, description, frequency, shift, shiftId, status, questions } = req.body;
+    const { templateName, assetType, serviceType, assetId, locationId, buildingId, floorId, roomId, category, description, frequency, shift, shiftId, status, questions, hasRemark, weekDays, hourlyInterval } = req.body;
     const [[check]] = await pool.query("SELECT id FROM checklist_templates WHERE id = ? AND company_id = ?", [id, cid(req)]);
     if (!check) return res.status(404).json({ message: "Checklist not found" });
     const isActive = status === "active" ? 1 : 0;
     const questionsJson = questions !== undefined ? JSON.stringify(questions) : undefined;
     const resolvedAssetType = assetType || serviceType || null;
+    const weekDaysJson = weekDays !== undefined ? (Array.isArray(weekDays) && weekDays.length > 0 ? JSON.stringify(weekDays) : null) : undefined;
     const [rows] = await pool.query(
       `UPDATE checklist_templates SET
          template_name = COALESCE(?, template_name),
@@ -1214,6 +1567,9 @@ router.put("/checklists/:id", async (req, res, next) => {
          service_type = ?,
          asset_id = ?,
          location_id = ?,
+         building_id = ?,
+         floor_id = ?,
+         room_id = ?,
          category = COALESCE(?, category),
          description = COALESCE(?, description),
          frequency = COALESCE(?, frequency),
@@ -1221,10 +1577,13 @@ router.put("/checklists/:id", async (req, res, next) => {
          shift_id = COALESCE(?, shift_id),
          status = COALESCE(?, status),
          is_active = ?,
-         questions = COALESCE(?, questions)
+         questions = COALESCE(?, questions),
+         has_remark = ?,
+         week_days = COALESCE(?, week_days),
+         hourly_interval = COALESCE(?, hourly_interval)
        WHERE id = ?
-       RETURNING id, template_name AS "templateName", asset_type AS "assetType", service_type AS "serviceType", asset_id AS "assetId", location_id AS "locationId", category, description, frequency, shift, shift_id AS "shiftId", status, questions, created_at AS "createdAt"`,
-      [templateName || null, resolvedAssetType || null, serviceType ?? null, assetId ?? null, locationId ?? null, category || null, description || null, frequency || null, shift || null, shiftId ?? null, status || null, isActive, questionsJson ?? null, id]
+       RETURNING id, template_name AS "templateName", asset_type AS "assetType", service_type AS "serviceType", asset_id AS "assetId", location_id AS "locationId", building_id AS "buildingId", floor_id AS "floorId", room_id AS "roomId", category, description, frequency, shift, shift_id AS "shiftId", status, questions, has_remark AS "hasRemark", week_days AS "weekDays", hourly_interval AS "hourlyInterval", created_at AS "createdAt"`,
+      [templateName || null, resolvedAssetType || null, serviceType ?? null, assetId ?? null, locationId ?? null, buildingId ?? null, floorId ?? null, roomId ?? null, category || null, description || null, frequency || null, shift || null, shiftId ?? null, status || null, isActive, questionsJson ?? null, hasRemark != null ? !!hasRemark : null, weekDaysJson ?? null, hourlyInterval ?? null, id]
     );
     res.json(rows[0]);
   } catch (err) { next(err); }
