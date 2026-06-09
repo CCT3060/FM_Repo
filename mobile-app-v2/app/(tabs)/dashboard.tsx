@@ -9,7 +9,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import Svg, { Circle } from 'react-native-svg';
 import { useAuth } from '../../context/AuthContext';
-import { fetchSiteScore, logoutUser, getStoredCompany, type SiteScore, ApiError } from '../../utils/api';
+import { fetchSiteScore, logoutUser, getStoredCompany, type SiteScore, ApiError, API_BASE } from '../../utils/api';
 import { hasSoftAccess } from '../../utils/permissions';
 import { useTheme, Spacing, Radius, Typography } from '../../utils/theme';
 
@@ -152,7 +152,7 @@ export default function DashboardScreen() {
           {/* Client / company logo – right corner */}
           {user?.companyLogoUrl ? (
             <Image
-              source={{ uri: user.companyLogoUrl }}
+              source={{ uri: user.companyLogoUrl.startsWith('http') ? user.companyLogoUrl : `${API_BASE}${user.companyLogoUrl}` }}
               style={styles.headerLogoRight}
               resizeMode="contain"
             />

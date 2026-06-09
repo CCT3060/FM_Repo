@@ -8,7 +8,8 @@
  */
 
 import { router, useLocalSearchParams } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { useIsFocused } from '@react-navigation/native';
 import {
   ActivityIndicator, ScrollView, StyleSheet, Text,
   TouchableOpacity, View,
@@ -30,6 +31,7 @@ export default function LocationScanScreen() {
   const [isSupervisor,      setIsSupervisor]      = useState(false);
   const [isCatalystSupervisor, setIsCatalystSupervisor] = useState(false);
   const [assignedSoftRequests, setAssignedSoftRequests] = useState<Array<{ id: number; status: string; templateName?: string; raisedAt: string }>>([]);
+  const isFocused = useIsFocused();
 
   useEffect(() => {
     // Check if user is a client supervisor (can raise soft issues)
@@ -44,7 +46,7 @@ export default function LocationScanScreen() {
     }).catch(() => {});
   }, []);
 
-  useEffect(() => {
+  const loadTemplates = useCallback(() => {
     if (!locationId) { setError('No location ID provided'); setLoading(false); return; }
     fetchLocationTemplates(Number(locationId))
       .then(({ location: loc, templates: tmpl, recentSubmission: recent, assignedSoftRequests: asr }) => {
@@ -56,6 +58,13 @@ export default function LocationScanScreen() {
       .catch((err) => { setError(err?.message ?? 'Location not found'); })
       .finally(() => setLoading(false));
   }, [locationId]);
+
+  useEffect(() => {
+    if (isFocused) {
+      setLoading(true);
+      loadTemplates();
+    }
+  }, [isFocused, loadTemplates]);
 
   const openChecklist = (t: any) => {
     router.push({
