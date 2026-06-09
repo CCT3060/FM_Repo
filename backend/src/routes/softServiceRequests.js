@@ -302,8 +302,8 @@ router.get("/requests/asset/:assetId", async (req, res, next) => {
          )                             AS "beforeAnswers",
          cs.submitted_at               AS "beforeSubmittedAt"
        FROM soft_service_requests ssr
-       JOIN assets a ON a.id = ssr.asset_id
-       JOIN company_users cu ON cu.id = ssr.raised_by_user_id
+       LEFT JOIN assets a ON a.id = ssr.asset_id
+       LEFT JOIN company_users cu ON cu.id = ssr.raised_by_user_id
        LEFT JOIN checklist_submissions cs ON cs.id = ssr.raise_submission_id
        WHERE ssr.company_id = ? AND ssr.asset_id = ? AND ssr.status = 'open'
        ORDER BY ssr.raised_at DESC`,
@@ -434,7 +434,7 @@ router.get("/requests/all", async (req, res, next) => {
        LEFT JOIN locations loc ON loc.id = ssr.location_id
        LEFT JOIN checklist_templates ct ON ssr.template_type = 'checklist' AND ct.id = ssr.template_id
        LEFT JOIN logsheet_templates lt ON ssr.template_type = 'logsheet' AND lt.id = ssr.template_id
-       JOIN company_users raiser ON raiser.id = ssr.raised_by_user_id
+       LEFT JOIN company_users raiser ON raiser.id = ssr.raised_by_user_id
        LEFT JOIN company_users resolver ON resolver.id = ssr.resolved_by_user_id
        LEFT JOIN company_users assignee ON assignee.id = ssr.assigned_to_user_id
        LEFT JOIN company_users escuser ON escuser.id = ssr.cutoff_escalation_user_id
@@ -567,7 +567,7 @@ router.get("/requests/:id", async (req, res, next) => {
        FROM soft_service_requests ssr
        LEFT JOIN assets a ON a.id = ssr.asset_id
        LEFT JOIN locations loc ON loc.id = ssr.location_id
-       JOIN company_users cu ON cu.id = ssr.raised_by_user_id
+       LEFT JOIN company_users cu ON cu.id = ssr.raised_by_user_id
        LEFT JOIN company_users resolver ON resolver.id = ssr.resolved_by_user_id
        LEFT JOIN company_users assignee ON assignee.id = ssr.assigned_to_user_id
        WHERE ssr.id = ? AND ssr.company_id = ?`,
