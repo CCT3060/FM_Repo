@@ -118,20 +118,20 @@ function tryParse(s) {
   try { return JSON.parse(s); } catch { return null; }
 }
 
-/* Normalize photo URLs: old uploads stored as http://EC2-IP/uploads/... must be
-   converted to relative paths so they work on HTTPS portals without mixed-content errors. */
+/* Normalize photo URLs: convert any absolute URL with /uploads/ to a relative path
+   so the Vite proxy (local dev) and nginx (production) both serve it correctly. */
 function normalizePhotoUrl(src) {
   if (!src || typeof src !== "string") return src;
   // Handle bare filenames (no path prefix) — assume they live in /uploads/
   if (!src.startsWith("/") && !src.startsWith("http") && !src.includes("/")) {
     return `/uploads/${src}`;
   }
-  // On HTTPS (production): strip any external host to use relative /uploads/ path (avoids mixed content)
-  if (typeof window !== "undefined" && window.location.protocol === "https:") {
-    return src.replace(/^https?:\/\/[^/]+(:\d+)?(?=\/uploads\/)/, "");
-  }
-  // On HTTP (local dev): only strip localhost/127.0.0.1 — keep external EC2 URLs for direct access
-  return src.replace(/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(?=\/uploads\/)/, "");
+  // Convert ANY absolute URL containing /uploads/ to a relative path.
+  // This covers EC2 IPs, old domains, localhost — all get normalized to /uploads/...
+  // Vite proxies /uploads → backend in dev; nginx serves /uploads directly in prod.
+  const match = src.match(/(\/uploads\/.+)/i);
+  if (match) return match[1];
+  return src;
 }
 
 /* --- Photo thumbnail + full-screen lightbox -------------------- */
@@ -497,10 +497,6 @@ function DetailModal({ submission, type, onClose }) {
           gridTemplateColumns: "repeat(3, 1fr)", gap: "10px 24px", flexShrink: 0 }}>
           {[
             { label: "Submitted By", value: submission.submittedBy || "—" },
-            { label: "Company",      value: submission.companyName || "—" },
-            { label: "Building",     value: submission.buildingName || (submission.assetId ? formatAssetLocation(submission) : "—") },
-            { label: "Floor",        value: submission.floorName || "—" },
-            { label: "Room",         value: submission.roomName || submission.assetName || "—" },
             { label: "Date / Time",  value: fmt(submission.submittedAt) },
             { label: "Status",       value: <StatusBadge status={submission.status} /> },
             ...(submission.locationAddress || (submission.latitude && submission.longitude) ? [
@@ -1620,13 +1616,11 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
     for (const r of sorted) {
       const key = r.templateId ?? r.templateName ?? "unknown";
       if (!map.has(key)) {
-        const hasAsset    = !!(r.assetId || r.assetName);
-        const hasHierarchy = !!(r.buildingName || r.floorName || r.roomName);
+        const hasAsset = !!(r.assetId || r.assetName);
+        // Location priority: locationName (loc.name) > roomName (room_name/loc.room) > asset location > "—"
         const locationStr = hasAsset
           ? formatAssetLocation(r)
-          : hasHierarchy
-            ? [r.buildingName, r.floorName, r.roomName].filter(Boolean).join(" › ")
-            : (r.locationName || "—");
+          : (r.locationName || r.roomName || "—");
         map.set(key, {
           templateId:   r.templateId,
           templateName: r.templateName || "Unknown Template",

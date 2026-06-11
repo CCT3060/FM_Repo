@@ -25,14 +25,19 @@ export default function CompanyCodeScreen() {
   // Auto-redirect if already authenticated or company stored
   useEffect(() => {
     (async () => {
-      const user    = await getStoredUser();
-      const company = await getStoredCompany();
-      if (user && company) {
-        setUser(user);
-        router.replace('/(tabs)/dashboard');
-      } else if (company) {
-        router.replace({ pathname: '/login', params: { companyId: String(company.companyId), companyName: company.companyName } });
-      } else {
+      try {
+        const user    = await getStoredUser();
+        const company = await getStoredCompany();
+        if (user && company) {
+          setUser(user);
+          router.replace('/(tabs)/dashboard');
+        } else if (company) {
+          router.replace({ pathname: '/login', params: { companyId: String(company.companyId), companyName: company.companyName } });
+        } else {
+          setLoading(false);
+        }
+      } catch {
+        // If anything fails (corrupted storage, etc.) fall through to company code screen
         setLoading(false);
       }
     })();

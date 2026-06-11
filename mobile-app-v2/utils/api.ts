@@ -603,9 +603,9 @@ export async function fetchActiveShift() {
  * Returns the public URL of the uploaded file.
  * Does NOT set Content-Type — the native fetch will set it with the multipart boundary.
  */
-const MAX_PHOTO_BYTES = 4 * 1024 * 1024; // 4 MB — nginx limit is 15m, kept at 4 MB for safety
+const MAX_PHOTO_BYTES = 14 * 1024 * 1024; // 14 MB — nginx limit is 15m
 
-/** Compress an image so it is under 4 MB. Returns the (possibly new) URI. */
+/** Compress an image so it is under 14 MB. Returns the (possibly new) URI. */
 async function compressToUnder5MB(uri: string): Promise<string> {
   try {
     const info = await FileSystem.getInfoAsync(uri, { size: true });

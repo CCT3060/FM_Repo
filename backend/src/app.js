@@ -33,6 +33,7 @@ import assetDashboardRouter from "./routes/assetDashboard.js";
 import companyPortalAssetDashboardRouter from "./routes/companyPortalAssetDashboard.js";
 import uploadRouter from "./routes/upload.js";
 import softServiceRequestsRouter from "./routes/softServiceRequests.js";
+import scheduledReportsRouter from "./routes/scheduledReports.js";
 
 // ── Startup migrations ────────────────────────────────────────────────────────
 (async () => {
@@ -99,6 +100,7 @@ app.use("/api/asset-dashboard", assetDashboardRouter);
 app.use("/api/company-portal/asset-dashboard", companyPortalAssetDashboardRouter);
 app.use("/api/upload", uploadRouter);
 app.use("/api/soft-service", softServiceRequestsRouter);
+app.use("/api/company-portal/scheduled-reports", scheduledReportsRouter);
 
 app.use("/uploads", (req, res, next) => {
   res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");

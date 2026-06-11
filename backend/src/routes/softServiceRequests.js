@@ -394,8 +394,9 @@ router.get("/requests/all", async (req, res, next) => {
       : await hasCapability(companyId, roleKey, "is_soft_manager");
 
     if (!isSoftManagerRole) {
-      // Resolver users can only act on unassigned requests or those assigned to them.
-      conditions.push("(ssr.assigned_to_user_id IS NULL OR ssr.assigned_to_user_id = ?)");
+      // Resolver users can only see requests that are specifically assigned to them.
+      // Unassigned requests are only visible to managers (who can then assign them).
+      conditions.push("ssr.assigned_to_user_id = ?");
       params.push(userId);
     }
 

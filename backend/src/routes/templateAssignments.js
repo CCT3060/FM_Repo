@@ -51,7 +51,7 @@ const normalizeInputType = (value) => {
   return "text";
 };
 
-// Self-migration: ensure company_user_id columns exist on relevant tables
+// Self-migration: ensure required columns exist on relevant tables
 // so that submission history works even if migrations were not run manually.
 (async () => {
   const migrations = [
@@ -67,6 +67,13 @@ const normalizeInputType = (value) => {
     `ALTER TABLE logsheet_entries ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION DEFAULT NULL`,
     `ALTER TABLE logsheet_entries ADD COLUMN IF NOT EXISTS device_ip VARCHAR(64) DEFAULT NULL`,
     `ALTER TABLE logsheet_entries ADD COLUMN IF NOT EXISTS location_address TEXT DEFAULT NULL`,
+    // Columns for linking checklist templates to buildings/floors/rooms/locations
+    `ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS location_id BIGINT DEFAULT NULL`,
+    `ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS building_id BIGINT DEFAULT NULL`,
+    `ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS floor_id BIGINT DEFAULT NULL`,
+    `ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS room_id BIGINT DEFAULT NULL`,
+    // Overall remark on checklist submissions
+    `ALTER TABLE checklist_submissions ADD COLUMN IF NOT EXISTS overall_remark TEXT DEFAULT NULL`,
   ];
   for (const sql of migrations) {
     try { await pool.query(sql); } catch (_) { /* ignore if already exists */ }
@@ -1664,18 +1671,22 @@ router.get("/submissions/checklists", async (req, res, next) => {
          ct.template_name        AS "templateName",
          cs.asset_id             AS "assetId",
          a.asset_name            AS "assetName",
+         co.company_name         AS "companyName",
+         ct.location_id          AS "locationId",
+         loc.name                AS "locationName",
          ct.building_id          AS "buildingId",
-         COALESCE(b.name,        loc.building) AS "buildingName",
+         COALESCE(b.name, loc.building, loc.campus) AS "buildingName",
          ct.floor_id             AS "floorId",
-         COALESCE(f.floor_number, loc.floor)   AS "floorName",
+         COALESCE(f.floor_number, loc.floor)        AS "floorName",
          ct.room_id              AS "roomId",
-         COALESCE(r.room_name, loc.room, a.asset_name) AS "roomName",
+         COALESCE(r.room_name, loc.room, loc.name, a.asset_name) AS "roomName",
          cs.overall_remark       AS "overallRemark",
          cs.status,
          cs.submitted_at         AS "submittedAt",
          cu.full_name            AS "submittedBy"
        FROM checklist_submissions cs
        JOIN checklist_templates ct ON cs.template_id = ct.id
+       LEFT JOIN companies co ON co.id = ct.company_id
        LEFT JOIN assets a ON cs.asset_id = a.id
        LEFT JOIN buildings b ON b.id = ct.building_id
        LEFT JOIN floors f ON f.id = ct.floor_id
@@ -1751,15 +1762,15 @@ router.get("/submissions/checklists/:id", param("id").isInt(), async (req, res, 
          a.asset_name                             AS "assetName",
          -- Company: join via template company_id with fallback via the submitting user
          COALESCE(co.company_name, co2.company_name) AS "companyName",
-         -- Building: from direct hierarchy first, then from linked location row
+         -- Building: from direct hierarchy first, then from linked location row, then campus
          ct.building_id                           AS "buildingId",
-         COALESCE(b.name,        loc.building)    AS "buildingName",
+         COALESCE(b.name, loc.building, loc.campus) AS "buildingName",
          -- Floor: from direct hierarchy first, then from linked location row
          ct.floor_id                              AS "floorId",
          COALESCE(f.floor_number, loc.floor)      AS "floorName",
-         -- Room: from direct hierarchy, then from linked location, then asset name
+         -- Room: from direct hierarchy, then from linked location, then location name, then asset name
          ct.room_id                               AS "roomId",
-         COALESCE(r.room_name, loc.room, a.asset_name) AS "roomName",
+         COALESCE(r.room_name, loc.room, loc.name, a.asset_name) AS "roomName",
          cs.status,
          cs.submitted_at      AS "submittedAt",
          cu.full_name         AS "submittedBy",

@@ -182,6 +182,463 @@ const CardHeader = ({ title, subtitle, action }) => (
     {action && <div style={{ flexShrink: 0 }}>{action}</div>}
   </div>
 );
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ScheduleMailModal — Dashboard scheduled email report form
+   ═══════════════════════════════════════════════════════════════════════════ */
+function ScheduleMailModal({ companyUser }) {
+  const [open, setOpen] = useState(false);
+  const [schedules, setSchedules] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [sendingId, setSendingId] = useState(null);
+  const [toast, setToast] = useState(null);
+  const [editId, setEditId] = useState(null); // null = new schedule
+  const [showScheduleList, setShowScheduleList] = useState(false); // toggle existing schedules list
+
+  const emptyForm = {
+    frequency: "daily",
+    scheduledDay: "",      // monthly: day 1-31
+    weeklyDays: [],        // weekly: array of 0-6 (Sun=0)
+    quarterlyMonths: "3",  // quarterly: interval in months
+    yearlyMonth: "1",      // yearly: month 1-12
+    yearlyDay: "1",        // yearly: day 1-31
+    sendHour: "08",
+    sendMinute: "00",
+    sendAmPm: "AM",
+    recipientInput: "",
+    recipients: [],
+    formats: [],
+  };
+  const [form, setForm] = useState(emptyForm);
+
+  // Expose open function globally so parent can call it
+  useEffect(() => {
+    window._openScheduleMailModal = () => { setOpen(true); loadSchedules(); };
+    return () => { delete window._openScheduleMailModal; };
+  }, []);
+
+  const token = companyUser?.token || sessionStorage.getItem("cp_token") || localStorage.getItem("cp_token");
+
+  const apiReq = async (method, path, body) => {
+    const BASE = window.__API_BASE__ || "";
+    const res = await fetch(`${BASE}/api/company-portal/scheduled-reports${path}`, {
+      method,
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+    return data;
+  };
+
+  const loadSchedules = async () => {
+    setLoading(true);
+    try { setSchedules(await apiReq("GET", "")); }
+    catch (e) { showToast(e.message, "error"); }
+    finally { setLoading(false); }
+  };
+
+  const showToast = (msg, type = "success") => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 4000);
+  };
+
+  const to24 = (h, m, ap) => {
+    let hour = parseInt(h, 10);
+    if (ap === "PM" && hour !== 12) hour += 12;
+    if (ap === "AM" && hour === 12) hour = 0;
+    return `${String(hour).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+  };
+
+  const handleSave = async () => {
+    const { frequency, scheduledDay, sendHour, sendMinute, sendAmPm, recipients, formats,
+            weeklyDays, quarterlyMonths, yearlyMonth, yearlyDay } = form;
+    if (!recipients.length) return showToast("Add at least one recipient email", "error");
+    if (!formats.length)    return showToast("Select at least one format (PDF/CSV/Excel)", "error");
+    if (frequency === "weekly" && weeklyDays.length === 0) return showToast("Select at least one day of week", "error");
+    setSaving(true);
+    try {
+      const scheduleConfig = {};
+      if (frequency === "weekly" && weeklyDays.length > 0) scheduleConfig.weeklyDays = weeklyDays.map(Number);
+      if (frequency === "quarterly") scheduleConfig.quarterlyMonths = Number(quarterlyMonths);
+      if (frequency === "yearly") { scheduleConfig.yearlyMonth = Number(yearlyMonth); scheduleConfig.yearlyDay = Number(yearlyDay); }
+
+      const payload = {
+        frequency,
+        scheduledDay: frequency === "monthly" && scheduledDay !== "" ? Number(scheduledDay) : null,
+        sendTime: to24(sendHour, sendMinute, sendAmPm),
+        recipients,
+        formats,
+        scheduleConfig,
+      };
+      if (editId) {
+        await apiReq("PUT", `/${editId}`, payload);
+        showToast("Schedule updated!");
+      } else {
+        await apiReq("POST", "", payload);
+        showToast("Schedule saved! First mail will be sent at the next scheduled time.");
+      }
+      setForm(emptyForm);
+      setEditId(null);
+      await loadSchedules();
+    } catch (e) { showToast(e.message, "error"); }
+    finally { setSaving(false); }
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm("Delete this schedule?")) return;
+    try { await apiReq("DELETE", `/${id}`); await loadSchedules(); showToast("Deleted"); }
+    catch (e) { showToast(e.message, "error"); }
+  };
+
+  const handleSendNow = async (id) => {
+    setSendingId(id);
+    try { await apiReq("POST", `/${id}/send-now`); showToast("Report sent now!"); }
+    catch (e) { showToast(e.message, "error"); }
+    finally { setSendingId(null); }
+  };
+
+  const handleToggleActive = async (id, currentlyActive) => {
+    try {
+      await apiReq("PUT", `/${id}`, { isActive: !currentlyActive });
+      showToast(currentlyActive ? "Schedule paused" : "Schedule activated!");
+      await loadSchedules();
+    } catch (e) { showToast(e.message, "error"); }
+  };
+
+  const editSchedule = (s) => {
+    const [hStr, mStr] = s.send_time.split(":");
+    let h = parseInt(hStr, 10);
+    const ap = h >= 12 ? "PM" : "AM";
+    if (h > 12) h -= 12;
+    if (h === 0) h = 12;
+    const cfg = s.schedule_config || {};
+    setForm({
+      frequency: s.frequency,
+      scheduledDay: s.scheduled_day ?? "",
+      weeklyDays: cfg.weeklyDays || [],
+      quarterlyMonths: String(cfg.quarterlyMonths || "3"),
+      yearlyMonth: String(cfg.yearlyMonth || "1"),
+      yearlyDay: String(cfg.yearlyDay || "1"),
+      sendHour: String(h).padStart(2, "0"),
+      sendMinute: mStr,
+      sendAmPm: ap,
+      recipientInput: "",
+      recipients: s.recipients || [],
+      formats: s.formats || [],
+    });
+    setEditId(s.id);
+  };
+
+  const addRecipient = () => {
+    const email = form.recipientInput.trim().toLowerCase();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return showToast("Enter a valid email", "error");
+    if (form.recipients.includes(email)) return showToast("Already added", "error");
+    setForm((f) => ({ ...f, recipients: [...f.recipients, email], recipientInput: "" }));
+  };
+
+  const toggleFormat = (fmt) =>
+    setForm((f) => ({
+      ...f,
+      formats: f.formats.includes(fmt) ? f.formats.filter((x) => x !== fmt) : [...f.formats, fmt],
+    }));
+
+  const inp = (style) => ({
+    width: "100%", padding: "9px 12px", borderRadius: "8px",
+    border: "1.5px solid #e2e8f0", fontSize: "14px", outline: "none",
+    background: "#fff", boxSizing: "border-box", ...style,
+  });
+  const label = (style) => ({
+    display: "block", fontSize: "12px", fontWeight: 700,
+    color: "#475569", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.5px",
+    ...style,
+  });
+
+  const FREQ_OPTIONS = [
+    { value: "daily",     label: "Daily" },
+    { value: "weekly",    label: "Weekly" },
+    { value: "monthly",   label: "Monthly" },
+    { value: "quarterly", label: "Quarterly" },
+    { value: "yearly",    label: "Yearly" },
+  ];
+
+  const FORMAT_OPTIONS = [
+    { value: "pdf",   label: "PDF",   icon: "📄" },
+    { value: "csv",   label: "CSV",   icon: "📊" },
+    { value: "excel", label: "Excel", icon: "📋" },
+  ];
+
+  if (!open) return null;
+
+  const overlay = {
+    position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)",
+    display: "flex", alignItems: "center", justifyContent: "center",
+    zIndex: 9999, padding: "16px",
+  };
+  const modal = {
+    background: "#fff", borderRadius: "16px", width: "100%", maxWidth: "780px",
+    maxHeight: "90vh", overflowY: "auto", boxShadow: "0 24px 80px rgba(0,0,0,0.2)",
+    display: "flex", flexDirection: "column",
+  };
+
+  return (
+    <div style={overlay} onClick={(e) => { if (e.target === e.currentTarget) setOpen(false); }}>
+      <div style={modal}>
+        {/* Modal Header */}
+        <div style={{ background: "linear-gradient(135deg,#2563eb,#1d4ed8)", padding: "24px 28px", borderRadius: "16px 16px 0 0", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <div style={{ width: 42, height: 42, background: "rgba(255,255,255,0.18)", borderRadius: "10px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "20px" }}>📧</div>
+            <div>
+              <h2 style={{ color: "#fff", fontSize: "18px", fontWeight: 800, margin: 0 }}>Schedule Mail</h2>
+              <p style={{ color: "#bfdbfe", fontSize: "13px", margin: 0 }}>Automated dashboard report delivery</p>
+            </div>
+          </div>
+          <button onClick={() => setOpen(false)} style={{ background: "rgba(255,255,255,0.15)", border: "none", borderRadius: "8px", width: 36, height: 36, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: "18px" }}>×</button>
+        </div>
+
+        <div style={{ padding: "28px", display: "flex", flexDirection: "column", gap: "24px" }}>
+          {/* Toast */}
+          {toast && (
+            <div style={{ padding: "12px 16px", borderRadius: "10px", background: toast.type === "error" ? "#fef2f2" : "#f0fdf4", border: `1px solid ${toast.type === "error" ? "#fecaca" : "#bbf7d0"}`, color: toast.type === "error" ? "#dc2626" : "#16a34a", fontSize: "14px", fontWeight: 600 }}>
+              {toast.type === "error" ? "⚠️ " : "✅ "}{toast.msg}
+            </div>
+          )}
+
+          {/* Existing schedules — collapsible */}
+          {schedules.length > 0 && (
+            <div>
+              <button type="button"
+                onClick={() => setShowScheduleList((v) => !v)}
+                style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 14px", borderRadius: "8px", border: "1px solid #e2e8f0", background: showScheduleList ? "#eff6ff" : "#f8fafc", color: showScheduleList ? "#2563eb" : "#64748b", fontWeight: 600, fontSize: "13px", cursor: "pointer" }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+                {showScheduleList ? "Hide" : "View"} Existing Schedules ({schedules.length})
+              </button>
+
+              {showScheduleList && (
+                <div style={{ marginTop: "10px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                  {loading ? <p style={{ color: "#94a3b8" }}>Loading…</p> : schedules.map((s) => (
+                    <div key={s.id} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "12px 14px", border: `1px solid ${s.is_active ? "#e2e8f0" : "#f1f5f9"}`, borderRadius: "10px", background: s.is_active ? "#f8fafc" : "#fafafa", opacity: s.is_active ? 1 : 0.7 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center" }}>
+                          <span style={{ background: "#dbeafe", color: "#2563eb", borderRadius: "6px", padding: "2px 8px", fontSize: "12px", fontWeight: 700 }}>{s.frequency}</span>
+                          <span style={{ fontSize: "12px", color: "#64748b" }}>at {s.send_time}</span>
+                          {s.formats.map((f) => <span key={f} style={{ background: "#f1f5f9", color: "#475569", borderRadius: "6px", padding: "2px 7px", fontSize: "11px" }}>{f.toUpperCase()}</span>)}
+                          <span style={{ padding: "2px 8px", borderRadius: "20px", fontSize: "11px", fontWeight: 700, background: s.is_active ? "#f0fdf4" : "#fef2f2", color: s.is_active ? "#16a34a" : "#dc2626" }}>
+                            {s.is_active ? "● Active" : "○ Inactive"}
+                          </span>
+                        </div>
+                        <p style={{ margin: "4px 0 0", fontSize: "12px", color: "#94a3b8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>To: {(s.recipients || []).join(", ") || "—"}</p>
+                      </div>
+                      <div style={{ display: "flex", gap: "6px", flexShrink: 0, flexWrap: "wrap" }}>
+                        <button onClick={() => handleSendNow(s.id)} disabled={sendingId === s.id} style={{ fontSize: "12px", padding: "5px 10px", borderRadius: "7px", border: "1px solid #bbf7d0", background: "#f0fdf4", color: "#16a34a", cursor: "pointer", fontWeight: 600 }}>{sendingId === s.id ? "Sending…" : "Send Now"}</button>
+                        <button onClick={() => handleToggleActive(s.id, s.is_active)}
+                          style={{ fontSize: "12px", padding: "5px 10px", borderRadius: "7px", border: `1px solid ${s.is_active ? "#fde68a" : "#bbf7d0"}`, background: s.is_active ? "#fffbeb" : "#f0fdf4", color: s.is_active ? "#92400e" : "#16a34a", cursor: "pointer", fontWeight: 600 }}>
+                          {s.is_active ? "Pause" : "Activate"}
+                        </button>
+                        <button onClick={() => editSchedule(s)} style={{ fontSize: "12px", padding: "5px 10px", borderRadius: "7px", border: "1px solid #dbeafe", background: "#eff6ff", color: "#2563eb", cursor: "pointer", fontWeight: 600 }}>Edit</button>
+                        <button onClick={() => handleDelete(s.id)} style={{ fontSize: "12px", padding: "5px 10px", borderRadius: "7px", border: "1px solid #fecaca", background: "#fef2f2", color: "#dc2626", cursor: "pointer", fontWeight: 600 }}>Delete</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <hr style={{ border: "none", borderTop: "1px solid #e2e8f0", margin: "12px 0 0" }} />
+            </div>
+          )}
+
+          {/* Form title */}
+          <p style={{ fontWeight: 700, fontSize: "13px", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px", margin: 0 }}>
+            {editId ? "Edit Schedule" : "New Schedule"}
+          </p>
+
+          {/* Row 1: Frequency */}
+          <div>
+            <span style={label()}>Frequency</span>
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              {FREQ_OPTIONS.map((f) => (
+                <button key={f.value} type="button"
+                  onClick={() => setForm((x) => ({ ...x, frequency: f.value, scheduledDay: "" }))}
+                  style={{ padding: "8px 18px", borderRadius: "20px", fontSize: "13px", fontWeight: 600, cursor: "pointer", border: `2px solid ${form.frequency === f.value ? "#2563eb" : "#e2e8f0"}`, background: form.frequency === f.value ? "#eff6ff" : "#fff", color: form.frequency === f.value ? "#2563eb" : "#64748b" }}>
+                  {f.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Row 2: Schedule Config — changes based on frequency */}
+          <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+
+            {/* WEEKLY: multi-day selector */}
+            {form.frequency === "weekly" && (
+              <div>
+                <span style={label()}>Send on these days</span>
+                <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                  {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d, i) => {
+                    const sel = form.weeklyDays.includes(i);
+                    return (
+                      <button key={i} type="button"
+                        onClick={() => setForm((x) => ({
+                          ...x,
+                          weeklyDays: sel ? x.weeklyDays.filter((v) => v !== i) : [...x.weeklyDays, i],
+                        }))}
+                        style={{ padding: "8px 14px", borderRadius: "20px", fontSize: "13px", fontWeight: 600, cursor: "pointer",
+                          border: `2px solid ${sel ? "#2563eb" : "#e2e8f0"}`,
+                          background: sel ? "#2563eb" : "#fff",
+                          color: sel ? "#fff" : "#64748b" }}>
+                        {d}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* MONTHLY: 1-31 calendar grid day picker */}
+            {form.frequency === "monthly" && (
+              <div>
+                <span style={label()}>Day of Month</span>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "6px", maxWidth: "340px" }}>
+                  {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => {
+                    const sel = String(d) === String(form.scheduledDay);
+                    return (
+                      <button key={d} type="button"
+                        onClick={() => setForm((x) => ({ ...x, scheduledDay: String(d) }))}
+                        style={{ padding: "8px 4px", borderRadius: "8px", fontSize: "13px", fontWeight: 600, cursor: "pointer", textAlign: "center",
+                          border: `2px solid ${sel ? "#2563eb" : "#e2e8f0"}`,
+                          background: sel ? "#2563eb" : "#fff",
+                          color: sel ? "#fff" : "#475569" }}>
+                        {d}
+                      </button>
+                    );
+                  })}
+                </div>
+                {form.scheduledDay && <p style={{ fontSize: "12px", color: "#64748b", marginTop: "8px" }}>Report sends on day <strong>{form.scheduledDay}</strong> of each month</p>}
+              </div>
+            )}
+
+            {/* QUARTERLY: interval in months */}
+            {form.frequency === "quarterly" && (
+              <div style={{ maxWidth: "240px" }}>
+                <span style={label()}>Send every N months</span>
+                <select value={form.quarterlyMonths}
+                  onChange={(e) => setForm((x) => ({ ...x, quarterlyMonths: e.target.value }))}
+                  style={inp()}>
+                  {[["1","Every 1 month"],["2","Every 2 months"],["3","Every 3 months (quarterly)"],["4","Every 4 months"],["6","Every 6 months (semi-annual)"]].map(([v, l]) => (
+                    <option key={v} value={v}>{l}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* YEARLY: month + day */}
+            {form.frequency === "yearly" && (
+              <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" }}>
+                <div style={{ flex: "1 1 180px" }}>
+                  <span style={label()}>Month</span>
+                  <select value={form.yearlyMonth}
+                    onChange={(e) => setForm((x) => ({ ...x, yearlyMonth: e.target.value }))}
+                    style={inp()}>
+                    {["January","February","March","April","May","June","July","August","September","October","November","December"].map((m, i) => (
+                      <option key={i+1} value={i+1}>{m}</option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ flex: "0 0 120px" }}>
+                  <span style={label()}>Day</span>
+                  <input type="number" min="1" max="28" placeholder="Day (1–28)"
+                    value={form.yearlyDay}
+                    onChange={(e) => setForm((x) => ({ ...x, yearlyDay: e.target.value }))}
+                    style={inp()} />
+                </div>
+              </div>
+            )}
+
+            {/* Time selector — always shown */}
+            <div style={{ maxWidth: "340px" }}>
+              <span style={label()}>Send Time</span>
+              <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                <select value={form.sendHour} onChange={(e) => setForm((x) => ({ ...x, sendHour: e.target.value }))} style={{ ...inp(), width: "auto", flex: 1 }}>
+                  {Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, "0")).map((h) => (
+                    <option key={h} value={h}>{h}</option>
+                  ))}
+                </select>
+                <span style={{ color: "#64748b", fontWeight: 700 }}>:</span>
+                <select value={form.sendMinute} onChange={(e) => setForm((x) => ({ ...x, sendMinute: e.target.value }))} style={{ ...inp(), width: "auto", flex: 1 }}>
+                  {Array.from({ length: 60 }, (_, i) => String(i).padStart(2, "0")).map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+                <select value={form.sendAmPm} onChange={(e) => setForm((x) => ({ ...x, sendAmPm: e.target.value }))} style={{ ...inp(), width: "auto" }}>
+                  <option value="AM">AM</option>
+                  <option value="PM">PM</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Row 3: Recipients */}
+          <div>
+            <span style={label()}>Recipient Emails</span>
+            <div style={{ display: "flex", gap: "8px" }}>
+              <input type="email" placeholder="user@example.com" value={form.recipientInput}
+                onChange={(e) => setForm((x) => ({ ...x, recipientInput: e.target.value }))}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addRecipient(); } }}
+                style={{ ...inp(), flex: 1 }} />
+              <button type="button" onClick={addRecipient}
+                style={{ padding: "9px 18px", borderRadius: "8px", border: "none", background: "#2563eb", color: "#fff", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap", fontSize: "13px" }}>
+                + Add
+              </button>
+            </div>
+            {form.recipients.length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "10px" }}>
+                {form.recipients.map((r) => (
+                  <span key={r} style={{ display: "inline-flex", alignItems: "center", gap: "6px", background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: "20px", padding: "4px 12px", fontSize: "13px", color: "#1d4ed8" }}>
+                    {r}
+                    <button type="button" onClick={() => setForm((f) => ({ ...f, recipients: f.recipients.filter((x) => x !== r) }))}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "#60a5fa", fontWeight: 800, fontSize: "14px", lineHeight: 1, padding: 0 }}>×</button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Row 4: Attach Report Formats */}
+          <div>
+            <span style={label()}>Attach Report As</span>
+            <div style={{ display: "flex", gap: "10px" }}>
+              {FORMAT_OPTIONS.map((f) => {
+                const selected = form.formats.includes(f.value);
+                return (
+                  <button key={f.value} type="button" onClick={() => toggleFormat(f.value)}
+                    style={{ flex: 1, padding: "14px 10px", borderRadius: "12px", border: `2px solid ${selected ? "#2563eb" : "#e2e8f0"}`, background: selected ? "#eff6ff" : "#f8fafc", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: "6px", transition: "all 0.15s" }}>
+                    <span style={{ fontSize: "22px" }}>{f.icon}</span>
+                    <span style={{ fontSize: "13px", fontWeight: 700, color: selected ? "#2563eb" : "#475569" }}>{f.label}</span>
+                    {selected && <span style={{ fontSize: "10px", color: "#2563eb", fontWeight: 700 }}>✓ Selected</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Action buttons */}
+          <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end", paddingTop: "8px", borderTop: "1px solid #e2e8f0" }}>
+            <button type="button"
+              onClick={() => { setForm(emptyForm); setEditId(null); setOpen(false); }}
+              style={{ padding: "10px 24px", borderRadius: "8px", border: "1.5px solid #e2e8f0", background: "#fff", color: "#64748b", fontWeight: 600, cursor: "pointer", fontSize: "14px" }}>
+              {editId ? "Cancel Edit" : "Cancel"}
+            </button>
+            <button type="button" onClick={handleSave} disabled={saving}
+              style={{ padding: "10px 28px", borderRadius: "8px", border: "none", background: saving ? "#94a3b8" : "#2563eb", color: "#fff", fontWeight: 700, cursor: saving ? "not-allowed" : "pointer", fontSize: "14px", display: "flex", alignItems: "center", gap: "8px" }}>
+              {saving ? "Saving…" : (editId ? "Update Schedule" : "Save Schedule")}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const StatCard = ({ label, value, sub, subCol, iconBg, iconCol, icon, onClick }) => (
   <div onClick={onClick} style={{ background: "#fff", borderRadius: "12px", padding: "20px 24px", border: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "flex-start", cursor: onClick ? "pointer" : "default", transition: "box-shadow 0.15s", ...(onClick ? { boxShadow: "0 0 0 0 transparent" } : {}) }}
     onMouseEnter={onClick ? e => e.currentTarget.style.boxShadow = "0 4px 16px rgba(37,99,235,0.10)" : undefined}
@@ -5036,10 +5493,20 @@ export default function CompanyEmployeePortal() {
       <style>{`
         @media print {
           aside { display: none !important; }
-          main { margin-left: 0 !important; width: 100% !important; padding: 16px !important; }
+          main { margin-left: 0 !important; width: 100% !important; padding: 8px !important; }
           .no-print { display: none !important; }
           body { background: #fff !important; }
-          @page { margin: 12mm; size: A4 landscape; }
+          @page { margin: 10mm; size: A4 portrait; }
+          /* Force single-column on print to avoid layout overflow */
+          [data-print-grid] { display: block !important; }
+          [data-print-grid] > * { margin-bottom: 16px; break-inside: avoid; page-break-inside: avoid; }
+          /* Ensure SVG charts print */
+          svg { overflow: visible !important; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+          /* Stat cards row: show as 3-col table on A4 */
+          [data-stat-row] { display: grid !important; grid-template-columns: repeat(3, 1fr) !important; gap: 8px !important; }
+          [data-stat-row] > * { padding: 10px 12px !important; }
+          /* Submission overview: stack donut + legend vertically */
+          [data-donut-wrap] { flex-direction: column !important; align-items: center !important; }
         }
       `}</style>
       {/* Sidebar */}
@@ -5534,6 +6001,9 @@ export default function CompanyEmployeePortal() {
 
             return (
               <div>
+                {/* ── Schedule Mail Modal ───────────────────────────────────────────── */}
+                <ScheduleMailModal companyUser={currentUser} />
+
                 {/* Header */}
                 <div style={{ marginBottom: "24px", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "16px", flexWrap: "wrap" }}>
                   <div>
@@ -5543,6 +6013,14 @@ export default function CompanyEmployeePortal() {
                     <p style={{ color: "#64748b", fontSize: "14px" }}>{currentUser.companyName} — {new Date().toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}</p>
                   </div>
                   <div style={{ display: "flex", gap: "8px", flexShrink: 0 }} className="no-print">
+                    <button
+                      type="button"
+                      onClick={() => { window._openScheduleMailModal && window._openScheduleMailModal(); }}
+                      style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "8px", fontSize: "13px", fontWeight: 600, cursor: "pointer", border: "1.5px solid #2563eb", background: "#eff6ff", color: "#2563eb" }}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 7L2 7"/><path d="M12 3v4"/><path d="M12 3l2 2-2 2-2-2z" fill="currentColor" stroke="none"/></svg>
+                      Schedule Mail
+                    </button>
                     <button
                       type="button"
                       onClick={() => {
@@ -5698,7 +6176,7 @@ export default function CompanyEmployeePortal() {
                 })()}
                 {/* ── Main 2-col grid: Submission Overview (left) | Alerts + WO (right) ── */}
                 <style>{`@keyframes blink-dot{0%,100%{opacity:1}50%{opacity:0.12}} @keyframes pulse-dot{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.55);opacity:0.65}}`}</style>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "20px", marginBottom: "24px", alignItems: "start" }}>
+                <div data-print-grid="1" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "20px", marginBottom: "24px", alignItems: "start" }}>
 
                   {/* ── Left: Submission Overview ── */}
                   <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px" }}>
@@ -5735,7 +6213,7 @@ export default function CompanyEmployeePortal() {
                     </div>
 
                     {/* Donut + Legend */}
-                    <div style={{ display: "flex", alignItems: "center", gap: "24px", justifyContent: "center" }}>
+                    <div data-donut-wrap="1" style={{ display: "flex", alignItems: "center", gap: "24px", justifyContent: "center" }}>
                       <div style={{ flexShrink: 0 }}>
                         <DonutChart data={chartData} size={190} thickness={38} centerLabel={`${siteScoreRate}%`} />
                       </div>

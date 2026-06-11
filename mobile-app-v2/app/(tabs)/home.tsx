@@ -129,7 +129,7 @@ export default function HomeScreen() {
             <ActionCard icon="briefcase-outline" label="Work Orders" sublabel="Active orders" color="#D97706" onPress={() => router.push('/work-orders')} />
           ) : null}
 
-          {canRaise ? (
+          {canRaise && user?.role !== 'client_supervisor' ? (
             <ActionCard icon="alert-circle-outline" label="Raise Issue" sublabel="Soft service" color={theme.danger} onPress={() => router.push('/soft-raise')} />
           ) : null}
 

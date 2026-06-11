@@ -247,13 +247,7 @@ function PhotoInput({
     if (result.canceled || !result.assets?.[0]?.uri) return;
 
     const asset = result.assets[0];
-    const MAX_BYTES = 5 * 1024 * 1024; // 5 MB
     const fileBytes = asset.fileSize ?? 0;
-    if (fileBytes > MAX_BYTES) {
-      const sizeMB = (fileBytes / (1024 * 1024)).toFixed(1);
-      Alert.alert('Image Too Large', `This image is ${sizeMB} MB. Please choose an image smaller than 5 MB.`);
-      return;
-    }
 
     setUploading(true);
     try {
