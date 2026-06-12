@@ -4898,8 +4898,11 @@ export default function CompanyEmployeePortal() {
     const r = await fetch(url, { method, headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify(formData) });
     const data = await r.json();
     if (!r.ok) throw new Error(data.message || "Save failed");
-    if (isEdit) setLocations(p => p.map(l => l.id === data.id ? data : l));
-    else setLocations(p => [...p, data]);
+    if (isEdit) {
+      setLocations(p => p.map(l => l.id === data.id ? data : l));
+      // Reload rooms so Manage Rooms modal reflects any room rename
+      reloadRooms();
+    } else setLocations(p => [...p, data]);
     setShowLocModal(false); setEditLoc(null);
   };
 
@@ -5036,6 +5039,10 @@ export default function CompanyEmployeePortal() {
     // Optimistically update list immediately, then sync from server
     if (editId) {
       setRooms((p) => p.map((rm) => rm.id === data.id ? { ...rm, ...data } : rm));
+      // Also reload locations so the Room column in the table reflects the renamed room
+      const lr = await fetch("/api/company-portal/locations", { headers: { Authorization: `Bearer ${token}` } });
+      const ld = await lr.json();
+      if (Array.isArray(ld)) setLocations(ld);
     } else {
       // Also auto-create a location so it appears in the Locations list
       const bldg = buildings.find((b) => String(b.id) === String(buildingId));

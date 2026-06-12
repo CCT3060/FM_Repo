@@ -1078,6 +1078,12 @@ router.put("/locations/:id", async (req, res, next) => {
     const { name, campus, building, floor, room, status } = req.body;
     if (!name?.trim()) return res.status(400).json({ message: "Location name is required" });
 
+    // Fetch old room value so we can sync rooms table if it changed
+    const [[oldLoc]] = await pool.query(
+      "SELECT room FROM locations WHERE id = ? AND company_id = ?",
+      [id, companyId]
+    );
+
     const [rows] = await pool.query(
       `UPDATE locations SET name = ?, campus = ?, building = ?, floor = ?, room = ?, status = ?
        WHERE id = ? AND company_id = ?
@@ -1105,11 +1111,26 @@ router.put("/locations/:id", async (req, res, next) => {
           );
           const flId = flRows[0]?.id;
           if (flId && room?.trim()) {
+            // If room name changed, update the existing rooms row; otherwise insert if missing
+            if (oldLoc?.room?.trim() && oldLoc.room.trim() !== room.trim()) {
+              await pool.query(
+                `UPDATE rooms SET room_name = ? WHERE company_id = ? AND floor_id = ? AND room_name = ?`,
+                [room.trim(), companyId, flId, oldLoc.room.trim()]
+              );
+            }
             await pool.query(
               `INSERT INTO rooms (company_id, building_id, floor_id, room_name) VALUES (?, ?, ?, ?)
                ON CONFLICT (company_id, floor_id, room_name) DO NOTHING`,
               [companyId, bldgId, flId, room.trim()]
             );
+            // Also sync all other locations that had the old room name on the same floor
+            if (oldLoc?.room?.trim() && oldLoc.room.trim() !== room.trim()) {
+              await pool.query(
+                `UPDATE locations SET room = ?, name = CASE WHEN name = ? THEN ? ELSE name END
+                 WHERE company_id = ? AND room = ? AND floor = ? AND building = ? AND id != ?`,
+                [room.trim(), oldLoc.room.trim(), room.trim(), companyId, oldLoc.room.trim(), floor.trim(), building.trim(), id]
+              );
+            }
           }
         }
       } catch { /* non-critical */ }
@@ -1380,6 +1401,13 @@ router.put("/rooms/:id", async (req, res, next) => {
   try {
     const { buildingId, floorId, roomName } = req.body;
     if (!roomName?.trim()) return res.status(400).json({ message: "Room name is required" });
+
+    // Fetch old room name before updating so we can sync locations
+    const [[oldRoom]] = await pool.query(
+      "SELECT room_name AS \"roomName\", floor_id AS \"floorId\", building_id AS \"buildingId\" FROM rooms WHERE id = ? AND company_id = ?",
+      [req.params.id, cid(req)]
+    );
+
     const [rows] = await pool.query(
       `UPDATE rooms SET
          building_id = COALESCE(?, building_id),
@@ -1390,6 +1418,16 @@ router.put("/rooms/:id", async (req, res, next) => {
       [buildingId || null, floorId || null, roomName.trim(), req.params.id, cid(req)]
     );
     if (!rows.length) return res.status(404).json({ message: "Room not found" });
+
+    // Sync the room name change into the locations table
+    if (oldRoom && oldRoom.roomName && oldRoom.roomName.trim() !== roomName.trim()) {
+      await pool.query(
+        `UPDATE locations SET room = ?, name = CASE WHEN name = ? THEN ? ELSE name END
+         WHERE company_id = ? AND room = ?`,
+        [roomName.trim(), oldRoom.roomName.trim(), roomName.trim(), cid(req), oldRoom.roomName.trim()]
+      );
+    }
+
     res.json(rows[0]);
   } catch (err) { next(err); }
 });
