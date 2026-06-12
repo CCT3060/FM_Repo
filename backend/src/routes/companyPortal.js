@@ -4471,7 +4471,8 @@ router.post("/upload-logo", (req, res, next) => {
     if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
     if (!req.file) return res.status(400).json({ message: "No file provided" });
     const ext = path.extname(req.file.originalname).toLowerCase() || ".png";
-    const url = `/uploads/logos/company-${req.companyUser.companyId}${ext}`;
+    const baseUrl = `/uploads/logos/company-${req.companyUser.companyId}${ext}`;
+    const url = `${baseUrl}?v=${Date.now()}`;
     await pool.query("UPDATE companies SET logo_url = ? WHERE id = ?", [url, req.companyUser.companyId]);
     res.json({ url });
   } catch (err) { next(err); }
