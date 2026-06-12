@@ -1663,7 +1663,7 @@ function LocationForm({ initial, onSave, onSaveBulk, onCancel, buildings = [], f
             </datalist>
           )}
         </div>
-        {(!isEdit && !multiRoom) && (
+        {(!isEdit && !multiRoom || isEdit) && (
           <div>
             <LocLbl>Room</LocLbl>
             <input value={form.room} onChange={(e) => setForm(p => ({ ...p, room: e.target.value }))} placeholder="e.g. Room 101" style={locInpStyle} />
