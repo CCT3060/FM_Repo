@@ -4430,7 +4430,7 @@ export default function CompanyEmployeePortal() {
       const saved = localStorage.getItem('locQrSettings');
       if (saved) return JSON.parse(saved);
     } catch { /* ignore */ }
-    return { startNumber: 1, showFields: ["floor", "room", "area", "building"] };
+    return { startNumber: 1, showFields: ["floor", "room", "area", "building"], showFieldLabels: ["floor", "room", "area", "building"], showWebsite: true, horizontal: false };
   });
   // Fleet State
   const [fleetAssets, setFleetAssets] = useState([]);
@@ -5152,8 +5152,8 @@ export default function CompanyEmployeePortal() {
           <div style="width:90px;height:55px;display:flex;align-items:center;justify-content:flex-start;">${clientLogoHtml}</div>
           <div style="width:90px;height:55px;display:flex;align-items:center;justify-content:flex-end;">${catalystLogoHtml}</div>
         </div>
-        <div style="font-size:15px;font-weight:800;letter-spacing:2px;margin-bottom:3px;color:#0f172a;">SCAN QR CODE</div>
-        <div style="font-size:11px;color:#475569;margin-bottom:14px;">For Service Excellence</div>
+        <div style="font-size:15px;font-weight:800;letter-spacing:2px;margin-bottom:3px;color:#0f172a;">TO SERVE YOU BETTER</div>
+        <div style="font-size:12px;font-weight:bold;color:#0f172a;margin-bottom:14px;">Scan QR Code</div>
         <div style="background:#f8fafc;padding:10px;border-radius:10px;display:inline-block;margin-bottom:12px;border:1px solid #e2e8f0;">
           <img src="${qrDataUrl}" style="width:200px;height:200px;display:block;" />
         </div>
@@ -5166,32 +5166,48 @@ export default function CompanyEmployeePortal() {
 
   // Build the styled QR card HTML for a single location
   const buildLocQrCardHtml = (qrDataUrl, loc, clientLogoDataUrl, catalystLogoDataUrl) => {
-    const sf = locQrSettings?.showFields ?? ["floor","room","area","building"];
-    const details = [
-      sf.includes("floor")    && loc.floor    ? `Floor - ${loc.floor}`       : null,
-      sf.includes("room")     && loc.room     ? `Room - ${loc.room}`          : null,
-      sf.includes("area")     && (loc.area || loc.room) ? `Area - ${loc.area || loc.room}` : null,
-      sf.includes("building") && loc.building ? `Building - ${loc.building}` : null,
-    ].filter(Boolean);
+    const sf  = locQrSettings?.showFields      ?? ["floor","room","area","building"];
+    const slf = locQrSettings?.showFieldLabels ?? ["floor","room","area","building"];
+    const showWebsite  = locQrSettings?.showWebsite  !== false;
+    const horizontal   = locQrSettings?.horizontal   === true;
+
+    const fieldDefs = [
+      { key: "floor",    label: "Floor",    value: loc.floor    },
+      { key: "room",     label: "Room",     value: loc.room     },
+      { key: "area",     label: "Area",     value: loc.area || loc.room },
+      { key: "building", label: "Building", value: loc.building },
+    ];
+
+    const detailParts = fieldDefs
+      .filter(f => sf.includes(f.key) && f.value)
+      .map(f => {
+        const showLabel = slf.includes(f.key);
+        return showLabel ? `${f.label} - ${f.value}` : f.value;
+      });
+
+    const detailHtml = detailParts.length === 0 ? "" : horizontal
+      ? `<div style="font-size:10px;color:#334155;margin-bottom:2px;">${detailParts.join(" &nbsp;|&nbsp; ")}</div>`
+      : detailParts.map(d => `<div style="font-size:10px;color:#334155;margin-bottom:2px;">${d}</div>`).join("");
+
     const clientLogoHtml = clientLogoDataUrl
-      ? `<img src="${clientLogoDataUrl}" style="max-width:90px;max-height:55px;object-fit:contain;" />`
-      : `<div style="width:90px;"></div>`;
+      ? `<img src="${clientLogoDataUrl}" style="max-width:80px;max-height:38px;object-fit:contain;" />`
+      : `<div style="width:80px;"></div>`;
     const catalystLogoHtml = catalystLogoDataUrl
-      ? `<img src="${catalystLogoDataUrl}" style="max-width:90px;max-height:55px;object-fit:contain;" />`
-      : `<div style="font-size:10px;font-weight:800;color:#1a1a1a;text-align:right;line-height:1.2;">CATALYST<br/><span style="font-size:8px;font-weight:400;">PARTNERING FOR SUSTAINABILITY</span></div>`;
+      ? `<img src="${catalystLogoDataUrl}" style="max-width:80px;max-height:38px;object-fit:contain;" />`
+      : `<div style="font-size:8px;font-weight:800;color:#1a1a1a;text-align:right;line-height:1.2;">CATALYST<br/><span style="font-size:7px;font-weight:400;">PARTNERING FOR SUSTAINABILITY</span></div>`;
     return `
-      <div style="background:#ffffff;color:#1a1a1a;padding:24px 20px 20px;border-radius:16px;width:300px;text-align:center;font-family:Arial,sans-serif;box-shadow:0 4px 16px rgba(0,0,0,0.15);border:2px solid #2563eb;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
-          <div style="width:90px;height:55px;display:flex;align-items:center;justify-content:flex-start;">${clientLogoHtml}</div>
-          <div style="width:90px;height:55px;display:flex;align-items:center;justify-content:flex-end;">${catalystLogoHtml}</div>
+      <div style="background:#ffffff;color:#1a1a1a;padding:12px 12px 10px;border-radius:12px;width:250px;text-align:center;font-family:Arial,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.12);border:2px solid #2563eb;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <div style="width:80px;height:38px;display:flex;align-items:center;justify-content:flex-start;">${clientLogoHtml}</div>
+          <div style="width:80px;height:38px;display:flex;align-items:center;justify-content:flex-end;">${catalystLogoHtml}</div>
         </div>
-        <div style="font-size:15px;font-weight:800;letter-spacing:2px;margin-bottom:3px;color:#0f172a;">SCAN QR CODE</div>
-        <div style="font-size:11px;color:#475569;margin-bottom:14px;">For Service Excellence</div>
-        <div style="background:#f8fafc;padding:10px;border-radius:10px;display:inline-block;margin-bottom:12px;border:1px solid #e2e8f0;">
-          <img src="${qrDataUrl}" style="width:200px;height:200px;display:block;" />
+        <div style="font-size:11px;font-weight:800;letter-spacing:1.5px;margin-bottom:2px;color:#0f172a;">TO SERVE YOU BETTER</div>
+        <div style="font-size:12px;font-weight:bold;color:#0f172a;margin-bottom:8px;">Scan QR Code</div>
+        <div style="background:#f8fafc;padding:6px;border-radius:8px;display:inline-block;margin-bottom:8px;border:1px solid #e2e8f0;">
+          <img src="${qrDataUrl}" style="width:160px;height:160px;display:block;" />
         </div>
-        ${details.map(d => `<div style="font-size:12px;color:#334155;margin-bottom:2px;">${d}</div>`).join("")}
-        <div style="font-size:13px;font-weight:700;color:#0f172a;margin-top:8px;">www.catalystsolutions.eco</div>
+        ${detailHtml}
+        ${showWebsite ? `<div style="font-size:10px;font-weight:700;color:#0f172a;margin-top:6px;">www.catalystsolutions.eco</div>` : ""}
       </div>`;
   };
 
@@ -5267,15 +5283,15 @@ export default function CompanyEmployeePortal() {
       const printHtml = `<!DOCTYPE html><html><head><title>Location QR Codes</title>
         <style>
           *{margin:0;padding:0;box-sizing:border-box;}
-          body{background:#f8fafc;font-family:Arial,sans-serif;}
-          .page{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px;page-break-after:always;}
+          body{background:#fff;font-family:Arial,sans-serif;}
+          .page{display:flex;align-items:flex-start;justify-content:center;padding:8px;page-break-after:always;}
           .page:last-child{page-break-after:auto;}
-          .grid{display:grid;grid-template-columns:repeat(2,auto);gap:28px;justify-content:center;align-items:start;}
-          @media print{body{background:#fff;}@page{size:A4 portrait;margin:8mm;}.page{min-height:100vh;padding:16px;}}
+          .grid{display:grid;grid-template-columns:repeat(2,auto);gap:10px;justify-content:center;align-items:start;}
+          @media print{@page{size:A4 portrait;margin:5mm;}}
         </style>
       </head><body>${(() => {
         const chunks = [];
-        for (let i = 0; i < cardHtmls.length; i += 4) chunks.push(cardHtmls.slice(i, i + 4));
+        for (let i = 0; i < cardHtmls.length; i += 6) chunks.push(cardHtmls.slice(i, i + 6));
         return chunks.map(chunk => `<div class="page"><div class="grid">${chunk.join('')}</div></div>`).join('');
       })()}</body></html>`;
       const w = window.open("", "_blank");
@@ -5341,17 +5357,26 @@ export default function CompanyEmployeePortal() {
       ]);
 
       const W = 340, PAD = 24;
-      const sf = locQrSettings?.showFields ?? ["floor","room","area","building"];
-      const details = [
-        sf.includes("floor")    && loc.floor    ? `Floor - ${loc.floor}`       : null,
-        sf.includes("room")     && loc.room     ? `Room - ${loc.room}`          : null,
-        sf.includes("area")     && (loc.area || loc.room) ? `Area - ${loc.area || loc.room}` : null,
-        sf.includes("building") && loc.building ? `Building - ${loc.building}` : null,
-      ].filter(Boolean);
+      const sf  = locQrSettings?.showFields      ?? ["floor","room","area","building"];
+      const slf = locQrSettings?.showFieldLabels ?? ["floor","room","area","building"];
+      const showWebsite  = locQrSettings?.showWebsite  !== false;
+      const horizontal   = locQrSettings?.horizontal   === true;
+      const fieldDefs = [
+        { key: "floor",    label: "Floor",    value: loc.floor    },
+        { key: "room",     label: "Room",     value: loc.room     },
+        { key: "area",     label: "Area",     value: loc.area || loc.room },
+        { key: "building", label: "Building", value: loc.building },
+      ];
+      const details = fieldDefs
+        .filter(f => sf.includes(f.key) && f.value)
+        .map(f => slf.includes(f.key) ? `${f.label} - ${f.value}` : f.value);
+
+      const detailLines = horizontal && details.length > 0 ? [details.join("  |  ")] : details;
 
       // Calculate canvas height
-      const QR_BOX = 216;
-      let H = PAD + 56 + 14 + 20 + 4 + 14 + 14 + QR_BOX + 14 + (details.length * 18) + 8 + 14 + 14 + 40 + PAD;
+      const QR_BOX = 240;
+      const LOGO_H = 65, LOGO_W = 110;
+      let H = PAD + LOGO_H + 14 + 20 + 4 + 14 + 14 + QR_BOX + 14 + (detailLines.length * 18) + 8 + (showWebsite ? 28 : 0) + PAD;
 
       const SCALE = 2;
       const canvas = document.createElement("canvas");
@@ -5381,7 +5406,6 @@ export default function CompanyEmployeePortal() {
       let y = PAD;
 
       // Logo row
-      const LOGO_H = 56, LOGO_W = 90;
       if (clientImg) {
         const sc = Math.min(LOGO_W / clientImg.width, LOGO_H / clientImg.height);
         const dw = clientImg.width * sc, dh = clientImg.height * sc;
@@ -5394,14 +5418,14 @@ export default function CompanyEmployeePortal() {
       }
       y += LOGO_H + 14;
 
-      // "SCAN QR CODE"
+      // "TO SERVE YOU BETTER"
       ctx.fillStyle = "#0f172a"; ctx.font = "bold 15px Arial"; ctx.textAlign = "center";
-      ctx.fillText("SCAN QR CODE", W / 2, y + 15);
+      ctx.fillText("TO SERVE YOU BETTER", W / 2, y + 15);
       y += 20 + 4;
 
-      // "For Service Excellence"
-      ctx.fillStyle = "#475569"; ctx.font = "11px Arial";
-      ctx.fillText("For Service Excellence", W / 2, y + 11);
+      // "Scan QR Code"
+      ctx.fillStyle = "#0f172a"; ctx.font = "bold 13px Arial";
+      ctx.fillText("Scan QR Code", W / 2, y + 11);
       y += 14 + 14;
 
       // QR box
@@ -5417,13 +5441,15 @@ export default function CompanyEmployeePortal() {
 
       // Detail lines
       ctx.fillStyle = "#334155"; ctx.font = "12px Arial";
-      for (const d of details) { ctx.fillText(d, W / 2, y + 12); y += 18; }
+      for (const d of detailLines) { ctx.fillText(d, W / 2, y + 12); y += 18; }
       y += 8;
 
       // Website
-      ctx.fillStyle = "#0f172a"; ctx.font = "bold 13px Arial";
-      ctx.fillText("www.catalystsolutions.eco", W / 2, y + 11);
-      y += 24;
+      if (showWebsite) {
+        ctx.fillStyle = "#0f172a"; ctx.font = "bold 13px Arial";
+        ctx.fillText("www.catalystsolutions.eco", W / 2, y + 11);
+        y += 24;
+      }
 
       const link = document.createElement("a");
       link.download = `QR-Location-${loc.name.replace(/[^a-zA-Z0-9]/g, "_")}-${loc.id}.png`;
@@ -6871,17 +6897,55 @@ export default function CompanyEmployeePortal() {
                       <p style={{ fontSize: "12px", color: "#94a3b8", marginTop: "4px" }}>QR codes will be labeled QR-{locQrSettings.startNumber}, QR-{locQrSettings.startNumber + 1}, …</p>
                     </div>
                     <div style={{ marginBottom: "24px" }}>
-                      <label style={{ fontSize: "13px", fontWeight: 600, color: "#374151", display: "block", marginBottom: "8px" }}>Fields to show on QR Card</label>
-                      {[["floor", "Floor"], ["room", "Room"], ["area", "Area"], ["building", "Building"]].map(([field, label]) => (
-                        <label key={field} style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px", cursor: "pointer" }}>
-                          <input type="checkbox" checked={locQrSettings.showFields.includes(field)}
-                            onChange={(e) => setLocQrSettings(s => ({
-                              ...s,
-                              showFields: e.target.checked ? [...s.showFields, field] : s.showFields.filter(f => f !== field)
-                            }))} />
-                          <span style={{ fontSize: "13px", color: "#374151" }}>{label}</span>
+                      <label style={{ fontSize: "13px", fontWeight: 600, color: "#374151", display: "block", marginBottom: "10px" }}>Fields to show on QR Card</label>
+                      <div style={{ fontSize: "12px", color: "#94a3b8", marginBottom: "8px" }}>
+                        Check <strong>Label</strong> to show the field name (e.g. "Floor"), check <strong>Value</strong> to show the data (e.g. "6"). Uncheck both to hide the field.
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: "6px 12px", alignItems: "center", marginBottom: "4px" }}>
+                        <span style={{ fontSize: "11px", fontWeight: 700, color: "#94a3b8", textTransform: "uppercase" }}>Field</span>
+                        <span style={{ fontSize: "11px", fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", textAlign: "center" }}>Label</span>
+                        <span style={{ fontSize: "11px", fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", textAlign: "center" }}>Value</span>
+                      </div>
+                      {[["floor", "Floor"], ["room", "Room"], ["area", "Area"], ["building", "Building"]].map(([field, label]) => {
+                        const sf  = locQrSettings.showFields      ?? [];
+                        const slf = locQrSettings.showFieldLabels ?? [];
+                        const valueOn = sf.includes(field);
+                        const labelOn = slf.includes(field);
+                        return (
+                          <div key={field} style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: "6px 12px", alignItems: "center", marginBottom: "4px" }}>
+                            <span style={{ fontSize: "13px", color: "#374151", fontWeight: 500 }}>{label}</span>
+                            {/* Label checkbox */}
+                            <input type="checkbox" checked={labelOn && valueOn}
+                              onChange={(e) => setLocQrSettings(s => ({
+                                ...s,
+                                showFields:      e.target.checked ? [...new Set([...(s.showFields??[]), field])] : (s.showFields??[]).filter(f=>f!==field),
+                                showFieldLabels: e.target.checked ? [...new Set([...(s.showFieldLabels??[]), field])] : (s.showFieldLabels??[]).filter(f=>f!==field),
+                              }))} />
+                            {/* Value-only checkbox */}
+                            <input type="checkbox" checked={valueOn}
+                              onChange={(e) => setLocQrSettings(s => ({
+                                ...s,
+                                showFields: e.target.checked ? [...new Set([...(s.showFields??[]), field])] : (s.showFields??[]).filter(f=>f!==field),
+                                // When turning value off, also remove from labels
+                                showFieldLabels: e.target.checked ? (s.showFieldLabels??[]) : (s.showFieldLabels??[]).filter(f=>f!==field),
+                              }))} />
+                          </div>
+                        );
+                      })}
+                      <div style={{ marginTop: "14px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                        {/* Horizontal layout */}
+                        <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
+                          <input type="checkbox" checked={!!locQrSettings.horizontal}
+                            onChange={(e) => setLocQrSettings(s => ({ ...s, horizontal: e.target.checked }))} />
+                          <span style={{ fontSize: "13px", color: "#374151" }}>Show location details in one horizontal line</span>
                         </label>
-                      ))}
+                        {/* Show website */}
+                        <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
+                          <input type="checkbox" checked={locQrSettings.showWebsite !== false}
+                            onChange={(e) => setLocQrSettings(s => ({ ...s, showWebsite: e.target.checked }))} />
+                          <span style={{ fontSize: "13px", color: "#374151" }}>Show website (www.catalystsolutions.eco)</span>
+                        </label>
+                      </div>
                     </div>
                     <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
                       <button onClick={() => setShowLocSettings(false)}
@@ -7238,18 +7302,32 @@ export default function CompanyEmployeePortal() {
                           </div>
                         </div>
                         {/* Header text */}
-                        <div style={{ fontSize: "13px", fontWeight: 800, letterSpacing: "2px", marginBottom: "2px", color: "#0f172a" }}>SCAN QR CODE</div>
-                        <div style={{ fontSize: "10px", color: "#475569", marginBottom: "12px" }}>For Service Excellence</div>
+                        <div style={{ fontSize: "13px", fontWeight: 800, letterSpacing: "2px", marginBottom: "2px", color: "#0f172a" }}>TO SERVE YOU BETTER</div>
+                        <div style={{ fontSize: "11px", color: "#475569", marginBottom: "12px" }}>Scan QR Code</div>
                         {/* QR code */}
                         <div style={{ background: "#f8fafc", padding: "8px", borderRadius: "8px", display: "inline-block", marginBottom: "10px", border: "1px solid #e2e8f0" }}>
                           <img src={locQrDataUrl} alt="QR" style={{ width: "180px", height: "180px", display: "block" }} />
                         </div>
-                        {/* Location details — filtered by QR settings */}
-                        {locQrSettings.showFields.includes("floor")    && locQrModal.floor    && <div style={{ fontSize: "12px", color: "#334155", marginBottom: "2px" }}>Floor - {locQrModal.floor}</div>}
-                        {locQrSettings.showFields.includes("room")     && locQrModal.room     && <div style={{ fontSize: "12px", color: "#334155", marginBottom: "2px" }}>Room - {locQrModal.room}</div>}
-                        {locQrSettings.showFields.includes("area")     && (locQrModal.area || locQrModal.room) && <div style={{ fontSize: "12px", color: "#334155", marginBottom: "2px" }}>Area - {locQrModal.area || locQrModal.room}</div>}
-                        {locQrSettings.showFields.includes("building") && locQrModal.building && <div style={{ fontSize: "12px", color: "#334155", marginBottom: "2px" }}>Building - {locQrModal.building}</div>}
-                        <div style={{ fontSize: "13px", fontWeight: 700, color: "#0f172a", marginTop: "8px" }}>www.catalystsolutions.eco</div>
+                        {/* Location details — filtered by QR settings (label+value / value-only / horizontal) */}
+                        {(() => {
+                          const sf  = locQrSettings?.showFields      ?? [];
+                          const slf = locQrSettings?.showFieldLabels ?? [];
+                          const fieldDefs = [
+                            { key: "floor",    label: "Floor",    value: locQrModal.floor },
+                            { key: "room",     label: "Room",     value: locQrModal.room },
+                            { key: "area",     label: "Area",     value: locQrModal.area || locQrModal.room },
+                            { key: "building", label: "Building", value: locQrModal.building },
+                          ];
+                          const parts = fieldDefs
+                            .filter(f => sf.includes(f.key) && f.value)
+                            .map(f => slf.includes(f.key) ? `${f.label} - ${f.value}` : f.value);
+                          if (parts.length === 0) return null;
+                          if (locQrSettings?.horizontal) {
+                            return <div style={{ fontSize: "12px", color: "#334155", marginBottom: "2px" }}>{parts.join(" | ")}</div>;
+                          }
+                          return parts.map((p, i) => <div key={i} style={{ fontSize: "12px", color: "#334155", marginBottom: "2px" }}>{p}</div>);
+                        })()}
+                        {locQrSettings?.showWebsite !== false && <div style={{ fontSize: "13px", fontWeight: 700, color: "#0f172a", marginTop: "8px" }}>www.catalystsolutions.eco</div>}
                       </div>
                     ) : (
                       <p style={{ color: "#94a3b8" }}>Generating QR...</p>

@@ -307,21 +307,21 @@ async function generatePDF(companyId) {
   );
   const [[dashRow]] = await pool.query(
     `SELECT
-       (SELECT COUNT(*) FROM assets WHERE company_id = ?) AS total_assets,
-       (SELECT COUNT(*) FROM assets WHERE company_id = ? AND status = 'Active') AS active_assets,
-       (SELECT COUNT(*) FROM work_orders WHERE company_id = ? AND status NOT IN ('closed','completed','cancelled')) AS open_requests,
+       (SELECT COUNT(*) FROM locations WHERE company_id = ? AND status = 'Active') AS active_locations,
        (SELECT COUNT(*) FROM soft_service_requests WHERE company_id = ? AND status NOT IN ('closed','resolved')) AS open_soft,
        (SELECT COUNT(*) FROM checklist_submissions cs JOIN checklist_templates ct ON ct.id=cs.template_id WHERE ct.company_id = ? AND cs.submitted_at >= CURRENT_DATE) AS filled_today,
        (SELECT COUNT(*) FROM checklist_templates WHERE company_id = ? AND is_active=1) AS total_templates,
-       (SELECT COUNT(*) FROM checklist_submissions cs2 JOIN checklist_templates ct2 ON ct2.id=cs2.template_id WHERE ct2.company_id = ? AND cs2.submitted_at >= CURRENT_DATE) AS checklists_filled_today,
-       (SELECT COUNT(*) FROM checklist_templates WHERE company_id = ? AND is_active=1) AS total_active_templates`,
-    [companyId, companyId, companyId, companyId, companyId, companyId, companyId, companyId]
+       (SELECT COUNT(*) FROM checklist_submissions cs2 JOIN checklist_templates ct2 ON ct2.id=cs2.template_id WHERE ct2.company_id = ?) AS execution_volume,
+       (SELECT COUNT(*) FROM work_orders WHERE company_id = ? AND priority='critical' AND status NOT IN ('closed','completed','cancelled')) AS risk_snapshot,
+       (SELECT COUNT(*) FROM work_orders WHERE company_id = ? AND assigned_to IS NULL AND status NOT IN ('closed','completed','cancelled')) AS request_coverage`,
+    [companyId, companyId, companyId, companyId, companyId, companyId, companyId]
   );
 
   const [submissions] = await pool.query(
-    `SELECT cs.id, ct.template_name, cu.full_name AS submitted_by, cs.status, cs.submitted_at
+    `SELECT cs.id, ct.template_name, loc.name AS location_name, cu.full_name AS submitted_by, cs.status, cs.submitted_at
      FROM checklist_submissions cs
      JOIN checklist_templates ct ON ct.id = cs.template_id
+     LEFT JOIN locations loc ON loc.id = ct.location_id
      LEFT JOIN company_users cu ON cu.id = cs.company_user_id
      WHERE ct.company_id = ?
      ORDER BY cs.submitted_at DESC NULLS LAST
@@ -353,9 +353,14 @@ async function generatePDF(companyId) {
     [companyId]
   );
 
-  const filledToday   = Number(dashRow?.checklists_filled_today ?? dashRow?.filled_today ?? 0);
-  const totalTemplates= Number(dashRow?.total_active_templates  ?? dashRow?.total_templates ?? 0);
-  const siteScorePct  = totalTemplates > 0 ? Math.round((filledToday / totalTemplates) * 100) : 0;
+  const filledToday    = Number(dashRow?.filled_today ?? 0);
+  const totalTemplates = Number(dashRow?.total_templates ?? 0);
+  const siteScorePct   = totalTemplates > 0 ? Math.round((filledToday / totalTemplates) * 100) : 0;
+  const activeLocations= Number(dashRow?.active_locations ?? 0);
+  const openSoft       = Number(dashRow?.open_soft ?? 0);
+  const executionVol   = Number(dashRow?.execution_volume ?? 0);
+  const riskSnapshot   = Number(dashRow?.risk_snapshot ?? 0);
+  const requestCoverage= Number(dashRow?.request_coverage ?? 0);
 
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 0, size: "A4" });
@@ -380,45 +385,43 @@ async function generatePDF(companyId) {
     doc.rect(0, 0, W, 68).fill(BLUE);
     doc.fillColor("#fff").fontSize(20).font("Helvetica-Bold").text("FM Dashboard Report", M, 16);
     doc.fontSize(10).font("Helvetica").fillColor("#bfdbfe")
-       .text(`${companyName}  â€”  ${date}`, M, 42);
+       .text(`${companyName}  -  ${date}`, M, 42);
 
     let y = 84;
 
-    /* â”€ Stat cards row (3 wide + 3 wide) â”€ */
-    const stats = [
-      { label: "Total Assets",           val: dashRow?.total_assets ?? 0 },
-      { label: "Active Assets",          val: dashRow?.active_assets ?? 0 },
-      { label: "Open Work Orders",       val: dashRow?.open_requests ?? 0 },
-      { label: "Open Soft Requests",     val: dashRow?.open_soft ?? 0 },
-      { label: "Checklists Filled Today",val: filledToday },
-      { label: "Total Active Templates", val: totalTemplates },
+
+    // -- Row 1: 2 wide cards (Active Locations, Open Soft Requests) --
+    const wideCardW = (IW - 12) / 2;
+    const wideCards = [
+      { label: "ACTIVE LOCATIONS",   sub: "Location records",    val: activeLocations, color: BLUE },
+      { label: "OPEN SOFT REQUESTS", sub: "Needs attention",     val: openSoft,        color: "#7c3aed" },
     ];
-    const cardW = (IW - 10 * 2) / 3;
-    const cardH = 52;
-    for (let i = 0; i < stats.length; i++) {
-      const col = i % 3;
-      const row = Math.floor(i / 3);
-      const cx  = M + col * (cardW + 10);
-      const cy  = y + row * (cardH + 8);
-      doc.roundedRect(cx, cy, cardW, cardH, 6).fillAndStroke("#fff", "#e2e8f0");
-      doc.fillColor(LGRAY).fontSize(8).font("Helvetica").text(stats[i].label.toUpperCase(), cx + 10, cy + 8, { width: cardW - 20 });
-      doc.fillColor(BLUE).fontSize(22).font("Helvetica-Bold").text(String(stats[i].val), cx + 10, cy + 20, { width: cardW - 20 });
+    for (let i = 0; i < 2; i++) {
+      const cx = M + i * (wideCardW + 12);
+      doc.roundedRect(cx, y, wideCardW, 60, 6).fillAndStroke("#fff", "#e2e8f0");
+      doc.fillColor(LGRAY).fontSize(8).font("Helvetica").text(wideCards[i].label, cx + 12, y + 10, { width: wideCardW - 24 });
+      doc.fillColor(wideCards[i].color).fontSize(28).font("Helvetica-Bold").text(String(wideCards[i].val), cx + 12, y + 22, { width: wideCardW - 24 });
+      doc.fillColor(GRAY).fontSize(8).font("Helvetica").text(wideCards[i].sub, cx + 12, y + 48, { width: wideCardW - 24 });
     }
-    y += 2 * (cardH + 8) + 16;
+    y += 72;
+    // -- Row 2: 4 small cards (Site Score, Execution Volume, Risk Snapshot, Request Coverage) --
+    const smCardW = (IW - 10 * 3) / 4;
+    const smCards = [
+      { label: "TODAY'S SITE SCORE",  val: `${siteScorePct}%`, sub: `${filledToday} of ${totalTemplates} checklists filled today`, color: "#16a34a" },
+      { label: "EXECUTION VOLUME",    val: executionVol,        sub: "Total checklist outcomes tracked",                           color: BLUE },
+      { label: "RISK SNAPSHOT",       val: riskSnapshot,        sub: "Critical alerts open",                                       color: "#dc2626" },
+      { label: "REQUEST COVERAGE",    val: requestCoverage,     sub: "Open requests without an assignee",                          color: "#ea580c" },
+    ];
+    for (let i = 0; i < 4; i++) {
+      const cx = M + i * (smCardW + 10);
+      doc.roundedRect(cx, y, smCardW, 64, 6).fillAndStroke("#fff", "#e2e8f0");
+      doc.fillColor(LGRAY).fontSize(7).font("Helvetica").text(smCards[i].label, cx + 8, y + 8, { width: smCardW - 16 });
+      doc.fillColor(smCards[i].color).fontSize(22).font("Helvetica-Bold").text(String(smCards[i].val), cx + 8, y + 20, { width: smCardW - 16 });
+      doc.fillColor(GRAY).fontSize(7).font("Helvetica").text(smCards[i].sub, cx + 8, y + 44, { width: smCardW - 16 });
+    }
+    y += 78;
 
-    /* â”€ Site Score bar â”€ */
-    doc.roundedRect(M, y, IW, 44, 6).fillAndStroke(LBG, "#e2e8f0");
-    doc.fillColor(DARK).fontSize(11).font("Helvetica-Bold").text("Today's Site Score", M + 12, y + 8);
-    doc.fillColor(BLUE).fontSize(20).font("Helvetica-Bold").text(`${siteScorePct}%`, M + 12, y + 22);
-    const barX = M + 130, barY = y + 19, barW = IW - 150, barH = 12;
-    doc.roundedRect(barX, barY, barW, barH, 4).fill("#e2e8f0");
-    const fillW = Math.max(0, Math.min(barW, Math.round((siteScorePct / 100) * barW)));
-    if (fillW > 0) doc.roundedRect(barX, barY, fillW, barH, 4).fill("#16a34a");
-    doc.fillColor(GRAY).fontSize(9).font("Helvetica")
-       .text(`${filledToday} of ${totalTemplates} templates filled`, M + 12, y + 30);
-    y += 60;
-
-    /* â”€ Recent Submissions â”€ */
+    // -- Recent Submissions --
     doc.fillColor(BLUE).fontSize(13).font("Helvetica-Bold").text("Recent Checklist Submissions", M, y);
     y += 18;
     doc.moveTo(M, y).lineTo(W - M, y).strokeColor(BLUE).lineWidth(1).stroke();
@@ -427,7 +430,7 @@ async function generatePDF(companyId) {
     // Table header
     doc.rect(M, y, IW, 18).fill("#EFF6FF");
     doc.fillColor(BLUE).font("Helvetica-Bold").fontSize(8);
-    const cols = [{ x: M+4, w: 28, t:"ID" }, { x: M+36, w: 200, t:"Template" }, { x: M+240, w: 130, t:"Submitted By" }, { x: M+374, w: 60, t:"Status" }, { x: M+438, w: 90, t:"Date" }];
+    const cols = [{ x: M+4, w: 20, t:"#" }, { x: M+28, w: 148, t:"Template" }, { x: M+180, w: 108, t:"Location" }, { x: M+292, w: 56, t:"Status" }, { x: M+352, w: 110, t:"Filled By" }, { x: M+466, w: 62, t:"Submitted" }];
     for (const c of cols) doc.text(c.t, c.x, y + 4, { width: c.w });
     y += 20;
 
@@ -437,11 +440,12 @@ async function generatePDF(companyId) {
       doc.rect(M, y, IW, 16).fill(i % 2 === 0 ? LBG : "#fff");
       doc.fillColor(DARK).font("Helvetica").fontSize(7.5);
       doc.text(String(s.id), cols[0].x, y + 3, { width: cols[0].w });
-      doc.text(s.template_name ?? "â€”", cols[1].x, y + 3, { width: cols[1].w, ellipsis: true });
-      doc.text(s.submitted_by ?? "â€”", cols[2].x, y + 3, { width: cols[2].w, ellipsis: true });
+      doc.text(s.template_name ?? "-", cols[1].x, y + 3, { width: cols[1].w, ellipsis: true });
+      doc.text(s.location_name ?? "-", cols[2].x, y + 3, { width: cols[2].w, ellipsis: true });
       const stColor = s.status === "submitted" ? "#16a34a" : GRAY;
-      doc.fillColor(stColor).text(s.status ?? "â€”", cols[3].x, y + 3, { width: cols[3].w });
-      doc.fillColor(DARK).text(s.submitted_at ? new Date(s.submitted_at).toLocaleDateString("en-GB") : "â€”", cols[4].x, y + 3, { width: cols[4].w });
+      doc.fillColor(stColor).text(s.status ?? "-", cols[3].x, y + 3, { width: cols[3].w });
+      doc.fillColor(DARK).text(s.submitted_by ?? "-", cols[4].x, y + 3, { width: cols[4].w, ellipsis: true });
+      doc.text(s.submitted_at ? new Date(s.submitted_at).toLocaleDateString("en-GB") : "-", cols[5].x, y + 3, { width: cols[5].w });
       y += 17;
     }
     y += 12;
@@ -464,10 +468,10 @@ async function generatePDF(companyId) {
         doc.rect(M, y, IW, 16).fill(i % 2 === 0 ? LBG : "#fff");
         doc.fillColor(DARK).font("Helvetica").fontSize(7.5);
         doc.text(String(wo.id), woCols[0].x, y + 3, { width: woCols[0].w });
-        doc.text(wo.title ?? "â€”", woCols[1].x, y + 3, { width: woCols[1].w, ellipsis: true });
+        doc.text(wo.title ?? "-", woCols[1].x, y + 3, { width: woCols[1].w, ellipsis: true });
         const priColor = { critical:"#dc2626", high:"#ea580c", medium:"#ca8a04", low:"#16a34a" }[wo.priority] || GRAY;
-        doc.fillColor(priColor).text(wo.priority ?? "â€”", woCols[2].x, y + 3, { width: woCols[2].w });
-        doc.fillColor(DARK).text(wo.status ?? "â€”", woCols[3].x, y + 3, { width: woCols[3].w });
+        doc.fillColor(priColor).text(wo.priority ?? "-", woCols[2].x, y + 3, { width: woCols[2].w });
+        doc.fillColor(DARK).text(wo.status ?? "-", woCols[3].x, y + 3, { width: woCols[3].w });
         doc.text(wo.assigned_to ?? "Unassigned", woCols[4].x, y + 3, { width: woCols[4].w, ellipsis: true });
         y += 17;
       }
@@ -492,17 +496,17 @@ async function generatePDF(companyId) {
         doc.rect(M, y, IW, 16).fill(i % 2 === 0 ? LBG : "#fff");
         doc.fillColor(DARK).font("Helvetica").fontSize(7.5);
         doc.text(String(sr.id), srCols[0].x, y + 3, { width: srCols[0].w });
-        doc.text(sr.location_name ?? "â€”", srCols[1].x, y + 3, { width: srCols[1].w, ellipsis: true });
-        doc.text(sr.raised_by ?? "â€”", srCols[2].x, y + 3, { width: srCols[2].w, ellipsis: true });
-        doc.fillColor("#7c3aed").text(sr.status ?? "â€”", srCols[3].x, y + 3, { width: srCols[3].w });
-        doc.fillColor(DARK).text(sr.raised_at ? new Date(sr.raised_at).toLocaleDateString("en-GB") : "â€”", srCols[4].x, y + 3, { width: srCols[4].w });
+        doc.text(sr.location_name ?? "-", srCols[1].x, y + 3, { width: srCols[1].w, ellipsis: true });
+        doc.text(sr.raised_by ?? "-", srCols[2].x, y + 3, { width: srCols[2].w, ellipsis: true });
+        doc.fillColor("#7c3aed").text(sr.status ?? "-", srCols[3].x, y + 3, { width: srCols[3].w });
+        doc.fillColor(DARK).text(sr.raised_at ? new Date(sr.raised_at).toLocaleDateString("en-GB") : "-", srCols[4].x, y + 3, { width: srCols[4].w });
         y += 17;
       }
     }
 
     /* â”€ Footer â”€ */
     doc.fillColor(LGRAY).fontSize(8).font("Helvetica")
-       .text(`Generated by FM App â€” ${new Date().toLocaleString("en-IN")}`, M, H - 28, { align: "center", width: IW });
+       .text(`Generated by FM App - ${new Date().toLocaleString("en-IN")}`, M, H - 28, { align: "center", width: IW });
 
     doc.end();
   });
@@ -535,18 +539,18 @@ async function sendScheduledReport(config) {
   const [[co]] = await pool.query("SELECT company_name FROM companies WHERE id = ?", [config.company_id]);
 
   await transporter.sendMail({
-    from: `"FM App â€” ${co?.company_name ?? "Catalyst FM"}" <${process.env.MAIL_USER}>`,
+    from: `"FM App - ${co?.company_name ?? "Catalyst FM"}" <${process.env.MAIL_USER}>`,
     to: recipients.join(", "),
-    subject: `[FM Report] ${config.frequency.charAt(0).toUpperCase() + config.frequency.slice(1)} Dashboard Report â€” ${dateStr}`,
+    subject: `[FM Report] ${config.frequency.charAt(0).toUpperCase() + config.frequency.slice(1)} Dashboard Report - ${dateStr}`,
     html: `
       <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
         <div style="background:#2563EB;padding:24px;border-radius:8px 8px 0 0">
           <h2 style="color:#fff;margin:0">FM Dashboard Report</h2>
-          <p style="color:#bfdbfe;margin:6px 0 0">${co?.company_name ?? ""} â€” ${new Date().toLocaleDateString("en-GB", { day:"2-digit",month:"long",year:"numeric" })}</p>
+          <p style="color:#bfdbfe;margin:6px 0 0">${co?.company_name ?? ""} - ${new Date().toLocaleDateString("en-GB", { day:"2-digit",month:"long",year:"numeric" })}</p>
         </div>
         <div style="background:#f8fafc;padding:24px;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 8px 8px">
           <p style="color:#334155">Please find the <strong>${config.frequency}</strong> dashboard report attached in the following format(s): <strong>${formats.join(", ").toUpperCase()}</strong>.</p>
-          <p style="color:#64748b;font-size:13px">This is an automated report from FM App. To update or cancel this schedule, visit your Company Portal â†’ Dashboard â†’ Schedule Mail.</p>
+          <p style="color:#64748b;font-size:13px">This is an automated report from FM App. To update or cancel this schedule, visit your Company Portal &gt; Dashboard &gt; Schedule Mail.</p>
         </div>
       </div>
     `,
