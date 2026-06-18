@@ -59,9 +59,18 @@ import {
   updateAdminShift,
   deleteAdminShift,
   getAdminEmployees,
+  getAdminEmployeeCompanies,
   createAdminEmployee,
   updateAdminEmployee,
   deleteAdminEmployee,
+  getAdminCompanyRoles,
+  createAdminCompanyRole,
+  updateAdminCompanyRole,
+  deleteAdminCompanyRole,
+  getAdminLocations,
+  deleteAdminLocation,
+  getAdminSoftRequests,
+  resolveAdminSoftRequest,
 } from "../api";
 import ChecklistBuilder from "../components/ChecklistBuilder";
 import LogsheetModule from "../components/LogsheetModule.jsx";
@@ -143,9 +152,9 @@ const emptyCompany = {
   billingCycle: "Monthly",
   paymentTermsDays: "30",
   maxEmployees: "",
-  qsrModule: true,
-  premealModule: true,
-  deliveryModule: true,
+  qsrModule: false,
+  premealModule: false,
+  deliveryModule: false,
   allowGuestBooking: false, // mapped to OJT training toggle
   softServiceBundle: false,
   status: "Active",
@@ -631,38 +640,444 @@ function AdminShiftsSection({ token, companies = [] }) {
   );
 }
 
+/* ─── Admin Roles Section ────────────────────────────────────────────────── */
+function AdminRolesSection({ token, companies = [] }) {
+  const [selCo, setSelCo]   = useState(companies[0]?.id || null);
+  const [roles, setRoles]   = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [editRole, setEditRole] = useState(null);
+  const emptyRole = { label:"", roleKey:"", parentRoleKey:"", color:"#475569", bgColor:"#f1f5f9", canRaiseSoftIssue:false, canResolveSoftIssue:false, isSoftManager:false, isTechnicalSupervisor:false, isTechnician:false };
+  const [form, setForm] = useState(emptyRole);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!selCo) return;
+    setLoading(true);
+    getAdminCompanyRoles(token, selCo).then(d => setRoles(Array.isArray(d) ? d : [])).catch(()=>{}).finally(()=>setLoading(false));
+  }, [selCo, token]);
+
+  const handleSave = async () => {
+    if (!form.label.trim()) return;
+    setSaving(true);
+    try {
+      if (editRole) { await updateAdminCompanyRole(token, editRole.id, form); }
+      else { await createAdminCompanyRole(token, { ...form, companyId: selCo }); }
+      const d = await getAdminCompanyRoles(token, selCo);
+      setRoles(Array.isArray(d) ? d : []);
+      setShowForm(false); setEditRole(null); setForm(emptyRole);
+    } catch(e) { alert(e.message); }
+    setSaving(false);
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm("Delete this role?")) return;
+    try { await deleteAdminCompanyRole(token, id); setRoles(prev => prev.filter(r => r.id !== id)); }
+    catch(e) { alert(e.message); }
+  };
+
+  const CAP_FLAGS = [
+    { key:"canRaiseSoftIssue",    label:"Can Raise Soft Issue" },
+    { key:"canResolveSoftIssue",  label:"Can Resolve Soft Issue" },
+    { key:"isSoftManager",        label:"Soft Manager" },
+    { key:"isTechnicalSupervisor",label:"Technical Supervisor" },
+    { key:"isTechnician",         label:"Technician" },
+  ];
+
+  return (
+    <div style={{ padding:"16px", maxWidth:"100%" }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:"20px", gap:"10px", flexWrap:"wrap" }}>
+        <div><h1 style={{ fontSize:"22px", fontWeight:800, color:"#0f172a", margin:0 }}>Manage Roles</h1><p style={{ color:"#64748b", fontSize:"13px", margin:"4px 0 0" }}>Define custom roles and capabilities per company</p></div>
+        <button type="button" onClick={() => { setForm(emptyRole); setEditRole(null); setShowForm(true); }} style={{ padding:"9px 16px", background:"#2563eb", color:"#fff", border:"none", borderRadius:"8px", fontSize:"13px", fontWeight:700, cursor:"pointer" }}>+ Add Role</button>
+      </div>
+
+      {/* Company selector */}
+      <div style={{ background:"#fff", borderRadius:"12px", border:"1px solid #e2e8f0", padding:"12px 16px", marginBottom:"16px", display:"flex", alignItems:"center", gap:"8px", flexWrap:"wrap" }}>
+        <span style={{ fontSize:"13px", fontWeight:700, color:"#374151" }}>Company:</span>
+        {companies.map(c => (
+          <button key={c.id} type="button" onClick={() => setSelCo(c.id)} style={{ padding:"5px 12px", borderRadius:"7px", fontSize:"12px", fontWeight:600, cursor:"pointer", border: selCo===c.id ? "none":"1px solid #e2e8f0", background: selCo===c.id ? "#2563eb":"#f8fafc", color: selCo===c.id ? "#fff":"#475569" }}>{c.companyName||c.name}</button>
+        ))}
+      </div>
+
+      {/* Add/Edit form modal */}
+      {showForm && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", zIndex:9999, display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <div style={{ background:"#fff", borderRadius:"14px", padding:"24px", width:"460px", maxWidth:"92vw", maxHeight:"90vh", overflowY:"auto" }}>
+            <h3 style={{ margin:"0 0 18px", fontSize:"16px", fontWeight:800 }}>{editRole ? "Edit Role" : "Add Role"}</h3>
+            <div style={{ display:"flex", flexDirection:"column", gap:"10px" }}>
+              <input value={form.label} onChange={e=>setForm(p=>({...p,label:e.target.value}))} placeholder="Role label *" style={{ padding:"8px 11px", borderRadius:"7px", border:"1px solid #e2e8f0", fontSize:"13.5px" }} />
+              {!editRole && <input value={form.roleKey} onChange={e=>setForm(p=>({...p,roleKey:e.target.value}))} placeholder="Role key (auto if blank, e.g. hse_supervisor)" style={{ padding:"8px 11px", borderRadius:"7px", border:"1px solid #e2e8f0", fontSize:"13px", fontFamily:"monospace" }} />}
+              <select value={form.parentRoleKey} onChange={e=>setForm(p=>({...p,parentRoleKey:e.target.value}))} style={{ padding:"8px 11px", borderRadius:"7px", border:"1px solid #e2e8f0", fontSize:"13.5px" }}>
+                <option value="">No parent (top-level)</option>
+                {roles.filter(r=>!editRole||r.id!==editRole.id).map(r=><option key={r.roleKey} value={r.roleKey}>{r.label}</option>)}
+              </select>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"10px" }}>
+                <label style={{ fontSize:"12px", fontWeight:600, color:"#475569" }}>Text color<br/><input type="color" value={form.color} onChange={e=>setForm(p=>({...p,color:e.target.value}))} style={{ width:"100%", height:"32px", borderRadius:"6px", border:"1px solid #e2e8f0", cursor:"pointer" }} /></label>
+                <label style={{ fontSize:"12px", fontWeight:600, color:"#475569" }}>Background<br/><input type="color" value={form.bgColor} onChange={e=>setForm(p=>({...p,bgColor:e.target.value}))} style={{ width:"100%", height:"32px", borderRadius:"6px", border:"1px solid #e2e8f0", cursor:"pointer" }} /></label>
+              </div>
+              <div>
+                <p style={{ fontSize:"12px", fontWeight:700, color:"#374151", marginBottom:"6px" }}>Capabilities</p>
+                <div style={{ display:"flex", flexDirection:"column", gap:"6px" }}>
+                  {CAP_FLAGS.map(f=>(
+                    <label key={f.key} style={{ display:"flex", alignItems:"center", gap:"8px", fontSize:"13px", cursor:"pointer" }}>
+                      <input type="checkbox" checked={!!form[f.key]} onChange={e=>setForm(p=>({...p,[f.key]:e.target.checked}))} style={{ accentColor:"#2563eb" }} />
+                      {f.label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div style={{ display:"flex", gap:"8px", justifyContent:"flex-end", marginTop:"18px" }}>
+              <button type="button" onClick={() => { setShowForm(false); setEditRole(null); }} style={{ padding:"8px 16px", borderRadius:"7px", border:"1px solid #e2e8f0", background:"#f8fafc", fontWeight:600, cursor:"pointer", fontSize:"13px" }}>Cancel</button>
+              <button type="button" onClick={handleSave} disabled={saving} style={{ padding:"8px 16px", borderRadius:"7px", border:"none", background:"#2563eb", color:"#fff", fontWeight:700, cursor:"pointer", fontSize:"13px" }}>{saving?"Saving…":editRole?"Save Changes":"Add Role"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {loading ? (
+        <div style={{ padding:"40px", textAlign:"center", color:"#94a3b8" }}>Loading roles…</div>
+      ) : roles.length === 0 ? (
+        <div style={{ padding:"40px", textAlign:"center", color:"#94a3b8", background:"#fff", borderRadius:"12px", border:"1px solid #e2e8f0" }}>No custom roles found for this company.</div>
+      ) : (
+        <div style={{ background:"#fff", borderRadius:"12px", border:"1px solid #e2e8f0", overflowX:"auto" }}>
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:"13px", minWidth:"560px" }}>
+            <thead>
+              <tr style={{ background:"#f8fafc" }}>
+                {["Role","Key","Parent","Capabilities","Preview","Actions"].map(h=>(
+                  <th key={h} style={{ padding:"10px 12px", textAlign:"left", color:"#475569", fontWeight:600, fontSize:"11px", textTransform:"uppercase", borderBottom:"1px solid #e2e8f0", whiteSpace:"nowrap" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {roles.map(r => {
+                const caps = [r.canRaiseSoftIssue&&"Raise Issue",r.canResolveSoftIssue&&"Resolve",r.isSoftManager&&"Soft Mgr",r.isTechnicalSupervisor&&"Tech Sup",r.isTechnician&&"Tech"].filter(Boolean);
+                return (
+                  <tr key={r.id} style={{ borderBottom:"1px solid #f1f5f9" }}>
+                    <td style={{ padding:"10px 12px", fontWeight:600, color:"#0f172a" }}>{r.label}</td>
+                    <td style={{ padding:"10px 12px", color:"#64748b", fontFamily:"monospace", fontSize:"12px" }}>{r.roleKey}</td>
+                    <td style={{ padding:"10px 12px", color:"#64748b", fontSize:"12px" }}>{r.parentRoleKey||"—"}</td>
+                    <td style={{ padding:"10px 12px" }}>
+                      {caps.length ? caps.map(c=><span key={c} style={{ display:"inline-block", marginRight:"4px", marginBottom:"2px", padding:"2px 7px", borderRadius:"10px", background:"#eff6ff", color:"#2563eb", fontSize:"10.5px", fontWeight:600 }}>{c}</span>) : <span style={{ color:"#94a3b8", fontSize:"12px" }}>—</span>}
+                    </td>
+                    <td style={{ padding:"10px 12px" }}><span style={{ padding:"3px 10px", borderRadius:"20px", fontSize:"12px", fontWeight:700, background:r.bgColor||"#f1f5f9", color:r.color||"#475569" }}>{r.label}</span></td>
+                    <td style={{ padding:"10px 12px" }}>
+                      <div style={{ display:"flex", gap:"5px" }}>
+                        <button type="button" onClick={() => { setForm({ label:r.label, roleKey:r.roleKey, parentRoleKey:r.parentRoleKey||"", color:r.color||"#475569", bgColor:r.bgColor||"#f1f5f9", canRaiseSoftIssue:!!r.canRaiseSoftIssue, canResolveSoftIssue:!!r.canResolveSoftIssue, isSoftManager:!!r.isSoftManager, isTechnicalSupervisor:!!r.isTechnicalSupervisor, isTechnician:!!r.isTechnician }); setEditRole(r); setShowForm(true); }} style={{ padding:"4px 8px", borderRadius:"6px", border:"1px solid #e2e8f0", background:"#f8fafc", fontSize:"11px", cursor:"pointer", fontWeight:600 }}>Edit</button>
+                        <button type="button" onClick={() => handleDelete(r.id)} style={{ padding:"4px 8px", borderRadius:"6px", border:"1px solid #fee2e2", background:"#fef2f2", color:"#dc2626", fontSize:"11px", cursor:"pointer", fontWeight:600 }}>Del</button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Admin Locations Section ────────────────────────────────────────────── */
+function AdminLocationsSection({ token, companies = [] }) {
+  const [selCo, setSelCo]   = useState(companies[0]?.id || null);
+  const [locations, setLocs] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [search, setSearch]  = useState("");
+
+  useEffect(() => {
+    if (!selCo) return;
+    setLoading(true);
+    getAdminLocations(token, selCo).then(d => setLocs(Array.isArray(d) ? d : [])).catch(()=>{}).finally(()=>setLoading(false));
+  }, [selCo, token]);
+
+  const handleDelete = async (id) => {
+    if (!window.confirm("Delete this location?")) return;
+    try { await deleteAdminLocation(token, id); setLocs(prev => prev.filter(l => l.id !== id)); }
+    catch(e) { alert(e.message); }
+  };
+
+  const displayed = locations.filter(l => !search ||
+    (l.name||"").toLowerCase().includes(search.toLowerCase()) ||
+    (l.building||"").toLowerCase().includes(search.toLowerCase()) ||
+    (l.floor||"").toLowerCase().includes(search.toLowerCase()) ||
+    (l.room||"").toLowerCase().includes(search.toLowerCase())
+  );
+
+  return (
+    <div style={{ padding:"16px", maxWidth:"100%" }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:"20px", gap:"10px", flexWrap:"wrap" }}>
+        <div><h1 style={{ fontSize:"22px", fontWeight:800, color:"#0f172a", margin:0 }}>Locations</h1><p style={{ color:"#64748b", fontSize:"13px", margin:"4px 0 0" }}>View all locations across companies</p></div>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search locations…" style={{ padding:"8px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13px", outline:"none", width:"200px" }} />
+      </div>
+
+      {/* Company selector */}
+      <div style={{ background:"#fff", borderRadius:"12px", border:"1px solid #e2e8f0", padding:"12px 16px", marginBottom:"16px", display:"flex", alignItems:"center", gap:"8px", flexWrap:"wrap" }}>
+        <span style={{ fontSize:"13px", fontWeight:700, color:"#374151" }}>Company:</span>
+        {companies.map(c => (
+          <button key={c.id} type="button" onClick={() => setSelCo(c.id)} style={{ padding:"5px 12px", borderRadius:"7px", fontSize:"12px", fontWeight:600, cursor:"pointer", border: selCo===c.id ? "none":"1px solid #e2e8f0", background: selCo===c.id ? "#2563eb":"#f8fafc", color: selCo===c.id ? "#fff":"#475569" }}>{c.companyName||c.name}</button>
+        ))}
+      </div>
+
+      {loading ? (
+        <div style={{ padding:"40px", textAlign:"center", color:"#94a3b8" }}>Loading locations…</div>
+      ) : displayed.length === 0 ? (
+        <div style={{ padding:"40px", textAlign:"center", color:"#94a3b8", background:"#fff", borderRadius:"12px", border:"1px solid #e2e8f0" }}>{search ? "No locations match your search." : "No locations found for this company."}</div>
+      ) : (
+        <div style={{ background:"#fff", borderRadius:"12px", border:"1px solid #e2e8f0", overflowX:"auto" }}>
+          <div style={{ padding:"12px 16px", borderBottom:"1px solid #e2e8f0", color:"#64748b", fontSize:"13px" }}>{displayed.length} location{displayed.length!==1?"s":""}</div>
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:"13px", minWidth:"600px" }}>
+            <thead>
+              <tr style={{ background:"#f8fafc" }}>
+                {["#","Location Name","Campus","Building","Floor","Room","Status","Actions"].map(h=>(
+                  <th key={h} style={{ padding:"10px 12px", textAlign:"left", color:"#475569", fontWeight:600, fontSize:"11px", textTransform:"uppercase", borderBottom:"1px solid #e2e8f0", whiteSpace:"nowrap" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {displayed.map((l,i) => (
+                <tr key={l.id} style={{ borderBottom:"1px solid #f1f5f9" }}>
+                  <td style={{ padding:"10px 12px", color:"#94a3b8" }}>{i+1}</td>
+                  <td style={{ padding:"10px 12px", fontWeight:600, color:"#0f172a" }}>{l.name}</td>
+                  <td style={{ padding:"10px 12px", color:"#64748b", fontSize:"12px" }}>{l.campus||"—"}</td>
+                  <td style={{ padding:"10px 12px", color:"#64748b", fontSize:"12px" }}>{l.building||"—"}</td>
+                  <td style={{ padding:"10px 12px", color:"#64748b", fontSize:"12px" }}>{l.floor!=null&&l.floor!==''?l.floor:"—"}</td>
+                  <td style={{ padding:"10px 12px", color:"#64748b", fontSize:"12px" }}>{l.room||"—"}</td>
+                  <td style={{ padding:"10px 12px" }}><span style={{ padding:"3px 8px", borderRadius:"12px", fontSize:"11px", fontWeight:600, background:l.status==="Active"?"#dcfce7":"#f1f5f9", color:l.status==="Active"?"#166534":"#475569" }}>{l.status||"Active"}</span></td>
+                  <td style={{ padding:"10px 12px" }}>
+                    <button type="button" onClick={() => handleDelete(l.id)} style={{ padding:"4px 8px", borderRadius:"6px", border:"1px solid #fee2e2", background:"#fef2f2", color:"#dc2626", fontSize:"11px", cursor:"pointer", fontWeight:600 }}>Delete</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Admin Soft Requests Section ───────────────────────────────────────── */
+function AdminSoftRequestsSection({ token, companies = [] }) {
+  const [selCo, setSelCo]   = useState(null); // null = all companies
+  const [requests, setReqs] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [resolveId, setResolveId] = useState(null);
+  const [resolveNotes, setResolveNotes] = useState("");
+  const [resolving, setResolving] = useState(false);
+  const [search, setSearch] = useState("");
+
+  const load = useCallback(() => {
+    setLoading(true);
+    getAdminSoftRequests(token, selCo, statusFilter)
+      .then(d => setReqs(Array.isArray(d) ? d : []))
+      .catch(() => setReqs([]))
+      .finally(() => setLoading(false));
+  }, [token, selCo, statusFilter]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleResolve = async () => {
+    if (!resolveId) return;
+    setResolving(true);
+    try {
+      await resolveAdminSoftRequest(token, resolveId, resolveNotes);
+      setReqs(prev => prev.map(r => r.id === resolveId ? { ...r, status: "resolved", resolvedAt: new Date().toISOString(), notes: resolveNotes } : r));
+      setResolveId(null);
+      setResolveNotes("");
+    } catch(e) { alert(e.message); }
+    finally { setResolving(false); }
+  };
+
+  const sevColor = { open: "#dc2626", resolved: "#16a34a", escalated: "#7c3aed" };
+  const sevBg    = { open: "#fee2e2", resolved: "#dcfce7", escalated: "#ede9fe" };
+
+  const displayed = requests.filter(r => {
+    if (!search) return true;
+    const s = search.toLowerCase();
+    return (r.assetName||"").toLowerCase().includes(s) ||
+           (r.description||"").toLowerCase().includes(s) ||
+           (r.raisedBy||"").toLowerCase().includes(s) ||
+           (r.companyName||"").toLowerCase().includes(s);
+  });
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:"20px", flexWrap:"wrap", gap:"10px" }}>
+        <div>
+          <h1 style={{ fontSize:"22px", fontWeight:800, color:"#0f172a", margin:0 }}>Soft Service Requests</h1>
+          <p style={{ color:"#64748b", fontSize:"13.5px", margin:"4px 0 0" }}>View and manage soft service requests across all companies</p>
+        </div>
+        <div style={{ display:"flex", gap:"8px", alignItems:"center", flexWrap:"wrap" }}>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search…" style={{ padding:"7px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13px", outline:"none", width:"180px" }} />
+          <button onClick={load} style={{ padding:"7px 14px", borderRadius:"7px", border:"1px solid #e2e8f0", background:"#f8fafc", color:"#475569", cursor:"pointer", fontSize:"13px", fontWeight:600 }}>↺ Refresh</button>
+        </div>
+      </div>
+
+      {/* Company + Status filters */}
+      <div style={{ background:"#fff", borderRadius:"12px", border:"1px solid #e2e8f0", padding:"12px 16px", marginBottom:"16px", display:"flex", flexWrap:"wrap", gap:"12px", alignItems:"center" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:"6px", flexWrap:"wrap" }}>
+          <span style={{ fontSize:"13px", fontWeight:700, color:"#374151" }}>Company:</span>
+          <button type="button" onClick={() => setSelCo(null)} style={{ padding:"5px 12px", borderRadius:"7px", fontSize:"12px", fontWeight:600, cursor:"pointer", border: selCo===null ? "none":"1px solid #e2e8f0", background: selCo===null ? "#2563eb":"#f8fafc", color: selCo===null ? "#fff":"#475569" }}>All</button>
+          {companies.map(c => (
+            <button key={c.id} type="button" onClick={() => setSelCo(c.id)} style={{ padding:"5px 12px", borderRadius:"7px", fontSize:"12px", fontWeight:600, cursor:"pointer", border: selCo===c.id ? "none":"1px solid #e2e8f0", background: selCo===c.id ? "#2563eb":"#f8fafc", color: selCo===c.id ? "#fff":"#475569" }}>{c.companyName||c.name}</button>
+          ))}
+        </div>
+        <div style={{ display:"flex", alignItems:"center", gap:"6px" }}>
+          <span style={{ fontSize:"13px", fontWeight:700, color:"#374151" }}>Status:</span>
+          {["all","open","resolved","escalated"].map(s => (
+            <button key={s} type="button" onClick={() => setStatusFilter(s)} style={{ padding:"5px 10px", borderRadius:"7px", fontSize:"12px", fontWeight:600, cursor:"pointer", border: statusFilter===s ? "none":"1px solid #e2e8f0", background: statusFilter===s ? "#7c3aed":"#f8fafc", color: statusFilter===s ? "#fff":"#475569", textTransform:"capitalize" }}>{s}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Stats */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(3, 1fr)", gap:"16px", marginBottom:"20px" }}>
+        {[
+          { label:"Total",    val: requests.length,                                color:"#2563eb", bg:"#eff6ff" },
+          { label:"Open",     val: requests.filter(r=>r.status==="open").length,   color:"#dc2626", bg:"#fee2e2" },
+          { label:"Resolved", val: requests.filter(r=>r.status==="resolved").length, color:"#16a34a", bg:"#dcfce7" },
+        ].map(({ label, val, color, bg }) => (
+          <div key={label} style={{ background:"#fff", borderRadius:"10px", border:"1px solid #e2e8f0", padding:"16px 20px" }}>
+            <p style={{ margin:0, fontSize:"11px", fontWeight:700, color:"#64748b", textTransform:"uppercase", letterSpacing:"0.05em" }}>{label}</p>
+            <p style={{ margin:"4px 0 0", fontSize:"26px", fontWeight:800, color }}>{val}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Table */}
+      {loading ? (
+        <div style={{ padding:"40px", textAlign:"center", color:"#94a3b8", background:"#fff", borderRadius:"12px", border:"1px solid #e2e8f0" }}>Loading requests…</div>
+      ) : displayed.length === 0 ? (
+        <div style={{ padding:"48px", textAlign:"center", background:"#fff", borderRadius:"12px", border:"1px solid #e2e8f0" }}>
+          <div style={{ fontSize:"36px", marginBottom:"12px" }}>💬</div>
+          <p style={{ fontWeight:600, color:"#0f172a", margin:0 }}>No soft service requests found</p>
+        </div>
+      ) : (
+        <div style={{ background:"#fff", borderRadius:"12px", border:"1px solid #e2e8f0", overflowX:"auto" }}>
+          <div style={{ padding:"12px 16px", borderBottom:"1px solid #e2e8f0", color:"#64748b", fontSize:"13px" }}>{displayed.length} request{displayed.length!==1?"s":""}</div>
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:"13px", minWidth:"800px" }}>
+            <thead>
+              <tr style={{ background:"#f8fafc" }}>
+                {["#","Company","Asset/Location","Description","Raised By","Assigned To","Status","Raised At","Actions"].map(h=>(
+                  <th key={h} style={{ padding:"10px 12px", textAlign:"left", color:"#475569", fontWeight:600, fontSize:"11px", textTransform:"uppercase", borderBottom:"1px solid #e2e8f0", whiteSpace:"nowrap" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {displayed.map((r, i) => (
+                <tr key={r.id} style={{ borderBottom:"1px solid #f1f5f9" }}>
+                  <td style={{ padding:"10px 12px", color:"#94a3b8" }}>{i+1}</td>
+                  <td style={{ padding:"10px 12px", fontWeight:600, color:"#0f172a", fontSize:"12px" }}>{r.companyName||"—"}</td>
+                  <td style={{ padding:"10px 12px", color:"#475569", fontSize:"12px" }}>{r.assetName||"—"}</td>
+                  <td style={{ padding:"10px 12px", color:"#475569", maxWidth:"220px" }}>
+                    <span title={r.description} style={{ display:"block", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:"200px" }}>{r.description||"—"}</span>
+                  </td>
+                  <td style={{ padding:"10px 12px", color:"#475569", fontSize:"12px" }}>{r.raisedBy||"—"}</td>
+                  <td style={{ padding:"10px 12px", color:"#475569", fontSize:"12px" }}>{r.assignedTo||"Unassigned"}</td>
+                  <td style={{ padding:"10px 12px" }}>
+                    <span style={{ padding:"3px 9px", borderRadius:"12px", fontSize:"11px", fontWeight:700, background:sevBg[r.status]||"#f8fafc", color:sevColor[r.status]||"#475569", textTransform:"capitalize" }}>
+                      {r.escalationLevel > 0 && r.status === "open" ? `Escalated (L${r.escalationLevel})` : r.status}
+                    </span>
+                  </td>
+                  <td style={{ padding:"10px 12px", color:"#64748b", fontSize:"12px", whiteSpace:"nowrap" }}>{r.raisedAt ? new Date(r.raisedAt).toLocaleString() : "—"}</td>
+                  <td style={{ padding:"10px 12px" }}>
+                    {r.status === "open" && (
+                      <button type="button" onClick={() => { setResolveId(r.id); setResolveNotes(""); }}
+                        style={{ padding:"4px 10px", borderRadius:"6px", border:"1px solid #bbf7d0", background:"#f0fdf4", color:"#16a34a", fontSize:"11px", cursor:"pointer", fontWeight:600, whiteSpace:"nowrap" }}>
+                        ✓ Resolve
+                      </button>
+                    )}
+                    {r.status !== "open" && <span style={{ fontSize:"11px", color:"#94a3b8" }}>—</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Resolve Modal */}
+      {resolveId && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(15,23,42,0.45)", zIndex:200, display:"flex", alignItems:"center", justifyContent:"center", padding:"16px" }} onClick={() => setResolveId(null)}>
+          <div style={{ background:"#fff", borderRadius:"14px", padding:"28px", maxWidth:"440px", width:"100%", boxShadow:"0 20px 60px rgba(0,0,0,0.15)" }} onClick={e=>e.stopPropagation()}>
+            <h2 style={{ fontSize:"17px", fontWeight:700, color:"#0f172a", margin:"0 0 6px" }}>Resolve Request</h2>
+            <p style={{ fontSize:"13px", color:"#64748b", margin:"0 0 16px" }}>Add optional resolution notes before marking this request as resolved.</p>
+            <textarea
+              value={resolveNotes}
+              onChange={e=>setResolveNotes(e.target.value)}
+              placeholder="Resolution notes (optional)…"
+              rows={3}
+              style={{ width:"100%", padding:"10px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13px", resize:"vertical", outline:"none", boxSizing:"border-box", marginBottom:"16px" }}
+            />
+            <div style={{ display:"flex", gap:"10px", justifyContent:"flex-end" }}>
+              <button type="button" onClick={() => setResolveId(null)} style={{ padding:"8px 18px", borderRadius:"7px", border:"1px solid #e2e8f0", background:"#fff", color:"#64748b", cursor:"pointer", fontSize:"13px", fontWeight:600 }}>Cancel</button>
+              <button type="button" onClick={handleResolve} disabled={resolving} style={{ padding:"8px 18px", borderRadius:"7px", border:"none", background:"#16a34a", color:"#fff", cursor:resolving?"not-allowed":"pointer", fontSize:"13px", fontWeight:700 }}>{resolving ? "Resolving…" : "✓ Resolve"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ─── Admin Employees Section ────────────────────────────────────────────── */
 function AdminEmployeesSection({ token, companies = [] }) {
-  const [selCo, setSelCo]     = useState(companies[0]?.id || null);
+  // null = All Companies view
+  const [selCo, setSelCo]     = useState(null);
   const [employees, setEmp]   = useState([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch]   = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [editEmp, setEditEmp] = useState(null);
-  const emptyForm = { fullName:"", email:"", phone:"", role:"technician", designation:"", password:"" };
+  const emptyForm = { fullName:"", email:"", phone:"", role:"technician", designation:"", username:"", status:"Active", password:"" };
   const [form, setForm]       = useState(emptyForm);
   const [saving, setSaving]   = useState(false);
+  // Multi-company: IDs of companies this employee is assigned to
+  const [selectedCompanyIds, setSelectedCompanyIds] = useState([]);
+  const [ddOpen, setDdOpen]   = useState(false);
 
   const load = useCallback(async (cid) => {
-    if (!cid) return; setLoading(true);
-    try { const d = await getAdminEmployees(token, cid); setEmp(Array.isArray(d) ? d : []); }
-    catch(e) { console.error(e); }
+    setLoading(true);
+    try {
+      const d = await getAdminEmployees(token, cid === null ? "all" : cid);
+      setEmp(Array.isArray(d) ? d : []);
+    } catch(e) { console.error("loadEmployees error:", e, e?.body); }
     setLoading(false);
   }, [token]);
 
-  useEffect(() => { if (selCo) load(selCo); }, [selCo, load]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(selCo); }, [selCo]);
+
+  // When opening edit modal, load the employee's company assignments
+  useEffect(() => {
+    if (editEmp) {
+      getAdminEmployeeCompanies(token, editEmp.id)
+        .then(list => setSelectedCompanyIds((list||[]).map(c=>c.id)))
+        .catch(() => {});
+    }
+  }, [editEmp, token]);
 
   const handleSave = async () => {
     if (!form.fullName || !form.email) return;
+    // If no specific company selected and not editing, require at least one company checked
+    if (!editEmp && !selCo && selectedCompanyIds.length === 0) {
+      alert("Please select at least one company for this employee."); return;
+    }
     setSaving(true);
     try {
+      // Primary company: if a specific company tab is selected use it, else use first selected
+      const primaryCompanyId = selCo || selectedCompanyIds[0];
+      const payload = { ...form, companyIds: selectedCompanyIds };
       if (editEmp) {
-        await updateAdminEmployee(token, editEmp.id, form);
+        await updateAdminEmployee(token, editEmp.id, payload);
       } else {
-        await createAdminEmployee(token, { ...form, companyId: selCo });
+        await createAdminEmployee(token, { ...payload, companyId: primaryCompanyId });
       }
       await load(selCo);
-      setShowCreate(false); setEditEmp(null); setForm(emptyForm);
+      setShowCreate(false); setEditEmp(null); setForm(emptyForm); setSelectedCompanyIds([]);
     } catch(e) { alert(e.message); }
     setSaving(false);
   };
@@ -673,24 +1088,31 @@ function AdminEmployeesSection({ token, companies = [] }) {
     catch(e) { alert(e.message); }
   };
 
+  const toggleCompanyId = (id) => {
+    setSelectedCompanyIds(prev => prev.includes(id) ? prev.filter(x=>x!==id) : [...prev, id]);
+  };
+
   const displayed = employees.filter(e => !search || (e.fullName||"").toLowerCase().includes(search.toLowerCase()) || (e.email||"").toLowerCase().includes(search.toLowerCase()) || (e.designation||"").toLowerCase().includes(search.toLowerCase()));
   const ROLES = ["admin","supervisor","technician","employee"];
   const roleColors = { admin:"#dbeafe", supervisor:"#fef9c3", technician:"#dcfce7", employee:"#f1f5f9" };
   const roleTextColors = { admin:"#1d4ed8", supervisor:"#854d0e", technician:"#166534", employee:"#475569" };
+  // Show company column when viewing "All Companies"
+  const showCompanyCol = selCo === null;
 
   return (
-    <div style={{ padding:"24px", maxWidth:"1300px" }}>
+    <div style={{ padding:"16px", maxWidth:"100%" }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:"20px", gap:"10px", flexWrap:"wrap" }}>
         <div><h1 style={{ fontSize:"22px", fontWeight:800, color:"#0f172a", margin:0 }}>Employees</h1><p style={{ color:"#64748b", fontSize:"13.5px", margin:"4px 0 0" }}>Manage employees across companies</p></div>
         <div style={{ display:"flex", gap:"10px" }}>
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search employees…" style={{ padding:"8px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13px", outline:"none", width:"200px" }} />
-          <button type="button" onClick={() => { setForm(emptyForm); setEditEmp(null); setShowCreate(true); }} style={{ padding:"9px 18px", background:"#2563eb", color:"#fff", border:"none", borderRadius:"8px", fontSize:"13.5px", fontWeight:700, cursor:"pointer" }}>+ Add Employee</button>
+          <button type="button" onClick={() => { setForm(emptyForm); setEditEmp(null); setSelectedCompanyIds(selCo ? [selCo] : []); setShowCreate(true); }} style={{ padding:"9px 18px", background:"#2563eb", color:"#fff", border:"none", borderRadius:"8px", fontSize:"13.5px", fontWeight:700, cursor:"pointer" }}>+ Add Employee</button>
         </div>
       </div>
 
-      {/* Company selector */}
+      {/* Company selector — "All Companies" first, then individual */}
       <div style={{ background:"#fff", borderRadius:"12px", border:"1px solid #e2e8f0", padding:"12px 16px", marginBottom:"20px", display:"flex", alignItems:"center", gap:"10px", flexWrap:"wrap" }}>
         <span style={{ fontSize:"13px", fontWeight:700, color:"#374151" }}>Company:</span>
+        <button type="button" onClick={() => setSelCo(null)} style={{ padding:"5px 12px", borderRadius:"7px", fontSize:"12.5px", fontWeight:600, cursor:"pointer", border: selCo===null ? "none":"1px solid #e2e8f0", background: selCo===null ? "#0f172a":"#f8fafc", color: selCo===null ? "#fff":"#475569" }}>All Companies</button>
         {companies.map(c => (
           <button key={c.id} type="button" onClick={() => setSelCo(c.id)} style={{ padding:"5px 12px", borderRadius:"7px", fontSize:"12.5px", fontWeight:600, cursor:"pointer", border: selCo===c.id ? "none":"1px solid #e2e8f0", background: selCo===c.id ? "#2563eb":"#f8fafc", color: selCo===c.id ? "#fff":"#475569" }}>{c.companyName||c.name}</button>
         ))}
@@ -699,7 +1121,7 @@ function AdminEmployeesSection({ token, companies = [] }) {
       {/* Create/Edit modal */}
       {(showCreate || editEmp) && (
         <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", zIndex:9999, display:"flex", alignItems:"center", justifyContent:"center" }}>
-          <div style={{ background:"#fff", borderRadius:"16px", padding:"28px", width:"480px", maxWidth:"92vw" }}>
+          <div style={{ background:"#fff", borderRadius:"16px", padding:"28px", width:"480px", maxWidth:"92vw", maxHeight:"90vh", overflowY:"auto" }}>
             <h3 style={{ margin:"0 0 20px", fontSize:"17px", fontWeight:800 }}>{editEmp ? "Edit Employee":"Add Employee"}</h3>
             <div style={{ display:"flex", flexDirection:"column", gap:"12px" }}>
               <input value={form.fullName} onChange={e=>setForm({...form,fullName:e.target.value})} placeholder="Full name *" style={{ padding:"9px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13.5px" }} />
@@ -711,7 +1133,52 @@ function AdminEmployeesSection({ token, companies = [] }) {
                 </select>
                 <input value={form.designation} onChange={e=>setForm({...form,designation:e.target.value})} placeholder="Designation" style={{ flex:1, padding:"9px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13.5px" }} />
               </div>
-              {!editEmp && <input value={form.password} onChange={e=>setForm({...form,password:e.target.value})} placeholder="Password (leave blank for default)" type="password" style={{ padding:"9px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13.5px" }} />}
+              <div style={{ display:"flex", gap:"10px" }}>
+                <input value={form.username} onChange={e=>setForm({...form,username:e.target.value})} placeholder="Username (for mobile login)" style={{ flex:2, padding:"9px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13.5px" }} />
+                <select value={form.status} onChange={e=>setForm({...form,status:e.target.value})} style={{ flex:1, padding:"9px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13.5px" }}>
+                  <option value="Active">Active</option>
+                  <option value="Inactive">Inactive</option>
+                </select>
+              </div>
+              <input value={form.password} onChange={e=>setForm({...form,password:e.target.value})} placeholder={editEmp ? "New password (leave blank to keep current)" : "Password (leave blank for default)"} type="password" style={{ padding:"9px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13.5px" }} />
+              {/* Company multiselect dropdown — shown for ALL roles */}
+              {companies.length > 1 && (
+                <div style={{ position:"relative" }}>
+                  <p style={{ fontSize:"12.5px", fontWeight:700, color:"#374151", marginBottom:"6px" }}>
+                    Assign to Companies {!editEmp && !selCo ? <span style={{ color:"#dc2626" }}>*</span> : ""}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setDdOpen(o => !o)}
+                    style={{ width:"100%", padding:"9px 12px", borderRadius:"8px", border:`1px solid ${ddOpen?"#2563eb":"#e2e8f0"}`, background:"#fff", textAlign:"left", fontSize:"13.5px", cursor:"pointer", display:"flex", justifyContent:"space-between", alignItems:"center", color: selectedCompanyIds.length ? "#0f172a" : "#94a3b8" }}
+                  >
+                    <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:"90%" }}>
+                      {selectedCompanyIds.length === 0 ? "Select companies…" : selectedCompanyIds.map(id => { const c=companies.find(x=>x.id===id); return c?(c.companyName||c.name):id; }).join(", ")}
+                    </span>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2" style={{ flexShrink:0, transform: ddOpen ? "rotate(180deg)" : "none", transition:"transform 0.15s" }}>
+                      <polyline points="6 9 12 15 18 9"/>
+                    </svg>
+                  </button>
+                  {ddOpen && (
+                    <div style={{ position:"absolute", top:"100%", left:0, right:0, background:"#fff", border:"1px solid #e2e8f0", borderRadius:"8px", boxShadow:"0 8px 24px rgba(0,0,0,0.12)", zIndex:1000, maxHeight:"200px", overflowY:"auto", marginTop:"4px" }}>
+                      {companies.map(c => {
+                        const checked = selectedCompanyIds.includes(c.id);
+                        return (
+                          <label key={c.id} style={{ display:"flex", alignItems:"center", gap:"10px", padding:"10px 14px", cursor:"pointer", fontSize:"13.5px", borderBottom:"1px solid #f1f5f9", background: checked ? "#eff6ff" : "#fff" }}>
+                            <input type="checkbox" checked={checked} onChange={() => toggleCompanyId(c.id)} style={{ accentColor:"#2563eb", width:"15px", height:"15px" }} />
+                            <span style={{ color: checked ? "#1d4ed8" : "#0f172a", fontWeight: checked ? 600 : 400 }}>{c.companyName || c.name}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {selectedCompanyIds.length > 0 && (
+                    <p style={{ fontSize:"11px", color:"#64748b", marginTop:"5px" }}>
+                      {selectedCompanyIds.length} {selectedCompanyIds.length === 1 ? "company" : "companies"} selected
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
             <div style={{ display:"flex", gap:"10px", justifyContent:"flex-end", marginTop:"20px" }}>
               <button type="button" onClick={() => { setShowCreate(false); setEditEmp(null); }} style={{ padding:"9px 18px", borderRadius:"8px", border:"1px solid #e2e8f0", background:"#f8fafc", fontWeight:600, cursor:"pointer" }}>Cancel</button>
@@ -726,28 +1193,30 @@ function AdminEmployeesSection({ token, companies = [] }) {
       ) : displayed.length === 0 ? (
         <div style={{ padding:"48px", textAlign:"center", color:"#94a3b8", background:"#fff", borderRadius:"12px", border:"1px solid #e2e8f0" }}>No employees found.</div>
       ) : (
-        <div style={{ background:"#fff", borderRadius:"12px", border:"1px solid #e2e8f0", overflow:"hidden" }}>
-          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:"14px" }}>
+        <div style={{ background:"#fff", borderRadius:"12px", border:"1px solid #e2e8f0", overflowX:"auto" }}>
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:"13px", minWidth:"680px" }}>
             <thead>
               <tr style={{ background:"#f8fafc" }}>
-                {["Name","Email","Phone","Role","Designation","Status","Actions"].map(h=>(
-                  <th key={h} style={{ padding:"11px 14px", textAlign:"left", color:"#475569", fontWeight:600, fontSize:"12px", textTransform:"uppercase", borderBottom:"1px solid #e2e8f0" }}>{h}</th>
+                {[...(showCompanyCol ? ["Company"] : []), "Name","Email","Phone","Role","Designation","Username","Status","Actions"].map(h=>(
+                  <th key={h} style={{ padding:"10px 12px", textAlign:"left", color:"#475569", fontWeight:600, fontSize:"11px", textTransform:"uppercase", borderBottom:"1px solid #e2e8f0", whiteSpace:"nowrap" }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {displayed.map(e => (
                 <tr key={e.id} style={{ borderBottom:"1px solid #f1f5f9" }}>
-                  <td style={{ padding:"11px 14px", fontWeight:600, color:"#0f172a" }}>{e.fullName}</td>
-                  <td style={{ padding:"11px 14px", color:"#475569" }}>{e.email}</td>
-                  <td style={{ padding:"11px 14px", color:"#64748b", fontSize:"12.5px" }}>{e.phone||"—"}</td>
-                  <td style={{ padding:"11px 14px" }}><span style={{ padding:"3px 9px", borderRadius:"20px", fontSize:"11.5px", fontWeight:700, background: roleColors[e.role]||"#f1f5f9", color: roleTextColors[e.role]||"#475569", textTransform:"capitalize" }}>{e.role||"—"}</span></td>
-                  <td style={{ padding:"11px 14px", color:"#64748b", fontSize:"12.5px" }}>{e.designation||"—"}</td>
-                  <td style={{ padding:"11px 14px" }}><span style={{ padding:"3px 9px", borderRadius:"20px", fontSize:"11.5px", fontWeight:700, background:(e.status||"active")==="active"?"#dcfce7":"#f1f5f9", color:(e.status||"active")==="active"?"#166534":"#475569" }}>{e.status||"Active"}</span></td>
-                  <td style={{ padding:"11px 14px" }}>
-                    <div style={{ display:"flex", gap:"6px" }}>
-                      <button type="button" onClick={() => { setForm({ fullName:e.fullName, email:e.email, phone:e.phone||"", role:e.role||"technician", designation:e.designation||"", password:"" }); setEditEmp(e); setShowCreate(false); }} style={{ padding:"5px 10px", borderRadius:"6px", border:"1px solid #e2e8f0", background:"#f8fafc", fontSize:"12px", cursor:"pointer", fontWeight:600 }}>Edit</button>
-                      <button type="button" onClick={() => handleDelete(e.id)} style={{ padding:"5px 10px", borderRadius:"6px", border:"1px solid #fee2e2", background:"#fef2f2", color:"#dc2626", fontSize:"12px", cursor:"pointer", fontWeight:600 }}>Delete</button>
+                  {showCompanyCol && <td style={{ padding:"10px 12px", color:"#2563eb", fontSize:"12px", fontWeight:600, whiteSpace:"nowrap" }}>{e.companyName||"—"}</td>}
+                  <td style={{ padding:"10px 12px", fontWeight:600, color:"#0f172a", whiteSpace:"nowrap" }}>{e.fullName}</td>
+                  <td style={{ padding:"10px 12px", color:"#475569", maxWidth:"180px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }} title={e.email}>{e.email}</td>
+                  <td style={{ padding:"10px 12px", color:"#64748b", fontSize:"12px", whiteSpace:"nowrap" }}>{e.phone||"—"}</td>
+                  <td style={{ padding:"10px 12px" }}><span style={{ padding:"3px 8px", borderRadius:"20px", fontSize:"11px", fontWeight:700, background: roleColors[e.role]||"#f1f5f9", color: roleTextColors[e.role]||"#475569", textTransform:"capitalize", whiteSpace:"nowrap" }}>{e.role||"—"}</span></td>
+                  <td style={{ padding:"10px 12px", color:"#64748b", fontSize:"12px", maxWidth:"120px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }} title={e.designation||""}>{e.designation||"—"}</td>
+                  <td style={{ padding:"10px 12px", color:"#64748b", fontSize:"12px", fontFamily:"monospace", maxWidth:"120px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }} title={e.username||""}>{e.username||"—"}</td>
+                  <td style={{ padding:"10px 12px" }}><span style={{ padding:"3px 8px", borderRadius:"20px", fontSize:"11px", fontWeight:700, background:(e.status||"Active")==="Active"?"#dcfce7":"#f1f5f9", color:(e.status||"Active")==="Active"?"#166534":"#475569", whiteSpace:"nowrap" }}>{e.status||"Active"}</span></td>
+                  <td style={{ padding:"10px 12px" }}>
+                    <div style={{ display:"flex", gap:"5px" }}>
+                      <button type="button" onClick={() => { setForm({ fullName:e.fullName, email:e.email, phone:e.phone||"", role:e.role||"technician", designation:e.designation||"", username:e.username||"", status:e.status||"Active", password:"" }); setEditEmp(e); setSelectedCompanyIds([]); setShowCreate(false); }} style={{ padding:"4px 8px", borderRadius:"6px", border:"1px solid #e2e8f0", background:"#f8fafc", fontSize:"11px", cursor:"pointer", fontWeight:600, whiteSpace:"nowrap" }}>Edit</button>
+                      <button type="button" onClick={() => handleDelete(e.id)} style={{ padding:"4px 8px", borderRadius:"6px", border:"1px solid #fee2e2", background:"#fef2f2", color:"#dc2626", fontSize:"11px", cursor:"pointer", fontWeight:600, whiteSpace:"nowrap" }}>Del</button>
                     </div>
                   </td>
                 </tr>
@@ -1304,7 +1773,7 @@ const CompanyPortal = () => {
         ...prev,
         softServiceBundle: checked,
         enabledModules: checked
-          ? [...new Set([...(prev.enabledModules || []), "checklists", "locations", "soft-requests", "roles", "workorders", "warnings"])]
+          ? [...new Set([...(prev.enabledModules || []), "checklists", "locations", "soft-requests", "roles", "workorders", "warnings", "notifications"])]
           : prev.enabledModules,
       }));
       return;
@@ -1871,6 +2340,7 @@ const CompanyPortal = () => {
     { key: "ojt", label: "OJT Training" },
     { key: "fleet", label: "Fleet Management" },
     { key: "warnings", label: "Warnings" },
+    { key: "notifications", label: "Notifications" },
     { key: "shifts", label: "Shifts" },
     { key: "departments", label: "Departments" },
     { key: "asset-types", label: "Asset Types" },
@@ -2388,7 +2858,10 @@ const CompanyPortal = () => {
           <button className={nav === "checklists" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("checklists"); setShowAddForm(false); }}>Checklists</button>
           <button className={nav === "logsheets" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("logsheets"); setShowAddForm(false); }}>Logsheets</button>
           <button className={nav === "employees" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("employees"); setShowAddForm(false); }}>Employees</button>
+          <button className={nav === "roles" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("roles"); setShowAddForm(false); }}>Manage Roles</button>
+          <button className={nav === "locations" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("locations"); setShowAddForm(false); }}>Locations</button>
           <button className={nav === "workorders" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("workorders"); setShowAddForm(false); }}>Requests</button>
+          <button className={nav === "softrequests" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("softrequests"); setShowAddForm(false); }}>Soft Requests</button>
           <button className={nav === "reports" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("reports"); setShowAddForm(false); }}>Reports</button>
           <button className={nav === "shifts" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("shifts"); setShowAddForm(false); }}>Shifts</button>
           <button className={nav === "ojt" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("ojt"); setShowAddForm(false); }}>OJT Training</button>
@@ -2438,6 +2911,12 @@ const CompanyPortal = () => {
               {/* Header */}
               <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "22px" }}>
                 <div>
+                  <button
+                    onClick={() => setAdminCompanyId(null)}
+                    style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "7px 14px", borderRadius: "8px", background: "#f1f5f9", color: "#475569", border: "1px solid #e2e8f0", cursor: "pointer", fontSize: "13px", fontWeight: 600, marginBottom: "14px" }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg>
+                    Back to Companies
+                  </button>
                   <h1 style={{ fontSize: "24px", fontWeight: "800", color: "#0f172a", marginBottom: "4px", letterSpacing: "-0.5px" }}>
                     Users — {adminCompany?.companyName || "Company"}
                   </h1>
@@ -4010,6 +4489,18 @@ const CompanyPortal = () => {
           <AdminEmployeesSection token={token} companies={companies} />
         )}
 
+        {nav === "roles" && (
+          <AdminRolesSection token={token} companies={companies} />
+        )}
+
+        {nav === "locations" && (
+          <AdminLocationsSection token={token} companies={companies} />
+        )}
+
+        {nav === "softrequests" && (
+          <AdminSoftRequestsSection token={token} companies={companies} />
+        )}
+
         {/* ── Toast notifications (fixed overlay on every page) ── */}
         <div style={{ position: "fixed", bottom: "24px", right: "24px", zIndex: 99999, display: "flex", flexDirection: "column", gap: "10px", pointerEvents: "none" }}>
           {toasts.map((t) => {
@@ -4181,7 +4672,7 @@ const CompanyPortal = () => {
                     />
                     <div style={{ flex: 1 }}>
                       <span style={{ fontSize: "13.5px", fontWeight: 700, color: companyForm.softServiceBundle ? "#0d9488" : "#0f172a" }}>Soft Service Bundle</span>
-                      <span style={{ fontSize: "11.5px", color: "#64748b", display: "block", marginTop: "2px" }}>Auto-enables: Locations, Soft Requests, Checklists, Manage Roles, Work Orders, Warnings</span>
+                      <span style={{ fontSize: "11.5px", color: "#64748b", display: "block", marginTop: "2px" }}>Auto-enables: Locations, Soft Requests, Checklists, Manage Roles, Work Orders, Warnings, Notifications</span>
                     </div>
                     {companyForm.softServiceBundle && (
                       <span style={{ padding: "3px 10px", borderRadius: "20px", background: "#ccfbf1", color: "#0d9488", fontSize: "11px", fontWeight: 700, flexShrink: 0 }}>Active</span>

@@ -120,6 +120,24 @@ pool.query("ALTER TABLE checklist_submissions ADD COLUMN IF NOT EXISTS overall_r
 // Ensure week_days and hourly_interval columns exist for frequency scheduling
 pool.query("ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS week_days JSONB NULL").catch(() => {});
 pool.query("ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS hourly_interval SMALLINT NOT NULL DEFAULT 1").catch(() => {});
+pool.query("ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS active_months JSONB NULL").catch(() => {});
+
+// ── Backfill QR codes for locations that have no qr_code stored yet ──────────
+// Uses the production URL format that the mobile QR scanner expects.
+// Only fills NULL entries — existing codes are never changed.
+(async () => {
+  try {
+    const APP_URL = process.env.APP_URL || "https://fm.catalystservices.eco";
+    await pool.query(
+      `UPDATE locations
+       SET qr_code = CONCAT(?, '/location/', id::text)
+       WHERE qr_code IS NULL OR qr_code = ''`,
+      [APP_URL]
+    );
+  } catch (e) {
+    console.warn("[companyPortal] QR backfill warning:", e.message);
+  }
+})();
 // Ensure reference_image_url column exists on checklist_template_questions
 pool.query("ALTER TABLE checklist_template_questions ADD COLUMN IF NOT EXISTS reference_image_url TEXT NULL").catch(() => {});
 // Ensure question_image_url column exists (photo-as-question feature)
@@ -984,6 +1002,135 @@ router.post("/locations/bulk", async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+/* ── Helper: sync building/floor/room hierarchy from a (building, floor, room) triple ─── */
+async function syncHierarchyEntry(companyId, building, floor, room) {
+  if (!building?.trim() || !floor?.trim()) return;
+  const [bldgRows] = await pool.query(
+    `INSERT INTO buildings (company_id, name) VALUES (?, ?)
+     ON CONFLICT (company_id, name) DO UPDATE SET name = EXCLUDED.name
+     RETURNING id`,
+    [companyId, building.trim()]
+  );
+  const bldgId = bldgRows[0]?.id;
+  if (!bldgId) return;
+  const [flRows] = await pool.query(
+    `INSERT INTO floors (company_id, building_id, floor_number) VALUES (?, ?, ?)
+     ON CONFLICT (company_id, building_id, floor_number) DO UPDATE SET floor_number = EXCLUDED.floor_number
+     RETURNING id`,
+    [companyId, bldgId, floor.trim()]
+  );
+  const flId = flRows[0]?.id;
+  if (flId && room?.trim()) {
+    await pool.query(
+      `INSERT INTO rooms (company_id, building_id, floor_id, room_name) VALUES (?, ?, ?, ?)
+       ON CONFLICT (company_id, floor_id, room_name) DO NOTHING`,
+      [companyId, bldgId, flId, room.trim()]
+    );
+  }
+}
+
+/* ── Locations: Sync hierarchy (buildings/floors/rooms) from locations table ── */
+/* POST /api/company-portal/locations/sync-hierarchy                            */
+/* Full rebuild: adds missing entries AND removes stale entries that no longer  */
+/* correspond to any location. Idempotent — safe to call multiple times.       */
+router.post("/locations/sync-hierarchy", async (req, res, next) => {
+  try {
+    const companyId = cid(req);
+
+    // ── Step 1: Collect all distinct (building, floor, room) from locations ──
+    const [locs] = await pool.query(
+      `SELECT DISTINCT building, floor, room
+       FROM locations
+       WHERE company_id = ? AND building IS NOT NULL AND building <> '' AND floor IS NOT NULL AND floor <> ''`,
+      [companyId]
+    );
+
+    // ── Step 2: Upsert hierarchy and collect valid room IDs ────────────────
+    const validRoomIds = new Set();
+    const validFloorIds = new Set();
+    const validBuildingIds = new Set();
+
+    for (const loc of locs) {
+      try {
+        const [bldgRows] = await pool.query(
+          `INSERT INTO buildings (company_id, name) VALUES (?, ?)
+           ON CONFLICT (company_id, name) DO UPDATE SET name = EXCLUDED.name
+           RETURNING id`,
+          [companyId, loc.building.trim()]
+        );
+        const bldgId = bldgRows[0]?.id;
+        if (!bldgId) continue;
+        validBuildingIds.add(bldgId);
+
+        const [flRows] = await pool.query(
+          `INSERT INTO floors (company_id, building_id, floor_number) VALUES (?, ?, ?)
+           ON CONFLICT (company_id, building_id, floor_number) DO UPDATE SET floor_number = EXCLUDED.floor_number
+           RETURNING id`,
+          [companyId, bldgId, loc.floor.trim()]
+        );
+        const flId = flRows[0]?.id;
+        if (!flId) continue;
+        validFloorIds.add(flId);
+
+        if (loc.room?.trim()) {
+          const [rmRows] = await pool.query(
+            `INSERT INTO rooms (company_id, building_id, floor_id, room_name) VALUES (?, ?, ?, ?)
+             ON CONFLICT (company_id, floor_id, room_name) DO UPDATE SET room_name = EXCLUDED.room_name
+             RETURNING id`,
+            [companyId, bldgId, flId, loc.room.trim()]
+          );
+          if (rmRows[0]?.id) validRoomIds.add(rmRows[0].id);
+        }
+      } catch { /* skip individual failures */ }
+    }
+
+    // ── Step 3: Delete stale rooms (not in validRoomIds) ──────────────────
+    const [allRooms] = await pool.query(
+      `SELECT id FROM rooms WHERE company_id = ?`, [companyId]
+    );
+    const staleRoomIds = allRooms.map(r => r.id).filter(id => !validRoomIds.has(id));
+    if (staleRoomIds.length > 0) {
+      const ph = staleRoomIds.map(() => "?").join(",");
+      await pool.query(`DELETE FROM rooms WHERE id IN (${ph})`, staleRoomIds);
+    }
+
+    // ── Step 4: Delete stale floors (not in validFloorIds) ────────────────
+    const [allFloors] = await pool.query(
+      `SELECT id FROM floors WHERE company_id = ?`, [companyId]
+    );
+    const staleFloorIds = allFloors.map(f => f.id).filter(id => !validFloorIds.has(id));
+    if (staleFloorIds.length > 0) {
+      const ph = staleFloorIds.map(() => "?").join(",");
+      await pool.query(`DELETE FROM floors WHERE id IN (${ph})`, staleFloorIds);
+    }
+
+    // ── Step 5: Delete stale buildings (not in validBuildingIds) ──────────
+    const [allBuildings] = await pool.query(
+      `SELECT id FROM buildings WHERE company_id = ?`, [companyId]
+    );
+    const staleBuildingIds = allBuildings.map(b => b.id).filter(id => !validBuildingIds.has(id));
+    if (staleBuildingIds.length > 0) {
+      const ph = staleBuildingIds.map(() => "?").join(",");
+      await pool.query(`DELETE FROM buildings WHERE id IN (${ph})`, staleBuildingIds);
+    }
+
+    // ── Step 6: Return fresh rooms list ───────────────────────────────────
+    const [rooms] = await pool.query(
+      `SELECT r.id, r.building_id AS "buildingId", b.name AS "buildingName",
+              r.floor_id AS "floorId", f.floor_number AS "floorNumber",
+              r.room_name AS "roomName", r.created_at AS "createdAt"
+       FROM rooms r
+       JOIN buildings b ON b.id = r.building_id
+       JOIN floors   f ON f.id = r.floor_id
+       WHERE r.company_id = ?
+       ORDER BY b.name ASC, f.floor_number ASC, r.room_name ASC`,
+      [companyId]
+    );
+
+    res.json({ ok: true, rooms });
+  } catch (err) { next(err); }
+});
+
 /* ── Locations: Bulk import from Excel/CSV ──────────────────────────────── */
 router.post("/locations/bulk-import", uploadLocImport.single("file"), async (req, res, next) => {
   try {
@@ -1003,10 +1150,11 @@ router.post("/locations/bulk-import", uploadLocImport.single("file"), async (req
       const row = data[i];
       const name = (row["Location Name"] || row["name"] || "").toString().trim();
       if (!name) { errors.push(`Row ${i + 2}: Location Name is required`); continue; }
-      const campus   = (row["Campus"]   || row["campus"]   || "").toString().trim() || null;
-      const building = (row["Building"] || row["building"] || "").toString().trim() || null;
-      const floor    = (row["Floor"]    || row["floor"]    || "").toString().trim() || null;
-      const room     = (row["Room"]     || row["room"]     || "").toString().trim() || null;
+      // Use != null to avoid treating 0 as falsy (floor "0" = Ground floor)
+      const campus   = (row["Campus"]   != null ? String(row["Campus"])   : row["campus"]   != null ? String(row["campus"])   : "").trim() || null;
+      const building = (row["Building"] != null ? String(row["Building"]) : row["building"] != null ? String(row["building"]) : "").trim() || null;
+      const floor    = (row["Floor"]    != null ? String(row["Floor"])    : row["floor"]    != null ? String(row["floor"])    : "").trim() || null;
+      const room     = (row["Room"]     != null ? String(row["Room"])     : row["room"]     != null ? String(row["room"])     : "").trim() || null;
       const status   = (row["Status"]   || row["status"]   || "Active").toString().trim();
       try {
         const [rows] = await pool.query(
@@ -1015,7 +1163,13 @@ router.post("/locations/bulk-import", uploadLocImport.single("file"), async (req
            RETURNING id, name, campus, building, floor, room, qr_code AS "qrCode", status, created_at AS "createdAt"`,
           [companyId, name, campus, building, floor, room, status, userId]
         );
-        if (rows[0]) created.push(rows[0]);
+        if (rows[0]) {
+          created.push(rows[0]);
+          // Sync hierarchy tables so Rooms modal stays in sync
+          if (building && floor) {
+            try { await syncHierarchyEntry(companyId, building, floor, room); } catch { /* non-critical */ }
+          }
+        }
       } catch (e) {
         errors.push(`Row ${i + 2}: ${e.message}`);
       }
@@ -1040,31 +1194,16 @@ router.post("/locations", async (req, res, next) => {
 
     // Sync building/floor/room hierarchy tables so they appear in template dropdowns
     if (building?.trim() && floor?.trim()) {
-      try {
-        const [bldgRows] = await pool.query(
-          `INSERT INTO buildings (company_id, name) VALUES (?, ?)
-           ON CONFLICT (company_id, name) DO UPDATE SET name = EXCLUDED.name
-           RETURNING id`,
-          [companyId, building.trim()]
-        );
-        const bldgId = bldgRows[0]?.id;
-        if (bldgId) {
-          const [flRows] = await pool.query(
-            `INSERT INTO floors (company_id, building_id, floor_number) VALUES (?, ?, ?)
-             ON CONFLICT (company_id, building_id, floor_number) DO UPDATE SET floor_number = EXCLUDED.floor_number
-             RETURNING id`,
-            [companyId, bldgId, floor.trim()]
-          );
-          const flId = flRows[0]?.id;
-          if (flId && room?.trim()) {
-            await pool.query(
-              `INSERT INTO rooms (company_id, building_id, floor_id, room_name) VALUES (?, ?, ?, ?)
-               ON CONFLICT (company_id, floor_id, room_name) DO NOTHING`,
-              [companyId, bldgId, flId, room.trim()]
-            );
-          }
-        }
-      } catch { /* non-critical hierarchy sync */ }
+      try { await syncHierarchyEntry(companyId, building, floor, room); } catch { /* non-critical hierarchy sync */ }
+    }
+
+    // Auto-set qr_code for newly created location (uses production app URL)
+    const newLoc = rows[0];
+    if (newLoc && !newLoc.qrCode) {
+      const APP_URL = process.env.APP_URL || "https://fm.catalystservices.eco";
+      const qrValue = `${APP_URL}/location/${newLoc.id}`;
+      await pool.query("UPDATE locations SET qr_code = ? WHERE id = ?", [qrValue, newLoc.id]).catch(() => {});
+      newLoc.qrCode = qrValue;
     }
 
     res.status(201).json(rows[0]);
@@ -1448,6 +1587,10 @@ router.delete("/rooms/:id", async (req, res, next) => {
     await pool.query(`ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS building_id bigint NULL`);
     await pool.query(`ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS floor_id bigint NULL`);
     await pool.query(`ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS room_id bigint NULL`);
+    await pool.query(`ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS start_time TEXT NULL`);
+    await pool.query(`ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS end_time TEXT NULL`);
+    await pool.query(`ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS monthly_day INTEGER NULL`);
+    await pool.query(`ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS notification_timer INTEGER NULL`);
   } catch (e) {
     console.warn('[companyPortal] checklist_templates migration warning:', e.message);
   }
@@ -1484,6 +1627,11 @@ router.get("/checklists", async (req, res, next) => {
                 ct.has_remark AS "hasRemark",
                 COALESCE(ct.custom_hours::text, '[]') AS "customHoursRaw",
                 ct.week_days AS "weekDaysRaw", ct.hourly_interval AS "hourlyInterval",
+                ct.start_time AS "startTime", ct.end_time AS "endTime",
+                ct.monthly_day AS "monthlyDay",
+                ct.notification_timer AS "notificationTimer",
+                ct.notification_time AS "notificationTime",
+                ct.active_months AS "activeMonths",
                 b.name AS "buildingName", f.floor_number AS "floorName", r.room_name AS "roomName"
          FROM checklist_templates ct
          LEFT JOIN buildings b ON b.id = ct.building_id
@@ -1497,7 +1645,7 @@ router.get("/checklists", async (req, res, next) => {
         try { customHours = JSON.parse(e.customHoursRaw || '[]'); } catch { customHours = []; }
         let weekDays = [];
         try { weekDays = typeof e.weekDaysRaw === 'string' ? JSON.parse(e.weekDaysRaw) : (e.weekDaysRaw || []); } catch { weekDays = []; }
-        extraMap[e.id] = { serviceType: e.serviceType, locationId: e.locationId, buildingId: e.buildingId, floorId: e.floorId, roomId: e.roomId, hasRemark: !!e.hasRemark, buildingName: e.buildingName, floorName: e.floorName, roomName: e.roomName, customHours, weekDays, hourlyInterval: e.hourlyInterval || 1 };
+        extraMap[e.id] = { serviceType: e.serviceType, locationId: e.locationId, buildingId: e.buildingId, floorId: e.floorId, roomId: e.roomId, hasRemark: !!e.hasRemark, buildingName: e.buildingName, floorName: e.floorName, roomName: e.roomName, customHours, weekDays, hourlyInterval: e.hourlyInterval || 1, startTime: e.startTime || null, endTime: e.endTime || null, monthlyDay: e.monthlyDay || null, notificationTimer: e.notificationTimer || null, notificationTime: e.notificationTime || null, activeMonths: Array.isArray(e.activeMonths) ? e.activeMonths : (typeof e.activeMonths === 'string' ? JSON.parse(e.activeMonths) : []) };
       }
     } catch (_) { /* columns not yet added — skip */ }
 
@@ -1546,16 +1694,17 @@ router.get("/checklists", async (req, res, next) => {
 router.post("/checklists", async (req, res, next) => {
   try {
     if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
-    const { templateName, assetType, serviceType, assetId, locationId, buildingId, floorId, roomId, category, description, frequency = "Daily", shift, shiftId, status = "active", questions, hasRemark, weekDays, hourlyInterval } = req.body;
+    const { templateName, assetType, serviceType, assetId, locationId, buildingId, floorId, roomId, category, description, frequency = "Daily", shift, shiftId, status = "active", questions, hasRemark, weekDays, hourlyInterval, startTime, endTime, monthlyDay, notificationTimer, notificationTime, activeMonths } = req.body;
     if (!templateName?.trim()) return res.status(400).json({ message: "templateName is required" });
     const resolvedAssetType = assetType || serviceType || null;
     const questionsJson = questions ? JSON.stringify(questions) : null;
     const weekDaysJson = Array.isArray(weekDays) && weekDays.length > 0 ? JSON.stringify(weekDays) : null;
+    const activeMonthsJson = Array.isArray(activeMonths) && activeMonths.length > 0 ? JSON.stringify(activeMonths) : null;
     const [rows] = await pool.query(
-      `INSERT INTO checklist_templates (company_id, template_name, asset_type, service_type, asset_id, location_id, building_id, floor_id, room_id, category, description, frequency, shift, shift_id, status, is_active, created_by, questions, has_remark, week_days, hourly_interval)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
-       RETURNING id, template_name AS "templateName", asset_type AS "assetType", service_type AS "serviceType", asset_id AS "assetId", location_id AS "locationId", building_id AS "buildingId", floor_id AS "floorId", room_id AS "roomId", category, description, frequency, shift, shift_id AS "shiftId", status, questions, has_remark AS "hasRemark", week_days AS "weekDays", hourly_interval AS "hourlyInterval", created_at AS "createdAt"`,
-      [cid(req), templateName.trim(), resolvedAssetType, serviceType || null, assetId || null, locationId || null, buildingId || null, floorId || null, roomId || null, category || null, description || null, frequency, shift || null, shiftId || null, status, null, questionsJson, hasRemark ? true : false, weekDaysJson, hourlyInterval || 1]
+      `INSERT INTO checklist_templates (company_id, template_name, asset_type, service_type, asset_id, location_id, building_id, floor_id, room_id, category, description, frequency, shift, shift_id, status, is_active, created_by, questions, has_remark, week_days, hourly_interval, start_time, end_time, monthly_day, notification_timer, notification_time, active_months)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       RETURNING id, template_name AS "templateName", asset_type AS "assetType", service_type AS "serviceType", asset_id AS "assetId", location_id AS "locationId", building_id AS "buildingId", floor_id AS "floorId", room_id AS "roomId", category, description, frequency, shift, shift_id AS "shiftId", status, questions, has_remark AS "hasRemark", week_days AS "weekDays", hourly_interval AS "hourlyInterval", start_time AS "startTime", end_time AS "endTime", monthly_day AS "monthlyDay", notification_timer AS "notificationTimer", notification_time AS "notificationTime", active_months AS "activeMonths", created_at AS "createdAt"`,
+      [cid(req), templateName.trim(), resolvedAssetType, serviceType || null, assetId || null, locationId || null, buildingId || null, floorId || null, roomId || null, category || null, description || null, frequency, shift || null, shiftId || null, status, null, questionsJson, hasRemark ? true : false, weekDaysJson, hourlyInterval || 1, startTime || null, endTime || null, monthlyDay ? Number(monthlyDay) : null, notificationTimer ? Number(notificationTimer) : null, notificationTime || null, activeMonthsJson]
     );
     // Auto-assign new checklist to all active catalyst supervisors (can_resolve_soft_issue) of this company
     try {
@@ -1591,13 +1740,14 @@ router.put("/checklists/:id", async (req, res, next) => {
   try {
     if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
     const { id } = req.params;
-    const { templateName, assetType, serviceType, assetId, locationId, buildingId, floorId, roomId, category, description, frequency, shift, shiftId, status, questions, hasRemark, weekDays, hourlyInterval } = req.body;
+    const { templateName, assetType, serviceType, assetId, locationId, buildingId, floorId, roomId, category, description, frequency, shift, shiftId, status, questions, hasRemark, weekDays, hourlyInterval, startTime, endTime, monthlyDay, notificationTimer, notificationTime, activeMonths } = req.body;
     const [[check]] = await pool.query("SELECT id FROM checklist_templates WHERE id = ? AND company_id = ?", [id, cid(req)]);
     if (!check) return res.status(404).json({ message: "Checklist not found" });
     const isActive = status === "active" ? 1 : 0;
     const questionsJson = questions !== undefined ? JSON.stringify(questions) : undefined;
     const resolvedAssetType = assetType || serviceType || null;
     const weekDaysJson = weekDays !== undefined ? (Array.isArray(weekDays) && weekDays.length > 0 ? JSON.stringify(weekDays) : null) : undefined;
+    const activeMonthsJson = activeMonths !== undefined ? (Array.isArray(activeMonths) && activeMonths.length > 0 ? JSON.stringify(activeMonths) : null) : undefined;
     const [rows] = await pool.query(
       `UPDATE checklist_templates SET
          template_name = COALESCE(?, template_name),
@@ -1618,10 +1768,16 @@ router.put("/checklists/:id", async (req, res, next) => {
          questions = COALESCE(?, questions),
          has_remark = ?,
          week_days = COALESCE(?, week_days),
-         hourly_interval = COALESCE(?, hourly_interval)
+         hourly_interval = COALESCE(?, hourly_interval),
+         start_time = ?,
+         end_time = ?,
+         monthly_day = ?,
+         notification_timer = ?,
+         notification_time = ?,
+         active_months = COALESCE(?, active_months)
        WHERE id = ?
-       RETURNING id, template_name AS "templateName", asset_type AS "assetType", service_type AS "serviceType", asset_id AS "assetId", location_id AS "locationId", building_id AS "buildingId", floor_id AS "floorId", room_id AS "roomId", category, description, frequency, shift, shift_id AS "shiftId", status, questions, has_remark AS "hasRemark", week_days AS "weekDays", hourly_interval AS "hourlyInterval", created_at AS "createdAt"`,
-      [templateName || null, resolvedAssetType || null, serviceType ?? null, assetId ?? null, locationId ?? null, buildingId ?? null, floorId ?? null, roomId ?? null, category || null, description || null, frequency || null, shift || null, shiftId ?? null, status || null, isActive, questionsJson ?? null, hasRemark != null ? !!hasRemark : null, weekDaysJson ?? null, hourlyInterval ?? null, id]
+       RETURNING id, template_name AS "templateName", asset_type AS "assetType", service_type AS "serviceType", asset_id AS "assetId", location_id AS "locationId", building_id AS "buildingId", floor_id AS "floorId", room_id AS "roomId", category, description, frequency, shift, shift_id AS "shiftId", status, questions, has_remark AS "hasRemark", week_days AS "weekDays", hourly_interval AS "hourlyInterval", start_time AS "startTime", end_time AS "endTime", monthly_day AS "monthlyDay", notification_timer AS "notificationTimer", notification_time AS "notificationTime", active_months AS "activeMonths", created_at AS "createdAt"`,
+      [templateName || null, resolvedAssetType || null, serviceType ?? null, assetId ?? null, locationId ?? null, buildingId ?? null, floorId ?? null, roomId ?? null, category || null, description || null, frequency || null, shift || null, shiftId ?? null, status || null, isActive, questionsJson ?? null, hasRemark != null ? !!hasRemark : null, weekDaysJson ?? null, hourlyInterval ?? null, startTime ?? null, endTime ?? null, monthlyDay != null ? Number(monthlyDay) : null, notificationTimer != null ? Number(notificationTimer) : null, notificationTime ?? null, activeMonthsJson ?? null, id]
     );
     res.json(rows[0]);
   } catch (err) { next(err); }
@@ -2661,6 +2817,7 @@ router.get("/checklist-submissions/recent", async (req, res, next) => {
               ct.template_name AS "templateName", ct.id AS "templateId",
               a.asset_name AS "assetName", a.id AS "assetId",
               COALESCE(loc.name, NULLIF(TRIM(CONCAT_WS(', ', a.building, a.floor, a.room)), '')) AS "locationName",
+              r.room_name AS "roomName",
               cs.status, cs.completion_pct AS "completionPct",
               COALESCE(cs.company_user_id, cs.submitted_by) AS "submittedById",
               cu.full_name AS "submittedBy"
@@ -2668,6 +2825,7 @@ router.get("/checklist-submissions/recent", async (req, res, next) => {
        LEFT JOIN checklist_templates ct ON ct.id = cs.template_id
        LEFT JOIN assets a ON a.id = cs.asset_id
        LEFT JOIN locations loc ON loc.id = ct.location_id
+       LEFT JOIN rooms r ON r.id = ct.room_id
        LEFT JOIN company_users cu ON cu.id = COALESCE(cs.company_user_id, cs.submitted_by)
        WHERE ct.company_id = ?
        ORDER BY cs.submitted_at DESC NULLS LAST
@@ -4842,6 +5000,94 @@ router.get("/ojt/mobile/test-attempts/:trainingId", async (req, res, next) => {
       [trainingId, userId]
     );
     res.json(rows);
+  } catch (err) { next(err); }
+});
+
+/* ── GET /api/company-portal/my-companies ───────────────────────────────────
+   Returns all companies the logged-in user has access to (primary + assigned).
+   Used by multi-company admins to populate the company switcher dropdown.     */
+router.get("/my-companies", async (req, res, next) => {
+  try {
+    const userId = req.companyUser.id;
+    // Primary company
+    const [[primary]] = await pool.query(
+      `SELECT id, company_name AS "companyName", company_code AS "companyCode"
+       FROM companies WHERE id = ?`,
+      [cid(req)]
+    );
+    // Extra assigned companies
+    const [extras] = await pool.query(
+      `SELECT c.id, c.company_name AS "companyName", c.company_code AS "companyCode"
+       FROM user_company_assignments uca
+       JOIN companies c ON c.id = uca.company_id
+       WHERE uca.user_id = ?
+       ORDER BY c.company_name`,
+      [userId]
+    );
+    // Merge; primary first, no duplicates
+    const allIds = new Set();
+    const result = [];
+    if (primary) { allIds.add(primary.id); result.push({ ...primary, isPrimary: true }); }
+    for (const e of extras) {
+      if (!allIds.has(e.id)) { allIds.add(e.id); result.push({ ...e, isPrimary: false }); }
+    }
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
+/* ── POST /api/company-portal/switch-company ────────────────────────────────
+   Lets a multi-company user get a new short-lived JWT for a different company.
+   The user must have access to the target company via user_company_assignments
+   or it must be their primary company.                                        */
+router.post("/switch-company", async (req, res, next) => {
+  try {
+    const { companyId: targetId } = req.body;
+    if (!targetId) return res.status(400).json({ message: "companyId is required" });
+
+    const userId = req.companyUser.id;
+    const primaryCompanyId = cid(req);
+
+    // Allow if target is primary company
+    let allowed = Number(targetId) === Number(primaryCompanyId);
+
+    if (!allowed) {
+      // Check user_company_assignments
+      const [[row]] = await pool.query(
+        `SELECT id FROM user_company_assignments WHERE user_id = ? AND company_id = ?`,
+        [userId, targetId]
+      );
+      allowed = !!row;
+    }
+
+    if (!allowed) return res.status(403).json({ message: "You do not have access to this company" });
+
+    // Fetch company info
+    const [[company]] = await pool.query(
+      `SELECT id, company_name AS "companyName", company_code AS "companyCode", enabled_modules AS "enabledModules"
+       FROM companies WHERE id = ?`,
+      [targetId]
+    );
+    if (!company) return res.status(404).json({ message: "Company not found" });
+
+    const { companyUser } = req;
+    const jwt = (await import("jsonwebtoken")).default;
+    const newToken = jwt.sign(
+      { sub: companyUser.id, email: companyUser.email, companyId: Number(targetId), role: companyUser.role },
+      process.env.JWT_SECRET,
+      { expiresIn: "10h" }
+    );
+
+    res.json({
+      token: newToken,
+      company: {
+        id: company.id,
+        companyName: company.companyName,
+        companyCode: company.companyCode,
+        enabledModules: company.enabledModules
+          ? (typeof company.enabledModules === "string" ? JSON.parse(company.enabledModules) : company.enabledModules)
+          : null,
+      },
+    });
   } catch (err) { next(err); }
 });
 

@@ -1818,6 +1818,7 @@ router.get("/submissions/checklists/:id", param("id").isInt(), async (req, res, 
        FROM checklist_submission_answers csa
        WHERE csa.submission_id = ?
          AND COALESCE(csa.input_type, '') != 'remark'
+         AND NOT (csa.question_id IS NULL AND LOWER(csa.question_text) = 'overall remark')
        ORDER BY csa.id ASC`,
       [id]
     );

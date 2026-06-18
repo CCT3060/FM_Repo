@@ -172,10 +172,6 @@ export default function SoftResolveScreen() {
   const afterAnswers: any[] = Array.isArray((request as any)?.afterAnswers)
     ? (request as any).afterAnswers
     : [];
-  // Catalyst supervisor's original checklist submission (fetched separately by backend)
-  const catalystAnswers: any[] = Array.isArray((request as any)?.catalystAnswers)
-    ? (request as any).catalystAnswers
-    : [];
 
   const filterNonEmpty = (arr: any[]) => arr.filter((a: any) => {
     const raw = a.answer ?? a.optionSelected ?? a.value ?? null;
@@ -184,29 +180,22 @@ export default function SoftResolveScreen() {
     return s !== '' && s !== 'null';
   });
 
-  // Only keep answers where the user actually provided a non-empty value.
-  const actuallyCatalystAnswered = filterNonEmpty(catalystAnswers);
+  // Only show questions where a raised issue exists (beforeAnswers = client supervisor noted)
   const actuallyAnswered = filterNonEmpty(beforeAnswers); // client raised answers
   const actuallyResolvedAnswered = filterNonEmpty(afterAnswers);
 
-  // Build the visible question list from all answered sources
-  const combinedAnswered = [...actuallyCatalystAnswered, ...actuallyAnswered, ...actuallyResolvedAnswered];
-  const answeredIds = new Set(
-    combinedAnswered
-      .map((a: any) => (a.questionId != null ? String(a.questionId) : null))
-      .filter(Boolean)
-  );
-  const answeredTexts = new Set(
-    combinedAnswered
-      .map((a: any) => a.questionText?.trim().toLowerCase())
-      .filter(Boolean)
-  );
+  // Filter template questions to only those with a raised issue
   const visibleQuestions = questions.filter((q) => {
     const qId   = String(q.id ?? '');
     const qText = (q.questionText || q.text || '').trim().toLowerCase();
-    return answeredIds.has(qId) || answeredTexts.has(qText);
+    return actuallyAnswered.some((a: any) => {
+      const matchId   = a.questionId != null && String(a.questionId) === qId;
+      const matchText = a.questionText?.trim().toLowerCase() === qText;
+      return matchId || matchText;
+    });
   });
-  const derivedQuestions = combinedAnswered.map((a: any, idx: number) => ({
+  // Fallback: derive question list from the raised answers when template not loaded
+  const derivedQuestions = actuallyAnswered.map((a: any, idx: number) => ({
     id: a.questionId ?? `derived-${idx}`,
     questionText: a.questionText || `Question ${idx + 1}`,
     inputType: a.inputType || 'text',
@@ -216,7 +205,7 @@ export default function SoftResolveScreen() {
   // In read-only mode, prefer question rows derived from submitted answers when template mapping is unavailable.
   const displayQuestions = visibleQuestions.length > 0
     ? visibleQuestions
-    : (isReadOnly && derivedQuestions.length > 0 ? derivedQuestions : questions);
+    : (derivedQuestions.length > 0 ? derivedQuestions : questions);
 
   const handleSubmit = async () => {
     setSubmitting(true);
@@ -333,12 +322,6 @@ export default function SoftResolveScreen() {
             const selOpts  = parseOptions(q);
             const photoVal = photos[q.id] ?? null;
 
-            // Find catalyst supervisor's original filled answer
-            const catalystEntry = actuallyCatalystAnswered.find((a: any) => {
-              const matchId   = a.questionId != null && String(a.questionId) === String(q.id ?? '');
-              const matchText = a.questionText?.trim().toLowerCase() === (q.questionText || q.text || '').trim().toLowerCase();
-              return matchId || matchText;
-            });
             // Find client supervisor's raised-issue answer
             const beforeEntry = actuallyAnswered.find((a: any) => {
               const matchId   = a.questionId != null && String(a.questionId) === String(q.id ?? '');
@@ -351,11 +334,9 @@ export default function SoftResolveScreen() {
               return matchId || matchText;
             });
 
-            const { text: catalystDisplay, photoUrl: parsedCatalystPhotoUrl } = parseAnswerEntry(catalystEntry);
             const { text: beforeDisplay, photoUrl: parsedBeforePhotoUrl } = parseAnswerEntry(beforeEntry);
             const { text: afterDisplay, photoUrl: parsedAfterPhotoUrl } = parseAnswerEntry(afterEntry);
 
-            const hasCatalyst = catalystDisplay !== null || parsedCatalystPhotoUrl !== null;
             const hasClientRaised = beforeDisplay !== null || parsedBeforePhotoUrl !== null;
 
             return (
@@ -391,25 +372,10 @@ export default function SoftResolveScreen() {
                   )}
                 </View>
 
-                {/* CATALYST SUPERVISOR FILLED RESPONSE — their original checklist answer */}
-                {hasCatalyst && (
-                  <View style={[styles.beforeBox, { backgroundColor: theme.inputBg, borderColor: theme.inputBorder }]}>
-                    <Text style={[styles.beforeLabel, { color: theme.textMuted }]}>CATALYST SUPERVISOR FILLED RESPONSE</Text>
-                    {catalystDisplay && catalystDisplay.startsWith('http') && /\.(jpe?g|png|gif|webp)/i.test(catalystDisplay) ? (
-                      <Image source={{ uri: catalystDisplay }} style={{ width: '100%', height: 160, borderRadius: 8, marginTop: 8 }} resizeMode="cover" />
-                    ) : (
-                      catalystDisplay !== null ? <Text style={[styles.beforeValue, { color: theme.textSecondary }]}>{catalystDisplay}</Text> : null
-                    )}
-                    {parsedCatalystPhotoUrl ? (
-                      <Image source={{ uri: parsedCatalystPhotoUrl }} style={{ width: '100%', height: 160, borderRadius: 8, marginTop: 8 }} resizeMode="cover" />
-                    ) : null}
-                  </View>
-                )}
-
                 {/* CLIENT RAISED ISSUE RESPONSE — what the client supervisor noted */}
                 {hasClientRaised && (
                   <View style={[styles.beforeBox, { backgroundColor: theme.inputBg, borderColor: theme.inputBorder }]}>
-                    <Text style={[styles.beforeLabel, { color: theme.textMuted }]}>CLIENT RAISED ISSUE RESPONSE</Text>
+                    <Text style={[styles.beforeLabel, { color: theme.textMuted }]}>RAISED ISSUE</Text>
                     {beforeDisplay && beforeDisplay.startsWith('http') && /\.(jpe?g|png|gif|webp)/i.test(beforeDisplay) ? (
                       <Image source={{ uri: beforeDisplay }} style={{ width: '100%', height: 160, borderRadius: 8, marginTop: 8 }} resizeMode="cover" />
                     ) : (
@@ -436,7 +402,7 @@ export default function SoftResolveScreen() {
                 )}
 
                 {/* Fallback: resolved read-only but no responses stored */}
-                {isReadOnly && !hasCatalyst && !hasClientRaised && afterDisplay === null && !parsedAfterPhotoUrl && (
+                {isReadOnly && !hasClientRaised && afterDisplay === null && !parsedAfterPhotoUrl && (
                   <View style={[styles.beforeBox, { backgroundColor: theme.inputBg, borderColor: theme.inputBorder }]}>
                     <Text style={[styles.beforeLabel, { color: theme.textMuted }]}>RESPONSE</Text>
                     <Text style={[styles.beforeValue, { color: theme.textMuted, fontStyle: 'italic' }]}>No response recorded</Text>
@@ -445,7 +411,7 @@ export default function SoftResolveScreen() {
 
                 {/* AFTER section — hidden in read-only mode */}
                 {!isReadOnly && (<>
-                <Text style={[styles.afterLabel, { color: theme.textMuted }]}>YOUR RESPONSE (AFTER)</Text>
+                <Text style={[styles.afterLabel, { color: theme.textMuted }]}>AFTER</Text>
 
                 {/* After — catalyst's answer input */}
                 {type === 'boolean' && (

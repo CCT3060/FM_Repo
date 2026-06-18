@@ -69,7 +69,28 @@ router.get(
            ORDER BY asset_name`,
           [cParam]
         );
-        return res.json({ templates, employees, assets, shifts: [] });
+        const [buildingRows] = await pool.query(
+          `SELECT DISTINCT name AS building FROM buildings WHERE company_id ${cCond} AND name IS NOT NULL AND name <> ''
+           UNION
+           SELECT DISTINCT a.building FROM assets a WHERE a.company_id ${cCond} AND a.building IS NOT NULL AND a.building <> ''
+           ORDER BY building`,
+          [cParam, cParam]
+        );
+        const [floorRows] = await pool.query(
+          `SELECT DISTINCT floor_number AS floor FROM floors WHERE company_id ${cCond} AND floor_number IS NOT NULL AND floor_number <> ''
+           UNION
+           SELECT DISTINCT a.floor FROM assets a WHERE a.company_id ${cCond} AND a.floor IS NOT NULL AND a.floor <> ''
+           ORDER BY floor`,
+          [cParam, cParam]
+        );
+        const [roomRows] = await pool.query(
+          `SELECT DISTINCT room_name AS room FROM rooms WHERE company_id ${cCond} AND room_name IS NOT NULL AND room_name <> ''
+           UNION
+           SELECT DISTINCT a.room FROM assets a WHERE a.company_id ${cCond} AND a.room IS NOT NULL AND a.room <> ''
+           ORDER BY room`,
+          [cParam, cParam]
+        );
+        return res.json({ templates, employees, assets, shifts: [], buildings: buildingRows.map((r) => r.building), floors: floorRows.map((r) => r.floor), rooms: roomRows.map((r) => r.room) });
       }
 
       // logsheets
@@ -101,7 +122,28 @@ router.get(
          ORDER BY le.shift`,
         [cParam]
       );
-      res.json({ templates, employees, assets, shifts: shiftRows.map((r) => r.shift) });
+      const [buildingRows] = await pool.query(
+        `SELECT DISTINCT name AS building FROM buildings WHERE company_id ${cCond} AND name IS NOT NULL AND name <> ''
+         UNION
+         SELECT DISTINCT a.building FROM assets a WHERE a.company_id ${cCond} AND a.building IS NOT NULL AND a.building <> ''
+         ORDER BY building`,
+        [cParam, cParam]
+      );
+      const [floorRows] = await pool.query(
+        `SELECT DISTINCT floor_number AS floor FROM floors WHERE company_id ${cCond} AND floor_number IS NOT NULL AND floor_number <> ''
+         UNION
+         SELECT DISTINCT a.floor FROM assets a WHERE a.company_id ${cCond} AND a.floor IS NOT NULL AND a.floor <> ''
+         ORDER BY floor`,
+        [cParam, cParam]
+      );
+      const [roomRows] = await pool.query(
+        `SELECT DISTINCT room_name AS room FROM rooms WHERE company_id ${cCond} AND room_name IS NOT NULL AND room_name <> ''
+         UNION
+         SELECT DISTINCT a.room FROM assets a WHERE a.company_id ${cCond} AND a.room IS NOT NULL AND a.room <> ''
+         ORDER BY room`,
+        [cParam, cParam]
+      );
+      res.json({ templates, employees, assets, shifts: shiftRows.map((r) => r.shift), buildings: buildingRows.map((r) => r.building), floors: floorRows.map((r) => r.floor), rooms: roomRows.map((r) => r.room) });
     } catch (err) { next(err); }
   }
 );
@@ -119,7 +161,7 @@ router.get(
       if (!companyId && !userId)
         return res.status(400).json({ message: "Authentication required" });
 
-      const { dateFrom, dateTo, period, templateId, assetId, status, submittedBy, search } = req.query;
+      const { dateFrom, dateTo, period, templateId, assetId, building, floor, room, status, submittedBy, search } = req.query;
       const conditions = companyId ? ["ct.company_id = ?"] : ["co.user_id = ?"];
       const params     = companyId ? [companyId] : [userId];
 
@@ -136,6 +178,9 @@ router.get(
       if (dateTo)   { conditions.push("cs.submitted_at <= ?");  params.push(dateTo + " 23:59:59"); }
       if (templateId && !isNaN(Number(templateId))) { conditions.push("cs.template_id = ?");  params.push(Number(templateId)); }
       if (assetId    && !isNaN(Number(assetId)))    { conditions.push("cs.asset_id = ?");     params.push(Number(assetId)); }
+      if (building)    { conditions.push("(a.building ILIKE ? OR b.name ILIKE ?)");     params.push(building, building); }
+      if (floor)       { conditions.push("(a.floor ILIKE ? OR f.floor_number ILIKE ?)"); params.push(floor, floor); }
+      if (room)        { conditions.push("(a.room ILIKE ? OR r.room_name ILIKE ?)");     params.push(room, room); }
       if (status)      { conditions.push("LOWER(cs.status) = LOWER(?)");  params.push(status); }
       if (submittedBy) { conditions.push("cu.full_name ILIKE ?");          params.push(`%${submittedBy}%`); }
       if (search) {
@@ -151,6 +196,9 @@ router.get(
            ct.service_type         AS "serviceType",
            cs.asset_id             AS "assetId",
            a.asset_name            AS "assetName",
+           COALESCE(b.name, a.building) AS "buildingName",
+           COALESCE(f.floor_number, a.floor) AS "floorName",
+           COALESCE(r.room_name, a.room) AS "roomName",
            a.building              AS "assetBuilding",
            a.floor                 AS "assetFloor",
            a.room                  AS "assetRoom",
@@ -170,6 +218,9 @@ router.get(
          LEFT JOIN assets a          ON a.id = cs.asset_id
          LEFT JOIN departments d     ON d.id = a.department_id
          LEFT JOIN locations loc     ON loc.id = ct.location_id
+         LEFT JOIN buildings b       ON b.id = ct.building_id
+         LEFT JOIN floors f          ON f.id = ct.floor_id
+         LEFT JOIN rooms r           ON r.id = ct.room_id
          LEFT JOIN company_users cu  ON cu.id = cs.company_user_id
          WHERE ${conditions.join(" AND ")}
          ORDER BY cs.submitted_at DESC NULLS LAST
@@ -194,7 +245,7 @@ router.get(
       if (!companyId && !userId)
         return res.status(400).json({ message: "Authentication required" });
 
-      const { dateFrom, dateTo, period, templateId, assetId, status, shift, submittedBy, search } = req.query;
+      const { dateFrom, dateTo, period, templateId, assetId, building, floor, room, status, shift, submittedBy, search } = req.query;
       const conditions = companyId ? ["lt.company_id = ?"] : ["co.user_id = ?"];
       const params     = companyId ? [companyId] : [userId];
       const dateExpr   = "COALESCE(le.submitted_at, le.entry_date)";
@@ -212,6 +263,9 @@ router.get(
       if (dateTo)   { conditions.push(`${dateExpr} <= ?`); params.push(dateTo + " 23:59:59"); }
       if (templateId && !isNaN(Number(templateId))) { conditions.push("le.template_id = ?"); params.push(Number(templateId)); }
       if (assetId    && !isNaN(Number(assetId)))    { conditions.push("le.asset_id = ?");    params.push(Number(assetId)); }
+      if (building)    { conditions.push("a.building ILIKE ?");     params.push(building); }
+      if (floor)       { conditions.push("a.floor ILIKE ?");         params.push(floor); }
+      if (room)        { conditions.push("a.room ILIKE ?");          params.push(room); }
       if (status)      { conditions.push("LOWER(le.status) = LOWER(?)"); params.push(status); }
       if (shift)       { conditions.push("le.shift = ?");                params.push(shift); }
       if (submittedBy) { conditions.push("cu.full_name ILIKE ?");        params.push(`%${submittedBy}%`); }
@@ -228,6 +282,9 @@ router.get(
            lt.layout_type               AS "layoutType",
            le.asset_id                  AS "assetId",
            a.asset_name                 AS "assetName",
+           a.building                   AS "buildingName",
+           a.floor                      AS "floorName",
+           a.room                       AS "roomName",
            a.building                   AS "assetBuilding",
            a.floor                      AS "assetFloor",
            a.room                       AS "assetRoom",
@@ -308,8 +365,10 @@ router.get(
            csa.question_text   AS "questionText",
            csa.input_type      AS "answerType",
            csa.answer_json     AS "answerJson",
-           csa.option_selected AS "answerValue"
+           csa.option_selected AS "answerValue",
+           ctq.question_image_url AS "questionImageUrl"
          FROM checklist_submission_answers csa
+         LEFT JOIN checklist_template_questions ctq ON ctq.id = csa.question_id
          WHERE csa.submission_id = ?
          ORDER BY csa.id ASC`,
         [id]

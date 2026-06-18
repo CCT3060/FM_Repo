@@ -180,10 +180,29 @@ export const updateAdminShift  = (token, id, data)  => request("PUT", `/api/comp
 export const deleteAdminShift  = (token, id)        => request("DELETE", `/api/company-users/shifts/${id}`, undefined, { authToken: token });
 
 // ── Admin-level CRUD for Employees (client portal) ───────────────────────────
-export const getAdminEmployees   = (token, companyId) => request("GET", `/api/company-users/employees?companyId=${companyId}`, undefined, { authToken: token });
-export const createAdminEmployee = (token, data)      => request("POST", "/api/company-users/employees", data, { authToken: token });
-export const updateAdminEmployee = (token, id, data)  => request("PUT", `/api/company-users/employees/${id}`, data, { authToken: token });
-export const deleteAdminEmployee = (token, id)        => request("DELETE", `/api/company-users/employees/${id}`, undefined, { authToken: token });
+export const getAdminEmployees      = (token, companyId) => request("GET", `/api/company-users/employees?companyId=${companyId}`, undefined, { authToken: token });
+export const getAdminEmployeeCompanies = (token, userId) => request("GET", `/api/company-users/employees/${userId}/companies`, undefined, { authToken: token });
+export const createAdminEmployee    = (token, data)      => request("POST", "/api/company-users/employees", data, { authToken: token });
+export const updateAdminEmployee    = (token, id, data)  => request("PUT", `/api/company-users/employees/${id}`, data, { authToken: token });
+export const deleteAdminEmployee    = (token, id)        => request("DELETE", `/api/company-users/employees/${id}`, undefined, { authToken: token });
+
+// ── Admin-level Company Roles (client portal) ─────────────────────────────────
+export const getAdminCompanyRoles    = (token, companyId) => request("GET", `/api/company-users/company-roles?companyId=${companyId}`, undefined, { authToken: token });
+export const createAdminCompanyRole  = (token, data)      => request("POST", "/api/company-users/company-roles", data, { authToken: token });
+export const updateAdminCompanyRole  = (token, id, data)  => request("PUT", `/api/company-users/company-roles/${id}`, data, { authToken: token });
+export const deleteAdminCompanyRole  = (token, id)        => request("DELETE", `/api/company-users/company-roles/${id}`, undefined, { authToken: token });
+
+// ── Admin-level Locations (client portal) ────────────────────────────────────
+export const getAdminLocations    = (token, companyId) => request("GET", `/api/company-users/locations?companyId=${companyId}`, undefined, { authToken: token });
+export const deleteAdminLocation  = (token, id)        => request("DELETE", `/api/company-users/locations/${id}`, undefined, { authToken: token });
+
+// ── Admin-level Soft Service Requests (client portal) ────────────────────────
+export const getAdminSoftRequests     = (token, companyId, status) => request("GET", `/api/company-users/soft-requests${companyId ? `?companyId=${companyId}${status && status !== "all" ? `&status=${status}` : ""}` : (status && status !== "all" ? `?status=${status}` : "")}`, undefined, { authToken: token });
+export const resolveAdminSoftRequest  = (token, id, notes) => request("PUT", `/api/company-users/soft-requests/${id}/resolve`, { notes }, { authToken: token });
+
+// Multi-company switcher (CompanyEmployeePortal)
+export const getMyCompanies      = (token) => request("GET", "/api/company-portal/my-companies", undefined, { authToken: token });
+export const switchPortalCompany = (token, companyId) => request("POST", "/api/company-portal/switch-company", { companyId }, { authToken: token });
 
 // ── Smart Checklist Submissions ───────────────────────────────────────────────
 export const submitChecklistExecution = (token, checklistId, data) =>
@@ -224,6 +243,10 @@ export const markNotificationRead = (token, id) =>
   request("PUT", `/api/notifications/${id}/read`, undefined, { authToken: token });
 export const markAllNotificationsRead = (token) =>
   request("PUT", "/api/notifications/read-all", undefined, { authToken: token });
+export const deleteNotification = (token, id) =>
+  request("DELETE", `/api/notifications/${id}`, undefined, { authToken: token });
+export const deleteAllNotifications = (token) =>
+  request("DELETE", "/api/notifications/all", undefined, { authToken: token });
 
 // ── Company Portal Work Orders ────────────────────────────────────────────────
 export const getCompanyPortalWorkOrders = (token, params = "") =>

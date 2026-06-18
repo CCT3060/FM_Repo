@@ -24,6 +24,22 @@ router.use(requireCompanyAuth);
 pool.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS target_screen VARCHAR(255) DEFAULT NULL`)
   .catch(() => {}); // Silently ignore if already exists or driver error
 
+// ── Auto-cleanup: delete read notifications older than 2 days ────────────────
+// Runs on startup, then every hour.
+const cleanupOldNotifications = async () => {
+  try {
+    const [result] = await pool.query(
+      `DELETE FROM notifications WHERE is_read = TRUE AND created_at < NOW() - INTERVAL '2 days'`
+    );
+    const deleted = result?.rowCount ?? result?.affectedRows ?? 0;
+    if (deleted > 0) console.log(`[notifications] Cleaned up ${deleted} read notifications older than 2 days`);
+  } catch (e) {
+    console.warn("[notifications] Cleanup error:", e.message);
+  }
+};
+cleanupOldNotifications();
+setInterval(cleanupOldNotifications, 60 * 60 * 1000); // every hour
+
 // ── GET /notifications ────────────────────────────────────────────────────────
 router.get("/", async (req, res, next) => {
   try {
@@ -107,6 +123,39 @@ router.put(
         return res.status(404).json({ message: "Notification not found" });
       }
       res.json({ message: "Marked as read" });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// ── DELETE /notifications/all ─────────────────────────────────────────────────
+router.delete("/all", async (req, res, next) => {
+  try {
+    await pool.query(
+      `DELETE FROM notifications WHERE recipient_id = ?`,
+      [req.companyUser.id]
+    );
+    res.json({ message: "All notifications deleted" });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── DELETE /notifications/:id ─────────────────────────────────────────────────
+router.delete(
+  "/:id",
+  validate([param("id").isInt({ min: 1 })]),
+  async (req, res, next) => {
+    try {
+      const [result] = await pool.query(
+        `DELETE FROM notifications WHERE id = ? AND recipient_id = ?`,
+        [Number(req.params.id), req.companyUser.id]
+      );
+      if (!result.affectedRows && !result.rowCount) {
+        return res.status(404).json({ message: "Notification not found" });
+      }
+      res.json({ message: "Notification deleted" });
     } catch (err) {
       next(err);
     }

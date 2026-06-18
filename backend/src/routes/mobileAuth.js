@@ -51,7 +51,7 @@ router.post("/verify-company", async (req, res, next) => {
 
 /* ── Helper: fetch role capabilities from company_roles table ─────────────── */
 async function getRoleCapabilities(companyId, roleKey) {
-  const empty = { canRaiseSoftIssue: false, canResolveSoftIssue: false, isSoftManager: false, isTechnicalSupervisor: false, isTechnician: false };
+  const empty = { canRaiseSoftIssue: false, canResolveSoftIssue: false, isSoftManager: false, isTechnicalSupervisor: false, isTechnician: false, isClientSupervisor: false };
   if (!roleKey) return empty;
 
   // Legacy built-in role keys that are always technical
@@ -88,13 +88,23 @@ async function getRoleCapabilities(companyId, roleKey) {
   }
 
   if (!row) return empty;
-  return {
+
+  const caps = {
     canRaiseSoftIssue:     Boolean(row.canRaiseSoftIssue),
     canResolveSoftIssue:   Boolean(row.canResolveSoftIssue),
     isSoftManager:         Boolean(row.isSoftManager),
     isTechnicalSupervisor: Boolean(row.isTechnicalSupervisor),
     isTechnician:          Boolean(row.isTechnician),
   };
+
+  // A "client supervisor" can only raise issues — no resolve, no manage, no tech access
+  caps.isClientSupervisor = caps.canRaiseSoftIssue &&
+    !caps.canResolveSoftIssue &&
+    !caps.isSoftManager &&
+    !caps.isTechnicalSupervisor &&
+    !caps.isTechnician;
+
+  return caps;
 }
 
 /* ── Mobile Login (username + password) ──────────────────────────────────────── */

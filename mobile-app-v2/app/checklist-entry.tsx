@@ -339,24 +339,29 @@ function FieldInput({ field, value, onChange }: { field: Field; value: any; onCh
     );
   }
 
-  // ── Select / Dropdown (wrapping chips) ──────────────────────────────────
+  // ── Select / Custom Options (full-width buttons, same style as boolean) ─
   if (field.type === 'select' && field.options && field.options.length > 0) {
     return (
-      <View style={styles.selectGrid}>
-        {field.options.map((opt) => (
-          <TouchableOpacity
-            key={opt}
-            style={[styles.optBtn, {
-              backgroundColor: value === opt ? theme.primary : theme.inputBg,
-              borderColor:     value === opt ? theme.primary : theme.inputBorder,
-            }]}
-            onPress={() => onChange(value === opt ? null : opt)}
-          >
-            <Text style={[styles.optBtnText, { color: value === opt ? '#fff' : theme.textSecondary }]}>
-              {opt}
-            </Text>
-          </TouchableOpacity>
-        ))}
+      <View style={[styles.boolContainer, { backgroundColor: theme.inputBg }]}>
+        {field.options.map((opt) => {
+          const { bg, text } = getBoolOptColors(opt, value === opt);
+          return (
+            <TouchableOpacity
+              key={opt}
+              style={[
+                styles.boolBtn,
+                { backgroundColor: bg },
+                value === opt && { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.2, shadowRadius: 2, elevation: 3 },
+              ]}
+              onPress={() => onChange(value === opt ? null : opt)}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.boolBtnText, { color: text, fontWeight: value === opt ? '700' : '500' }]}>
+                {opt}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
       </View>
     );
   }

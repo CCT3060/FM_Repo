@@ -42,6 +42,16 @@ import scheduledReportsRouter from "./routes/scheduledReports.js";
   } catch (e) {
     console.warn("[startup] fcm_token migration warning:", e.message);
   }
+  try {
+    await pool.query(`ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS notification_timer INTEGER NULL`);
+  } catch (e) {
+    console.warn("[startup] notification_timer migration warning:", e.message);
+  }
+  try {
+    await pool.query(`ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS notification_time VARCHAR(8) NULL`);
+  } catch (e) {
+    console.warn("[startup] notification_time migration warning:", e.message);
+  }
 })();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

@@ -503,6 +503,12 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
         customHours: isClone ? [] : (Array.isArray(source.customHours) ? source.customHours : []),
         weekDays: isClone ? [] : (Array.isArray(source.weekDays) ? source.weekDays : []),
         hourlyInterval: source.hourlyInterval ?? 1,
+        notificationTimer: source.notificationTimer || "",
+        notificationTime: source.notificationTime || "",
+        monthlyDay: source.monthlyDay || "",
+        activeMonths: Array.isArray(source.activeMonths) ? source.activeMonths : [],
+        startTime: source.startTime || "",
+        endTime: source.endTime || "",
         shiftId: source.shiftId ? String(source.shiftId) : "",
         status: source.status || "active",
         hasRemark: source.hasRemark != null ? !!source.hasRemark : true,
@@ -524,10 +530,21 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
       customHours: [],
       weekDays: [],
       hourlyInterval: 1,
+      notificationTimer: "",
+      notificationTime: "",
+      monthlyDay: "",
+      activeMonths: [],
+      startTime: "",
+      endTime: "",
       shiftId: "",
       status: "active",
       hasRemark: true,
     };
+  });
+
+  const [calViewDate, setCalViewDate] = useState(() => {
+    const now = new Date();
+    return { year: now.getFullYear(), month: now.getMonth() }; // month 0-indexed
   });
 
   const [questions, setQuestions] = useState(() => {
@@ -656,6 +673,12 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
       customHours: (form.frequency === "" || form.frequency === "Custom") ? (form.customHours || []) : undefined,
       weekDays: form.frequency === "Weekly" ? (form.weekDays || []) : undefined,
       hourlyInterval: form.frequency === "Hourly" ? (form.hourlyInterval || 1) : undefined,
+      notificationTimer: form.frequency === "Hourly" && form.notificationTimer ? Number(form.notificationTimer) : (form.frequency === "Custom" || form.frequency === "") && form.notificationTimer ? Number(form.notificationTimer) : undefined,
+      notificationTime: ["Weekly", "Monthly"].includes(form.frequency) && form.notificationTime ? form.notificationTime : undefined,
+      monthlyDay: form.frequency === "Monthly" && form.monthlyDay ? Number(form.monthlyDay) : undefined,
+      activeMonths: form.frequency === "Monthly" && form.activeMonths?.length ? form.activeMonths : undefined,
+      startTime: (["Hourly","Weekly","Monthly"].includes(form.frequency) && form.startTime) ? form.startTime : undefined,
+      endTime: (["Hourly","Weekly","Monthly"].includes(form.frequency) && form.endTime) ? form.endTime : undefined,
       shiftId: form.shiftId ? Number(form.shiftId) : undefined,
       status: form.status,
       hasRemark: !!form.hasRemark,
@@ -893,30 +916,97 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
               ) : (
                 <p style={{ fontSize: "12px", color: "#94a3b8", marginTop: "8px" }}>No hours selected — checklist can be filled any time.</p>
               )}
+              {/* Notification reminder for Custom */}
+              {(form.customHours || []).length > 0 && (
+                <div style={{ marginTop: "14px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: "10px", padding: "14px 16px" }}>
+                  <Label>Friendly Reminder Timer <span style={{ color: "#94a3b8", fontWeight: 400 }}>(minutes before each scheduled hour — sends push notification if not filled)</span></Label>
+                  <div style={{ display: "flex", alignItems: "center", gap: "12px", marginTop: "8px" }}>
+                    <Inp
+                      type="number" min="1" max="59"
+                      value={form.notificationTimer || ""}
+                      onChange={(e) => {
+                        const v = e.target.value === "" ? "" : Math.min(59, Math.max(1, parseInt(e.target.value) || 1));
+                        setForm((p) => ({ ...p, notificationTimer: v }));
+                      }}
+                      style={{ width: "110px" }}
+                      placeholder="e.g. 30"
+                    />
+                    <span style={{ fontSize: "14px", color: "#92400e", fontWeight: 500 }}>minutes</span>
+                  </div>
+                  {form.notificationTimer ? (
+                    <p style={{ fontSize: "12px", color: "#92400e", marginTop: "6px", fontWeight: 600 }}>
+                      🔔 Reminder sent {form.notificationTimer} min before each scheduled hour
+                    </p>
+                  ) : (
+                    <p style={{ fontSize: "12px", color: "#94a3b8", marginTop: "6px" }}>Leave empty to disable reminder notifications</p>
+                  )}
+                </div>
+              )}
             </div>
           )}
-          {/* Hourly — interval picker */}
+          {/* Hourly — interval picker + start/end time */}
           {form.frequency === "Hourly" && (
             <div style={{ gridColumn: "span 3" }}>
-              <Label>Repeat every <span style={{ color: "#94a3b8", fontWeight: 400 }}>(hours)</span></Label>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginTop: "8px" }}>
-                {[1, 2, 3, 4, 6, 8, 12].map((h) => {
-                  const sel = (form.hourlyInterval || 1) === h;
-                  return (
-                    <button key={h} type="button"
-                      onClick={() => setForm((p) => ({ ...p, hourlyInterval: h }))}
-                      style={{ padding: "8px 18px", borderRadius: "8px", fontSize: "13px", fontWeight: sel ? 700 : 400, cursor: "pointer", border: sel ? "2px solid #2563eb" : "1px solid #cbd5e1", background: sel ? "#eff6ff" : "#f8fafc", color: sel ? "#1e40af" : "#64748b", transition: "all 0.1s" }}>
-                      Every {h}h
-                    </button>
-                  );
-                })}
+              <Label>Repeat after <span style={{ color: "#94a3b8", fontWeight: 400 }}>(enter number of hours, 1–23)</span></Label>
+              <div style={{ display: "flex", alignItems: "center", gap: "12px", marginTop: "8px" }}>
+                <Inp
+                  type="number"
+                  min="1"
+                  max="23"
+                  value={form.hourlyInterval || 1}
+                  onChange={(e) => {
+                    const v = Math.min(23, Math.max(1, parseInt(e.target.value) || 1));
+                    setForm((p) => ({ ...p, hourlyInterval: v }));
+                  }}
+                  style={{ width: "110px" }}
+                  placeholder="e.g. 2"
+                />
+                <span style={{ fontSize: "14px", color: "#64748b", fontWeight: 500 }}>hour(s)</span>
               </div>
               <p style={{ fontSize: "12px", color: "#2563eb", marginTop: "8px", fontWeight: 600 }}>
-                Checklist repeats every {form.hourlyInterval || 1} hour{(form.hourlyInterval || 1) > 1 ? "s" : ""}
+                Checklist repeats every {form.hourlyInterval || 1} hour{(form.hourlyInterval || 1) > 1 ? "s" : ""} within 24 hours
               </p>
+              {/* Notification reminder timer */}
+              <div style={{ marginTop: "14px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: "10px", padding: "14px 16px" }}>
+                <Label>Friendly Reminder Timer <span style={{ color: "#94a3b8", fontWeight: 400 }}>(minutes before deadline — sends push notification if checklist not filled)</span></Label>
+                <div style={{ display: "flex", alignItems: "center", gap: "12px", marginTop: "8px" }}>
+                  <Inp
+                    type="number"
+                    min="1"
+                    max={((form.hourlyInterval || 1) * 60) - 1}
+                    value={form.notificationTimer || ""}
+                    onChange={(e) => {
+                      const max = ((form.hourlyInterval || 1) * 60) - 1;
+                      const v = e.target.value === "" ? "" : Math.min(max, Math.max(1, parseInt(e.target.value) || 1));
+                      setForm((p) => ({ ...p, notificationTimer: v }));
+                    }}
+                    style={{ width: "110px" }}
+                    placeholder="e.g. 40"
+                  />
+                  <span style={{ fontSize: "14px", color: "#92400e", fontWeight: 500 }}>minutes</span>
+                </div>
+                {form.notificationTimer ? (
+                  <p style={{ fontSize: "12px", color: "#92400e", marginTop: "6px", fontWeight: 600 }}>
+                    🔔 Reminder sent {form.notificationTimer} min before deadline if checklist is not filled
+                  </p>
+                ) : (
+                  <p style={{ fontSize: "12px", color: "#94a3b8", marginTop: "6px" }}>Leave empty to disable reminder notifications</p>
+                )}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginTop: "12px" }}>
+                <div>
+                  <Label>Start Time <span style={{ color: "#94a3b8", fontWeight: 400 }}>(optional)</span></Label>
+                  <Inp type="time" value={form.startTime} onChange={(e) => setForm((p) => ({ ...p, startTime: e.target.value }))} />
+                </div>
+                <div>
+                  <Label>End Time <span style={{ color: "#94a3b8", fontWeight: 400 }}>(optional)</span></Label>
+                  <Inp type="time" value={form.endTime} onChange={(e) => setForm((p) => ({ ...p, endTime: e.target.value }))} />
+                </div>
+              </div>
+              {form.startTime && form.endTime && <p style={{ fontSize: "12px", color: "#2563eb", marginTop: "6px", fontWeight: 600 }}>Active window: {form.startTime} – {form.endTime}</p>}
             </div>
           )}
-          {/* Weekly — day selector */}
+          {/* Weekly — day selector + start/end time */}
           {form.frequency === "Weekly" && (
             <div style={{ gridColumn: "span 3" }}>
               <Label>Select days of the week</Label>
@@ -939,8 +1029,158 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
               ) : (
                 <p style={{ fontSize: "12px", color: "#94a3b8", marginTop: "8px" }}>No days selected — active every day.</p>
               )}
+              {/* Notification reminder for Weekly */}
+              <div style={{ marginTop: "14px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: "10px", padding: "14px 16px" }}>
+                <Label>Friendly Reminder <span style={{ color: "#94a3b8", fontWeight: 400 }}>(time to send notification on selected days — if checklist not filled)</span></Label>
+                <div style={{ display: "flex", alignItems: "center", gap: "12px", marginTop: "8px" }}>
+                  <Inp type="time" value={form.notificationTime || ""} onChange={(e) => setForm((p) => ({ ...p, notificationTime: e.target.value }))} style={{ width: "150px" }} />
+                </div>
+                {form.notificationTime ? (
+                  <p style={{ fontSize: "12px", color: "#92400e", marginTop: "6px", fontWeight: 600 }}>
+                    🔔 Reminder sent at {form.notificationTime} on selected days if checklist is not filled
+                  </p>
+                ) : (
+                  <p style={{ fontSize: "12px", color: "#94a3b8", marginTop: "6px" }}>Leave empty to disable reminder notifications</p>
+                )}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginTop: "12px" }}>
+                <div>
+                  <Label>Start Time <span style={{ color: "#94a3b8", fontWeight: 400 }}>(optional)</span></Label>
+                  <Inp type="time" value={form.startTime} onChange={(e) => setForm((p) => ({ ...p, startTime: e.target.value }))} />
+                </div>
+                <div>
+                  <Label>End Time <span style={{ color: "#94a3b8", fontWeight: 400 }}>(optional)</span></Label>
+                  <Inp type="time" value={form.endTime} onChange={(e) => setForm((p) => ({ ...p, endTime: e.target.value }))} />
+                </div>
+              </div>
+              {form.startTime && form.endTime && <p style={{ fontSize: "12px", color: "#2563eb", marginTop: "6px", fontWeight: 600 }}>Active window: {form.startTime} – {form.endTime}</p>}
             </div>
           )}
+          {/* Monthly — calendar picker + month multi-select + reminder */}
+          {form.frequency === "Monthly" && (() => {
+            const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+            const MONTH_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+            const DAY_HEADERS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+            const { year, month } = calViewDate; // month 0-indexed
+            const firstDow = new Date(year, month, 1).getDay();
+            const daysInMonth = new Date(year, month + 1, 0).getDate();
+            const cells = [];
+            for (let i = 0; i < firstDow; i++) cells.push(null);
+            for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+            while (cells.length % 7 !== 0) cells.push(null);
+            const selectedDay = form.monthlyDay ? Number(form.monthlyDay) : null;
+            const activeMonths = Array.isArray(form.activeMonths) ? form.activeMonths : [];
+
+            const prevMonth = () => setCalViewDate(({ year: y, month: m }) => m === 0 ? { year: y - 1, month: 11 } : { year: y, month: m - 1 });
+            const nextMonth = () => setCalViewDate(({ year: y, month: m }) => m === 11 ? { year: y + 1, month: 0 } : { year: y, month: m + 1 });
+
+            const toggleMonth = (num) => setForm((p) => {
+              const cur = Array.isArray(p.activeMonths) ? p.activeMonths : [];
+              return { ...p, activeMonths: cur.includes(num) ? cur.filter((x) => x !== num) : [...cur, num].sort((a, b) => a - b) };
+            });
+
+            return (
+              <div style={{ gridColumn: "span 3" }}>
+                {/* Month multi-select chips */}
+                <Label>Active Months <span style={{ color: "#94a3b8", fontWeight: 400 }}>(select which months this checklist runs — leave all unselected for every month)</span></Label>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "8px" }}>
+                  {MONTH_SHORT.map((m, i) => {
+                    const num = i + 1;
+                    const on = activeMonths.includes(num);
+                    return (
+                      <button key={m} type="button" onClick={() => toggleMonth(num)}
+                        style={{ padding: "5px 14px", borderRadius: "20px", fontSize: "13px", fontWeight: on ? 700 : 400, cursor: "pointer",
+                          border: on ? "2px solid #7c3aed" : "1px solid #cbd5e1",
+                          background: on ? "#f5f3ff" : "#f8fafc", color: on ? "#7c3aed" : "#64748b", transition: "all 0.15s" }}>
+                        {m}
+                      </button>
+                    );
+                  })}
+                </div>
+                {activeMonths.length > 0 && (
+                  <p style={{ fontSize: "12px", color: "#7c3aed", marginTop: "5px", fontWeight: 600 }}>
+                    Runs in: {activeMonths.map((n) => MONTH_SHORT[n - 1]).join(", ")}
+                  </p>
+                )}
+
+                {/* Calendar day picker */}
+                <div style={{ marginTop: "14px" }}>
+                  <Label>Day of Month <span style={{ color: "#94a3b8", fontWeight: 400 }}>(29/30/31 may not exist in all months)</span></Label>
+                  <div style={{ marginTop: "10px", display: "inline-block", border: "1px solid #e2e8f0", borderRadius: "12px", overflow: "hidden", boxShadow: "0 2px 8px rgba(0,0,0,0.06)", background: "#fff", minWidth: "280px" }}>
+                    {/* Calendar header */}
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", background: "#2563eb", color: "#fff" }}>
+                      <button type="button" onClick={prevMonth}
+                        style={{ background: "rgba(255,255,255,0.2)", border: "none", borderRadius: "6px", color: "#fff", cursor: "pointer", fontSize: "16px", width: "30px", height: "30px", display: "flex", alignItems: "center", justifyContent: "center" }}>‹</button>
+                      <span style={{ fontWeight: 700, fontSize: "15px" }}>{MONTH_NAMES[month]} {year}</span>
+                      <button type="button" onClick={nextMonth}
+                        style={{ background: "rgba(255,255,255,0.2)", border: "none", borderRadius: "6px", color: "#fff", cursor: "pointer", fontSize: "16px", width: "30px", height: "30px", display: "flex", alignItems: "center", justifyContent: "center" }}>›</button>
+                    </div>
+                    {/* Day-of-week headers */}
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", background: "#f1f5f9" }}>
+                      {DAY_HEADERS.map((h) => (
+                        <div key={h} style={{ textAlign: "center", fontSize: "11px", fontWeight: 700, color: "#64748b", padding: "6px 0" }}>{h}</div>
+                      ))}
+                    </div>
+                    {/* Day cells */}
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", padding: "6px" }}>
+                      {cells.map((d, idx) => {
+                        const isSel = d !== null && d === selectedDay;
+                        return (
+                          <button key={idx} type="button"
+                            onClick={() => d !== null && setForm((p) => ({ ...p, monthlyDay: p.monthlyDay === d ? "" : d }))}
+                            style={{ width: "36px", height: "36px", margin: "2px auto", display: "flex", alignItems: "center", justifyContent: "center",
+                              borderRadius: "50%", border: "none", fontSize: "13px", fontWeight: isSel ? 700 : 400,
+                              background: isSel ? "#2563eb" : "transparent", color: isSel ? "#fff" : d ? "#1e293b" : "transparent",
+                              cursor: d ? "pointer" : "default", transition: "all 0.1s",
+                              ...(d && !isSel ? { ":hover": { background: "#eff6ff" } } : {}) }}>
+                            {d || ""}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {/* Selected info */}
+                    <div style={{ textAlign: "center", padding: "8px 12px 12px", borderTop: "1px solid #f1f5f9" }}>
+                      {selectedDay ? (
+                        <span style={{ fontSize: "12px", color: "#2563eb", fontWeight: 600 }}>
+                          ✓ Day {selectedDay} selected{activeMonths.length ? ` · ${activeMonths.map((n) => MONTH_SHORT[n - 1]).join(", ")}` : " · every month"}
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: "12px", color: "#94a3b8" }}>Click a date to select</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Friendly Reminder */}
+                <div style={{ marginTop: "14px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: "10px", padding: "14px 16px" }}>
+                  <Label>Friendly Reminder <span style={{ color: "#94a3b8", fontWeight: 400 }}>(time on the scheduled day to send notification — if checklist not filled)</span></Label>
+                  <div style={{ display: "flex", alignItems: "center", gap: "12px", marginTop: "8px" }}>
+                    <Inp type="time" value={form.notificationTime || ""} onChange={(e) => setForm((p) => ({ ...p, notificationTime: e.target.value }))} style={{ width: "150px" }} />
+                  </div>
+                  {form.notificationTime && selectedDay ? (
+                    <p style={{ fontSize: "12px", color: "#92400e", marginTop: "6px", fontWeight: 600 }}>
+                      🔔 Reminder at {form.notificationTime} on day {selectedDay}{activeMonths.length ? ` of ${activeMonths.map((n) => MONTH_SHORT[n - 1]).join(", ")}` : " of every month"} — if checklist not filled
+                    </p>
+                  ) : (
+                    <p style={{ fontSize: "12px", color: "#94a3b8", marginTop: "6px" }}>Select a day and time to enable reminder notifications</p>
+                  )}
+                </div>
+
+                {/* Start/End Time */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginTop: "12px" }}>
+                  <div>
+                    <Label>Start Time <span style={{ color: "#94a3b8", fontWeight: 400 }}>(optional)</span></Label>
+                    <Inp type="time" value={form.startTime} onChange={(e) => setForm((p) => ({ ...p, startTime: e.target.value }))} />
+                  </div>
+                  <div>
+                    <Label>End Time <span style={{ color: "#94a3b8", fontWeight: 400 }}>(optional)</span></Label>
+                    <Inp type="time" value={form.endTime} onChange={(e) => setForm((p) => ({ ...p, endTime: e.target.value }))} />
+                  </div>
+                </div>
+                {form.startTime && form.endTime && <p style={{ fontSize: "12px", color: "#2563eb", marginTop: "6px", fontWeight: 600 }}>Active window: {form.startTime} – {form.endTime}</p>}
+              </div>
+            );
+          })()}
           <div style={{ gridColumn: "span 3" }}>
             <Label>Description</Label>
             <Inp value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} placeholder="Purpose / scope of this checklist" />

@@ -82,6 +82,13 @@ import {
   getFleetSubmissions, getFleetSubmissionDetail, downloadFleetSubmissionsCSV,
   getSoftServiceRequestsAll, getSoftServiceRequestsMy, resolveSoftServiceRequest,
   getNotifications,
+  getNotificationCount,
+  markNotificationRead,
+  markAllNotificationsRead,
+  deleteNotification,
+  deleteAllNotifications,
+  getMyCompanies,
+  switchPortalCompany,
 } from "../api.js";
 
 /* ─── Role definitions ────────────────────────────────────────────── */
@@ -156,6 +163,7 @@ const NAV_ALL = [
   { key: "employees", label: "My Team", roles: ["supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> },
   { key: "employees", label: "Employees", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> },
   { key: "warnings", label: "Warnings", roles: ["admin","supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> },
+  { key: "notifications", label: "Notifications", roles: ["admin","supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg> },
   { key: "workorders", label: "Requests", roles: ["admin","supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-4 0v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg> },
   { key: "softrequests", label: "Soft Requests", roles: ["admin","supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> },
   { key: "locations", label: "Locations", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg> },
@@ -763,7 +771,7 @@ function EmployeeModal({ existing, token, employees = [], customRoles = [], curr
     shift: "", status: "Active", password: "", username: "", supervisorId: "",
     employeeCode: "",
     permissions: normalizePerms(null),
-    moduleAccess: ["dashboard", "checklists", "logsheets", "mytasks"],
+    moduleAccess: ["dashboard", "checklists", "logsheets", "mytasks", "locations"],
   };
   const [form, setForm] = useState(isEdit ? {
     ...def, ...existing, password: "",
@@ -844,6 +852,9 @@ function EmployeeModal({ existing, token, employees = [], customRoles = [], curr
         </div>
 
         <div style={{ padding: "20px 24px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
+          {/* Hidden dummy fields to prevent browser autofill on the real username/password inputs */}
+          <input type="text" name="prevent_autofill_username" style={{ display: "none" }} readOnly tabIndex={-1} />
+          <input type="password" name="prevent_autofill_password" style={{ display: "none" }} readOnly tabIndex={-1} />
           {error && <div style={{ gridColumn: "span 2" }}><Alert>{error}</Alert></div>}
 
           {/* ── Service Domain ── */}
@@ -1045,8 +1056,8 @@ function EmployeeModal({ existing, token, employees = [], customRoles = [], curr
             </div>
             <p style={{ fontSize: "12px", color: "#64748b", marginBottom: "12px" }}>Username &amp; password for the employee mobile app login</p>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-              <FInput label="Username" required={!isEdit} value={form.username} onChange={(e) => change("username", e.target.value)} placeholder="e.g. ahmed.hassan" />
-              <FInput label={isEdit ? "New Password (leave blank to keep)" : "Password"} type="password" required={!isEdit} value={form.password} onChange={(e) => change("password", e.target.value)} placeholder={isEdit ? "••••••" : "Set a password"} />
+              <FInput label="Username" required={!isEdit} value={form.username} onChange={(e) => change("username", e.target.value)} placeholder="e.g. ahmed.hassan" autoComplete="off" />
+              <FInput label={isEdit ? "New Password (leave blank to keep)" : "Password"} type="password" required={!isEdit} value={form.password} onChange={(e) => change("password", e.target.value)} placeholder={isEdit ? "••••••" : "Set a password"} autoComplete="new-password" />
             </div>
             {isEdit && form.username && (
               <p style={{ fontSize: "11.5px", color: "#16a34a", marginTop: "8px", display: "flex", alignItems: "center", gap: "5px" }}>
@@ -3391,7 +3402,7 @@ const PERM_MODULES = [
 ];
 
 /* ─── Role Management Modal (custom hierarchy) ───────────────────────── */
-function RolesModal({ token, initialRoles, onClose, onSaved, inline = false, enabledModules }) {
+function RolesModal({ token, initialRoles, onClose, onSaved, inline = false, enabledModules, readOnly = false }) {
   const [roles, setRoles] = useState(initialRoles || []);
   const [draftLabel, setDraftLabel] = useState("");
   const [draftParent, setDraftParent] = useState("");
@@ -3590,12 +3601,16 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false, ena
               {r.isTechnicalSupervisor && <span style={{ padding: "2px 8px", borderRadius: "12px", fontSize: "10.5px", fontWeight: 600, background: "#eff6ff", color: "#1d4ed8" }}>Tech Supervisor</span>}
               {r.isTechnician         && <span style={{ padding: "2px 8px", borderRadius: "12px", fontSize: "10.5px", fontWeight: 600, background: "#f5f3ff", color: "#6d28d9" }}>Technician</span>}
               <span style={{ marginLeft: "auto", fontSize: "11px", color: "#94a3b8" }}>{r.roleKey}</span>
-              <button onClick={() => editingId === r.id ? cancelEdit() : startEdit(r)} disabled={saving}
-                style={{ padding: "4px 10px", border: `1px solid ${editingId === r.id ? "#c7d2fe" : "#e2e8f0"}`, background: editingId === r.id ? "#eef2ff" : "#f8fafc", color: editingId === r.id ? "#4f46e5" : "#475569", borderRadius: "6px", cursor: "pointer", fontSize: "11.5px", fontWeight: 600 }}>
-                {editingId === r.id ? "Cancel" : "Edit"}
-              </button>
-              <button onClick={() => removeRole(r.id)} disabled={saving}
-                style={{ padding: "4px 8px", border: "1px solid #fecaca", background: "#fff0f0", color: "#dc2626", borderRadius: "6px", cursor: "pointer", fontSize: "11.5px", fontWeight: 600 }}>Delete</button>
+              {!readOnly && (
+                <button onClick={() => editingId === r.id ? cancelEdit() : startEdit(r)} disabled={saving}
+                  style={{ padding: "4px 10px", border: `1px solid ${editingId === r.id ? "#c7d2fe" : "#e2e8f0"}`, background: editingId === r.id ? "#eef2ff" : "#f8fafc", color: editingId === r.id ? "#4f46e5" : "#475569", borderRadius: "6px", cursor: "pointer", fontSize: "11.5px", fontWeight: 600 }}>
+                  {editingId === r.id ? "Cancel" : "Edit"}
+                </button>
+              )}
+              {!readOnly && (
+                <button onClick={() => removeRole(r.id)} disabled={saving}
+                  style={{ padding: "4px 8px", border: "1px solid #fecaca", background: "#fff0f0", color: "#dc2626", borderRadius: "6px", cursor: "pointer", fontSize: "11.5px", fontWeight: 600 }}>Delete</button>
+              )}
             </div>
 
             {/* Inline edit form */}
@@ -3633,6 +3648,7 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false, ena
       </div>
 
       {/* Add new role */}
+      {!readOnly && (
       <div style={{ background: "#f8fafc", borderRadius: "10px", padding: "14px 16px", border: "1px solid #e2e8f0" }}>
         <p style={{ fontSize: "12.5px", fontWeight: 700, color: "#475569", marginBottom: "10px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Add New Role</p>
         <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr auto", gap: "10px", alignItems: "end", marginBottom: "12px" }}>
@@ -3665,6 +3681,7 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false, ena
           }}
         />
       </div>
+      )}
     </div>
   );
 
@@ -3714,7 +3731,9 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false, ena
                             {["create","read","update","delete"].map((op) => (
                               <input key={op} type="checkbox"
                                 checked={!!(rolePerms[r.roleKey] && rolePerms[r.roleKey][m.key] && rolePerms[r.roleKey][m.key][op])}
+                                disabled={readOnly}
                                 onChange={(e) => {
+                                  if (readOnly) return;
                                   const v = e.target.checked;
                                   setRolePerms((prev) => ({
                                     ...prev,
@@ -3741,6 +3760,7 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false, ena
             </div>
           )}
           <div style={{ marginTop: "12px", display: "flex", justifyContent: "flex-end" }}>
+            {!readOnly && (
             <Btn onClick={async () => {
               setPermsSaving(true);
               try {
@@ -3751,6 +3771,7 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false, ena
                 setPermsSaving(false);
               }
             }} disabled={permsSaving}>{permsSaving ? "Saving…" : "Save Permissions"}</Btn>
+            )}
           </div>
         </div>
       </div>
@@ -4189,14 +4210,370 @@ function AssetTypesPanel({ token, onLayoutSaved }) {
   );
 }
 
+/* ─── Dashboard Notifications Quick-View ────────────────────────── */
+function DashboardNotificationsBox({ token, onViewAll }) {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    getNotifications(token, "limit=5")
+      .then((d) => setItems(Array.isArray(d) ? d.slice(0, 5) : []))
+      .catch(() => setItems([]))
+      .finally(() => setLoading(false));
+  }, [token]);
+
+  const TYPE_LABELS = {
+    checklist_reminder: { label: "Checklist", color: "#d97706", bg: "#fef3c7" },
+    flag_raised:        { label: "Warning",   color: "#dc2626", bg: "#fee2e2" },
+    flag_escalated:     { label: "Escalated", color: "#7c3aed", bg: "#ede9fe" },
+    soft_request:       { label: "Soft Req",  color: "#0d9488", bg: "#ccfbf1" },
+    work_order:         { label: "Work Order",color: "#2563eb", bg: "#dbeafe" },
+  };
+
+  return (
+    <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+        <div>
+          <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", margin: 0 }}>Notifications</p>
+          <p style={{ fontSize: "12px", color: "#94a3b8", margin: 0, marginTop: "2px" }}>Latest alerts &amp; reminders</p>
+        </div>
+        <button onClick={onViewAll}
+          style={{ padding: "5px 12px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "1px solid #e2e8f0", background: "#f8fafc", color: "#64748b" }}>
+          View All →
+        </button>
+      </div>
+      {loading ? (
+        <p style={{ color: "#94a3b8", fontSize: "13px", padding: "8px 0" }}>Loading…</p>
+      ) : items.length === 0 ? (
+        <div style={{ padding: "24px", textAlign: "center", color: "#94a3b8", background: "#f8fafc", borderRadius: "8px", fontSize: "13px" }}>
+          🔔 No notifications yet
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+          {items.map((n) => {
+            const ti = TYPE_LABELS[n.type] || { label: n.type, color: "#475569", bg: "#f1f5f9" };
+            return (
+              <div key={n.id} style={{ display: "flex", alignItems: "flex-start", gap: "10px", padding: "10px 12px", borderRadius: "8px", border: `1px solid ${n.isRead ? "#f1f5f9" : "#dbeafe"}`, background: n.isRead ? "#fafafa" : "#f0f9ff" }}>
+                {!n.isRead && <span style={{ flexShrink: 0, width: "8px", height: "8px", borderRadius: "50%", background: ti.color, marginTop: "4px" }} />}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "2px" }}>
+                    <span style={{ flexShrink: 0, padding: "2px 7px", borderRadius: "20px", fontSize: "10px", fontWeight: 700, background: ti.bg, color: ti.color }}>{ti.label}</span>
+                    <p style={{ margin: 0, fontWeight: n.isRead ? 400 : 600, fontSize: "12.5px", color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{n.title}</p>
+                  </div>
+                  <p style={{ margin: 0, fontSize: "11.5px", color: "#64748b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{n.message}</p>
+                </div>
+                <span style={{ flexShrink: 0, fontSize: "10px", color: "#94a3b8", whiteSpace: "nowrap" }}>
+                  {new Date(n.createdAt).toLocaleDateString()}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Notifications Panel ────────────────────────────────────────── */
+function NotificationsPanel({ token }) {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState("all"); // "all" | "unread" | "checklist_reminder"
+  const [page, setPage] = useState(0);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const PAGE_SIZE = 20;
+
+  const TYPE_LABELS = {
+    checklist_reminder: { label: "Checklist Reminder", color: "#d97706", bg: "#fef3c7" },
+    flag_raised: { label: "Warning", color: "#dc2626", bg: "#fee2e2" },
+    flag_escalated: { label: "Escalated", color: "#7c3aed", bg: "#ede9fe" },
+    soft_request: { label: "Soft Request", color: "#0d9488", bg: "#ccfbf1" },
+    work_order: { label: "Work Order", color: "#2563eb", bg: "#dbeafe" },
+  };
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await getNotifications(token, "limit=200");
+      setItems(Array.isArray(data) ? data : []);
+    } catch {
+      setItems([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const filtered = useMemo(() => {
+    if (filter === "unread") return items.filter((n) => !n.isRead);
+    if (filter === "checklist_reminder") return items.filter((n) => n.type === "checklist_reminder");
+    return items;
+  }, [items, filter]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const paged = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+
+  const handleMarkRead = async (id) => {
+    await markNotificationRead(token, id);
+    setItems((prev) => prev.map((n) => n.id === id ? { ...n, isRead: true } : n));
+  };
+
+  const handleMarkAll = async () => {
+    await markAllNotificationsRead(token);
+    setItems((prev) => prev.map((n) => ({ ...n, isRead: true })));
+  };
+
+  const handleDelete = async (id) => {
+    await deleteNotification(token, id);
+    setItems((prev) => prev.filter((n) => n.id !== id));
+  };
+
+  const handleDeleteAll = async () => {
+    if (!window.confirm("Delete all notifications? This cannot be undone.")) return;
+    await deleteAllNotifications(token);
+    setItems([]);
+    setSelectedIds(new Set());
+  };
+
+  /* -- Selection helpers -- */
+  const toggleSelect = (id) => setSelectedIds((prev) => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
+
+  const isAllPageSelected = paged.length > 0 && paged.every((n) => selectedIds.has(n.id));
+  const isSomePageSelected = paged.some((n) => selectedIds.has(n.id));
+
+  const toggleSelectAll = () => {
+    if (isAllPageSelected) {
+      setSelectedIds((prev) => { const next = new Set(prev); paged.forEach((n) => next.delete(n.id)); return next; });
+    } else {
+      setSelectedIds((prev) => { const next = new Set(prev); paged.forEach((n) => next.add(n.id)); return next; });
+    }
+  };
+
+  const handleDeleteSelected = async () => {
+    if (selectedIds.size === 0) return;
+    if (!window.confirm(`Delete ${selectedIds.size} notification(s)?`)) return;
+    await Promise.all([...selectedIds].map((id) => deleteNotification(token, id).catch(() => {})));
+    setItems((prev) => prev.filter((n) => !selectedIds.has(n.id)));
+    setSelectedIds(new Set());
+  };
+
+  const handleMarkSelectedRead = async () => {
+    if (selectedIds.size === 0) return;
+    const unreadSelected = [...selectedIds].filter((id) => items.find((n) => n.id === id && !n.isRead));
+    await Promise.all(unreadSelected.map((id) => markNotificationRead(token, id).catch(() => {})));
+    setItems((prev) => prev.map((n) => selectedIds.has(n.id) ? { ...n, isRead: true } : n));
+    setSelectedIds(new Set());
+  };
+
+  const unreadCount = items.filter((n) => !n.isRead).length;
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "20px" }}>
+        <div>
+          <h1 style={{ fontSize: "22px", fontWeight: 800, color: "#0f172a", margin: 0, display: "flex", alignItems: "center", gap: "10px" }}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2563eb" strokeWidth="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+            Notifications
+            {unreadCount > 0 && (
+              <span style={{ background: "#dc2626", color: "#fff", borderRadius: "999px", fontSize: "11px", fontWeight: 800, padding: "1px 9px" }}>{unreadCount} unread</span>
+            )}
+          </h1>
+          <p style={{ color: "#64748b", fontSize: "13.5px", margin: "4px 0 0" }}>Manage all your alerts, reminders, and notifications</p>
+        </div>
+        <div style={{ display: "flex", gap: "8px" }}>
+          <button onClick={load} style={{ padding: "7px 14px", borderRadius: "7px", border: "1px solid #e2e8f0", background: "#f8fafc", color: "#475569", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>↺ Refresh</button>
+          {unreadCount > 0 && (
+            <button onClick={handleMarkAll} style={{ padding: "7px 14px", borderRadius: "7px", border: "1px solid #bfdbfe", background: "#eff6ff", color: "#2563eb", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>✓ Mark all read</button>
+          )}
+          {items.length > 0 && (
+            <button onClick={handleDeleteAll} style={{ padding: "7px 14px", borderRadius: "7px", border: "1px solid #fecaca", background: "#fef2f2", color: "#dc2626", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>🗑 Delete all</button>
+          )}
+        </div>
+      </div>
+
+      {/* Filter tabs */}
+      <div style={{ display: "flex", gap: "6px", marginBottom: "16px" }}>
+        {[
+          { key: "all", label: `All (${items.length})` },
+          { key: "unread", label: `Unread (${unreadCount})` },
+          { key: "checklist_reminder", label: "Checklist Reminders" },
+        ].map((f) => (
+          <button key={f.key} onClick={() => { setFilter(f.key); setPage(0); setSelectedIds(new Set()); }}
+            style={{ padding: "6px 16px", borderRadius: "20px", border: "1px solid", fontSize: "13px", fontWeight: 600, cursor: "pointer",
+              background: filter === f.key ? "#2563eb" : "#f8fafc",
+              color: filter === f.key ? "#fff" : "#64748b",
+              borderColor: filter === f.key ? "#2563eb" : "#e2e8f0" }}>
+            {f.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Bulk-selection action bar */}
+      {selectedIds.size > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "12px", padding: "10px 16px", background: "#eff6ff", borderRadius: "8px", border: "1px solid #bfdbfe" }}>
+          <span style={{ fontSize: "13px", fontWeight: 600, color: "#1e40af" }}>{selectedIds.size} selected</span>
+          <button onClick={handleMarkSelectedRead}
+            style={{ padding: "5px 14px", borderRadius: "6px", border: "1px solid #bfdbfe", background: "#fff", color: "#2563eb", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
+            ✓ Mark read
+          </button>
+          <button onClick={handleDeleteSelected}
+            style={{ padding: "5px 14px", borderRadius: "6px", border: "1px solid #fecaca", background: "#fff", color: "#dc2626", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
+            🗑 Delete
+          </button>
+          <button onClick={() => setSelectedIds(new Set())}
+            style={{ marginLeft: "auto", padding: "5px 10px", borderRadius: "6px", border: "1px solid #e2e8f0", background: "#fff", color: "#64748b", cursor: "pointer", fontSize: "12px" }}>
+            ✕ Cancel
+          </button>
+        </div>
+      )}
+
+      {/* List */}
+      {loading ? (
+        <div style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>Loading notifications…</div>
+      ) : filtered.length === 0 ? (
+        <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", padding: "48px", textAlign: "center" }}>
+          <div style={{ fontSize: "36px", marginBottom: "12px" }}>🔔</div>
+          <p style={{ fontWeight: 600, color: "#0f172a", margin: 0 }}>No notifications</p>
+          <p style={{ color: "#94a3b8", fontSize: "13px", margin: "4px 0 0" }}>You're all caught up!</p>
+        </div>
+      ) : (
+        <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
+          {/* Select-all header row */}
+          <div style={{ display: "flex", alignItems: "center", gap: "12px", padding: "10px 18px", borderBottom: "1px solid #f1f5f9", background: "#f8fafc" }}>
+            <input
+              type="checkbox"
+              checked={isAllPageSelected}
+              ref={(el) => { if (el) el.indeterminate = isSomePageSelected && !isAllPageSelected; }}
+              onChange={toggleSelectAll}
+              style={{ width: "16px", height: "16px", cursor: "pointer", accentColor: "#2563eb" }}
+            />
+            <span style={{ fontSize: "12px", color: "#64748b", fontWeight: 600 }}>
+              {isAllPageSelected ? "Deselect all on page" : "Select all on page"}
+            </span>
+          </div>
+          {paged.map((n, idx) => {
+            const typeInfo = TYPE_LABELS[n.type] || { label: n.type, color: "#475569", bg: "#f8fafc" };
+            const isUnread = !n.isRead;
+            const isSelected = selectedIds.has(n.id);
+            return (
+              <div key={n.id} style={{
+                display: "flex", alignItems: "flex-start", gap: "14px",
+                padding: "14px 18px",
+                borderBottom: idx < paged.length - 1 ? "1px solid #f1f5f9" : "none",
+                background: isSelected ? "#eff6ff" : isUnread ? (n.type === "checklist_reminder" ? "#fffbeb" : "#f8faff") : "#fff",
+                transition: "background 0.1s",
+              }}>
+                {/* Row checkbox */}
+                <input
+                  type="checkbox"
+                  checked={isSelected}
+                  onChange={() => toggleSelect(n.id)}
+                  style={{ width: "15px", height: "15px", marginTop: "4px", cursor: "pointer", flexShrink: 0, accentColor: "#2563eb" }}
+                />
+                {/* Unread dot */}
+                <div style={{ width: "8px", height: "8px", borderRadius: "50%", background: isUnread ? (n.type === "checklist_reminder" ? "#d97706" : "#2563eb") : "transparent", marginTop: "6px", flexShrink: 0 }} />
+                {/* Content */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginBottom: "4px" }}>
+                    <span style={{ background: typeInfo.bg, color: typeInfo.color, fontSize: "10px", fontWeight: 800, padding: "2px 8px", borderRadius: "20px", textTransform: "uppercase", flexShrink: 0 }}>{typeInfo.label}</span>
+                    <span style={{ fontWeight: isUnread ? 700 : 500, fontSize: "14px", color: "#0f172a" }}>{n.title}</span>
+                  </div>
+                  <p style={{ fontSize: "13px", color: "#475569", margin: "0 0 6px" }}>{n.message}</p>
+                  <span style={{ fontSize: "11px", color: "#94a3b8" }}>{new Date(n.createdAt).toLocaleString()}</span>
+                </div>
+                {/* Actions */}
+                <div style={{ display: "flex", gap: "6px", flexShrink: 0 }}>
+                  {isUnread && (
+                    <button onClick={() => handleMarkRead(n.id)}
+                      title="Mark as read"
+                      style={{ padding: "5px 10px", borderRadius: "6px", border: "1px solid #bfdbfe", background: "#eff6ff", color: "#2563eb", cursor: "pointer", fontSize: "12px", fontWeight: 600 }}>
+                      ✓ Read
+                    </button>
+                  )}
+                  <button onClick={() => handleDelete(n.id)}
+                    title="Delete"
+                    style={{ padding: "5px 10px", borderRadius: "6px", border: "1px solid #fecaca", background: "#fef2f2", color: "#dc2626", cursor: "pointer", fontSize: "12px", fontWeight: 600 }}>
+                    🗑
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div style={{ padding: "12px 18px", borderTop: "1px solid #f1f5f9", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ fontSize: "13px", color: "#64748b" }}>
+                Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length)} of {filtered.length}
+              </span>
+              <div style={{ display: "flex", gap: "6px" }}>
+                <button onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0}
+                  style={{ padding: "5px 12px", borderRadius: "6px", border: "1px solid #e2e8f0", background: page === 0 ? "#f8fafc" : "#fff", color: page === 0 ? "#cbd5e1" : "#374151", cursor: page === 0 ? "not-allowed" : "pointer", fontSize: "13px" }}>
+                  ← Prev
+                </button>
+                <button onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1}
+                  style={{ padding: "5px 12px", borderRadius: "6px", border: "1px solid #e2e8f0", background: page >= totalPages - 1 ? "#f8fafc" : "#fff", color: page >= totalPages - 1 ? "#cbd5e1" : "#374151", cursor: page >= totalPages - 1 ? "not-allowed" : "pointer", fontSize: "13px" }}>
+                  Next →
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ─── Main Portal ────────────────────────────────────────────────── */
 export default function CompanyEmployeePortal() {
   const navigate = useNavigate();
   const params = useParams();
-  const token = sessionStorage.getItem("cp_token");
+  const [cpToken, setCpToken] = useState(() => sessionStorage.getItem("cp_token") || "");
+  const token = cpToken; // alias used throughout
   const currentUser = useMemo(() => {
     try { return JSON.parse(sessionStorage.getItem("cp_user") || "null"); } catch { return null; }
   }, []);
+
+  // ── Multi-company switcher ──────────────────────────────────────
+  const [myCompanies, setMyCompanies] = useState([]);
+  const [switchingCompany, setSwitchingCompany] = useState(false);
+
+  useEffect(() => {
+    if (!cpToken || currentUser?.role !== "admin") return;
+    getMyCompanies(cpToken).then(list => {
+      if (Array.isArray(list) && list.length > 1) setMyCompanies(list);
+    }).catch(() => {});
+  }, [cpToken, currentUser?.role]);
+
+  const handleSwitchCompany = async (targetCompanyId) => {
+    if (!cpToken || !targetCompanyId) return;
+    setSwitchingCompany(true);
+    try {
+      const res = await switchPortalCompany(cpToken, targetCompanyId);
+      if (res.token) {
+        sessionStorage.setItem("cp_token", res.token);
+        // Update the company name in stored user object
+        const user = JSON.parse(sessionStorage.getItem("cp_user") || "null");
+        if (user && res.company) {
+          user.companyId = res.company.id;
+          user.companyName = res.company.companyName;
+          sessionStorage.setItem("cp_user", JSON.stringify(user));
+        }
+        setCpToken(res.token);
+        // Reload the page so all data reloads with the new company context
+        window.location.reload();
+      }
+    } catch(e) {
+      alert(e.message || "Failed to switch company");
+    } finally {
+      setSwitchingCompany(false);
+    }
+  };
 
   // URL-driven navigation: /company/portal/dashboard — enables browser back/forward
   const [nav, setNavState] = useState(() => {
@@ -4213,11 +4590,16 @@ export default function CompanyEmployeePortal() {
     if (urlNav && urlNav !== nav) setNavState(urlNav);
   }, [params]); // eslint-disable-line react-hooks/exhaustive-deps
   const [enabledModules, setEnabledModules] = useState(null);
+  const STANDARD_ROLES = new Set(["admin", "supervisor", "employee", "catalyst_admin"]);
+  const isCustomRole = !!(currentUser?.role && !STANDARD_ROLES.has(currentUser.role));
+  const isViewOnly = isCustomRole; // custom company roles are view-only observers
   const visibleNav = useMemo(() => {
-    const base = getNav(currentUser?.role || "employee");
+    const STANDARD = new Set(["admin", "supervisor", "employee", "catalyst_admin"]);
+    const isCustom = !!(currentUser?.role && !STANDARD.has(currentUser.role));
+    const base = getNav(isCustom ? "admin" : (currentUser?.role || "employee"));
     const isAdmin = currentUser?.role === "admin" || currentUser?.role === "catalyst_admin";
     // Admin-only management tabs that are always visible for admins regardless of module settings
-    const ADMIN_ALWAYS = new Set(["dashboard", "employees"]);
+    const ADMIN_ALWAYS = new Set(["dashboard", "employees", "notifications"]);
     const ALWAYS_VISIBLE = new Set(["dashboard", "mytasks", "employees"]);
     // Map nav key to the key used in enabledModules array (softrequests → soft-requests)
     const toModuleKey = (k) => k === "softrequests" ? "soft-requests" : k;
@@ -4240,7 +4622,7 @@ export default function CompanyEmployeePortal() {
       });
     };
 
-    if (isAdmin) {
+    if (isAdmin || isCustom) {
       // If no modules restriction set by super-admin, show everything
       if (!enabledModules) return base;
       // Otherwise apply company-level module filter but keep admin management tabs
@@ -4499,8 +4881,8 @@ export default function CompanyEmployeePortal() {
       .catch(() => {})
       .finally(() => setRecentChecklistsLoading(false));
     // Preload role-specific data on login so dashboard is immediately useful
-    if (currentUser?.role === "admin") {
-      // Admin: preload departments and assets so they persist across refreshes
+    if (currentUser?.role === "admin" || isCustomRole) {
+      // Admin/custom role: preload departments and assets so they persist across refreshes
       getCompanyPortalDepartments(token).then((d) => d && setDepartments(d)).catch(() => {});
       getCompanyPortalAssets(token).then((d) => d && setAssets(d)).catch(() => {});
       getCompanyPortalEmployees(token).then((d) => d && setEmployees(d)).catch(() => {});
@@ -4547,7 +4929,7 @@ export default function CompanyEmployeePortal() {
   }, [token, load]);
 
   useEffect(() => {
-    if (!token || currentUser?.role !== "admin") return;
+    if (!token || (currentUser?.role !== "admin" && !isCustomRole)) return;
     setChartStats(null);
     setChartError(null);
     const params = chartCustomStart && chartCustomEnd
@@ -4574,8 +4956,8 @@ export default function CompanyEmployeePortal() {
       .then((d) => d && setRecentChecklists(d))
       .catch(() => {})
       .finally(() => setRecentChecklistsLoading(false));
-    // Refresh dashboard quick-view (admin only)
-    if (currentUser?.role === "admin") {
+    // Refresh dashboard quick-view (admin or custom role)
+    if (currentUser?.role === "admin" || isCustomRole) {
       setDashboardAlertsLoading(true);
       getCompanyPortalAdminFlags(token, "status=open&limit=5")
         .then((d) => d && setDashboardAlerts(d.data ?? []))
@@ -4624,15 +5006,17 @@ export default function CompanyEmployeePortal() {
         const newCount = res.total ?? 0;
         const prev     = prevWarnCount.current;
         prevWarnCount.current = newCount;
-        setWarnOpenCount(newCount);
         setDashboardAlerts(res.data ?? []);
-        // Merge flag alerts and soft_request notifications into bell
+        // Merge flag alerts, soft_request and checklist_reminder notifications into bell
         const softNotifs = Array.isArray(notifRes) ? notifRes.filter(n => n.type === 'soft_request').slice(0, 3) : [];
+        const checklistReminders = Array.isArray(notifRes) ? notifRes.filter(n => n.type === 'checklist_reminder' && !n.isRead).slice(0, 3) : [];
         const merged = [
           ...(res.data ?? []),
           ...softNotifs.map(n => ({ id: `notif-${n.id}`, assetName: n.title, description: n.message, severity: 'medium', status: 'open', createdAt: n.createdAt, isSoftRequest: true })),
+          ...checklistReminders.map(n => ({ id: `notif-${n.id}`, assetName: n.title, description: n.message, severity: 'warning', status: 'open', createdAt: n.createdAt, isChecklistReminder: true })),
         ].slice(0, 8);
         setRecentAlerts(merged);
+        setWarnOpenCount(newCount + checklistReminders.length);
         if (newCount > prev) {
           const diff   = newCount - prev;
           const newest = res.data?.[0];
@@ -4689,15 +5073,17 @@ export default function CompanyEmployeePortal() {
     ]).then(([flagRes, woRes, notifRes, srRes]) => {
       if (flagRes) {
         prevWarnCount.current = flagRes.total ?? 0;
-        setWarnOpenCount(flagRes.total ?? 0);
         setDashboardAlerts(flagRes.data ?? []);
-        // Merge flag alerts and soft_request notifications into bell
+        // Merge flag alerts, soft_request and checklist_reminder notifications into bell
         const softNotifs = Array.isArray(notifRes) ? notifRes.filter(n => n.type === 'soft_request').slice(0, 3) : [];
+        const checklistReminders = Array.isArray(notifRes) ? notifRes.filter(n => n.type === 'checklist_reminder' && !n.isRead).slice(0, 3) : [];
         const merged = [
           ...(flagRes.data ?? []),
           ...softNotifs.map(n => ({ id: `notif-${n.id}`, assetName: n.title, description: n.message, severity: 'medium', status: 'open', createdAt: n.createdAt, isSoftRequest: true })),
+          ...checklistReminders.map(n => ({ id: `notif-${n.id}`, assetName: n.title, description: n.message, severity: 'warning', status: 'open', createdAt: n.createdAt, isChecklistReminder: true })),
         ].slice(0, 8);
         setRecentAlerts(merged);
+        setWarnOpenCount((flagRes.total ?? 0) + checklistReminders.length);
       }
       if (woRes) {
         prevWOCount.current = woRes?.total ?? woRes?.data?.length ?? 0;
@@ -5026,6 +5412,15 @@ export default function CompanyEmployeePortal() {
 
   // ── Room CRUD helpers ─────────────────────────────────────────────────────
   const reloadRooms = async () => {
+    // Sync hierarchy from locations (adds missing, removes stale) and get fresh list in one call
+    try {
+      const r = await fetch("/api/company-portal/locations/sync-hierarchy", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const d = await r.json();
+      if (Array.isArray(d.rooms)) { setRooms(d.rooms); return; }
+    } catch { /* fall through to plain GET */ }
     const r = await fetch("/api/company-portal/rooms", { headers: { Authorization: `Bearer ${token}` } });
     const d = await r.json();
     if (Array.isArray(d)) setRooms(d);
@@ -5555,6 +5950,16 @@ export default function CompanyEmployeePortal() {
             {currentUser.role === "supervisor" ? "Supervisor Portal" : "Company Portal"}
           </p>
           <p style={{ fontSize: "13.5px", fontWeight: 700, color: "#0f172a", lineHeight: 1.3 }}>{currentUser.companyName || "Company"}</p>
+          {myCompanies.length > 1 && (
+            <SearchableSelect
+              value=""
+              onChange={(v) => { if (v) handleSwitchCompany(Number(v)); }}
+              options={myCompanies.map(c => ({ value: String(c.id), label: c.companyName }))}
+              placeholder={switchingCompany ? "Switching…" : "Switch company…"}
+              disabled={switchingCompany}
+              style={{ marginTop: "6px" }}
+            />
+          )}
         </div>
 
         {/* Nav items */}
@@ -5581,7 +5986,18 @@ export default function CompanyEmployeePortal() {
             </div>
             <div style={{ overflow: "hidden" }}>
               <p style={{ fontSize: "13px", fontWeight: 600, color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{currentUser.fullName}</p>
-              <Badge val={currentUser.role} />
+              {(() => {
+                // For custom roles, look up label from customRoles list
+                const customRoleEntry = customRoles.find((r) => r.roleKey === currentUser.role);
+                if (customRoleEntry) {
+                  return (
+                    <span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: customRoleEntry.bgColor || "#eff6ff", color: customRoleEntry.color || "#2563eb" }}>
+                      {customRoleEntry.label}
+                    </span>
+                  );
+                }
+                return <Badge val={currentUser.role} />;
+              })()}
             </div>
           </div>
           {/* Bell button — admin & supervisor only */}
@@ -5604,24 +6020,32 @@ export default function CompanyEmployeePortal() {
               {bellOpen && (
                 <div style={{ position: "absolute", bottom: "calc(100% + 6px)", left: 0, right: 0, background: "#fff", border: "1px solid #e2e8f0", borderRadius: "10px", boxShadow: "0 -10px 30px rgba(0,0,0,0.12)", zIndex: 9999, overflow: "hidden", minWidth: "220px" }}>
                   <div style={{ padding: "10px 14px", borderBottom: "1px solid #f1f5f9", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <span style={{ fontWeight: 700, fontSize: "12px", color: "#0f172a" }}>⚠️ Active Warnings</span>
-                    <button onClick={() => { setBellOpen(false); setNav("warnings"); }} style={{ background: "none", border: "none", color: "#2563eb", fontSize: "11px", fontWeight: 700, cursor: "pointer" }}>View all →</button>
+                    <span style={{ fontWeight: 700, fontSize: "12px", color: "#0f172a" }}>🔔 Alerts & Reminders</span>
+                    <button onClick={() => { setBellOpen(false); setNav("notifications"); }} style={{ background: "none", border: "none", color: "#2563eb", fontSize: "11px", fontWeight: 700, cursor: "pointer" }}>View all →</button>
                   </div>
                   {recentAlerts.length === 0 && (
-                    <div style={{ padding: "16px", textAlign: "center", color: "#94a3b8", fontSize: "12px" }}>No open warnings</div>
+                    <div style={{ padding: "16px", textAlign: "center", color: "#94a3b8", fontSize: "12px" }}>No active alerts or reminders</div>
                   )}
                   {recentAlerts.map((a) => {
                     const isSoftReq = a.isSoftRequest;
-                    const sevColor = isSoftReq ? "#7c3aed" : ({ critical: "#dc2626", high: "#ea580c", medium: "#d97706", low: "#16a34a" }[a.severity] || "#475569");
-                    const sevBg    = isSoftReq ? "#f3e8ff" : ({ critical: "#fee2e2", high: "#fff7ed", medium: "#fefce8", low: "#f0fdf4"  }[a.severity] || "#f8fafc");
+                    const isChecklistReminder = a.isChecklistReminder;
+                    const sevColor = isChecklistReminder ? "#d97706"
+                      : isSoftReq ? "#7c3aed"
+                      : ({ critical: "#dc2626", high: "#ea580c", medium: "#d97706", low: "#16a34a" }[a.severity] || "#475569");
+                    const sevBg    = isChecklistReminder ? "#fefce8"
+                      : isSoftReq ? "#f3e8ff"
+                      : ({ critical: "#fee2e2", high: "#fff7ed", medium: "#fefce8", low: "#f0fdf4"  }[a.severity] || "#f8fafc");
+                    const navTarget = isChecklistReminder ? "checklists" : isSoftReq ? "softrequests" : "warnings";
                     return (
                       <div key={a.id} style={{ padding: "9px 14px", borderBottom: "1px solid #f8fafc", cursor: "pointer" }}
-                        onClick={() => { setBellOpen(false); setNav(isSoftReq ? "softrequests" : "warnings"); }}
+                        onClick={() => { setBellOpen(false); setNav(navTarget); }}
                         onMouseEnter={(e) => (e.currentTarget.style.background = "#f8fafc")}
                         onMouseLeave={(e) => (e.currentTarget.style.background = "")}>
                         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                          <span style={{ background: sevBg, color: sevColor, fontSize: "9px", fontWeight: 800, padding: "2px 6px", borderRadius: "8px", textTransform: "uppercase" }}>{isSoftReq ? "Soft Req" : (a.severity || "—")}</span>
-                          <span style={{ fontWeight: 600, fontSize: "11px", color: "#0f172a", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.assetName || "Unknown asset"}</span>
+                          <span style={{ background: sevBg, color: sevColor, fontSize: "9px", fontWeight: 800, padding: "2px 6px", borderRadius: "8px", textTransform: "uppercase" }}>
+                            {isChecklistReminder ? "Checklist" : isSoftReq ? "Soft Req" : (a.severity || "—")}
+                          </span>
+                          <span style={{ fontWeight: 600, fontSize: "11px", color: "#0f172a", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.assetName || "Unknown"}</span>
                         </div>
                         <div style={{ fontSize: "10px", color: "#64748b", marginTop: "2px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.description || "No description"}</div>
                       </div>
@@ -5711,17 +6135,19 @@ export default function CompanyEmployeePortal() {
                   <h2 style={{ fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>Recent Submissions</h2>
                 </div>
                 <div style={{ display: "flex", gap: "4px" }}>
-                  {[
-                    ...(!enabledModules || enabledModules.includes("logsheets") ? [{ key: "logsheets", label: "Logsheets" }] : []),
-                    { key: "checklists", label: "Checklists" },
-                  ].map((tab) => (
-                    <button key={tab.key} onClick={() => setDashboardRecentTab(tab.key)}
+                  {(!enabledModules || enabledModules.includes("logsheets")) && (
+                    <button onClick={() => setDashboardRecentTab("logsheets")}
                       style={{ padding: "5px 14px", borderRadius: "8px", fontSize: "13px", fontWeight: 600, cursor: "pointer", border: "none",
-                        background: dashboardRecentTab === tab.key ? "#7c3aed" : "#f1f5f9",
-                        color: dashboardRecentTab === tab.key ? "#fff" : "#64748b" }}>
-                      {tab.label}
+                        background: dashboardRecentTab === "logsheets" ? "#7c3aed" : "#f1f5f9",
+                        color: dashboardRecentTab === "logsheets" ? "#fff" : "#64748b" }}>
+                      Logsheets
                     </button>
-                  ))}
+                  )}
+                  <button onClick={() => { setNav("checklists"); setChecklistSubNav("submissions"); }}
+                    style={{ padding: "5px 14px", borderRadius: "8px", fontSize: "13px", fontWeight: 600, cursor: "pointer", border: "none",
+                      background: "#7c3aed", color: "#fff" }}>
+                    Checklists
+                  </button>
                 </div>
               </div>
               <div style={{ overflowX: "auto" }}>
@@ -5763,7 +6189,7 @@ export default function CompanyEmployeePortal() {
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
                     <thead>
                       <tr style={{ background: "#f8fafc" }}>
-                        {["#","Template","Location","Status","Filled By","Submitted"].map((h) => (
+                        {["#","Template","Room","Status","Filled By","Submitted"].map((h) => (
                           <th key={h} style={{ padding: "11px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.04em", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>{h}</th>
                         ))}
                       </tr>
@@ -5783,7 +6209,7 @@ export default function CompanyEmployeePortal() {
                           <tr key={c.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
                             <td style={{ padding: "12px 16px", color: "#94a3b8", fontWeight: 600 }}>{i + 1}</td>
                             <td style={{ padding: "12px 16px", fontWeight: 600, color: "#0f172a" }}>{c.templateName}</td>
-                            <td style={{ padding: "12px 16px", color: "#475569" }}>{c.locationName || c.assetName || "—"}</td>
+                            <td style={{ padding: "12px 16px", color: "#475569" }}>{c.roomName || c.locationName || c.assetName || "—"}</td>
                             <td style={{ padding: "12px 16px" }}><span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: sbg, color: stx, textTransform: "capitalize" }}>{c.status || "submitted"}</span></td>
                             <td style={{ padding: "12px 16px", color: "#475569", fontSize: "13px" }}>{c.submittedBy || "—"}</td>
                             <td style={{ padding: "12px 16px", color: "#94a3b8", fontSize: "12px", whiteSpace: "nowrap" }}>{c.submittedAt ? new Date(c.submittedAt).toLocaleString() : "—"}</td>
@@ -5818,9 +6244,9 @@ export default function CompanyEmployeePortal() {
           // Determine if user has supervisor-level access via custom role
           const builtInRoles = ["admin", "supervisor", "technical_lead", "assistant_manager", "technical_executive", "technician", "cleaner", "security", "driver", "fleet_operator", "employee"];
           const userCustomRoleInfo = !builtInRoles.includes(currentUser.role) ? customRoles.find((r) => r.roleKey === currentUser.role) : null;
-          // Custom roles are always manager/supervisor type — show supervisor dashboard
-          const hasCustomSupervisorAccess = !!userCustomRoleInfo;
-          if (currentUser.role === "supervisor" || hasCustomSupervisorAccess) {
+          // Custom roles → show admin dashboard (handled later); only real supervisors get supervisor dashboard
+          const hasCustomSupervisorAccess = false; // custom roles now fall through to admin dashboard
+          if (currentUser.role === "supervisor") {
             const myTeam = employees.filter((e) => String(e.supervisorId) === String(currentUser.id));
             const forwardedByMe = assignments.filter((a) => String(a.assignedBy) === String(currentUser.id));
             return (
@@ -5921,7 +6347,7 @@ export default function CompanyEmployeePortal() {
           }
 
           /* ── EMPLOYEE DASHBOARD ── */
-          if (currentUser.role !== "admin") {
+          if (currentUser.role !== "admin" && !isCustomRole) {
             const myTaskCount = myAssignments.length;
             return (
               <div>
@@ -6028,6 +6454,13 @@ export default function CompanyEmployeePortal() {
             const checklistTotalToday = cs ? (cs.filledChecklists || 0) + (cs.pendingChecklists || 0) : 0;
             const checklistRateFromChart = checklistTotalToday > 0 ? Math.round(((cs?.filledChecklists || 0) / checklistTotalToday) * 100) : 0;
             const siteScoreRate = typeof todaySiteScore?.percentage === "number" ? todaySiteScore.percentage : checklistRateFromChart;
+            // For "Today" filter, use site-score data for donut so slices match the center label
+            const donutData = (chartFilter === "day" && !chartCustomStart && todaySiteScore && (todaySiteScore.total || 0) > 0)
+              ? [
+                  { label: "Filled Checklists",  value: todaySiteScore.filled || 0, color: "#16a34a" },
+                  { label: "Pending Checklists", value: Math.max(0, (todaySiteScore.total || 0) - (todaySiteScore.filled || 0)), color: "#86efac" },
+                ]
+              : chartData;
             const openAlertsCount = dashboardAlerts.length;
             const criticalAlertsCount = dashboardAlerts.filter((f) => f.severity === "critical").length;
             const unassignedOpenWorkOrders = dashboardWorkOrders.filter((wo) => !wo.assignedTo).length;
@@ -6248,12 +6681,12 @@ export default function CompanyEmployeePortal() {
                     {/* Donut + Legend */}
                     <div data-donut-wrap="1" style={{ display: "flex", alignItems: "center", gap: "24px", justifyContent: "center" }}>
                       <div style={{ flexShrink: 0 }}>
-                        <DonutChart data={chartData} size={190} thickness={38} centerLabel={`${siteScoreRate}%`} />
+                        <DonutChart data={donutData} size={190} thickness={38} centerLabel={`${siteScoreRate}%`} />
                       </div>
                       <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "10px" }}>
                         {(() => {
-                          const chartTotal = chartData.reduce((s, d) => s + (d.value || 0), 0);
-                          return chartData.map((d) => {
+                          const chartTotal = donutData.reduce((s, d) => s + (d.value || 0), 0);
+                          return donutData.map((d) => {
                             const pct = chartTotal > 0 ? Math.round(((d.value || 0) / chartTotal) * 100) : 0;
                             return (
                               <div key={d.label} style={{ display: "flex", alignItems: "center", gap: "8px" }}>
@@ -6360,7 +6793,8 @@ export default function CompanyEmployeePortal() {
                     )}
                   </div>
 
-                  {/* Work Orders */}
+                  {/* Work Orders — only show if workorders module is enabled */}
+                  {(!enabledModules || enabledModules.includes("workorders") || enabledModules.includes("work-orders")) && (
                   <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
                       <div>
@@ -6422,6 +6856,7 @@ export default function CompanyEmployeePortal() {
                       </div>
                     )}
                   </div>
+                  )}
 
                   {/* Soft Service Requests */}
                   {(currentUser?.role === "admin" || currentUser?.role === "supervisor") && (
@@ -6466,6 +6901,11 @@ export default function CompanyEmployeePortal() {
                       </div>
                     )}
                   </div>
+                  )}
+
+                  {/* Notifications quick-view */}
+                  {currentUser?.role === "admin" && (
+                  <DashboardNotificationsBox token={token} onViewAll={() => setNav("notifications")} />
                   )}
 
                   </div>{/* end right column */}
@@ -6874,6 +7314,11 @@ export default function CompanyEmployeePortal() {
           />
         )}
 
+        {/* ── Notifications ─────────────────────────────────────── */}
+        {nav === "notifications" && (
+          <NotificationsPanel token={token} />
+        )}
+
         {/* ── Work Orders ───────────────────────────────────────── */}
         {nav === "workorders" && (
           <WorkOrdersPanel
@@ -6985,7 +7430,7 @@ export default function CompanyEmployeePortal() {
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="7" width="20" height="14" rx="1"/><path d="M16 7V5a2 2 0 0 0-4 0v2"/></svg>
                       Floors
                     </button>
-                    <button onClick={() => { setEditRoom(null); setShowRoomModal(true); }}
+                    <button onClick={() => { setEditRoom(null); reloadRooms().then(() => setShowRoomModal(true)); }}
                       style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 13px", borderRadius: "8px", background: "#fff7ed", color: "#c2410c", border: "1px solid #fed7aa", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
                       Rooms
@@ -7115,9 +7560,9 @@ export default function CompanyEmployeePortal() {
                           )}
                           <td style={{ padding: "10px 14px", color: "#94a3b8" }}>{i + 1}</td>
                           <td style={{ padding: "10px 14px", fontWeight: 600, color: "#0f172a" }}>{loc.name}</td>
-                          <td style={{ padding: "10px 14px", color: "#475569" }}>{loc.building || "—"}</td>
-                          <td style={{ padding: "10px 14px", color: "#475569" }}>{loc.floor || "—"}</td>
-                          <td style={{ padding: "10px 14px", color: "#475569" }}>{loc.room || "—"}</td>
+                          <td style={{ padding: "10px 14px", color: "#475569" }}>{loc.building != null && loc.building !== "" ? loc.building : "—"}</td>
+                          <td style={{ padding: "10px 14px", color: "#475569" }}>{loc.floor != null && loc.floor !== "" ? loc.floor : "—"}</td>
+                          <td style={{ padding: "10px 14px", color: "#475569" }}>{loc.room != null && loc.room !== "" ? loc.room : "—"}</td>
                           <td style={{ padding: "10px 14px" }}>
                             <span style={{ padding: "3px 10px", borderRadius: "12px", fontSize: "11px", fontWeight: 600,
                               background: loc.status === "Active" ? "#dcfce7" : "#fee2e2",
@@ -7704,6 +8149,7 @@ export default function CompanyEmployeePortal() {
             initialRoles={customRoles}
             inline={true}
             enabledModules={enabledModules}
+            readOnly={isViewOnly}
             onClose={() => {}}
             onSaved={(list) => {
               setCustomRoles(list);

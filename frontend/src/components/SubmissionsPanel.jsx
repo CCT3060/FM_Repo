@@ -258,9 +258,12 @@ function renderAnswerValue(val) {
     }
   }
 
-  // Plain image URL string (e.g. uploaded via mobile)
-  if (typeof val === "string" && val.startsWith("http") && /\.(jpe?g|png|gif|webp)(\?|$)/i.test(val)) {
-    return <PhotoAnswer src={val} />;
+  // Plain image URL string (e.g. uploaded via mobile) — handles both http and /uploads/ paths
+  if (typeof val === "string") {
+    const norm = normalizePhotoUrl(val);
+    if (norm && (norm.startsWith("/uploads/") || (norm.startsWith("http") && /\.(jpe?g|png|gif|webp)(\?|$)/i.test(norm)))) {
+      return <PhotoAnswer src={norm} />;
+    }
   }
 
   const parsed = typeof val === "string" ? tryParse(val) : val;
@@ -537,6 +540,19 @@ function DetailModal({ submission, type, onClose }) {
 
         {/* Body */}
         <div style={{ overflowY: "auto", padding: "20px 24px", flex: 1 }}>
+          {/* Overall remark — shown prominently at the top so it's always visible */}
+          {submission.overallRemark && (
+            <div style={{ marginBottom: "16px", background: "#fffbeb", border: "1px solid #fde68a",
+              borderRadius: "10px", padding: "12px 16px" }}>
+              <div style={{ fontSize: "11px", fontWeight: 700, color: "#92400e",
+                letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: "5px" }}>
+                &#128172; Overall Remark
+              </div>
+              <div style={{ fontSize: "14px", color: "#0f172a", whiteSpace: "pre-wrap", fontWeight: 500 }}>
+                {submission.overallRemark}
+              </div>
+            </div>
+          )}
           {allAnswers.length > 0 ? (
             <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
               {allAnswers.map((a, i) => {
@@ -559,10 +575,25 @@ function DetailModal({ submission, type, onClose }) {
                         </div>
                       )}
                       <div style={{ fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "3px" }}>
-                        {a.questionText}
+                        {a.questionImageUrl
+                          ? <img src={normalizePhotoUrl(a.questionImageUrl)} alt="Question" style={{ maxWidth: "220px", maxHeight: "160px", borderRadius: "6px", objectFit: "cover", border: "1px solid #e2e8f0", display: "block" }} />
+                          : (a.questionText && a.questionText !== "[Photo Question]" ? a.questionText : <span style={{ color: "#94a3b8", fontStyle: "italic" }}>Photo Question</span>)
+                        }
                       </div>
                       <div style={{ fontSize: "14px", color: a.isIssue ? "#dc2626" : "#0f172a" }}>
-                        {renderAnswerValue(val)}
+                        {(a.answerType === "photo" || a.answerType === "image")
+                          ? (() => {
+                              // Extract the raw URL string from whatever shape val has
+                              const raw = typeof val === "string" ? val
+                                : (val && typeof val === "object" && typeof val.value === "string" ? val.value : null);
+                              const src = normalizePhotoUrl(raw);
+                              // Only render as photo if it looks like an actual URL/path
+                              return (src && (src.startsWith("/uploads/") || src.startsWith("http") || src.startsWith("data:") || src.startsWith("blob:")))
+                                ? <PhotoAnswer src={src} />
+                                : renderAnswerValue(val);
+                            })()
+                          : renderAnswerValue(val)
+                        }
                         {/* If backend returned a separate photoUrl for this answer, show it */}
                         {a.photoUrl && !String(val).startsWith("http") && <PhotoAnswer src={a.photoUrl} />}
                         {a.isIssue && <span style={{ marginLeft: "6px", fontSize: "11px", background: "#fee2e2",
@@ -583,17 +614,7 @@ function DetailModal({ submission, type, onClose }) {
           ) : (
             <p style={{ color: "#94a3b8", fontSize: "14px" }}>No recorded answers for this submission.</p>
           )}
-          {/* Overall remark */}
-          {submission.overallRemark && (
-            <div style={{ marginTop: "16px" }}>
-              <div style={{ fontSize: "11px", fontWeight: 700, color: "#64748b", letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: "6px" }}>
-                Overall Remark
-              </div>
-              <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "9px", padding: "12px 16px", fontSize: "14px", color: "#0f172a", whiteSpace: "pre-wrap" }}>
-                {submission.overallRemark}
-              </div>
-            </div>
-          )}
+          {/* Overall remark bottom spacer — content moved to top for visibility */}
         </div>
       </div>
     </div>
@@ -1057,7 +1078,7 @@ function UserDrilldown({ userName, companyId, type, token, onBack }) {
                 <tr>
                   {["#", "Template",
                     ...(type === "logsheets" ? ["Type"] : []),
-                    "Asset / Location",
+                    "Asset", "Building", "Floor", "Room",
                     ...(type === "logsheets" ? [] : ["Remark"]),
                     ...(type === "logsheets" ? ["Period", "Shift"] : []),
                     "Date & Time", "Status", ""].map((h, hi) => (
@@ -1086,14 +1107,17 @@ function UserDrilldown({ userName, companyId, type, token, onBack }) {
                         </span>
                       </td>
                     )}
-                    <td style={{ padding: "10px 14px", color: "#475569" }}>
-                      {r.assetName
-                        ? <><div style={{ fontWeight: 600 }}>{r.assetName}</div><div style={{ fontSize: "11px", color: "#94a3b8" }}>{formatAssetLocation(r)}</div></>
-                        : (() => {
-                            const loc = [r.buildingName, r.floorName, r.roomName].filter(Boolean).join(" › ");
-                            return loc || "—";
-                          })()
-                      }
+                    <td style={{ padding: "10px 14px", color: "#475569", fontWeight: 600 }}>
+                      {r.assetName || <span style={{ color: "#cbd5e1" }}>—</span>}
+                    </td>
+                    <td style={{ padding: "10px 14px", color: "#475569", fontSize: "13px" }}>
+                      {r.buildingName || <span style={{ color: "#cbd5e1" }}>—</span>}
+                    </td>
+                    <td style={{ padding: "10px 14px", color: "#475569", fontSize: "13px" }}>
+                      {r.floorName || <span style={{ color: "#cbd5e1" }}>—</span>}
+                    </td>
+                    <td style={{ padding: "10px 14px", color: "#475569", fontSize: "13px" }}>
+                      {r.roomName || <span style={{ color: "#cbd5e1" }}>—</span>}
                     </td>
                     {type !== "logsheets" && (
                       <td style={{ padding: "10px 14px", color: "#64748b", fontSize: "12px", maxWidth: "180px" }}>
@@ -1504,7 +1528,7 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
   const [assetView, setAssetView] = useState({ active: false, templateId: null, templateName: "", assetId: null });
 
   /* -- Filter meta (loaded when advanced panel is opened) -- */
-  const [filterMeta, setFilterMeta] = useState({ templates: [], employees: [], assets: [], shifts: [] });
+  const [filterMeta, setFilterMeta] = useState({ templates: [], employees: [], assets: [], shifts: [], buildings: [], floors: [], rooms: [] });
 
   /* -- Period -- */
   const [period,   setPeriod]   = useState("all");
@@ -1515,6 +1539,9 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [fTemplate, setFTemplate] = useState("");
   const [fAsset,    setFAsset]    = useState("");
+  const [fBuilding, setFBuilding] = useState("");
+  const [fFloor,    setFFloor]    = useState("");
+  const [fRoom,     setFRoom]     = useState("");
   const [fEmployee, setFEmployee] = useState("");
   const [fStatus,   setFStatus]   = useState("");
   const [fShift,    setFShift]    = useState("");
@@ -1532,7 +1559,7 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((r) => r.ok ? r.json() : null)
-      .then((d) => { if (d) setFilterMeta(d); })
+      .then((d) => { if (d) setFilterMeta((prev) => ({ ...prev, buildings: [], floors: [], rooms: [], ...d })); })
       .catch(() => {});
   }, [companyId, token, type, showAdvanced]);
 
@@ -1548,13 +1575,16 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
     }
     if (fTemplate) p.set("templateId",  fTemplate);
     if (fAsset)    p.set("assetId",     fAsset);
+    if (fBuilding) p.set("building",    fBuilding);
+    if (fFloor)    p.set("floor",       fFloor);
+    if (fRoom)     p.set("room",        fRoom);
     if (fEmployee) p.set("submittedBy", fEmployee);
     if (fStatus)   p.set("status",      fStatus);
     if (fShift)    p.set("shift",       fShift);
     if (fSearch)   p.set("search",      fSearch);
     const qs = p.toString();
     return qs ? `${base}?${qs}` : base;
-  }, [type, period, dateFrom, dateTo, fTemplate, fAsset, fEmployee, fStatus, fShift, fSearch, companyId]);
+  }, [type, period, dateFrom, dateTo, fTemplate, fAsset, fBuilding, fFloor, fRoom, fEmployee, fStatus, fShift, fSearch, companyId]);
 
   /* -- Load submissions -- */
   // Stable ref so load() identity doesn't change when parent re-renders with same prop values
@@ -1668,6 +1698,9 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
       label: `Asset: ${filterMeta.assets.find((a) => String(a.id) === fAsset)?.assetName || fAsset}`,
       clear: () => setFAsset(""),
     },
+    fBuilding && { key: "building", label: `Building: ${fBuilding}`, clear: () => setFBuilding("") },
+    fFloor    && { key: "floor",    label: `Floor: ${fFloor}`,       clear: () => setFFloor("") },
+    fRoom     && { key: "room",     label: `Room: ${fRoom}`,         clear: () => setFRoom("") },
     fEmployee && { key: "employee", label: `Employee: ${fEmployee}`, clear: () => setFEmployee("") },
     fStatus   && { key: "status",   label: `Status: ${fStatus}`,     clear: () => setFStatus("") },
     fShift    && { key: "shift",    label: `Shift: ${fShift}`,       clear: () => setFShift("") },
@@ -1675,8 +1708,8 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
   ].filter(Boolean);
 
   const clearAllFilters = () => {
-    setFTemplate(""); setFAsset(""); setFEmployee("");
-    setFStatus(""); setFShift(""); setFSearch("");
+    setFTemplate(""); setFAsset(""); setFBuilding(""); setFFloor(""); setFRoom("");
+    setFEmployee(""); setFStatus(""); setFShift(""); setFSearch("");
     setPeriod("all"); setDateFrom(""); setDateTo("");
   };
 
@@ -1723,7 +1756,7 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
       {detail && <DetailModal submission={detail} type={type} onClose={() => setDetail(null)} />}
 
       {/* -- Period + Advanced Filters -- */}
-      <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
+      <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0" }}>
 
         {/* Period tabs */}
         <div style={{ padding: "14px 20px", borderBottom: "1px solid #e2e8f0", display: "flex",
@@ -1786,7 +1819,8 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
         {/* Advanced filter panel */}
         {showAdvanced && (
           <div style={{ padding: "16px 20px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0",
-            display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: "12px" }}>
+            display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "12px",
+            overflow: "visible" }}>
 
             <div>
               <label style={{ fontSize: "11px", fontWeight: 600, color: "#64748b",
@@ -1801,12 +1835,34 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
 
             <div>
               <label style={{ fontSize: "11px", fontWeight: 600, color: "#64748b",
-                display: "block", marginBottom: "4px" }}>Asset</label>
+                display: "block", marginBottom: "4px" }}>Building</label>
               <SearchableSelect
-                value={fAsset}
-                onChange={(v) => setFAsset(v)}
-                options={[{ value: "", label: "All Assets" }, ...filterMeta.assets.map((a) => ({ value: String(a.id), label: a.assetName }))]}
-                placeholder="All Assets"
+                value={fBuilding}
+                onChange={(v) => setFBuilding(v)}
+                options={[{ value: "", label: "All Buildings" }, ...filterMeta.buildings.map((b) => ({ value: b, label: b }))]}
+                placeholder="All Buildings"
+              />
+            </div>
+
+            <div>
+              <label style={{ fontSize: "11px", fontWeight: 600, color: "#64748b",
+                display: "block", marginBottom: "4px" }}>Floor</label>
+              <SearchableSelect
+                value={fFloor}
+                onChange={(v) => setFFloor(v)}
+                options={[{ value: "", label: "All Floors" }, ...filterMeta.floors.map((f) => ({ value: f, label: f }))]}
+                placeholder="All Floors"
+              />
+            </div>
+
+            <div>
+              <label style={{ fontSize: "11px", fontWeight: 600, color: "#64748b",
+                display: "block", marginBottom: "4px" }}>Room</label>
+              <SearchableSelect
+                value={fRoom}
+                onChange={(v) => setFRoom(v)}
+                options={[{ value: "", label: "All Rooms" }, ...filterMeta.rooms.map((r) => ({ value: r, label: r }))]}
+                placeholder="All Rooms"
               />
             </div>
 
@@ -1960,7 +2016,7 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13.5px" }}>
               <thead>
                 <tr>
-                  {["#", "Template", "Location", "Company", "Submissions", "Last Submitted", "Submitted By", ""].map((h, hi) => (
+                  {["#", "Template", "Building", "Floor", "Room", "Company", "Submissions", "Last Submitted", "Submitted By", ""].map((h, hi) => (
                     <th key={hi} style={{ padding: "11px 14px", textAlign: "left", background: "#f8fafc",
                       color: "#475569", fontWeight: 600, fontSize: "11.5px", textTransform: "uppercase",
                       letterSpacing: "0.05em", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>
@@ -1982,7 +2038,13 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
                       {g.templateName}
                     </td>
                     <td style={{ padding: "10px 14px", color: "#64748b", fontSize: "12px" }}>
-                      {g.location}
+                      {g.buildingName || "—"}
+                    </td>
+                    <td style={{ padding: "10px 14px", color: "#64748b", fontSize: "12px" }}>
+                      {g.floorName || "—"}
+                    </td>
+                    <td style={{ padding: "10px 14px", color: "#64748b", fontSize: "12px" }}>
+                      {g.roomName || "—"}
                     </td>
                     <td style={{ padding: "10px 14px", color: "#475569", fontSize: "12px" }}>
                       {g.companyName || "—"}

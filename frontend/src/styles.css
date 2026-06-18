@@ -536,7 +536,7 @@ tr:last-child td {
 }
 
 .client-side-panel {
-  width: 220px;
+  width: 200px;
   background: var(--card);
   border-right: 1px solid var(--border);
   display: flex;
@@ -548,6 +548,13 @@ tr:last-child td {
   height: 100vh;
   overflow-y: auto;
   flex-shrink: 0;
+  /* Hide scrollbar but keep scrolling */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+}
+
+.client-side-panel::-webkit-scrollbar {
+  display: none; /* Chrome / Safari */
 }
 
 .client-side-header {
@@ -624,12 +631,19 @@ tr:last-child td {
   flex: 1;
   min-width: 0;
   margin-left: 0;
-  padding: 24px;
+  padding: 20px;
+  overflow-x: hidden;
 }
 
 .client-main-area.page {
   margin-left: 0;
   max-width: none;
+}
+
+/* Responsive table containers in client portal */
+.client-main-area .table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .pill-btn {

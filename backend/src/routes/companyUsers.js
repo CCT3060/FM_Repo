@@ -35,6 +35,18 @@ const router = Router();
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_company_users_email ON company_users(email)`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_company_users_username ON company_users(LOWER(username)) WHERE username IS NOT NULL`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_company_users_company ON company_users(company_id)`);
+    // Multi-company assignments table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS user_company_assignments (
+        id         SERIAL PRIMARY KEY,
+        user_id    INTEGER NOT NULL REFERENCES company_users(id) ON DELETE CASCADE,
+        company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (user_id, company_id)
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_uca_user_id ON user_company_assignments(user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_uca_company_id ON user_company_assignments(company_id)`);
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error("[company-users] migration error:", err.message);
@@ -441,18 +453,50 @@ router.delete("/shifts/:id", requireAuth, async (req, res, next) => {
 });
 
 // ── Admin: employees by company (CRUD) ────────────────────────────────────
-// GET /api/company-users/employees?companyId=X
+// Helper: sync user_company_assignments for a given user (replaces all extra companies)
+async function syncCompanyAssignments(userId, primaryCompanyId, extraCompanyIds = []) {
+  // Remove all existing extra assignments
+  await pool.query(`DELETE FROM user_company_assignments WHERE user_id = ?`, [userId]);
+  // Insert new extra companies (excluding the primary company)
+  const extras = (extraCompanyIds || []).map(Number).filter(id => id && id !== Number(primaryCompanyId));
+  for (const cid of extras) {
+    await pool.query(
+      `INSERT INTO user_company_assignments (user_id, company_id) VALUES (?, ?) ON CONFLICT DO NOTHING`,
+      [userId, cid]
+    );
+  }
+}
+
+// GET /api/company-users/employees?companyId=X  (or companyId=all for all companies)
 router.get("/employees", requireAuth, async (req, res, next) => {
   try {
     const { companyId } = req.query;
     if (!companyId) return res.status(400).json({ message: "companyId is required" });
-    const [rows] = await pool.query(
-      `SELECT id, full_name AS "fullName", email, phone, role, designation,
-              department_id AS "departmentId", status, permissions,
-              module_access AS "moduleAccess", created_at AS "createdAt"
-       FROM company_users WHERE company_id = ? ORDER BY full_name`,
-      [companyId]
-    );
+    let rows;
+    if (companyId === "all") {
+      // Return all employees across all companies with the company name included
+      [rows] = await pool.query(
+        `SELECT cu.id, cu.full_name AS "fullName", cu.email, cu.phone, cu.role, cu.designation,
+                cu.department_id AS "departmentId", cu.status, cu.username,
+                cu.company_id AS "companyId", c.company_name AS "companyName",
+                cu.permissions, cu.module_access AS "moduleAccess", cu.created_at AS "createdAt"
+         FROM company_users cu
+         JOIN companies c ON c.id = cu.company_id
+         ORDER BY c.company_name, cu.full_name`,
+        []
+      );
+    } else {
+      [rows] = await pool.query(
+        `SELECT cu.id, cu.full_name AS "fullName", cu.email, cu.phone, cu.role, cu.designation,
+                cu.department_id AS "departmentId", cu.status, cu.username,
+                cu.company_id AS "companyId", c.company_name AS "companyName",
+                cu.permissions, cu.module_access AS "moduleAccess", cu.created_at AS "createdAt"
+         FROM company_users cu
+         JOIN companies c ON c.id = cu.company_id
+         WHERE cu.company_id = ? ORDER BY cu.full_name`,
+        [companyId]
+      );
+    }
     res.json(rows);
   } catch (err) { next(err); }
 });
@@ -460,25 +504,38 @@ router.get("/employees", requireAuth, async (req, res, next) => {
 // POST /api/company-users/employees – create employee (admin)
 router.post("/employees", requireAuth, async (req, res, next) => {
   try {
-    const { companyId, fullName, email, phone, role = "technician", designation, departmentId, password, permissions, moduleAccess } = req.body;
+    const { companyId, fullName, email, phone, role = "technician", designation, departmentId, status = "Active", username, password, permissions, moduleAccess } = req.body;
     if (!companyId || !fullName || !email) return res.status(400).json({ message: "companyId, fullName, email required" });
     const bcrypt = (await import("bcryptjs")).default;
     const hashedPw = password ? await bcrypt.hash(password, 10) : await bcrypt.hash("changeme123", 10);
     const permJson = JSON.stringify(permissions && typeof permissions === "object" ? permissions : {});
     const modJson  = JSON.stringify(Array.isArray(moduleAccess) ? moduleAccess : []);
-    const [result] = await pool.query(
-      `INSERT INTO company_users (company_id, full_name, email, phone, role, designation, department_id, password, status, permissions, module_access)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?::jsonb, ?::jsonb) RETURNING id`,
-      [companyId, fullName, email, phone || null, role, designation || null, departmentId || null, hashedPw, permJson, modJson]
+    const [rows] = await pool.query(
+      `INSERT INTO company_users (company_id, full_name, email, phone, role, designation, department_id, username, password_hash, status, permissions, module_access)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb)
+       RETURNING id, full_name AS "fullName", email, phone, role, designation, status, username`,
+      [companyId, fullName, email, phone || null, role, designation || null, departmentId || null, username || null, hashedPw, status, permJson, modJson]
     );
-    res.status(201).json({ id: result.insertId, fullName, email, role, status: "active", permissions: JSON.parse(permJson), moduleAccess: JSON.parse(modJson) });
-  } catch (err) { next(err); }
+    const newUser = rows[0];
+    // Sync extra company assignments if provided
+    const { companyIds } = req.body;
+    if (Array.isArray(companyIds)) {
+      await syncCompanyAssignments(newUser.id, companyId, companyIds);
+    }
+    res.status(201).json(newUser);
+  } catch (err) {
+    if (err.code === "23505") {
+      if (err.constraint && err.constraint.includes("username")) return res.status(409).json({ message: "A user with this username already exists" });
+      return res.status(409).json({ message: "A user with this email already exists" });
+    }
+    next(err);
+  }
 });
 
 // PUT /api/company-users/employees/:id – update employee (admin)
 router.put("/employees/:id", requireAuth, async (req, res, next) => {
   try {
-    const { fullName, email, phone, role, designation, departmentId, status, permissions, moduleAccess } = req.body;
+    const { fullName, email, phone, role, designation, departmentId, status, username, password, permissions, moduleAccess } = req.body;
     const fields = []; const params = [];
     if (fullName !== undefined)    { fields.push("full_name = ?");    params.push(fullName); }
     if (email !== undefined)       { fields.push("email = ?");        params.push(email); }
@@ -487,13 +544,34 @@ router.put("/employees/:id", requireAuth, async (req, res, next) => {
     if (designation !== undefined) { fields.push("designation = ?");  params.push(designation); }
     if (departmentId !== undefined){ fields.push("department_id = ?");params.push(departmentId); }
     if (status !== undefined)      { fields.push("status = ?");       params.push(status); }
+    if (username !== undefined)    { fields.push("username = ?");     params.push(username || null); }
+    if (password)                  {
+      const bcrypt = (await import("bcryptjs")).default;
+      fields.push("password_hash = ?");
+      params.push(await bcrypt.hash(password, 10));
+    }
     if (permissions !== undefined) { fields.push("permissions = ?::jsonb"); params.push(JSON.stringify(permissions || {})); }
     if (moduleAccess !== undefined){ fields.push("module_access = ?::jsonb"); params.push(JSON.stringify(Array.isArray(moduleAccess) ? moduleAccess : [])); }
     if (!fields.length) return res.status(400).json({ message: "No fields" });
     params.push(req.params.id);
-    await pool.query(`UPDATE company_users SET ${fields.join(", ")} WHERE id = ?`, params);
-    res.json({ message: "Updated" });
-  } catch (err) { next(err); }
+    const [rows] = await pool.query(
+      `UPDATE company_users SET ${fields.join(", ")} WHERE id = ? RETURNING id, full_name AS "fullName", email, phone, role, designation, status, username, company_id AS "companyId"`,
+      params
+    );
+    const updated = rows[0];
+    // Sync extra company assignments if provided
+    const { companyIds } = req.body;
+    if (updated && Array.isArray(companyIds)) {
+      await syncCompanyAssignments(updated.id, updated.companyId, companyIds);
+    }
+    res.json(updated || { message: "Updated" });
+  } catch (err) {
+    if (err.code === "23505") {
+      if (err.constraint && err.constraint.includes("username")) return res.status(409).json({ message: "A user with this username already exists" });
+      return res.status(409).json({ message: "A user with this email already exists" });
+    }
+    next(err);
+  }
 });
 
 // DELETE /api/company-users/employees/:id
@@ -501,6 +579,185 @@ router.delete("/employees/:id", requireAuth, async (req, res, next) => {
   try {
     await pool.query("DELETE FROM company_users WHERE id = ?", [req.params.id]);
     res.json({ message: "Deleted" });
+  } catch (err) { next(err); }
+});
+
+// GET /api/company-users/employees/:id/companies – extra companies assigned to a user
+router.get("/employees/:id/companies", requireAuth, async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT c.id, c.company_name AS "companyName", c.company_code AS "companyCode"
+       FROM user_company_assignments uca
+       JOIN companies c ON c.id = uca.company_id
+       WHERE uca.user_id = ?
+       ORDER BY c.company_name`,
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
+// ── Company Roles (platform admin view) ──────────────────────────────────────
+// GET /api/company-users/company-roles?companyId=X
+router.get("/company-roles", requireAuth, async (req, res, next) => {
+  try {
+    const { companyId } = req.query;
+    if (!companyId) return res.status(400).json({ message: "companyId is required" });
+    let rows;
+    try {
+      [rows] = await pool.query(
+        `SELECT id, company_id AS "companyId", role_key AS "roleKey", label,
+                parent_role_key AS "parentRoleKey", sort_order AS "sortOrder",
+                color, bg_color AS "bgColor", is_active AS "isActive",
+                can_raise_soft_issue AS "canRaiseSoftIssue",
+                can_resolve_soft_issue AS "canResolveSoftIssue",
+                is_soft_manager AS "isSoftManager",
+                is_technical_supervisor AS "isTechnicalSupervisor",
+                is_technician AS "isTechnician"
+         FROM company_roles WHERE company_id = ? AND is_active = TRUE
+         ORDER BY sort_order ASC, id ASC`,
+        [companyId]
+      );
+    } catch {
+      [rows] = await pool.query(
+        `SELECT id, company_id AS "companyId", role_key AS "roleKey", label,
+                parent_role_key AS "parentRoleKey", sort_order AS "sortOrder",
+                color, bg_color AS "bgColor", is_active AS "isActive"
+         FROM company_roles WHERE company_id = ? AND is_active = TRUE
+         ORDER BY sort_order ASC, id ASC`,
+        [companyId]
+      );
+    }
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
+// POST /api/company-users/company-roles
+router.post("/company-roles", requireAuth, async (req, res, next) => {
+  try {
+    const { companyId, label, roleKey, parentRoleKey, color, bgColor,
+            canRaiseSoftIssue, canResolveSoftIssue, isSoftManager,
+            isTechnicalSupervisor, isTechnician } = req.body;
+    if (!companyId || !label) return res.status(400).json({ message: "companyId and label are required" });
+    const slugify = (s) => String(s||"").toLowerCase().trim().replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"").slice(0,80)||`role_${Date.now()}`;
+    const key = roleKey?.trim() || slugify(label);
+    const [rows] = await pool.query(
+      `INSERT INTO company_roles (company_id, role_key, label, parent_role_key, color, bg_color,
+          can_raise_soft_issue, can_resolve_soft_issue, is_soft_manager, is_technical_supervisor, is_technician)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       RETURNING id, company_id AS "companyId", role_key AS "roleKey", label, parent_role_key AS "parentRoleKey",
+                 color, bg_color AS "bgColor", is_active AS "isActive",
+                 can_raise_soft_issue AS "canRaiseSoftIssue", can_resolve_soft_issue AS "canResolveSoftIssue",
+                 is_soft_manager AS "isSoftManager", is_technical_supervisor AS "isTechnicalSupervisor",
+                 is_technician AS "isTechnician"`,
+      [companyId, key, label.trim(), parentRoleKey||null, color||"#475569", bgColor||"#f1f5f9",
+       !!canRaiseSoftIssue, !!canResolveSoftIssue, !!isSoftManager, !!isTechnicalSupervisor, !!isTechnician]
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    if (err.code === "23505") return res.status(409).json({ message: "A role with this key already exists for this company" });
+    next(err);
+  }
+});
+
+// PUT /api/company-users/company-roles/:id
+router.put("/company-roles/:id", requireAuth, async (req, res, next) => {
+  try {
+    const { label, parentRoleKey, color, bgColor,
+            canRaiseSoftIssue, canResolveSoftIssue, isSoftManager,
+            isTechnicalSupervisor, isTechnician } = req.body;
+    await pool.query(
+      `UPDATE company_roles SET label = ?, parent_role_key = ?, color = ?, bg_color = ?,
+          can_raise_soft_issue = ?, can_resolve_soft_issue = ?, is_soft_manager = ?,
+          is_technical_supervisor = ?, is_technician = ?
+       WHERE id = ?`,
+      [label, parentRoleKey||null, color||"#475569", bgColor||"#f1f5f9",
+       !!canRaiseSoftIssue, !!canResolveSoftIssue, !!isSoftManager, !!isTechnicalSupervisor, !!isTechnician,
+       req.params.id]
+    );
+    res.json({ message: "Updated" });
+  } catch (err) { next(err); }
+});
+
+// DELETE /api/company-users/company-roles/:id
+router.delete("/company-roles/:id", requireAuth, async (req, res, next) => {
+  try {
+    await pool.query(`UPDATE company_roles SET is_active = FALSE WHERE id = ?`, [req.params.id]);
+    res.json({ message: "Deleted" });
+  } catch (err) { next(err); }
+});
+
+// ── Locations (platform admin view) ──────────────────────────────────────────
+// GET /api/company-users/locations?companyId=X
+router.get("/locations", requireAuth, async (req, res, next) => {
+  try {
+    const { companyId } = req.query;
+    if (!companyId) return res.status(400).json({ message: "companyId is required" });
+    const [rows] = await pool.query(
+      `SELECT id, name, campus, building, floor, room, status, qr_code AS "qrCode", created_at AS "createdAt"
+       FROM locations WHERE company_id = ? ORDER BY name ASC`,
+      [companyId]
+    );
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
+// DELETE /api/company-users/locations/:id
+router.delete("/locations/:id", requireAuth, async (req, res, next) => {
+  try {
+    await pool.query(`DELETE FROM locations WHERE id = ?`, [req.params.id]);
+    res.json({ message: "Deleted" });
+  } catch (err) { next(err); }
+});
+
+// ── GET /api/company-users/soft-requests?companyId=:id&status=:status ────────
+router.get("/soft-requests", async (req, res, next) => {
+  try {
+    const { companyId, status } = req.query;
+    let whereClause = "WHERE 1=1";
+    const params = [];
+    if (companyId) { whereClause += " AND ssr.company_id = ?"; params.push(Number(companyId)); }
+    if (status && status !== "all") { whereClause += " AND ssr.status = ?"; params.push(status); }
+
+    const [rows] = await pool.query(
+      `SELECT
+         ssr.id,
+         ssr.company_id        AS "companyId",
+         c.company_name        AS "companyName",
+         ssr.asset_id          AS "assetId",
+         COALESCE(a.asset_name, loc.name, 'N/A') AS "assetName",
+         ssr.description,
+         ssr.status,
+         ssr.raised_at         AS "raisedAt",
+         ssr.resolved_at       AS "resolvedAt",
+         ssr.escalation_level  AS "escalationLevel",
+         cu.full_name          AS "raisedBy",
+         COALESCE(cu2.full_name, 'Unassigned') AS "assignedTo",
+         ssr.notes
+       FROM soft_service_requests ssr
+       LEFT JOIN companies c ON c.id = ssr.company_id
+       LEFT JOIN assets a ON a.id = ssr.asset_id
+       LEFT JOIN locations loc ON loc.id = ssr.location_id
+       LEFT JOIN company_users cu ON cu.id = ssr.raised_by_user_id
+       LEFT JOIN company_users cu2 ON cu2.id = ssr.assigned_to_user_id
+       ${whereClause}
+       ORDER BY ssr.raised_at DESC
+       LIMIT 200`,
+      params
+    );
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
+// ── PUT /api/company-users/soft-requests/:id/resolve ─────────────────────────
+router.put("/soft-requests/:id/resolve", async (req, res, next) => {
+  try {
+    const { notes } = req.body || {};
+    await pool.query(
+      `UPDATE soft_service_requests SET status = 'resolved', resolved_at = NOW(), notes = ? WHERE id = ?`,
+      [notes || null, Number(req.params.id)]
+    );
+    res.json({ message: "Resolved" });
   } catch (err) { next(err); }
 });
 

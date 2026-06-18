@@ -21,6 +21,11 @@ export interface RoleCapabilities {
   isTechnicalSupervisor: boolean;
   /** Technician: executes assigned checklists & work orders */
   isTechnician: boolean;
+  /**
+   * Client-side supervisor: can only raise soft-service requests.
+   * Computed server-side: canRaiseSoftIssue && !canResolveSoftIssue && !isSoftManager && !isTechnicalSupervisor && !isTechnician
+   */
+  isClientSupervisor: boolean;
 }
 
 export const EMPTY_CAPS: RoleCapabilities = {
@@ -29,6 +34,7 @@ export const EMPTY_CAPS: RoleCapabilities = {
   isSoftManager:          false,
   isTechnicalSupervisor:  false,
   isTechnician:           false,
+  isClientSupervisor:     false,
 };
 
 // ─── Capability queries ───────────────────────────────────────────────────────

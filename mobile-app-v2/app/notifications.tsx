@@ -56,27 +56,38 @@ export default function NotificationsScreen() {
         >
           {items.length === 0 ? (
             <EmptyState icon="bell-outline" title="No notifications" message="You're all caught up!" />
-          ) : items.map((n) => (
-            <TouchableOpacity
-              key={n.id}
-              style={[styles.card, { backgroundColor: n.isRead ? theme.surface : theme.primaryBg, borderColor: n.isRead ? theme.border : theme.primaryLight + '40', shadowColor: theme.cardShadow }]}
-              onPress={async () => {
-                if (!n.isRead) {
-                  await markNotificationRead(n.id);
-                  setItems((prev) => prev.map((i) => i.id === n.id ? { ...i, isRead: true } : i));
-                }
-                if (n.targetScreen) router.push(n.targetScreen);
-              }}
-              activeOpacity={0.8}
-            >
-              {!n.isRead ? <View style={[styles.dot, { backgroundColor: theme.primary }]} /> : null}
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.title, { color: theme.textPrimary, fontWeight: n.isRead ? '400' : '600' }]} numberOfLines={2}>{n.title ?? n.message}</Text>
-                {n.body ? <Text style={[styles.body, { color: theme.textSecondary }]} numberOfLines={2}>{n.body}</Text> : null}
-                <Text style={[styles.time, { color: theme.textMuted }]}>{new Date(n.createdAt).toLocaleString()}</Text>
-              </View>
-            </TouchableOpacity>
-          ))}
+          ) : items.map((n) => {
+            const isChecklistReminder = n.type === 'checklist_reminder';
+            const cardBg = isChecklistReminder && !n.isRead ? '#fffbeb' : n.isRead ? theme.surface : theme.primaryBg;
+            const cardBorder = isChecklistReminder && !n.isRead ? '#fde68a' : n.isRead ? theme.border : (theme.primaryLight ?? theme.primary) + '40';
+            return (
+              <TouchableOpacity
+                key={n.id}
+                style={[styles.card, { backgroundColor: cardBg, borderColor: cardBorder, shadowColor: theme.cardShadow }]}
+                onPress={async () => {
+                  if (!n.isRead) {
+                    await markNotificationRead(n.id);
+                    setItems((prev) => prev.map((i) => i.id === n.id ? { ...i, isRead: true } : i));
+                  }
+                  if (n.targetScreen) router.push(n.targetScreen);
+                }}
+                activeOpacity={0.8}
+              >
+                {!n.isRead ? <View style={[styles.dot, { backgroundColor: isChecklistReminder ? '#d97706' : theme.primary }]} /> : null}
+                <View style={{ flex: 1 }}>
+                  {isChecklistReminder && (
+                    <View style={styles.typeBadge}>
+                      <MaterialCommunityIcons name="clipboard-clock-outline" size={11} color="#92400e" />
+                      <Text style={styles.typeBadgeText}>Checklist Reminder</Text>
+                    </View>
+                  )}
+                  <Text style={[styles.title, { color: theme.textPrimary, fontWeight: n.isRead ? '400' : '600' }]} numberOfLines={2}>{n.title ?? n.message}</Text>
+                  {n.body ? <Text style={[styles.body, { color: theme.textSecondary }]}>{n.body}</Text> : null}
+                  <Text style={[styles.time, { color: theme.textMuted }]}>{new Date(n.createdAt).toLocaleString()}</Text>
+                </View>
+              </TouchableOpacity>
+            );
+          })}
         </ScrollView>
       )}
     </SafeAreaView>
@@ -84,12 +95,14 @@ export default function NotificationsScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe:    { flex: 1 },
-  markAll: { ...Typography.label },
-  list:    { padding: Spacing.lg, gap: Spacing.sm },
-  card:    { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.md, borderRadius: Radius.lg, padding: Spacing.lg, borderWidth: 1, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 6, elevation: 3 },
-  dot:     { width: 8, height: 8, borderRadius: 4, marginTop: 6 },
-  title:   { ...Typography.body },
-  body:    { ...Typography.bodyS, marginTop: 2 },
-  time:    { ...Typography.micro, marginTop: Spacing.sm },
+  safe:          { flex: 1 },
+  markAll:       { ...Typography.label },
+  list:          { padding: Spacing.lg, gap: Spacing.sm },
+  card:          { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.md, borderRadius: Radius.lg, padding: Spacing.lg, borderWidth: 1, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 6, elevation: 3 },
+  dot:           { width: 8, height: 8, borderRadius: 4, marginTop: 6 },
+  title:         { ...Typography.body },
+  body:          { ...Typography.bodyS, marginTop: 2 },
+  time:          { ...Typography.micro, marginTop: Spacing.sm },
+  typeBadge:     { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#fef3c7', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2, alignSelf: 'flex-start', marginBottom: 4 },
+  typeBadgeText: { fontSize: 10, fontWeight: '700', color: '#92400e' },
 });
