@@ -56,7 +56,7 @@ function AssignModal({ req, users, token, onClose, onDone }) {
           onChange={setSelected}
           options={[
             { value: "", label: "— Unassigned —" },
-            ...users.map((u) => ({ value: String(u.id), label: `${u.fullName}${u.designation ? ` · ${u.designation}` : ""}` }))
+            ...users.map((u) => ({ value: String(u.id), label: `${u.fullName} · ${u.roleLabel || u.role || ""}` }))
           ]}
           placeholder="Search user…"
           style={{ marginBottom: "20px" }}
@@ -111,7 +111,7 @@ function CutoffModal({ req, users, token, onClose, onDone }) {
           onChange={setEscalateUser}
           options={[
             { value: "", label: "— No escalation —" },
-            ...users.map((u) => ({ value: String(u.id), label: `${u.fullName}${u.designation ? ` · ${u.designation}` : ""}` }))
+            ...users.map((u) => ({ value: String(u.id), label: `${u.fullName} · ${u.roleLabel || u.role || ""}` }))
           ]}
           placeholder="Search user…"
           style={{ marginBottom: "20px" }}

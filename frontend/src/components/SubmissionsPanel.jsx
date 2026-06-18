@@ -259,10 +259,18 @@ function renderAnswerValue(val) {
   }
 
   // Plain image URL string (e.g. uploaded via mobile) — handles both http and /uploads/ paths
+  // Check the ORIGINAL string before normalizing — normalizePhotoUrl turns any plain text
+  // without '/' into '/uploads/{text}', which would cause text answers to render as broken images.
   if (typeof val === "string") {
-    const norm = normalizePhotoUrl(val);
-    if (norm && (norm.startsWith("/uploads/") || (norm.startsWith("http") && /\.(jpe?g|png|gif|webp)(\?|$)/i.test(norm)))) {
-      return <PhotoAnswer src={norm} />;
+    const looksLikePhoto = (
+      val.startsWith("http") ||
+      val.startsWith("/uploads/") ||
+      val.startsWith("data:image") ||
+      val.startsWith("blob:") ||
+      /\.(jpe?g|png|gif|webp)(\?|$)/i.test(val)
+    );
+    if (looksLikePhoto) {
+      return <PhotoAnswer src={normalizePhotoUrl(val)} />;
     }
   }
 
@@ -583,13 +591,21 @@ function DetailModal({ submission, type, onClose }) {
                       <div style={{ fontSize: "14px", color: a.isIssue ? "#dc2626" : "#0f172a" }}>
                         {(a.answerType === "photo" || a.answerType === "image")
                           ? (() => {
-                              // Extract the raw URL string from whatever shape val has
+                              // Extract the raw value from whatever shape val has
                               const raw = typeof val === "string" ? val
                                 : (val && typeof val === "object" && typeof val.value === "string" ? val.value : null);
-                              const src = normalizePhotoUrl(raw);
-                              // Only render as photo if it looks like an actual URL/path
-                              return (src && (src.startsWith("/uploads/") || src.startsWith("http") || src.startsWith("data:") || src.startsWith("blob:")))
-                                ? <PhotoAnswer src={src} />
+                              // IMPORTANT: check if the raw string actually looks like a file URL
+                              // BEFORE calling normalizePhotoUrl — that function turns any plain
+                              // text without '/' into '/uploads/{text}', causing broken images.
+                              const looksLikePhoto = raw && typeof raw === "string" && (
+                                raw.startsWith("http") ||
+                                raw.startsWith("/uploads/") ||
+                                raw.startsWith("data:image") ||
+                                raw.startsWith("blob:") ||
+                                /\.(jpe?g|png|gif|webp)(\?|$)/i.test(raw)
+                              );
+                              return looksLikePhoto
+                                ? <PhotoAnswer src={normalizePhotoUrl(raw)} />
                                 : renderAnswerValue(val);
                             })()
                           : renderAnswerValue(val)

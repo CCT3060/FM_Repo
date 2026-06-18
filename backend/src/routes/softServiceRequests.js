@@ -367,11 +367,23 @@ router.get("/requests/my", async (req, res, next) => {
 router.get("/requests/users", async (req, res, next) => {
   try {
     const companyId = req.companyUser.companyId;
+    // Only return users whose custom role has can_resolve_soft_issue = TRUE.
+    // This maps exactly to "Catalyst Supervisor" (or any role the admin marked
+    // as able to resolve soft requests in Manage Roles).
     const [rows] = await pool.query(
-      `SELECT id, full_name AS "fullName", role, designation
-       FROM company_users WHERE company_id = ? AND status = 'Active'
-         AND LOWER(designation) LIKE '%catalyst supervisor%'
-       ORDER BY full_name`,
+      `SELECT cu.id,
+              cu.full_name    AS "fullName",
+              cu.role,
+              cu.designation,
+              COALESCE(cr.label, cu.role) AS "roleLabel"
+       FROM company_users cu
+       JOIN company_roles cr
+         ON cr.company_id = cu.company_id
+        AND cr.role_key   = cu.role
+        AND cr.is_active  = TRUE
+        AND cr.can_resolve_soft_issue = TRUE
+       WHERE cu.company_id = ? AND cu.status = 'Active'
+       ORDER BY cu.full_name`,
       [companyId]
     );
     res.json(rows);

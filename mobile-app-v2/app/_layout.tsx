@@ -114,6 +114,21 @@ function RootLayoutInner() {
           else router.push('/notifications');
         });
       });
+
+      // Re-register push token whenever app comes to foreground
+      // This ensures token is always up-to-date in the DB even if login-time
+      // registration failed (e.g. slow network or fresh install).
+      const { AppState } = require('react-native');
+      const appStateListener = AppState.addEventListener('change', (state: string) => {
+        if (state === 'active') {
+          void import('../utils/notifications').then(({ registerForPushNotifications }) => {
+            void registerForPushNotifications();
+          });
+        }
+      });
+      return () => {
+        appStateListener.remove();
+      };
     }
 
     // Start real device network monitoring (uses expo-network, not backend connectivity)

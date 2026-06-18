@@ -780,7 +780,10 @@ function EmployeeModal({ existing, token, employees = [], customRoles = [], curr
     shift: existing.shift || "",
     employeeCode: existing.employeeCode || "",
     permissions: normalizePerms(existing.permissions),
-    moduleAccess: Array.isArray(existing.moduleAccess) ? existing.moduleAccess : def.moduleAccess,
+    // If the DB has an empty moduleAccess array (default before feature existed),
+    // fall back to the full default list so all checkboxes appear checked.
+    moduleAccess: (Array.isArray(existing.moduleAccess) && existing.moduleAccess.length > 0)
+      ? existing.moduleAccess : def.moduleAccess,
   } : def);
   const [serviceDomain, setServiceDomain] = useState(deriveServiceDomain);
   const [saving, setSaving] = useState(false);

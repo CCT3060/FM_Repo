@@ -128,9 +128,10 @@ pool.query("ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS active_mont
 (async () => {
   try {
     const APP_URL = process.env.APP_URL || "https://fm.catalystservices.eco";
+    // Use || operator (PostgreSQL string concat) — avoids CONCAT/cast issues with the ? adapter
     await pool.query(
       `UPDATE locations
-       SET qr_code = CONCAT(?, '/location/', id::text)
+       SET qr_code = ? || '/location/' || id::text
        WHERE qr_code IS NULL OR qr_code = ''`,
       [APP_URL]
     );
@@ -2553,7 +2554,7 @@ router.get("/my-team", async (req, res, next) => {
 
 router.post("/employees", async (req, res, next) => {
   try {
-    const { fullName, email, phone, designation, role = "employee", status = "Active", password, username, supervisorId, shift, serviceDomain = "technical", employeeCode } = req.body;
+    const { fullName, email, phone, designation, role = "employee", status = "Active", password, username, supervisorId, shift, serviceDomain = "technical", employeeCode, permissions, moduleAccess } = req.body;
     if (!fullName || !email) return res.status(400).json({ message: "fullName and email are required" });
 
     if (req.companyUser.role !== "admin" && req.companyUser.role !== "supervisor") {
@@ -2567,12 +2568,19 @@ router.post("/employees", async (req, res, next) => {
     const validDomains = ['technical', 'soft', 'both'];
     const resolvedDomain = validDomains.includes(serviceDomain) ? serviceDomain : 'technical';
 
+    // Default moduleAccess to all modules when not specified
+    const DEFAULT_MODULE_ACCESS = ["dashboard", "checklists", "logsheets", "mytasks", "locations"];
+    const resolvedModuleAccess = Array.isArray(moduleAccess) && moduleAccess.length > 0
+      ? moduleAccess : DEFAULT_MODULE_ACCESS;
+    const permJson = JSON.stringify(permissions && typeof permissions === "object" ? permissions : {});
+    const modJson  = JSON.stringify(resolvedModuleAccess);
+
     let passwordHash = null;
     if (password) passwordHash = await bcrypt.hash(password, 10);
 
     const [rows] = await pool.query(
-      `INSERT INTO company_users (company_id, full_name, email, phone, designation, role, shift, status, password_hash, username, supervisor_id, service_domain, employee_code)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO company_users (company_id, full_name, email, phone, designation, role, shift, status, password_hash, username, supervisor_id, service_domain, employee_code, permissions, module_access)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb)
        RETURNING id,
                  company_id     AS "companyId",
                  full_name      AS "fullName",
@@ -2580,8 +2588,10 @@ router.post("/employees", async (req, res, next) => {
                  employee_code  AS "employeeCode",
                  supervisor_id  AS "supervisorId",
                  service_domain AS "serviceDomain",
+                 permissions,
+                 module_access  AS "moduleAccess",
                  created_at     AS "createdAt"`,
-      [cid(req), fullName, email, phone || null, designation || null, role, shift || null, status, passwordHash, username || null, resolvedSupervisorId, resolvedDomain, employeeCode || null]
+      [cid(req), fullName, email, phone || null, designation || null, role, shift || null, status, passwordHash, username || null, resolvedSupervisorId, resolvedDomain, employeeCode || null, permJson, modJson]
     );
     const newEmployee = rows[0];
     // Auto-assign all active checklist templates if the new employee is a catalyst supervisor
