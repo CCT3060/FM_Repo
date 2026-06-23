@@ -1038,6 +1038,7 @@ function AdminEmployeesSection({ token, companies = [] }) {
   // Multi-company: IDs of companies this employee is assigned to
   const [selectedCompanyIds, setSelectedCompanyIds] = useState([]);
   const [ddOpen, setDdOpen]   = useState(false);
+  const [companyRoles, setCompanyRoles] = useState([]);
 
   const load = useCallback(async (cid) => {
     setLoading(true);
@@ -1051,12 +1052,17 @@ function AdminEmployeesSection({ token, companies = [] }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(selCo); }, [selCo]);
 
-  // When opening edit modal, load the employee's company assignments
+  // When opening edit modal, load the employee's company assignments and company roles
   useEffect(() => {
     if (editEmp) {
       getAdminEmployeeCompanies(token, editEmp.id)
         .then(list => setSelectedCompanyIds((list||[]).map(c=>c.id)))
         .catch(() => {});
+      getAdminCompanyRoles(token, editEmp.companyId)
+        .then(roles => setCompanyRoles(Array.isArray(roles) ? roles : []))
+        .catch(() => setCompanyRoles([]));
+    } else {
+      setCompanyRoles([]);
     }
   }, [editEmp, token]);
 
@@ -1093,7 +1099,12 @@ function AdminEmployeesSection({ token, companies = [] }) {
   };
 
   const displayed = employees.filter(e => !search || (e.fullName||"").toLowerCase().includes(search.toLowerCase()) || (e.email||"").toLowerCase().includes(search.toLowerCase()) || (e.designation||"").toLowerCase().includes(search.toLowerCase()));
-  const ROLES = ["admin","supervisor","technician","employee"];
+  const STATIC_ROLES = ["admin","supervisor","technician","employee"];
+  // Build role options: use company_roles when loaded, else fall back to static list
+  const roleOptions = companyRoles.length > 0
+    ? [{ value:"admin", label:"Admin" }, ...companyRoles.map(r => ({ value: r.roleKey, label: r.label || r.roleKey }))]
+        .filter((opt, idx, arr) => arr.findIndex(o => o.value === opt.value) === idx)
+    : STATIC_ROLES.map(r => ({ value: r, label: r.charAt(0).toUpperCase()+r.slice(1) }));
   const roleColors = { admin:"#dbeafe", supervisor:"#fef9c3", technician:"#dcfce7", employee:"#f1f5f9" };
   const roleTextColors = { admin:"#1d4ed8", supervisor:"#854d0e", technician:"#166534", employee:"#475569" };
   // Show company column when viewing "All Companies"
@@ -1105,7 +1116,7 @@ function AdminEmployeesSection({ token, companies = [] }) {
         <div><h1 style={{ fontSize:"22px", fontWeight:800, color:"#0f172a", margin:0 }}>Employees</h1><p style={{ color:"#64748b", fontSize:"13.5px", margin:"4px 0 0" }}>Manage employees across companies</p></div>
         <div style={{ display:"flex", gap:"10px" }}>
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search employees…" style={{ padding:"8px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13px", outline:"none", width:"200px" }} />
-          <button type="button" onClick={() => { setForm(emptyForm); setEditEmp(null); setSelectedCompanyIds(selCo ? [selCo] : []); setShowCreate(true); }} style={{ padding:"9px 18px", background:"#2563eb", color:"#fff", border:"none", borderRadius:"8px", fontSize:"13.5px", fontWeight:700, cursor:"pointer" }}>+ Add Employee</button>
+          <button type="button" onClick={() => { setForm(emptyForm); setEditEmp(null); setSelectedCompanyIds(selCo ? [selCo] : []); setShowCreate(true); if (selCo) getAdminCompanyRoles(token, selCo).then(roles => setCompanyRoles(Array.isArray(roles) ? roles : [])).catch(() => setCompanyRoles([])); else setCompanyRoles([]); }} style={{ padding:"9px 18px", background:"#2563eb", color:"#fff", border:"none", borderRadius:"8px", fontSize:"13.5px", fontWeight:700, cursor:"pointer" }}>+ Add Employee</button>
         </div>
       </div>
 
@@ -1129,7 +1140,11 @@ function AdminEmployeesSection({ token, companies = [] }) {
               <input value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})} placeholder="Phone" style={{ padding:"9px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13.5px" }} />
               <div style={{ display:"flex", gap:"10px" }}>
                 <select value={form.role} onChange={e=>setForm({...form,role:e.target.value})} style={{ flex:1, padding:"9px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13.5px" }}>
-                  {ROLES.map(r => <option key={r} value={r}>{r.charAt(0).toUpperCase()+r.slice(1)}</option>)}
+                  {/* Always render the current role as an option so the select shows it correctly */}
+                  {form.role && !roleOptions.find(o => o.value === form.role) && (
+                    <option value={form.role}>{form.role}</option>
+                  )}
+                  {roleOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                 </select>
                 <input value={form.designation} onChange={e=>setForm({...form,designation:e.target.value})} placeholder="Designation" style={{ flex:1, padding:"9px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13.5px" }} />
               </div>
