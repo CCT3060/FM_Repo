@@ -4406,7 +4406,8 @@ const CompanyPortal = () => {
                 fetchTemplate={getChecklistTemplate}
                 updateTemplate={updateChecklistTemplate}
                 deleteTemplate={deleteChecklistTemplate}
-                canBuild={!isClientAdmin}
+                canBuild={true}
+                companyPortalMode={true}
               />
             )}
 

@@ -1,5 +1,6 @@
 import { getPublicAppUrl } from "../utils/runtimeConfig";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import * as XLSX from "xlsx";
 import { useNavigate, useParams } from "react-router-dom";
 import QRCode from "qrcode";
 import logo from "../images/image.png";
@@ -217,6 +218,10 @@ function ScheduleMailModal({ companyUser }) {
     recipientInput: "",
     recipients: [],
     formats: [],
+    subject: "",           // email subject (blank = use dynamic default)
+    body: "Please find the attachment of daily site report.",
+    regardsLogoDataUrl: "", // base64 logo for regards section
+    regardsText: "",        // regards sign-off text
   };
   const [form, setForm] = useState(emptyForm);
 
@@ -263,7 +268,7 @@ function ScheduleMailModal({ companyUser }) {
     const { frequency, scheduledDay, sendHour, sendMinute, sendAmPm, recipients, formats,
             weeklyDays, quarterlyMonths, yearlyMonth, yearlyDay } = form;
     if (!recipients.length) return showToast("Add at least one recipient email", "error");
-    if (!formats.length)    return showToast("Select at least one format (PDF/CSV/Excel)", "error");
+    if (!formats.length)    return showToast("Select at least one format (PDF/Excel)", "error");
     if (frequency === "weekly" && weeklyDays.length === 0) return showToast("Select at least one day of week", "error");
     setSaving(true);
     try {
@@ -272,6 +277,10 @@ function ScheduleMailModal({ companyUser }) {
       if (frequency === "quarterly") scheduleConfig.quarterlyMonths = Number(quarterlyMonths);
       if (frequency === "yearly") { scheduleConfig.yearlyMonth = Number(yearlyMonth); scheduleConfig.yearlyDay = Number(yearlyDay); }
 
+      const companyName = companyUser?.companyName || "";
+      const dateStr = new Date().toLocaleDateString("en-GB");
+      const defaultSubject = `Daily Site Report - ${companyName} - ${dateStr}`;
+
       const payload = {
         frequency,
         scheduledDay: frequency === "monthly" && scheduledDay !== "" ? Number(scheduledDay) : null,
@@ -279,6 +288,12 @@ function ScheduleMailModal({ companyUser }) {
         recipients,
         formats,
         scheduleConfig,
+        emailConfig: {
+          subject:          form.subject.trim() || defaultSubject,
+          body:             form.body.trim() || "Please find the attachment of daily site report.",
+          regardsLogoDataUrl: form.regardsLogoDataUrl || "",
+          regardsText:      form.regardsText.trim() || "",
+        },
       };
       if (editId) {
         await apiReq("PUT", `/${editId}`, payload);
@@ -335,6 +350,10 @@ function ScheduleMailModal({ companyUser }) {
       recipientInput: "",
       recipients: s.recipients || [],
       formats: s.formats || [],
+      subject: s.schedule_config?.emailConfig?.subject || "",
+      body: s.schedule_config?.emailConfig?.body || "Please find the attachment of daily site report.",
+      regardsLogoDataUrl: s.schedule_config?.emailConfig?.regardsLogoDataUrl || "",
+      regardsText: s.schedule_config?.emailConfig?.regardsText || "",
     });
     setEditId(s.id);
   };
@@ -372,9 +391,8 @@ function ScheduleMailModal({ companyUser }) {
   ];
 
   const FORMAT_OPTIONS = [
-    { value: "pdf",   label: "PDF",   icon: "📄" },
-    { value: "csv",   label: "CSV",   icon: "📊" },
-    { value: "excel", label: "Excel", icon: "📋" },
+    { value: "pdf",   label: "PDF",   icon: "\u{1F4C4}" },
+    { value: "excel", label: "Excel", icon: "\u{1F4CB}" },
   ];
 
   if (!open) return null;
@@ -609,6 +627,73 @@ function ScheduleMailModal({ companyUser }) {
                 ))}
               </div>
             )}
+          </div>
+
+          {/* Row 3b: Subject */}
+          <div>
+            <span style={label()}>Subject</span>
+            <input
+              type="text"
+              value={form.subject}
+              onChange={(e) => setForm((x) => ({ ...x, subject: e.target.value }))}
+              placeholder={`Daily Site Report \u2014 ${companyUser?.companyName || "Company"} \u2014 ${new Date().toLocaleDateString("en-GB")}`}
+              style={inp()}
+            />
+            <p style={{ fontSize: "11px", color: "#94a3b8", margin: "4px 0 0" }}>Leave blank to use default: “Daily Site Report \u2014 {companyUser?.companyName} \u2014 {new Date().toLocaleDateString("en-GB")}”</p>
+          </div>
+
+          {/* Row 3c: Body */}
+          <div>
+            <span style={label()}>Body</span>
+            <textarea
+              value={form.body}
+              onChange={(e) => setForm((x) => ({ ...x, body: e.target.value }))}
+              rows={3}
+              style={{ ...inp(), resize: "vertical", fontFamily: "inherit" }}
+            />
+          </div>
+
+          {/* Row 3d: Regards */}
+          <div>
+            <span style={label()}>Regards</span>
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px", padding: "14px", borderRadius: "10px", border: "1px solid #e2e8f0", background: "#f8fafc" }}>
+              {/* Logo upload */}
+              <div>
+                <span style={{ ...label(), textTransform: "none", fontWeight: 600, fontSize: "12px", color: "#64748b" }}>Upload Logo (optional)</span>
+                <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                  <label style={{ padding: "7px 14px", borderRadius: "8px", border: "1px solid #e2e8f0", background: "#fff", cursor: "pointer", fontSize: "13px", fontWeight: 600, color: "#475569" }}>
+                    Choose File
+                    <input type="file" accept="image/*" style={{ display: "none" }}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        const reader = new FileReader();
+                        reader.onload = (ev) => setForm((x) => ({ ...x, regardsLogoDataUrl: ev.target.result || "" }));
+                        reader.readAsDataURL(file);
+                      }}
+                    />
+                  </label>
+                  {form.regardsLogoDataUrl
+                    ? <img src={form.regardsLogoDataUrl} alt="Logo preview" style={{ height: "36px", maxWidth: "120px", objectFit: "contain", borderRadius: "4px", border: "1px solid #e2e8f0" }} />
+                    : <span style={{ fontSize: "12px", color: "#94a3b8" }}>No logo selected</span>
+                  }
+                  {form.regardsLogoDataUrl && (
+                    <button type="button" onClick={() => setForm((x) => ({ ...x, regardsLogoDataUrl: "" }))} style={{ background: "none", border: "none", cursor: "pointer", color: "#dc2626", fontSize: "13px", fontWeight: 700 }}>× Remove</button>
+                  )}
+                </div>
+              </div>
+              {/* Regards text */}
+              <div>
+                <span style={{ ...label(), textTransform: "none", fontWeight: 600, fontSize: "12px", color: "#64748b" }}>Regards Text</span>
+                <input
+                  type="text"
+                  value={form.regardsText}
+                  onChange={(e) => setForm((x) => ({ ...x, regardsText: e.target.value }))}
+                  placeholder="e.g. Regards, FM Team — Thermax"
+                  style={inp()}
+                />
+              </div>
+            </div>
           </div>
 
           {/* Row 4: Attach Report Formats */}
@@ -1597,13 +1682,32 @@ function RoomForm({ state, setState, buildings, floors, styles: s }) {
 const LocLbl = ({ children }) => <label style={{ fontSize: "12px", fontWeight: 600, color: "#475569", display: "block", marginBottom: "4px" }}>{children}</label>;
 const locInpStyle = { width: "100%", padding: "8px 12px", borderRadius: "8px", border: "1px solid #e2e8f0", fontSize: "13px", outline: "none", boxSizing: "border-box" };
 
-function LocationForm({ initial, onSave, onSaveBulk, onCancel, buildings = [], floors = [] }) {
+function LocationForm({ initial, onSave, onSaveBulk, onCancel, buildings = [], floors = [], rooms = [] }) {
   const isEdit = !!initial;
+
+  // Resolve initial IDs — prefer stored FK values, fall back to name-matching
+  const initBuildingId = initial?.buildingId
+    ? String(initial.buildingId)
+    : (initial?.building ? String(buildings.find(b => b.name === initial.building)?.id || "") : "");
+  const initFloorId = initial?.floorId
+    ? String(initial.floorId)
+    : (initial?.floor && initBuildingId
+        ? String(floors.find(f => String(f.buildingId) === initBuildingId && String(f.floorNumber) === String(initial.floor))?.id || "")
+        : "");
+  const initRoomId = initial?.roomId
+    ? String(initial.roomId)
+    : (initial?.room && initFloorId
+        ? String(rooms.find(r => String(r.floorId) === initFloorId && r.roomName === initial.room)?.id || "")
+        : "");
+
   const [form, setForm] = useState({
     name: initial?.name || "",
     building: initial?.building || "",
+    buildingId: initBuildingId,
     floor: initial?.floor || "",
+    floorId: initFloorId,
     room: initial?.room || "",
+    roomId: initRoomId,
     status: initial?.status || "Active",
   });
   const [multiRoom, setMultiRoom] = useState(false);
@@ -1612,6 +1716,28 @@ function LocationForm({ initial, onSave, onSaveBulk, onCancel, buildings = [], f
   const [roomTo, setRoomTo] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+
+  // Computed option lists for SearchableSelect
+  const buildingOpts = buildings.map(b => ({ value: String(b.id), label: b.name }));
+  const floorOpts = floors
+    .filter(f => !form.buildingId || String(f.buildingId) === form.buildingId)
+    .map(f => ({ value: String(f.id), label: String(f.floorNumber) }));
+  const roomOpts = rooms
+    .filter(r => !form.floorId || String(r.floorId) === form.floorId)
+    .map(r => ({ value: String(r.id), label: r.roomName }));
+
+  const handleBuildingChange = (id) => {
+    const b = buildings.find(bx => String(bx.id) === id);
+    setForm(p => ({ ...p, buildingId: id || "", building: b?.name || "", floorId: "", floor: "", roomId: "", room: "" }));
+  };
+  const handleFloorChange = (id) => {
+    const f = floors.find(fx => String(fx.id) === id);
+    setForm(p => ({ ...p, floorId: id || "", floor: f ? String(f.floorNumber) : "", roomId: "", room: "" }));
+  };
+  const handleRoomChange = (id) => {
+    const r = rooms.find(rx => String(rx.id) === id);
+    setForm(p => ({ ...p, roomId: id || "", room: r?.roomName || "" }));
+  };
 
   const handleSave = async () => {
     if (!form.name.trim()) return setError("Location name is required");
@@ -1632,7 +1758,18 @@ function LocationForm({ initial, onSave, onSaveBulk, onCancel, buildings = [], f
       finally { setSaving(false); }
     } else {
       setSaving(true); setError(null);
-      try { await onSave(form); }
+      try {
+        await onSave({
+          name: form.name,
+          building: form.building,
+          floor: form.floor,
+          room: form.room,
+          status: form.status,
+          ...(form.buildingId && { buildingId: Number(form.buildingId) }),
+          ...(form.floorId    && { floorId:    Number(form.floorId) }),
+          ...(form.roomId     && { roomId:     Number(form.roomId) }),
+        });
+      }
       catch (err) { setError(err.message || "Save failed"); }
       finally { setSaving(false); }
     }
@@ -1654,33 +1791,33 @@ function LocationForm({ initial, onSave, onSaveBulk, onCancel, buildings = [], f
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
         <div>
           <LocLbl>Building</LocLbl>
-          <input list="loc-buildings-dl" value={form.building} onChange={(e) => setForm(p => ({ ...p, building: e.target.value, floor: "" }))} placeholder="Select or type building" style={locInpStyle} />
-          {buildings.length > 0 && (
-            <datalist id="loc-buildings-dl">
-              {buildings.map(b => <option key={b.id} value={b.name} />)}
-            </datalist>
-          )}
+          <SearchableSelect
+            value={form.buildingId}
+            onChange={handleBuildingChange}
+            options={buildingOpts}
+            placeholder="Select building"
+          />
         </div>
         <div>
           <LocLbl>Floor</LocLbl>
-          <input list="loc-floors-dl" value={form.floor} onChange={(e) => setForm(p => ({ ...p, floor: e.target.value }))} placeholder="Select or type floor" style={locInpStyle} />
-          {floors.length > 0 && (
-            <datalist id="loc-floors-dl">
-              {floors
-                .filter(f => {
-                  if (!form.building) return true;
-                  const b = buildings.find(bx => bx.name === form.building);
-                  return !b || String(f.buildingId) === String(b.id);
-                })
-                .map(f => <option key={f.id} value={f.floorNumber} />)
-              }
-            </datalist>
-          )}
+          <SearchableSelect
+            value={form.floorId}
+            onChange={handleFloorChange}
+            options={floorOpts}
+            placeholder="Select floor"
+            disabled={!form.buildingId}
+          />
         </div>
         {(!isEdit && !multiRoom || isEdit) && (
           <div>
             <LocLbl>Room</LocLbl>
-            <input value={form.room} onChange={(e) => setForm(p => ({ ...p, room: e.target.value }))} placeholder="e.g. Room 101" style={locInpStyle} />
+            <SearchableSelect
+              value={form.roomId}
+              onChange={handleRoomChange}
+              options={roomOpts}
+              placeholder="Select room"
+              disabled={!form.floorId}
+            />
           </div>
         )}
       </div>
@@ -4214,16 +4351,26 @@ function AssetTypesPanel({ token, onLayoutSaved }) {
 }
 
 /* ─── Dashboard Notifications Quick-View ────────────────────────── */
-function DashboardNotificationsBox({ token, onViewAll }) {
+function DashboardNotificationsBox({ token, onViewAll, filterDate }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    getNotifications(token, "limit=5")
-      .then((d) => setItems(Array.isArray(d) ? d.slice(0, 5) : []))
+    setLoading(true);
+    getNotifications(token, "limit=50")
+      .then((d) => setItems(Array.isArray(d) ? d : []))
       .catch(() => setItems([]))
       .finally(() => setLoading(false));
   }, [token]);
+
+  // Filter to selected dashboard date if provided
+  const displayedItems = filterDate
+    ? items.filter((n) => {
+        const d = n.createdAt;
+        if (!d) return true;
+        return new Date(d).toISOString().slice(0, 10) === filterDate;
+      }).slice(0, 5)
+    : items.slice(0, 5);
 
   const TYPE_LABELS = {
     checklist_reminder: { label: "Checklist", color: "#d97706", bg: "#fef3c7" },
@@ -4247,13 +4394,13 @@ function DashboardNotificationsBox({ token, onViewAll }) {
       </div>
       {loading ? (
         <p style={{ color: "#94a3b8", fontSize: "13px", padding: "8px 0" }}>Loading…</p>
-      ) : items.length === 0 ? (
+      ) : displayedItems.length === 0 ? (
         <div style={{ padding: "24px", textAlign: "center", color: "#94a3b8", background: "#f8fafc", borderRadius: "8px", fontSize: "13px" }}>
           🔔 No notifications yet
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-          {items.map((n) => {
+          {displayedItems.map((n) => {
             const ti = TYPE_LABELS[n.type] || { label: n.type, color: "#475569", bg: "#f1f5f9" };
             return (
               <div key={n.id} style={{ display: "flex", alignItems: "flex-start", gap: "10px", padding: "10px 12px", borderRadius: "8px", border: `1px solid ${n.isRead ? "#f1f5f9" : "#dbeafe"}`, background: n.isRead ? "#fafafa" : "#f0f9ff" }}>
@@ -4692,6 +4839,8 @@ export default function CompanyEmployeePortal() {
   const [chartCustomStart, setChartCustomStart] = useState("");
   const [chartCustomEnd, setChartCustomEnd] = useState("");
   const [chartError, setChartError] = useState(null);
+  // Global dashboard date filter — all cards show data for this date (default: today)
+  const [dashboardDate, setDashboardDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [recentEntries, setRecentEntries] = useState([]);
   const [recentEntriesLoading, setRecentEntriesLoading] = useState(false);
   const [recentChecklists, setRecentChecklists] = useState([]);
@@ -4935,13 +5084,11 @@ export default function CompanyEmployeePortal() {
     if (!token || (currentUser?.role !== "admin" && !isCustomRole)) return;
     setChartStats(null);
     setChartError(null);
-    const params = chartCustomStart && chartCustomEnd
-      ? { period: "custom", startDate: chartCustomStart, endDate: chartCustomEnd }
-      : { period: chartFilter };
-    getCompanyPortalChartStats(token, params)
+    // Always fetch stats for the selected dashboard date (single-day custom range)
+    getCompanyPortalChartStats(token, { period: "custom", startDate: dashboardDate, endDate: dashboardDate })
       .then((d) => { if (d) { setChartStats(d); setChartError(null); } })
       .catch((e) => { setChartError(e?.message || "Failed to load chart data"); setChartStats(null); });
-  }, [token, chartFilter, chartCustomStart, chartCustomEnd]);
+  }, [token, dashboardDate, currentUser?.role, isCustomRole]);
 
   // Re-fetch dashboard data whenever the user navigates back to the dashboard tab
   // (ensures newly submitted logsheets/checklists appear without a full page reload)
@@ -4959,6 +5106,8 @@ export default function CompanyEmployeePortal() {
       .then((d) => d && setRecentChecklists(d))
       .catch(() => {})
       .finally(() => setRecentChecklistsLoading(false));
+    // Pre-load checklist templates so the "Recent Submissions" all-checklists view renders without requiring a page refresh
+    getCompanyPortalChecklists(token).then((d) => d && setChecklists(d)).catch(() => {});
     // Refresh dashboard quick-view (admin or custom role)
     if (currentUser?.role === "admin" || isCustomRole) {
       setDashboardAlertsLoading(true);
@@ -5346,6 +5495,8 @@ export default function CompanyEmployeePortal() {
       if (!r.ok) throw new Error("Delete failed");
       setLocations(p => p.filter(l => l.id !== id));
       setSelectedLocIds(prev => { const s = new Set(prev); s.delete(id); return s; });
+      // Sync rooms state — the linked room was deleted on the server
+      reloadRooms();
     } catch (err) { alert(err.message || "Delete failed"); }
   };
 
@@ -5361,6 +5512,8 @@ export default function CompanyEmployeePortal() {
       if (!r.ok) throw new Error("Delete failed");
       setLocations(p => p.filter(l => !selectedLocIds.has(l.id)));
       setSelectedLocIds(new Set());
+      // Sync rooms state — the linked rooms were deleted on the server
+      reloadRooms();
     } catch (err) { alert(err.message || "Delete failed"); }
   };
 
@@ -5377,12 +5530,18 @@ export default function CompanyEmployeePortal() {
     fetch("/api/company-portal/buildings", { headers: { Authorization: `Bearer ${token}` } })
       .then((r) => r.json()).then((d) => setBuildings(Array.isArray(d) ? d : [])).catch(() => {});
 
+  const reloadLocations = () =>
+    fetch("/api/company-portal/locations", { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => r.json()).then((d) => setLocations(Array.isArray(d) ? d : [])).catch(() => {});
+
   const handleSaveBuilding = async (name, editId) => {
     const url = editId ? `/api/company-portal/buildings/${editId}` : "/api/company-portal/buildings";
     const r = await fetch(url, { method: editId ? "PUT" : "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
     const data = await r.json();
     if (!r.ok) throw new Error(data.message || "Save failed");
     await reloadBuildings();
+    // Refresh locations so the Building column reflects the new name
+    if (editId) reloadLocations();
   };
 
   const handleDeleteBuilding = async (id) => {
@@ -5404,6 +5563,8 @@ export default function CompanyEmployeePortal() {
     const data = await r.json();
     if (!r.ok) throw new Error(data.message || "Save failed");
     await reloadFloors();
+    // Refresh locations so the Floor column reflects the new number
+    if (editId) reloadLocations();
   };
 
   const handleDeleteFloor = async (id) => {
@@ -5415,15 +5576,6 @@ export default function CompanyEmployeePortal() {
 
   // ── Room CRUD helpers ─────────────────────────────────────────────────────
   const reloadRooms = async () => {
-    // Sync hierarchy from locations (adds missing, removes stale) and get fresh list in one call
-    try {
-      const r = await fetch("/api/company-portal/locations/sync-hierarchy", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const d = await r.json();
-      if (Array.isArray(d.rooms)) { setRooms(d.rooms); return; }
-    } catch { /* fall through to plain GET */ }
     const r = await fetch("/api/company-portal/rooms", { headers: { Authorization: `Bearer ${token}` } });
     const d = await r.json();
     if (Array.isArray(d)) setRooms(d);
@@ -5455,6 +5607,10 @@ export default function CompanyEmployeePortal() {
             floor: fl.floorNumber,
             room: roomName.trim(),
             status: "Active",
+            // Pass IDs directly so backend doesn't need to look them up
+            buildingId: Number(buildingId),
+            floorId: Number(floorId),
+            roomId: data.id,
           }),
         }).then(async (lr) => {
           if (lr.ok) {
@@ -5478,7 +5634,8 @@ export default function CompanyEmployeePortal() {
         body: JSON.stringify({ buildingId, floorId, roomName }),
       });
       if (!r.ok) { const d = await r.json(); throw new Error(d.message || "Save failed"); }
-      // Also auto-create a corresponding location
+      const roomData = await r.json();
+      // Also auto-create a corresponding location with all FK IDs
       if (bldg && fl) {
         await fetch("/api/company-portal/locations", {
           method: "POST",
@@ -5489,6 +5646,9 @@ export default function CompanyEmployeePortal() {
             floor: fl.floorNumber,
             room: roomName.trim(),
             status: "Active",
+            buildingId: Number(buildingId),
+            floorId: Number(floorId),
+            roomId: roomData.id,
           }),
         }).catch(() => {});
       }
@@ -5502,8 +5662,15 @@ export default function CompanyEmployeePortal() {
 
   const handleDeleteRoom = async (id) => {
     if (!window.confirm("Delete this room?")) return;
-    await fetch(`/api/company-portal/rooms/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+    const r = await fetch(`/api/company-portal/rooms/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+    if (!r.ok) {
+      const data = await r.json().catch(() => ({}));
+      alert(data.message || "Failed to delete room");
+      return;
+    }
     setRooms((p) => p.filter((rm) => rm.id !== id));
+    // Reload locations so the locations table reflects the cleared room_id reference
+    reloadLocations();
   };
 
   const handleDownloadAssetQR = async (assetId, assetName) => {
@@ -5971,7 +6138,11 @@ export default function CompanyEmployeePortal() {
             <button key={item.key} onClick={() => setNav(item.key)}
               style={{ width: "100%", display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px", borderRadius: "8px", border: "none", cursor: "pointer", background: nav === item.key ? "#eff6ff" : "transparent", color: nav === item.key ? "#2563eb" : "#475569", fontWeight: nav === item.key ? 700 : 500, fontSize: "14px", textAlign: "left", marginBottom: "2px", transition: "background 0.15s" }}>
               {item.icon}
-              <span style={{ flex: 1 }}>{item.label}</span>
+              <span style={{ flex: 1 }}>
+                {item.key === "softrequests" && enabledModules && enabledModules.includes("soft-requests") && !enabledModules.includes("warnings")
+                  ? "HK Request"
+                  : item.label}
+              </span>
               {item.key === "softrequests" && openSoftCount > 0 && (
                 <span style={{ background: "#7c3aed", color: "#fff", borderRadius: "10px", fontSize: "10px", fontWeight: 800, padding: "1px 6px", minWidth: "18px", textAlign: "center", lineHeight: "16px" }}>
                   {openSoftCount > 99 ? "99+" : openSoftCount}
@@ -6128,14 +6299,40 @@ export default function CompanyEmployeePortal() {
           const FREQ_LABELS = { daily: "Daily", weekly: "Weekly", monthly: "Monthly", quarterly: "Quarterly", half_yearly: "Half-Yearly", yearly: "Yearly" };
           const FREQ_COLORS = { daily: ["#dcfce7","#16a34a"], weekly: ["#dbeafe","#1d4ed8"], monthly: ["#fef9c3","#ca8a04"], quarterly: ["#ede9fe","#7c3aed"], half_yearly: ["#fce7f3","#be185d"], yearly: ["#ffedd5","#c2410c"] };
           const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-          const visibleLogsheets = logsheetShowAll ? recentEntries : recentEntries.slice(0, 5);
-          const visibleChecklists = checklistShowAll ? recentChecklists : recentChecklists.slice(0, 5);
+          // Soft-services portal: has soft-requests but no warnings/flags module
+          const isSoftServices = !!(enabledModules && enabledModules.includes("soft-requests") && !enabledModules.includes("warnings"));
+          const hasWarnings = !enabledModules || enabledModules.includes("warnings");
+          const hasWorkOrders = !enabledModules || enabledModules.includes("workorders") || enabledModules.includes("work-orders");
+          // Filter recent submissions to only the selected dashboard date
+          const filterByDashDate = (item) => {
+            const d = item.submittedAt || item.createdAt;
+            if (!d) return true;
+            return new Date(d).toISOString().slice(0, 10) === dashboardDate;
+          };
+          const filteredRecentEntries = recentEntries.filter(filterByDashDate);
+          const filteredRecentChecklists = recentChecklists.filter(filterByDashDate);
+          const visibleLogsheets = logsheetShowAll ? filteredRecentEntries : filteredRecentEntries.slice(0, 5);
+          // All active checklist templates: submitted ones on dashboardDate + not-yet-submitted ones
+          const activeChklTemplates = checklists.filter(t => t.status !== 'inactive');
+          const submittedTplIds = new Set(filteredRecentChecklists.map(c => c.templateId).filter(Boolean));
+          const notSubmittedRows = activeChklTemplates
+            .filter(t => !submittedTplIds.has(t.id))
+            .map(t => ({
+              id: `ns-${t.id}`, templateId: t.id, templateName: t.templateName,
+              roomName: t.roomName || '—', buildingName: t.buildingName, floorName: t.floorName,
+              submittedBy: null, submittedAt: null, status: 'not_submitted', _notSubmitted: true
+            }));
+          const allChecklistRows = [...filteredRecentChecklists, ...notSubmittedRows];
+          const visibleChecklists = checklistShowAll ? allChecklistRows : allChecklistRows.slice(0, 10);
           const recentTable = (
             <div style={{ marginTop: "28px", background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
               <div style={{ padding: "16px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
                   <h2 style={{ fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>Recent Submissions</h2>
+                  <span style={{ fontSize: "12px", color: "#64748b", background: "#f1f5f9", padding: "2px 8px", borderRadius: "20px", fontWeight: 500 }}>
+                    {new Date(dashboardDate + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
+                  </span>
                 </div>
                 <div style={{ display: "flex", gap: "4px" }}>
                   {(!enabledModules || enabledModules.includes("logsheets")) && (
@@ -6166,10 +6363,10 @@ export default function CompanyEmployeePortal() {
                     <tbody>
                       {recentEntriesLoading ? (
                         <tr><td colSpan="7" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>Loading…</td></tr>
-                      ) : recentEntries.length === 0 ? (
+                      ) : filteredRecentEntries.length === 0 ? (
                         <tr><td colSpan="7" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>
-                          No logsheets filled yet.{" "}
-                          <button onClick={() => setNav("logsheets")} style={{ color: "#2563eb", background: "none", border: "none", cursor: "pointer", fontWeight: 600, fontSize: "14px" }}>Fill one now →</button>
+                          No logsheets submitted on {dashboardDate}.{" "}
+                          <button onClick={() => setNav("logsheets")} style={{ color: "#2563eb", background: "none", border: "none", cursor: "pointer", fontWeight: 600, fontSize: "14px" }}>View all →</button>
                         </td></tr>
                       ) : visibleLogsheets.map((e, i) => {
                         const freq = e.frequency || "daily";
@@ -6200,20 +6397,22 @@ export default function CompanyEmployeePortal() {
                     <tbody>
                       {recentChecklistsLoading ? (
                         <tr><td colSpan="6" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>Loading…</td></tr>
-                      ) : recentChecklists.length === 0 ? (
+                      ) : allChecklistRows.length === 0 ? (
                         <tr><td colSpan="6" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>
-                          No checklists filled yet.{" "}
-                          <button onClick={() => setNav("checklists")} style={{ color: "#2563eb", background: "none", border: "none", cursor: "pointer", fontWeight: 600, fontSize: "14px" }}>View Checklists →</button>
+                          No active checklists found.{" "}
+                          <button onClick={() => setNav("checklists")} style={{ color: "#2563eb", background: "none", border: "none", cursor: "pointer", fontWeight: 600, fontSize: "14px" }}>View all →</button>
                         </td></tr>
                       ) : visibleChecklists.map((c, i) => {
-                        const statusColors = { completed: ["#f0fdf4","#16a34a"], partial: ["#fffbeb","#ca8a04"], pending: ["#f1f5f9","#64748b"] };
+                        const isNotSub = c._notSubmitted;
+                        const statusColors = { submitted: ["#f0fdf4","#16a34a"], completed: ["#f0fdf4","#16a34a"], partial: ["#fffbeb","#ca8a04"], pending: ["#f1f5f9","#64748b"], not_submitted: ["#fef2f2","#dc2626"] };
                         const [sbg, stx] = statusColors[c.status] || ["#f1f5f9","#64748b"];
+                        const statusLabel = isNotSub ? "Not Submitted" : (c.status === "submitted" || !c.status ? "Submitted" : c.status);
                         return (
-                          <tr key={c.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                          <tr key={c.id} style={{ borderBottom: "1px solid #f1f5f9", opacity: isNotSub ? 0.7 : 1 }}>
                             <td style={{ padding: "12px 16px", color: "#94a3b8", fontWeight: 600 }}>{i + 1}</td>
-                            <td style={{ padding: "12px 16px", fontWeight: 600, color: "#0f172a" }}>{c.templateName}</td>
+                            <td style={{ padding: "12px 16px", fontWeight: 600, color: isNotSub ? "#64748b" : "#0f172a" }}>{c.templateName}</td>
                             <td style={{ padding: "12px 16px", color: "#475569" }}>{c.roomName || c.locationName || c.assetName || "—"}</td>
-                            <td style={{ padding: "12px 16px" }}><span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: sbg, color: stx, textTransform: "capitalize" }}>{c.status || "submitted"}</span></td>
+                            <td style={{ padding: "12px 16px" }}><span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: sbg, color: stx, textTransform: "capitalize" }}>{statusLabel}</span></td>
                             <td style={{ padding: "12px 16px", color: "#475569", fontSize: "13px" }}>{c.submittedBy || "—"}</td>
                             <td style={{ padding: "12px 16px", color: "#94a3b8", fontSize: "12px", whiteSpace: "nowrap" }}>{c.submittedAt ? new Date(c.submittedAt).toLocaleString() : "—"}</td>
                           </tr>
@@ -6224,19 +6423,19 @@ export default function CompanyEmployeePortal() {
                 )}
               </div>
               {/* Load More */}
-              {dashboardRecentTab === "logsheets" && !logsheetShowAll && recentEntries.length > 5 && (
+              {dashboardRecentTab === "logsheets" && !logsheetShowAll && filteredRecentEntries.length > 5 && (
                 <div style={{ padding: "12px 20px", borderTop: "1px solid #e2e8f0", textAlign: "center" }}>
                   <button onClick={() => setLogsheetShowAll(true)}
                     style={{ padding: "8px 24px", borderRadius: "8px", border: "1px solid #e2e8f0", background: "#f8fafc", color: "#475569", fontWeight: 600, fontSize: "13px", cursor: "pointer" }}>
-                    Load More ({recentEntries.length - 5} more)
+                    Load More ({filteredRecentEntries.length - 5} more)
                   </button>
                 </div>
               )}
-              {dashboardRecentTab === "checklists" && !checklistShowAll && recentChecklists.length > 5 && (
+              {dashboardRecentTab === "checklists" && !checklistShowAll && allChecklistRows.length > 10 && (
                 <div style={{ padding: "12px 20px", borderTop: "1px solid #e2e8f0", textAlign: "center" }}>
                   <button onClick={() => setChecklistShowAll(true)}
                     style={{ padding: "8px 24px", borderRadius: "8px", border: "1px solid #e2e8f0", background: "#f8fafc", color: "#475569", fontWeight: 600, fontSize: "13px", cursor: "pointer" }}>
-                    Load More ({recentChecklists.length - 5} more)
+                    Load More ({allChecklistRows.length - 10} more)
                   </button>
                 </div>
               )}
@@ -6456,9 +6655,10 @@ export default function CompanyEmployeePortal() {
             const completionRate = totalSubmissions > 0 ? Math.round((filledSubmissions / totalSubmissions) * 100) : 0;
             const checklistTotalToday = cs ? (cs.filledChecklists || 0) + (cs.pendingChecklists || 0) : 0;
             const checklistRateFromChart = checklistTotalToday > 0 ? Math.round(((cs?.filledChecklists || 0) / checklistTotalToday) * 100) : 0;
-            const siteScoreRate = typeof todaySiteScore?.percentage === "number" ? todaySiteScore.percentage : checklistRateFromChart;
-            // For "Today" filter, use site-score data for donut so slices match the center label
-            const donutData = (chartFilter === "day" && !chartCustomStart && todaySiteScore && (todaySiteScore.total || 0) > 0)
+            // For today, trust todaySiteScore (more accurate); for other dates use chart stats
+            const isToday = dashboardDate === new Date().toISOString().slice(0, 10);
+            const siteScoreRate = isToday && typeof todaySiteScore?.percentage === "number" ? todaySiteScore.percentage : checklistRateFromChart;
+            const donutData = isToday && todaySiteScore && (todaySiteScore.total || 0) > 0
               ? [
                   { label: "Filled Checklists",  value: todaySiteScore.filled || 0, color: "#16a34a" },
                   { label: "Pending Checklists", value: Math.max(0, (todaySiteScore.total || 0) - (todaySiteScore.filled || 0)), color: "#86efac" },
@@ -6479,9 +6679,20 @@ export default function CompanyEmployeePortal() {
                     <h1 style={{ fontSize: "26px", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px", marginBottom: "4px" }}>
                       Welcome back, {(currentUser.fullName || "").split(" ")[0]} 👋
                     </h1>
-                    <p style={{ color: "#64748b", fontSize: "14px" }}>{currentUser.companyName} — {new Date().toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}</p>
+                    <p style={{ color: "#64748b", fontSize: "14px" }}>{currentUser.companyName} — {new Date(dashboardDate + "T00:00:00").toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}</p>
                   </div>
-                  <div style={{ display: "flex", gap: "8px", flexShrink: 0 }} className="no-print">
+                  <div style={{ display: "flex", gap: "8px", flexShrink: 0, alignItems: "center", flexWrap: "wrap" }} className="no-print">
+                    {/* ── Global dashboard date filter ── */}
+                    <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "6px 10px", borderRadius: "8px", border: "1.5px solid #e2e8f0", background: "#f8fafc" }}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#475569" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                      <input
+                        type="date"
+                        value={dashboardDate}
+                        onChange={(e) => setDashboardDate(e.target.value || new Date().toISOString().slice(0, 10))}
+                        style={{ border: "none", background: "transparent", fontSize: "13px", fontWeight: 600, color: "#0f172a", outline: "none", cursor: "pointer" }}
+                      />
+                    </div>
+                    {currentUser?.role === "admin" && (
                     <button
                       type="button"
                       onClick={() => { window._openScheduleMailModal && window._openScheduleMailModal(); }}
@@ -6490,6 +6701,7 @@ export default function CompanyEmployeePortal() {
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 7L2 7"/><path d="M12 3v4"/><path d="M12 3l2 2-2 2-2-2z" fill="currentColor" stroke="none"/></svg>
                       Schedule Mail
                     </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => {
@@ -6509,16 +6721,16 @@ export default function CompanyEmployeePortal() {
                           ["Filled Checklists", cs?.filledChecklists ?? ""],
                           ["Pending Checklists", cs?.pendingChecklists ?? ""],
                         ];
-                        const csv = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
-                        const a = document.createElement("a");
-                        a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-                        a.download = `dashboard-${new Date().toISOString().slice(0, 10)}.csv`;
-                        a.click();
+                        const ws = XLSX.utils.aoa_to_sheet(rows);
+                        ws["!cols"] = [{wch:30},{wch:20}];
+                        const wb = XLSX.utils.book_new();
+                        XLSX.utils.book_append_sheet(wb, ws, "Dashboard");
+                        XLSX.writeFile(wb, `dashboard-${new Date().toISOString().slice(0, 10)}.xlsx`);
                       }}
                       style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "8px", fontSize: "13px", fontWeight: 600, cursor: "pointer", border: "1.5px solid #e2e8f0", background: "#fff", color: "#475569" }}
                     >
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                      Export CSV
+                      Export Excel
                     </button>
                     <button
                       type="button"
@@ -6556,7 +6768,7 @@ export default function CompanyEmployeePortal() {
                       icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>} />
                     )}
                     {(!enabledModules || enabledModules.includes("soft-requests") || enabledModules.includes("softrequests")) && (
-                    <StatCard label="Open Soft Requests" value={dashboard.openSoftRequests ?? dashboardSoftRequests.length}
+                    <StatCard label={isSoftServices ? "Open HK Requests" : "Open Soft Requests"} value={dashboard.openSoftRequests ?? dashboardSoftRequests.length}
                       sub={(dashboard.openSoftRequests ?? dashboardSoftRequests.length) > 0 ? "Needs attention" : "All clear"}
                       subCol={(dashboard.openSoftRequests ?? dashboardSoftRequests.length) > 0 ? "#7c3aed" : "#22c55e"}
                       iconBg={(dashboard.openSoftRequests ?? dashboardSoftRequests.length) > 0 ? "#f3e8ff" : "#f0fdf4"}
@@ -6589,21 +6801,33 @@ export default function CompanyEmployeePortal() {
                       {todaySiteScore ? `${todaySiteScore.filled || 0} of ${todaySiteScore.total || 0} checklists filled today` : "Today's checklist completion rate"}
                     </p>
                   </div>
+                  {isSoftServices ? (
+                    <div style={{ background: "linear-gradient(135deg, #f0fdf4 0%, #f8fafc 100%)", border: "1px solid #bbf7d0", borderRadius: "12px", padding: "12px 14px" }}>
+                      <p style={{ margin: 0, fontSize: "11px", fontWeight: 700, color: "#15803d", letterSpacing: "0.03em", textTransform: "uppercase" }}>Total Filled Checklists</p>
+                      <p style={{ margin: "6px 0 2px", fontSize: "22px", fontWeight: 800, color: "#0f172a" }}>{cs?.filledChecklists ?? 0}</p>
+                      <p style={{ margin: 0, fontSize: "12px", color: "#64748b" }}>Filled checklists for selected date</p>
+                    </div>
+                  ) : (
                   <div style={{ background: "linear-gradient(135deg, #f0fdf4 0%, #f8fafc 100%)", border: "1px solid #bbf7d0", borderRadius: "12px", padding: "12px 14px" }}>
                     <p style={{ margin: 0, fontSize: "11px", fontWeight: 700, color: "#15803d", letterSpacing: "0.03em", textTransform: "uppercase" }}>Execution Volume</p>
                     <p style={{ margin: "6px 0 2px", fontSize: "22px", fontWeight: 800, color: "#0f172a" }}>{totalSubmissions}</p>
                     <p style={{ margin: 0, fontSize: "12px", color: "#64748b" }}>Total checklist/logsheet outcomes tracked</p>
                   </div>
+                  )}
+                  {hasWarnings && (
                   <div style={{ background: "linear-gradient(135deg, #fff7ed 0%, #f8fafc 100%)", border: "1px solid #fed7aa", borderRadius: "12px", padding: "12px 14px" }}>
                     <p style={{ margin: 0, fontSize: "11px", fontWeight: 700, color: "#c2410c", letterSpacing: "0.03em", textTransform: "uppercase" }}>Risk Snapshot</p>
                     <p style={{ margin: "6px 0 2px", fontSize: "22px", fontWeight: 800, color: "#0f172a" }}>{openAlertsCount}</p>
                     <p style={{ margin: 0, fontSize: "12px", color: "#64748b" }}>{criticalAlertsCount} critical alert{criticalAlertsCount !== 1 ? "s" : ""} open</p>
                   </div>
+                  )}
+                  {hasWorkOrders && (
                   <div style={{ background: "linear-gradient(135deg, #fef2f2 0%, #f8fafc 100%)", border: "1px solid #fecaca", borderRadius: "12px", padding: "12px 14px" }}>
                     <p style={{ margin: 0, fontSize: "11px", fontWeight: 700, color: "#b91c1c", letterSpacing: "0.03em", textTransform: "uppercase" }}>Request Coverage</p>
                     <p style={{ margin: "6px 0 2px", fontSize: "22px", fontWeight: 800, color: "#0f172a" }}>{unassignedOpenWorkOrders}</p>
                     <p style={{ margin: 0, fontSize: "12px", color: "#64748b" }}>Open requests without an assignee</p>
                   </div>
+                  )}
                 </div>
 
                 {/* Submission Overview */}
@@ -6649,36 +6873,14 @@ export default function CompanyEmployeePortal() {
 
                   {/* ── Left: Submission Overview ── */}
                   <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px" }}>
-                    {/* Title + Period Filter */}
+                    {/* Title (period filters removed — now driven by top-level date picker) */}
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "10px" }}>
                       <div>
                         <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", margin: 0 }}>Submission Overview</p>
                         <p style={{ fontSize: "12px", color: chartError ? "#dc2626" : "#94a3b8", margin: 0, marginTop: "2px" }}>
-                          {chartSubtitle}
+                          {chartError ? chartError : `Data for ${new Date(dashboardDate + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}`}
                         </p>
                       </div>
-                      <div style={{ display: "flex", gap: "5px", flexWrap: "wrap" }}>
-                        {["day","week","month","year"].map((p) => (
-                          <button key={p} onClick={() => { setChartFilter(p); setChartCustomStart(""); setChartCustomEnd(""); }}
-                            style={{ padding: "5px 12px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: `1px solid ${chartFilter === p && !chartCustomStart ? "#2563eb" : "#e2e8f0"}`, background: chartFilter === p && !chartCustomStart ? "#eff6ff" : "#f8fafc", color: chartFilter === p && !chartCustomStart ? "#2563eb" : "#64748b" }}>
-                            {PERIOD_LABELS[p]}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Custom date range */}
-                    <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "20px", background: "#f8fafc", borderRadius: "8px", padding: "8px 12px" }}>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                      <input type="date" value={chartCustomStart} onChange={(e) => setChartCustomStart(e.target.value)}
-                        style={{ flex: 1, border: "1px solid #e2e8f0", borderRadius: "6px", padding: "4px 8px", fontSize: "12.5px", outline: "none", minWidth: 0 }} />
-                      <span style={{ color: "#94a3b8", fontSize: "12px" }}>to</span>
-                      <input type="date" value={chartCustomEnd} onChange={(e) => setChartCustomEnd(e.target.value)}
-                        style={{ flex: 1, border: "1px solid #e2e8f0", borderRadius: "6px", padding: "4px 8px", fontSize: "12.5px", outline: "none", minWidth: 0 }} />
-                      {(chartCustomStart || chartCustomEnd) && (
-                        <button onClick={() => { setChartCustomStart(""); setChartCustomEnd(""); }}
-                          style={{ padding: "3px 8px", borderRadius: "6px", background: "#fef2f2", color: "#dc2626", border: "none", cursor: "pointer", fontSize: "11.5px", fontWeight: 600, flexShrink: 0 }}>Clear</button>
-                      )}
                     </div>
 
                     {/* Donut + Legend */}
@@ -6710,7 +6912,7 @@ export default function CompanyEmployeePortal() {
                           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                             <div style={{ width: "12px", height: "12px", borderRadius: "50%", background: "#2563eb", flexShrink: 0 }} />
                             <div style={{ flex: 1 }}>
-                              <p style={{ fontSize: "12.5px", color: "#475569", margin: 0 }}>Today's Site Score</p>
+                              <p style={{ fontSize: "12.5px", color: "#475569", margin: 0 }}>Site Score</p>
                             </div>
                             <div style={{ textAlign: "right" }}>
                               <span style={{ fontWeight: 700, fontSize: "14px", color: "#2563eb", display: "block" }}>{siteScoreRate}%</span>
@@ -6727,7 +6929,8 @@ export default function CompanyEmployeePortal() {
                   {/* ── Right column: Latest Alerts + Work Orders stacked ── */}
                   <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
 
-                  {/* Latest Alerts */}
+                  {/* Latest Alerts — only if warnings module enabled */}
+                  {hasWarnings && (
                   <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
                       <div>
@@ -6795,6 +6998,7 @@ export default function CompanyEmployeePortal() {
                       </div>
                     )}
                   </div>
+                  )} {/* end hasWarnings Latest Alerts */}
 
                   {/* Work Orders — only show if workorders module is enabled */}
                   {(!enabledModules || enabledModules.includes("workorders") || enabledModules.includes("work-orders")) && (
@@ -6862,23 +7066,29 @@ export default function CompanyEmployeePortal() {
                   )}
 
                   {/* Soft Service Requests */}
-                  {(currentUser?.role === "admin" || currentUser?.role === "supervisor") && (
+                  {(currentUser?.role === "admin" || currentUser?.role === "supervisor") && (() => {
+                    const filteredSoftReqs = dashboardSoftRequests.filter((sr) => {
+                      const d = sr.raisedAt || sr.createdAt;
+                      if (!d) return true;
+                      return new Date(d).toISOString().slice(0, 10) === dashboardDate;
+                    });
+                    return (
                   <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
                       <div>
-                        <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", margin: 0 }}>Soft Service Requests</p>
+                        <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", margin: 0 }}>HK Request</p>
                         <p style={{ fontSize: "12px", color: "#94a3b8", margin: 0, marginTop: "2px" }}>Open requests raised by supervisors</p>
                       </div>
                     </div>
                     {dashboardSoftLoading ? (
                       <p style={{ color: "#94a3b8", fontSize: "13px", padding: "8px 0" }}>Loading…</p>
-                    ) : dashboardSoftRequests.length === 0 ? (
+                    ) : filteredSoftReqs.length === 0 ? (
                       <div style={{ padding: "24px", textAlign: "center", color: "#94a3b8", background: "#f8fafc", borderRadius: "8px", fontSize: "13px" }}>
                         ✅ No open soft service requests
                       </div>
                     ) : (
                       <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                        {dashboardSoftRequests.map((sr) => (
+                        {filteredSoftReqs.map((sr) => (
                           <div key={sr.id} style={{ display: "flex", alignItems: "flex-start", gap: "10px", padding: "10px 12px", borderRadius: "8px", border: "1px solid #f1f5f9", background: "#fafafa" }}>
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "3px" }}>
@@ -6904,11 +7114,12 @@ export default function CompanyEmployeePortal() {
                       </div>
                     )}
                   </div>
-                  )}
+                    );
+                  })()}
 
                   {/* Notifications quick-view */}
                   {currentUser?.role === "admin" && (
-                  <DashboardNotificationsBox token={token} onViewAll={() => setNav("notifications")} />
+                  <DashboardNotificationsBox token={token} onViewAll={() => setNav("notifications")} filterDate={dashboardDate} />
                   )}
 
                   </div>{/* end right column */}
@@ -7261,7 +7472,7 @@ export default function CompanyEmployeePortal() {
               />
             )}
             {checklistSubNav === "submissions" && (
-              <SubmissionsPanel token={token} type="checklists" />
+              <SubmissionsPanel token={token} type="checklists" isAdmin={currentUser?.role === "admin"} />
             )}
           </div>
         )}
@@ -7303,7 +7514,7 @@ export default function CompanyEmployeePortal() {
               />
             )}
             {logsheetSubNav === "submissions" && (
-              <SubmissionsPanel token={token} type="logsheets" />
+              <SubmissionsPanel token={token} type="logsheets" isAdmin={currentUser?.role === "admin"} />
             )}
           </div>
         )}
@@ -7668,7 +7879,7 @@ export default function CompanyEmployeePortal() {
                       <h2 style={{ fontSize: "17px", fontWeight: 700, color: "#0f172a" }}>{editLoc ? "Edit Location" : "Add Location"}</h2>
                       <button onClick={() => { setShowLocModal(false); setEditLoc(null); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: "22px" }}>✕</button>
                     </div>
-                    <LocationForm initial={editLoc} onSave={handleSaveLocation} onSaveBulk={handleBulkSaveLocations} onCancel={() => { setShowLocModal(false); setEditLoc(null); }} buildings={buildings} floors={floors} />
+                    <LocationForm initial={editLoc} onSave={handleSaveLocation} onSaveBulk={handleBulkSaveLocations} onCancel={() => { setShowLocModal(false); setEditLoc(null); }} buildings={buildings} floors={floors} rooms={rooms} />
                   </div>
                 </div>
               )}

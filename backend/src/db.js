@@ -19,6 +19,13 @@ const poolInstance = new Pool({
   query_timeout: Number(process.env.DB_QUERY_TIMEOUT_MS || 30000),
 });
 
+// Prevent idle client errors from crashing the process.
+// pg-pool emits 'error' on the pool when a client disconnects unexpectedly
+// while idle. Without this handler Node.js throws an unhandled exception.
+poolInstance.on("error", (err) => {
+  console.error("[pg-pool] Idle client error (safe to ignore):", err.message);
+});
+
 const RETRY_ATTEMPTS = Number(process.env.DB_RETRY_ATTEMPTS || 3);
 const RETRY_BASE_DELAY_MS = Number(process.env.DB_RETRY_BASE_DELAY_MS || 300);
 

@@ -1525,7 +1525,7 @@ function AssetDrilldown({ assetId, assetName, companyId, type, token, onBack }) 
 
 
 /* --- Main SubmissionsPanel -------------------------------------- */
-const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type = "checklists", companyId }) {
+const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type = "checklists", companyId, isAdmin = false }) {
   const token = tokenProp
     || sessionStorage.getItem("cp_token")
     || localStorage.getItem("companyAuthToken")
@@ -1536,6 +1536,8 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState(null);
   const [detail,  setDetail]  = useState(null);
+  const [xlsxLoading, setXlsxLoading] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   /* -- User drilldown -- */
   const [userView, setUserView] = useState({ active: false, userName: "", submittedById: null });
@@ -1648,6 +1650,22 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
     } catch (e) { alert(e.message || "Failed to load details"); }
   };
 
+  /* -- Delete one submission (admin only) -- */
+  const deleteOneSubmission = async (id) => {
+    if (!window.confirm("Delete this submission? This cannot be undone.")) return;
+    setDeleting(true);
+    try {
+      const qs = companyId ? `?companyId=${companyId}` : "";
+      const res = await fetch(
+        `${API_BASE}/api/company-portal/checklist-submissions/${id}${qs}`,
+        { method: "DELETE", headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || "Delete failed"); }
+      setRows((prev) => prev.filter((r) => r.id !== id));
+    } catch (e) { alert(e.message); }
+    finally { setDeleting(false); }
+  };
+
   /* -- Sorting -- */
   const sorted = [...rows].sort((a, b) => {
     const av = a[sortField] ?? "";
@@ -1732,6 +1750,75 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
   const panelLabel = type === "checklists" ? "Checklist Submissions" : "Logsheet Entries";
   // Expose manual refresh to the Refresh button (force=true bypasses URL sameness check)
   const handleManualRefresh = () => { lastLoadedUrl.current = null; load(true); };
+
+  /* -- Detailed Excel export: one row per submission, dynamic question columns -- */
+  const handleDetailedExcelExport = async () => {
+    if (!sorted.length) return;
+    setXlsxLoading(true);
+    try {
+      const qs = companyId ? `?companyId=${companyId}` : "";
+      const details = await Promise.all(
+        sorted.map(r =>
+          fetch(
+            `${API_BASE}/api/template-assignments/submissions/${type}/${r.id}${qs}`,
+            { headers: { Authorization: `Bearer ${token}` } }
+          ).then(res => res.ok ? res.json() : null).catch(() => null)
+        )
+      );
+      // Collect all unique question texts in order of first appearance across all submissions
+      const questionOrder = [];
+      const questionSet = new Set();
+      for (const d of details) {
+        if (!d) continue;
+        for (const a of getAllAnswers(d)) {
+          const qt = (a.questionText || "").trim();
+          if (qt && !questionSet.has(qt)) { questionSet.add(qt); questionOrder.push(qt); }
+        }
+      }
+      const headers = [
+        "Date", "Template Name", "Company", "Building", "Floor", "Room",
+        "Submitted By", "Submitted At",
+        ...questionOrder,
+        "Overall Remark",
+      ];
+      const dataRows = sorted.map((r, i) => {
+        const d = details[i];
+        const answerMap = {};
+        for (const a of (d ? getAllAnswers(d) : [])) {
+          const qt = (a.questionText || "").trim();
+          if (!qt) continue;
+          const val = a.answerValue ?? a.answer ?? "";
+          answerMap[qt] = (typeof val === "string" && (val.startsWith("/uploads/") || val.startsWith("http")))
+            ? "[Photo]"
+            : String(val);
+        }
+        const dt = r.submittedAt ? new Date(r.submittedAt) : null;
+        return [
+          dt ? dt.toLocaleDateString("en-GB") : "—",
+          r.templateName || "",
+          r.companyName || d?.companyName || "",
+          r.buildingName || d?.buildingName || "",
+          r.floorName ?? d?.floorName ?? "",
+          r.roomName || d?.roomName || "",
+          r.submittedBy || "",
+          dt ? dt.toLocaleString() : "—",
+          ...questionOrder.map(qt => answerMap[qt] ?? ""),
+          d?.overallRemark || "",
+        ];
+      });
+      const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows]);
+      ws["!cols"] = headers.map((h, ci) => ({
+        wch: Math.max(String(h).length, ...dataRows.map(row => String(row[ci] ?? "").length), 8),
+      }));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, type === "checklists" ? "Checklists" : "Logsheets");
+      XLSX.writeFile(wb, `${type}-report-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } catch (e) {
+      alert("Export failed: " + (e.message || "Unknown error"));
+    } finally {
+      setXlsxLoading(false);
+    }
+  };
 
   const inputStyle = {
     padding: "7px 10px", border: "1px solid #e2e8f0", borderRadius: "8px",
@@ -1975,7 +2062,7 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
             <span style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a" }}>{panelLabel}</span>
             <span style={{ background: "#eff6ff", color: "#2563eb", borderRadius: "20px",
               padding: "2px 10px", fontSize: "12px", fontWeight: 700 }}>
-              {assetGroups.length} templates
+              {sorted.length} {sorted.length === 1 ? "submission" : "submissions"}
             </span>
           </div>
           <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
@@ -1995,16 +2082,19 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
               </svg>
               CSV
             </button>
-            <button onClick={() => exportToExcel(sorted, type)}
+            <button onClick={() => handleDetailedExcelExport()}
+              disabled={xlsxLoading}
               style={{ padding: "7px 14px", border: "1px solid #bbf7d0", borderRadius: "8px",
-                background: "#f0fdf4", cursor: "pointer", fontSize: "13px", fontWeight: 600,
-                color: "#16a34a", display: "flex", alignItems: "center", gap: "5px" }}>
+                background: xlsxLoading ? "#f0fdf4" : "#f0fdf4", cursor: xlsxLoading ? "not-allowed" : "pointer",
+                fontSize: "13px", fontWeight: 600,
+                color: xlsxLoading ? "#86efac" : "#16a34a", display: "flex", alignItems: "center", gap: "5px",
+                opacity: xlsxLoading ? 0.7 : 1 }}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
                 <polyline points="7 10 12 15 17 10"/>
                 <line x1="12" y1="15" x2="12" y2="3"/>
               </svg>
-              Excel
+              {xlsxLoading ? "Exporting…" : "Excel"}
             </button>
           </div>
         </div>
@@ -2032,7 +2122,7 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13.5px" }}>
               <thead>
                 <tr>
-                  {["#", "Template", "Building", "Floor", "Room", "Company", "Submissions", "Last Submitted", "Submitted By", ""].map((h, hi) => (
+                  {["#", "Template", "Building", "Floor", "Room", "Company", "Submitted By", "Date & Time", "Status", ""].map((h, hi) => (
                     <th key={hi} style={{ padding: "11px 14px", textAlign: "left", background: "#f8fafc",
                       color: "#475569", fontWeight: 600, fontSize: "11.5px", textTransform: "uppercase",
                       letterSpacing: "0.05em", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>
@@ -2042,8 +2132,8 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
                 </tr>
               </thead>
               <tbody>
-                {assetGroups.map((g, i) => (
-                  <tr key={g.templateId ?? g.templateName ?? i}
+                {sorted.map((r, i) => (
+                  <tr key={r.id}
                     onMouseEnter={(e) => e.currentTarget.style.background = "#f8fafc"}
                     onMouseLeave={(e) => e.currentTarget.style.background = ""}
                     style={{ borderBottom: "1px solid #f1f5f9", transition: "background 0.1s" }}>
@@ -2051,57 +2141,57 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
                       {i + 1}
                     </td>
                     <td style={{ padding: "10px 14px", fontWeight: 700, color: "#0f172a" }}>
-                      {g.templateName}
+                      {r.templateName}
                     </td>
                     <td style={{ padding: "10px 14px", color: "#64748b", fontSize: "12px" }}>
-                      {g.buildingName || "—"}
+                      {r.buildingName || "—"}
                     </td>
                     <td style={{ padding: "10px 14px", color: "#64748b", fontSize: "12px" }}>
-                      {g.floorName || "—"}
+                      {r.floorName || "—"}
                     </td>
                     <td style={{ padding: "10px 14px", color: "#64748b", fontSize: "12px" }}>
-                      {g.roomName || "—"}
+                      {r.roomName || "—"}
                     </td>
                     <td style={{ padding: "10px 14px", color: "#475569", fontSize: "12px" }}>
-                      {g.companyName || "—"}
+                      {r.companyName || "—"}
                     </td>
                     <td style={{ padding: "10px 14px" }}>
-                      <span style={{ background: "#eff6ff", color: "#2563eb", borderRadius: "20px",
-                        padding: "2px 10px", fontSize: "12px", fontWeight: 700 }}>
-                        {g.count}
-                      </span>
-                    </td>
-                    <td style={{ padding: "10px 14px", color: "#64748b", whiteSpace: "nowrap" }}>
-                      {fmt(g.lastSubmittedAt)}
-                    </td>
-                    <td style={{ padding: "10px 14px" }}>
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", alignItems: "center" }}>
-                        {g.submitters.slice(0, 3).map((s) => (
-                          <span key={s} style={{ display: "inline-flex", alignItems: "center", gap: "4px",
-                            background: "#f1f5f9", borderRadius: "20px", padding: "2px 8px",
-                            fontSize: "11.5px", color: "#475569", fontWeight: 500 }}>
-                            <span style={{ width: "18px", height: "18px", borderRadius: "50%",
-                              background: "#e0e7ff", color: "#4338ca", fontSize: "9px", fontWeight: 700,
-                              display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
-                              {s.charAt(0).toUpperCase()}
+                      {r.submittedBy
+                        ? <span style={{ display: "inline-flex", alignItems: "center", gap: "5px" }}>
+                            <span style={{ width: "22px", height: "22px", borderRadius: "50%", background: "#e0e7ff",
+                              color: "#4338ca", fontSize: "9px", fontWeight: 700, display: "inline-flex",
+                              alignItems: "center", justifyContent: "center" }}>
+                              {r.submittedBy.charAt(0).toUpperCase()}
                             </span>
-                            {s}
+                            <span style={{ fontSize: "12px", color: "#475569" }}>{r.submittedBy}</span>
                           </span>
-                        ))}
-                        {g.submitters.length > 3 && (
-                          <span style={{ fontSize: "11px", color: "#94a3b8" }}>
-                            +{g.submitters.length - 3} more
-                          </span>
+                        : <span style={{ color: "#94a3b8", fontSize: "12px" }}>—</span>}
+                    </td>
+                    <td style={{ padding: "10px 14px", color: "#64748b", whiteSpace: "nowrap", fontSize: "12px" }}>
+                      {fmt(r.submittedAt)}
+                    </td>
+                    <td style={{ padding: "10px 14px" }}>
+                      <StatusBadge status={r.status} />
+                    </td>
+                    <td style={{ padding: "10px 14px" }}>
+                      <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                        <button
+                          onClick={() => openDetail(r.id)}
+                          style={{ padding: "5px 14px", background: "#eff6ff", color: "#2563eb",
+                            border: "none", borderRadius: "7px", fontSize: "12.5px", fontWeight: 600, cursor: "pointer" }}>
+                          View →
+                        </button>
+                        {isAdmin && (
+                          <button
+                            onClick={() => deleteOneSubmission(r.id)}
+                            disabled={deleting}
+                            style={{ padding: "5px 10px", background: "#fef2f2", color: "#dc2626",
+                              border: "1px solid #fecaca", borderRadius: "7px", fontSize: "12px", fontWeight: 600,
+                              cursor: deleting ? "not-allowed" : "pointer", opacity: deleting ? 0.6 : 1 }}>
+                            🗑
+                          </button>
                         )}
                       </div>
-                    </td>
-                    <td style={{ padding: "10px 14px" }}>
-                      <button
-                        onClick={() => setAssetView({ active: true, templateId: g.templateId, templateName: g.templateName, assetId: g.assetId })}
-                        style={{ padding: "5px 14px", background: "#eff6ff", color: "#2563eb",
-                          border: "none", borderRadius: "7px", fontSize: "12.5px", fontWeight: 600, cursor: "pointer" }}>
-                        View →
-                      </button>
                     </td>
                   </tr>
                 ))}
@@ -2114,7 +2204,6 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
         {!loading && !error && sorted.length > 0 && (
           <div style={{ padding: "10px 20px", borderTop: "1px solid #f1f5f9", display: "flex",
             gap: "24px", fontSize: "12px", color: "#94a3b8", background: "#f8fafc", flexWrap: "wrap" }}>
-            <span>Templates: <strong style={{ color: "#475569" }}>{assetGroups.length}</strong></span>
             <span>Total submissions: <strong style={{ color: "#475569" }}>{sorted.length}</strong></span>
             <span>Unique submitters: <strong style={{ color: "#475569" }}>
               {new Set(sorted.map((r) => r.submittedBy).filter(Boolean)).size}

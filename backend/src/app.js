@@ -66,7 +66,7 @@ app.use(
     credentials: true,
   })
 );
-app.use(express.json());
+app.use(express.json({ limit: "5mb" })); // increased for base64 logo uploads in schedule mail
 app.use(morgan("tiny"));
 
 const healthHandler = async (_req, res) => {

@@ -538,19 +538,36 @@ async function sendScheduledReport(config) {
 
   const [[co]] = await pool.query("SELECT company_name FROM companies WHERE id = ?", [config.company_id]);
 
+  const cfg = config.schedule_config ? (typeof config.schedule_config === "string" ? JSON.parse(config.schedule_config) : config.schedule_config) : {};
+  const ec = cfg.emailConfig || {};
+
+  const companyName = co?.company_name ?? "Catalyst FM";
+  const dateLong = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
+  const defaultSubject = `Daily Site Report - ${companyName} - ${new Date().toLocaleDateString("en-GB")}`;
+  const emailSubject = ec.subject || defaultSubject;
+  const emailBody   = ec.body   || "Please find the attachment of daily site report.";
+
+  const regardsHtml = (ec.regardsText || ec.regardsLogoDataUrl)
+    ? `<div style="margin-top:24px;padding-top:16px;border-top:1px solid #e2e8f0">${
+        ec.regardsLogoDataUrl ? `<img src="${ec.regardsLogoDataUrl}" alt="Logo" style="height:40px;max-width:160px;object-fit:contain;display:block;margin-bottom:8px" />` : ""
+      }${ec.regardsText ? `<p style="color:#475569;margin:0;font-size:14px">${ec.regardsText.replace(/\n/g, "<br/>")}</p>` : ""}</div>`
+    : "";
+
   await transporter.sendMail({
-    from: `"FM App - ${co?.company_name ?? "Catalyst FM"}" <${process.env.MAIL_USER}>`,
+    from: `"FM App - ${companyName}" <${process.env.MAIL_USER}>`,
     to: recipients.join(", "),
-    subject: `[FM Report] ${config.frequency.charAt(0).toUpperCase() + config.frequency.slice(1)} Dashboard Report - ${dateStr}`,
+    subject: emailSubject,
     html: `
       <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
         <div style="background:#2563EB;padding:24px;border-radius:8px 8px 0 0">
           <h2 style="color:#fff;margin:0">FM Dashboard Report</h2>
-          <p style="color:#bfdbfe;margin:6px 0 0">${co?.company_name ?? ""} - ${new Date().toLocaleDateString("en-GB", { day:"2-digit",month:"long",year:"numeric" })}</p>
+          <p style="color:#bfdbfe;margin:6px 0 0">${companyName} - ${dateLong}</p>
         </div>
         <div style="background:#f8fafc;padding:24px;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 8px 8px">
-          <p style="color:#334155">Please find the <strong>${config.frequency}</strong> dashboard report attached in the following format(s): <strong>${formats.join(", ").toUpperCase()}</strong>.</p>
-          <p style="color:#64748b;font-size:13px">This is an automated report from FM App. To update or cancel this schedule, visit your Company Portal &gt; Dashboard &gt; Schedule Mail.</p>
+          <p style="color:#334155">${emailBody.replace(/\n/g, "<br/>")}</p>
+          <p style="color:#64748b;font-size:13px">Attached format(s): <strong>${formats.join(", ").toUpperCase()}</strong>.</p>
+          <p style="color:#94a3b8;font-size:12px">This is an automated report from FM App. To update or cancel this schedule, visit your Company Portal &gt; Dashboard &gt; Schedule Mail.</p>
+          ${regardsHtml}
         </div>
       </div>
     `,
@@ -558,7 +575,6 @@ async function sendScheduledReport(config) {
   });
 
   // Update last_sent_at and next_send_at
-  const cfg = config.schedule_config ? (typeof config.schedule_config === "string" ? JSON.parse(config.schedule_config) : config.schedule_config) : {};
   const nextSend = computeNextSend(config.frequency, config.send_time, config.scheduled_day, cfg);
   await pool.query(
     `UPDATE scheduled_report_configs SET last_sent_at = NOW(), next_send_at = ?, updated_at = NOW() WHERE id = ?`,
@@ -594,15 +610,21 @@ cron.schedule("* * * * *", async () => {
 /* â”€â”€ GET /scheduled-reports â€” list all for company â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 router.get("/", async (req, res, next) => {
   try {
+    const companyId = cid(req);
     const [rows] = await pool.query(
       `SELECT * FROM scheduled_report_configs WHERE company_id = ? ORDER BY created_at DESC`,
-      [cid(req)]
+      [companyId]
     );
+    const safeJson = (v, fb) => {
+      if (v == null) return fb;
+      if (typeof v !== "string") return v;
+      try { return JSON.parse(v); } catch { return fb; }
+    };
     res.json(rows.map((r) => ({
       ...r,
-      recipients:      JSON.parse(r.recipients      || "[]"),
-      formats:         JSON.parse(r.formats         || "[]"),
-      schedule_config: JSON.parse(r.schedule_config || "{}"),
+      recipients:      safeJson(r.recipients,      []),
+      formats:         safeJson(r.formats,         []),
+      schedule_config: safeJson(r.schedule_config, {}),
     })));
   } catch (err) { next(err); }
 });
@@ -610,13 +632,14 @@ router.get("/", async (req, res, next) => {
 /* â”€â”€ POST /scheduled-reports â€” create new schedule â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 router.post("/", async (req, res, next) => {
   try {
-    const { frequency, scheduledDay, sendTime, recipients, formats, scheduleConfig } = req.body;
+    const { frequency, scheduledDay, sendTime, recipients, formats, scheduleConfig, emailConfig } = req.body;
 
     if (!frequency || !sendTime || !recipients?.length || !formats?.length) {
       return res.status(400).json({ message: "frequency, sendTime, recipients and formats are required" });
     }
 
     const cfg = scheduleConfig || {};
+    if (emailConfig && typeof emailConfig === "object") cfg.emailConfig = emailConfig;
     const nextSend = computeNextSend(frequency, sendTime, scheduledDay ?? null, cfg);
 
     const [result] = await pool.query(
@@ -643,11 +666,12 @@ router.post("/", async (req, res, next) => {
 /* â”€â”€ PUT /scheduled-reports/:id â€” update schedule â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 router.put("/:id", async (req, res, next) => {
   try {
-    const { frequency, scheduledDay, sendTime, recipients, formats, isActive, scheduleConfig } = req.body;
+    const { frequency, scheduledDay, sendTime, recipients, formats, isActive, scheduleConfig, emailConfig } = req.body;
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
 
     const cfg = scheduleConfig || {};
+    if (emailConfig && typeof emailConfig === "object") cfg.emailConfig = emailConfig;
     const nextSend = computeNextSend(
       frequency || "daily",
       sendTime || "08:00",

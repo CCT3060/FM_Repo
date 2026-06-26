@@ -406,7 +406,7 @@ export default function SoftRequestsPanel({ token, currentUser }) {
     <div style={{ padding: "0 0 40px" }}>
       {/* ── Page title ─────────────────────────────────────────────── */}
       <div style={{ marginBottom: "22px" }}>
-        <h2 style={{ margin: 0, fontSize: "22px", fontWeight: 800, color: "#0f172a" }}>Soft Requests</h2>
+        <h2 style={{ margin: 0, fontSize: "22px", fontWeight: 800, color: "#0f172a" }}>HK Request</h2>
         <p style={{ margin: "4px 0 0", fontSize: "13px", color: "#64748b" }}>Requests raised via QR scan from the mobile app</p>
       </div>
 

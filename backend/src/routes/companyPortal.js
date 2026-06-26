@@ -128,10 +128,9 @@ pool.query("ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS active_mont
 (async () => {
   try {
     const APP_URL = process.env.APP_URL || "https://fm.catalystservices.eco";
-    // Use || operator (PostgreSQL string concat) — avoids CONCAT/cast issues with the ? adapter
     await pool.query(
       `UPDATE locations
-       SET qr_code = ? || '/location/' || id::text
+       SET qr_code = CONCAT(?, '/location/', id::text)
        WHERE qr_code IS NULL OR qr_code = ''`,
       [APP_URL]
     );
@@ -397,8 +396,8 @@ router.get("/dashboard", async (req, res, next) => {
          WHERE company_id = ? AND escalation_level > 0 AND status NOT IN ('closed','resolved')`,
         [companyId]
       ),
-      // Active locations
-      pool.query("SELECT COUNT(*) AS cnt FROM locations WHERE company_id = ?", [companyId]),
+      // Active locations — only count Active status
+      pool.query("SELECT COUNT(*) AS cnt FROM locations WHERE company_id = ? AND LOWER(COALESCE(status,'Active')) = 'active'", [companyId]),
     ]);
 
     const severityMap = {};
@@ -923,7 +922,8 @@ router.get("/locations", async (req, res, next) => {
   try {
     const companyId = cid(req);
     const [rows] = await pool.query(
-      `SELECT id, name, campus, building, floor, room, qr_code AS "qrCode", status, created_at AS "createdAt"
+      `SELECT id, name, campus, building, floor, room, qr_code AS "qrCode", status, created_at AS "createdAt",
+              building_id AS "buildingId", floor_id AS "floorId", room_id AS "roomId"
        FROM locations WHERE company_id = ? ORDER BY name ASC`,
       [companyId]
     );
@@ -1032,8 +1032,10 @@ async function syncHierarchyEntry(companyId, building, floor, room) {
 
 /* ── Locations: Sync hierarchy (buildings/floors/rooms) from locations table ── */
 /* POST /api/company-portal/locations/sync-hierarchy                            */
-/* Full rebuild: adds missing entries AND removes stale entries that no longer  */
-/* correspond to any location. Idempotent — safe to call multiple times.       */
+/* Additive only: ensures every (building, floor, room) triple in the locations */
+/* text columns has a corresponding row in the hierarchy tables. Never deletes  */
+/* existing hierarchy rows — buildings/floors/rooms are the source of truth and */
+/* can exist independently of the locations text columns.                       */
 router.post("/locations/sync-hierarchy", async (req, res, next) => {
   try {
     const companyId = cid(req);
@@ -1046,11 +1048,7 @@ router.post("/locations/sync-hierarchy", async (req, res, next) => {
       [companyId]
     );
 
-    // ── Step 2: Upsert hierarchy and collect valid room IDs ────────────────
-    const validRoomIds = new Set();
-    const validFloorIds = new Set();
-    const validBuildingIds = new Set();
-
+    // ── Step 2: Upsert hierarchy — additive only, never delete ────────────
     for (const loc of locs) {
       try {
         const [bldgRows] = await pool.query(
@@ -1061,7 +1059,6 @@ router.post("/locations/sync-hierarchy", async (req, res, next) => {
         );
         const bldgId = bldgRows[0]?.id;
         if (!bldgId) continue;
-        validBuildingIds.add(bldgId);
 
         const [flRows] = await pool.query(
           `INSERT INTO floors (company_id, building_id, floor_number) VALUES (?, ?, ?)
@@ -1071,51 +1068,18 @@ router.post("/locations/sync-hierarchy", async (req, res, next) => {
         );
         const flId = flRows[0]?.id;
         if (!flId) continue;
-        validFloorIds.add(flId);
 
         if (loc.room?.trim()) {
-          const [rmRows] = await pool.query(
+          await pool.query(
             `INSERT INTO rooms (company_id, building_id, floor_id, room_name) VALUES (?, ?, ?, ?)
-             ON CONFLICT (company_id, floor_id, room_name) DO UPDATE SET room_name = EXCLUDED.room_name
-             RETURNING id`,
+             ON CONFLICT (company_id, floor_id, room_name) DO NOTHING`,
             [companyId, bldgId, flId, loc.room.trim()]
           );
-          if (rmRows[0]?.id) validRoomIds.add(rmRows[0].id);
         }
       } catch { /* skip individual failures */ }
     }
 
-    // ── Step 3: Delete stale rooms (not in validRoomIds) ──────────────────
-    const [allRooms] = await pool.query(
-      `SELECT id FROM rooms WHERE company_id = ?`, [companyId]
-    );
-    const staleRoomIds = allRooms.map(r => r.id).filter(id => !validRoomIds.has(id));
-    if (staleRoomIds.length > 0) {
-      const ph = staleRoomIds.map(() => "?").join(",");
-      await pool.query(`DELETE FROM rooms WHERE id IN (${ph})`, staleRoomIds);
-    }
-
-    // ── Step 4: Delete stale floors (not in validFloorIds) ────────────────
-    const [allFloors] = await pool.query(
-      `SELECT id FROM floors WHERE company_id = ?`, [companyId]
-    );
-    const staleFloorIds = allFloors.map(f => f.id).filter(id => !validFloorIds.has(id));
-    if (staleFloorIds.length > 0) {
-      const ph = staleFloorIds.map(() => "?").join(",");
-      await pool.query(`DELETE FROM floors WHERE id IN (${ph})`, staleFloorIds);
-    }
-
-    // ── Step 5: Delete stale buildings (not in validBuildingIds) ──────────
-    const [allBuildings] = await pool.query(
-      `SELECT id FROM buildings WHERE company_id = ?`, [companyId]
-    );
-    const staleBuildingIds = allBuildings.map(b => b.id).filter(id => !validBuildingIds.has(id));
-    if (staleBuildingIds.length > 0) {
-      const ph = staleBuildingIds.map(() => "?").join(",");
-      await pool.query(`DELETE FROM buildings WHERE id IN (${ph})`, staleBuildingIds);
-    }
-
-    // ── Step 6: Return fresh rooms list ───────────────────────────────────
+    // ── Step 3: Return fresh rooms list ───────────────────────────────────
     const [rooms] = await pool.query(
       `SELECT r.id, r.building_id AS "buildingId", b.name AS "buildingName",
               r.floor_id AS "floorId", f.floor_number AS "floorNumber",
@@ -1183,23 +1147,53 @@ router.post("/locations", async (req, res, next) => {
   try {
     const companyId = cid(req);
     const userId = req.companyUser.id;
-    const { name, campus, building, floor, room, status = "Active" } = req.body;
+    const { name, campus, building, floor, room, status = "Active",
+            buildingId: reqBuildingId, floorId: reqFloorId, roomId: reqRoomId } = req.body;
     if (!name?.trim()) return res.status(400).json({ message: "Location name is required" });
 
-    const [rows] = await pool.query(
-      `INSERT INTO locations (company_id, name, campus, building, floor, room, status, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       RETURNING id, name, campus, building, floor, room, qr_code AS "qrCode", status, created_at AS "createdAt"`,
-      [companyId, name.trim(), campus || null, building || null, floor || null, room || null, status, userId]
-    );
+    // Use directly supplied IDs first, then fall back to lookup from text columns
+    let buildingId = reqBuildingId ? Number(reqBuildingId) : null;
+    let floorId    = reqFloorId    ? Number(reqFloorId)    : null;
+    let roomId     = reqRoomId     ? Number(reqRoomId)     : null;
 
-    // Sync building/floor/room hierarchy tables so they appear in template dropdowns
-    if (building?.trim() && floor?.trim()) {
-      try { await syncHierarchyEntry(companyId, building, floor, room); } catch { /* non-critical hierarchy sync */ }
+    // Lookup any missing IDs from the hierarchy tables using text column values
+    if (building?.trim() && floor?.trim() && (!buildingId || !floorId)) {
+      try {
+        if (!buildingId) {
+          const [[bldgRow]] = await pool.query(
+            `SELECT id FROM buildings WHERE company_id = ? AND name = ? LIMIT 1`,
+            [companyId, building.trim()]
+          );
+          buildingId = bldgRow?.id ?? null;
+        }
+        if (buildingId && !floorId) {
+          const [[flRow]] = await pool.query(
+            `SELECT id FROM floors WHERE company_id = ? AND building_id = ? AND floor_number = ? LIMIT 1`,
+            [companyId, buildingId, floor.trim()]
+          );
+          floorId = flRow?.id ?? null;
+        }
+        if (floorId && room?.trim() && !roomId) {
+          const [[rmRow]] = await pool.query(
+            `SELECT id FROM rooms WHERE company_id = ? AND floor_id = ? AND room_name = ? LIMIT 1`,
+            [companyId, floorId, room.trim()]
+          );
+          roomId = rmRow?.id ?? null;
+        }
+      } catch { /* non-critical — FK resolution is best-effort */ }
     }
 
-    // Auto-set qr_code for newly created location (uses production app URL)
+    const [rows] = await pool.query(
+      `INSERT INTO locations (company_id, name, campus, building, floor, room, status, created_by, building_id, floor_id, room_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       RETURNING id, name, campus, building, floor, room, qr_code AS "qrCode", status, created_at AS "createdAt",
+                 building_id AS "buildingId", floor_id AS "floorId", room_id AS "roomId"`,
+      [companyId, name.trim(), campus || null, building || null, floor || null, room || null, status, userId, buildingId, floorId, roomId]
+    );
+
     const newLoc = rows[0];
+
+    // Auto-set qr_code immediately for every new location
     if (newLoc && !newLoc.qrCode) {
       const APP_URL = process.env.APP_URL || "https://fm.catalystservices.eco";
       const qrValue = `${APP_URL}/location/${newLoc.id}`;
@@ -1207,7 +1201,34 @@ router.post("/locations", async (req, res, next) => {
       newLoc.qrCode = qrValue;
     }
 
-    res.status(201).json(rows[0]);
+    // Back-link: set rooms.location_id so the Rooms table shows the location immediately
+    if (newLoc && roomId) {
+      await pool.query(
+        "UPDATE rooms SET location_id = ? WHERE id = ? AND company_id = ?",
+        [newLoc.id, roomId, companyId]
+      ).catch(() => {});
+    }
+    // Back-link: set buildings.location_id so the Buildings table reflects the linked location
+    if (newLoc && buildingId) {
+      await pool.query(
+        "UPDATE buildings SET location_id = ? WHERE id = ? AND company_id = ?",
+        [newLoc.id, buildingId, companyId]
+      ).catch(() => {});
+    }
+    // Back-link: set floors.location_id so the Floors table reflects the linked location
+    if (newLoc && floorId) {
+      await pool.query(
+        "UPDATE floors SET location_id = ? WHERE id = ? AND company_id = ?",
+        [newLoc.id, floorId, companyId]
+      ).catch(() => {});
+    }
+
+    // Sync building/floor/room hierarchy tables so they appear in template dropdowns
+    if (building?.trim() && floor?.trim()) {
+      try { await syncHierarchyEntry(companyId, building, floor, room); } catch { /* non-critical */ }
+    }
+
+    res.status(201).json(newLoc);
   } catch (err) { next(err); }
 });
 
@@ -1218,9 +1239,9 @@ router.put("/locations/:id", async (req, res, next) => {
     const { name, campus, building, floor, room, status } = req.body;
     if (!name?.trim()) return res.status(400).json({ message: "Location name is required" });
 
-    // Fetch old room value so we can sync rooms table if it changed
+    // Fetch old values so we can sync rooms table if name/room changed
     const [[oldLoc]] = await pool.query(
-      "SELECT room FROM locations WHERE id = ? AND company_id = ?",
+      "SELECT name, room, room_id AS \"roomId\", floor_id AS \"floorId\" FROM locations WHERE id = ? AND company_id = ?",
       [id, companyId]
     );
 
@@ -1276,6 +1297,31 @@ router.put("/locations/:id", async (req, res, next) => {
       } catch { /* non-critical */ }
     }
 
+    // Sync rooms.name when the location's display name changes
+    if (oldLoc && oldLoc.name !== name.trim()) {
+      try {
+        if (oldLoc.roomId) {
+          // Fast path: use the FK directly
+          await pool.query(
+            "UPDATE rooms SET name = ? WHERE id = ? AND company_id = ?",
+            [name.trim(), oldLoc.roomId, companyId]
+          );
+        } else if (room?.trim() && floor?.trim() && building?.trim()) {
+          // Fallback: find the room by hierarchy text values
+          await pool.query(
+            `UPDATE rooms SET name = ?
+             WHERE company_id = ? AND room_name = ?
+               AND floor_id IN (
+                 SELECT f.id FROM floors f
+                 JOIN buildings b ON b.id = f.building_id
+                 WHERE f.company_id = ? AND b.name = ? AND f.floor_number = ?
+               )`,
+            [name.trim(), companyId, room.trim(), companyId, building.trim(), floor.trim()]
+          );
+        }
+      } catch { /* non-critical */ }
+    }
+
     res.json(rows[0]);
   } catch (err) { next(err); }
 });
@@ -1284,6 +1330,21 @@ router.delete("/locations/:id", async (req, res, next) => {
   try {
     const companyId = cid(req);
     const { id } = req.params;
+    // Clean up the auto-created room that was back-linked to this location
+    // (rooms.location_id → locations.id) so the rooms table stays consistent.
+    await pool.query(
+      "DELETE FROM rooms WHERE location_id = ? AND company_id = ?",
+      [id, companyId]
+    ).catch(() => {});
+    // Clear buildings / floors back-links that pointed to this location
+    await pool.query(
+      "UPDATE buildings SET location_id = NULL WHERE location_id = ? AND company_id = ?",
+      [id, companyId]
+    ).catch(() => {});
+    await pool.query(
+      "UPDATE floors SET location_id = NULL WHERE location_id = ? AND company_id = ?",
+      [id, companyId]
+    ).catch(() => {});
     await pool.query("DELETE FROM locations WHERE id = ? AND company_id = ?", [id, companyId]);
     res.json({ success: true });
   } catch (err) { next(err); }
@@ -1298,6 +1359,19 @@ router.delete("/locations", async (req, res, next) => {
     const safeIds = ids.map(Number).filter((n) => Number.isFinite(n) && n > 0);
     if (safeIds.length === 0) return res.status(400).json({ message: "No valid ids" });
     const placeholders = safeIds.map(() => "?").join(",");
+    // Clean up auto-created rooms and hierarchy back-links for all deleted locations
+    await pool.query(
+      `DELETE FROM rooms WHERE company_id = ? AND location_id IN (${placeholders})`,
+      [companyId, ...safeIds]
+    ).catch(() => {});
+    await pool.query(
+      `UPDATE buildings SET location_id = NULL WHERE company_id = ? AND location_id IN (${placeholders})`,
+      [companyId, ...safeIds]
+    ).catch(() => {});
+    await pool.query(
+      `UPDATE floors SET location_id = NULL WHERE company_id = ? AND location_id IN (${placeholders})`,
+      [companyId, ...safeIds]
+    ).catch(() => {});
     await pool.query(
       `DELETE FROM locations WHERE company_id = ? AND id IN (${placeholders})`,
       [companyId, ...safeIds]
@@ -1401,6 +1475,19 @@ router.delete("/locations", async (req, res, next) => {
   } catch (e) { console.warn('[hierarchy] seed:', e.message); }
 })();
 
+// ── Inline migrations: ensure back-link location_id columns exist on hierarchy tables
+// and FK columns exist on locations table (idempotent, safe to run on every start)
+(async () => {
+  try {
+    await pool.query(`ALTER TABLE buildings  ADD COLUMN IF NOT EXISTS location_id INTEGER NULL`);
+    await pool.query(`ALTER TABLE floors     ADD COLUMN IF NOT EXISTS location_id INTEGER NULL`);
+    await pool.query(`ALTER TABLE rooms      ADD COLUMN IF NOT EXISTS location_id INTEGER NULL`);
+    await pool.query(`ALTER TABLE locations  ADD COLUMN IF NOT EXISTS building_id INTEGER NULL`);
+    await pool.query(`ALTER TABLE locations  ADD COLUMN IF NOT EXISTS floor_id    INTEGER NULL`);
+    await pool.query(`ALTER TABLE locations  ADD COLUMN IF NOT EXISTS room_id     INTEGER NULL`);
+  } catch (e) { console.warn('[hierarchy-cols] migration:', e.message); }
+})();
+
 // ─── Buildings ───────────────────────────────────────────────────────────────
 router.get("/buildings", async (req, res, next) => {
   try {
@@ -1417,8 +1504,8 @@ router.post("/buildings", async (req, res, next) => {
     const { name } = req.body;
     if (!name?.trim()) return res.status(400).json({ message: "Building name is required" });
     const [rows] = await pool.query(
-      `INSERT INTO buildings (company_id, name) VALUES (?, ?) RETURNING id, name, created_at AS "createdAt"`,
-      [cid(req), name.trim()]
+      `INSERT INTO buildings (company_id, name, created_by) VALUES (?, ?, ?) RETURNING id, name, created_at AS "createdAt", created_by AS "createdBy"`,
+      [cid(req), name.trim(), req.companyUser.id]
     );
     res.status(201).json(rows[0]);
   } catch (err) { next(err); }
@@ -1428,11 +1515,28 @@ router.put("/buildings/:id", async (req, res, next) => {
   try {
     const { name } = req.body;
     if (!name?.trim()) return res.status(400).json({ message: "Building name is required" });
+    const companyId = cid(req);
+
+    // Fetch old name before updating so we can cascade to locations text column
+    const [[oldBuilding]] = await pool.query(
+      "SELECT name FROM buildings WHERE id = ? AND company_id = ?",
+      [req.params.id, companyId]
+    );
+
     const [rows] = await pool.query(
       `UPDATE buildings SET name = ? WHERE id = ? AND company_id = ? RETURNING id, name, created_at AS "createdAt"`,
-      [name.trim(), req.params.id, cid(req)]
+      [name.trim(), req.params.id, companyId]
     );
     if (!rows.length) return res.status(404).json({ message: "Building not found" });
+
+    // Cascade: update locations.building text column so the locations table stays in sync
+    if (oldBuilding && oldBuilding.name && oldBuilding.name !== name.trim()) {
+      await pool.query(
+        `UPDATE locations SET building = ? WHERE company_id = ? AND building = ?`,
+        [name.trim(), companyId, oldBuilding.name]
+      ).catch(() => {});
+    }
+
     res.json(rows[0]);
   } catch (err) { next(err); }
 });
@@ -1469,9 +1573,9 @@ router.post("/floors", async (req, res, next) => {
     if (!buildingId) return res.status(400).json({ message: "buildingId is required" });
     if (!String(floorNumber ?? "").trim()) return res.status(400).json({ message: "Floor number is required" });
     const [rows] = await pool.query(
-      `INSERT INTO floors (company_id, building_id, floor_number) VALUES (?, ?, ?)
-       RETURNING id, building_id AS "buildingId", floor_number AS "floorNumber", created_at AS "createdAt"`,
-      [cid(req), buildingId, String(floorNumber).trim()]
+      `INSERT INTO floors (company_id, building_id, floor_number, created_by) VALUES (?, ?, ?, ?)
+       RETURNING id, building_id AS "buildingId", floor_number AS "floorNumber", created_at AS "createdAt", created_by AS "createdBy"`,
+      [cid(req), buildingId, String(floorNumber).trim(), req.companyUser.id]
     );
     res.status(201).json(rows[0]);
   } catch (err) { next(err); }
@@ -1481,13 +1585,30 @@ router.put("/floors/:id", async (req, res, next) => {
   try {
     const { buildingId, floorNumber } = req.body;
     if (!String(floorNumber ?? "").trim()) return res.status(400).json({ message: "Floor number is required" });
+    const companyId = cid(req);
+
+    // Fetch old floor number so we can cascade to locations text column
+    const [[oldFloor]] = await pool.query(
+      "SELECT floor_number AS \"floorNumber\" FROM floors WHERE id = ? AND company_id = ?",
+      [req.params.id, companyId]
+    );
+
     const [rows] = await pool.query(
       `UPDATE floors SET building_id = COALESCE(?, building_id), floor_number = ?
        WHERE id = ? AND company_id = ?
        RETURNING id, building_id AS "buildingId", floor_number AS "floorNumber", created_at AS "createdAt"`,
-      [buildingId || null, String(floorNumber).trim(), req.params.id, cid(req)]
+      [buildingId || null, String(floorNumber).trim(), req.params.id, companyId]
     );
     if (!rows.length) return res.status(404).json({ message: "Floor not found" });
+
+    // Cascade: update locations.floor text column so the locations table stays in sync
+    if (oldFloor && oldFloor.floorNumber && oldFloor.floorNumber !== String(floorNumber).trim()) {
+      await pool.query(
+        `UPDATE locations SET floor = ? WHERE company_id = ? AND floor = ?`,
+        [String(floorNumber).trim(), companyId, oldFloor.floorNumber]
+      ).catch(() => {});
+    }
+
     res.json(rows[0]);
   } catch (err) { next(err); }
 });
@@ -1529,9 +1650,9 @@ router.post("/rooms", async (req, res, next) => {
     if (!floorId)    return res.status(400).json({ message: "floorId is required" });
     if (!roomName?.trim()) return res.status(400).json({ message: "Room name is required" });
     const [rows] = await pool.query(
-      `INSERT INTO rooms (company_id, building_id, floor_id, room_name) VALUES (?, ?, ?, ?)
-       RETURNING id, building_id AS "buildingId", floor_id AS "floorId", room_name AS "roomName", created_at AS "createdAt"`,
-      [cid(req), buildingId, floorId, roomName.trim()]
+      `INSERT INTO rooms (company_id, building_id, floor_id, room_name, name, created_by) VALUES (?, ?, ?, ?, ?, ?)
+       RETURNING id, building_id AS "buildingId", floor_id AS "floorId", room_name AS "roomName", name, created_at AS "createdAt", created_by AS "createdBy"`,
+      [cid(req), buildingId, floorId, roomName.trim(), roomName.trim(), req.companyUser.id]
     );
     res.status(201).json(rows[0]);
   } catch (err) { next(err); }
@@ -1552,14 +1673,15 @@ router.put("/rooms/:id", async (req, res, next) => {
       `UPDATE rooms SET
          building_id = COALESCE(?, building_id),
          floor_id    = COALESCE(?, floor_id),
-         room_name   = ?
+         room_name   = ?,
+         name        = ?
        WHERE id = ? AND company_id = ?
-       RETURNING id, building_id AS "buildingId", floor_id AS "floorId", room_name AS "roomName", created_at AS "createdAt"`,
-      [buildingId || null, floorId || null, roomName.trim(), req.params.id, cid(req)]
+       RETURNING id, building_id AS "buildingId", floor_id AS "floorId", room_name AS "roomName", name, created_at AS "createdAt"`,
+      [buildingId || null, floorId || null, roomName.trim(), roomName.trim(), req.params.id, cid(req)]
     );
     if (!rows.length) return res.status(404).json({ message: "Room not found" });
 
-    // Sync the room name change into the locations table
+    // Cascade: sync room name change into the locations table
     if (oldRoom && oldRoom.roomName && oldRoom.roomName.trim() !== roomName.trim()) {
       await pool.query(
         `UPDATE locations SET room = ?, name = CASE WHEN name = ? THEN ? ELSE name END
@@ -1574,7 +1696,32 @@ router.put("/rooms/:id", async (req, res, next) => {
 
 router.delete("/rooms/:id", async (req, res, next) => {
   try {
-    await pool.query("DELETE FROM rooms WHERE id = ? AND company_id = ?", [req.params.id, cid(req)]);
+    const companyId = cid(req);
+    const roomId = req.params.id;
+    // Clear FK back-references in locations before deleting the room.
+    // This prevents FK constraint violations (locations.room_id → rooms.id)
+    // and also clears the back-link on buildings/floors whose location_id
+    // pointed to a location that was linked to this room.
+    await pool.query(
+      `UPDATE buildings SET location_id = NULL
+       WHERE company_id = ? AND location_id IN (
+         SELECT id FROM locations WHERE room_id = ? AND company_id = ?
+       )`,
+      [companyId, roomId, companyId]
+    ).catch(() => {});
+    await pool.query(
+      `UPDATE floors SET location_id = NULL
+       WHERE company_id = ? AND location_id IN (
+         SELECT id FROM locations WHERE room_id = ? AND company_id = ?
+       )`,
+      [companyId, roomId, companyId]
+    ).catch(() => {});
+    // Null out the room_id on any location that references this room
+    await pool.query(
+      "UPDATE locations SET room_id = NULL WHERE room_id = ? AND company_id = ?",
+      [roomId, companyId]
+    ).catch(() => {});
+    await pool.query("DELETE FROM rooms WHERE id = ? AND company_id = ?", [roomId, companyId]);
     res.json({ success: true });
   } catch (err) { next(err); }
 });
@@ -1612,7 +1759,7 @@ router.get("/checklists", async (req, res, next) => {
                END) AS "questionCount"
        FROM checklist_templates ct
        LEFT JOIN shifts s ON s.id = ct.shift_id
-       WHERE ct.company_id = ? AND ct.is_active = 1
+       WHERE ct.company_id = ?
        ORDER BY ct.template_name`,
       [cid(req)]
     ).catch(() => [[]]);
@@ -1638,7 +1785,7 @@ router.get("/checklists", async (req, res, next) => {
          LEFT JOIN buildings b ON b.id = ct.building_id
          LEFT JOIN floors f ON f.id = ct.floor_id
          LEFT JOIN rooms r ON r.id = ct.room_id
-         WHERE ct.company_id = ? AND ct.is_active = 1`,
+         WHERE ct.company_id = ?`,
         [cid(req)]
       );
       for (const e of extras) {
@@ -2554,7 +2701,7 @@ router.get("/my-team", async (req, res, next) => {
 
 router.post("/employees", async (req, res, next) => {
   try {
-    const { fullName, email, phone, designation, role = "employee", status = "Active", password, username, supervisorId, shift, serviceDomain = "technical", employeeCode, permissions, moduleAccess } = req.body;
+    const { fullName, email, phone, designation, role = "employee", status = "Active", password, username, supervisorId, shift, serviceDomain = "technical", employeeCode } = req.body;
     if (!fullName || !email) return res.status(400).json({ message: "fullName and email are required" });
 
     if (req.companyUser.role !== "admin" && req.companyUser.role !== "supervisor") {
@@ -2568,19 +2715,12 @@ router.post("/employees", async (req, res, next) => {
     const validDomains = ['technical', 'soft', 'both'];
     const resolvedDomain = validDomains.includes(serviceDomain) ? serviceDomain : 'technical';
 
-    // Default moduleAccess to all modules when not specified
-    const DEFAULT_MODULE_ACCESS = ["dashboard", "checklists", "logsheets", "mytasks", "locations"];
-    const resolvedModuleAccess = Array.isArray(moduleAccess) && moduleAccess.length > 0
-      ? moduleAccess : DEFAULT_MODULE_ACCESS;
-    const permJson = JSON.stringify(permissions && typeof permissions === "object" ? permissions : {});
-    const modJson  = JSON.stringify(resolvedModuleAccess);
-
     let passwordHash = null;
     if (password) passwordHash = await bcrypt.hash(password, 10);
 
     const [rows] = await pool.query(
-      `INSERT INTO company_users (company_id, full_name, email, phone, designation, role, shift, status, password_hash, username, supervisor_id, service_domain, employee_code, permissions, module_access)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb)
+      `INSERT INTO company_users (company_id, full_name, email, phone, designation, role, shift, status, password_hash, username, supervisor_id, service_domain, employee_code)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        RETURNING id,
                  company_id     AS "companyId",
                  full_name      AS "fullName",
@@ -2588,10 +2728,8 @@ router.post("/employees", async (req, res, next) => {
                  employee_code  AS "employeeCode",
                  supervisor_id  AS "supervisorId",
                  service_domain AS "serviceDomain",
-                 permissions,
-                 module_access  AS "moduleAccess",
                  created_at     AS "createdAt"`,
-      [cid(req), fullName, email, phone || null, designation || null, role, shift || null, status, passwordHash, username || null, resolvedSupervisorId, resolvedDomain, employeeCode || null, permJson, modJson]
+      [cid(req), fullName, email, phone || null, designation || null, role, shift || null, status, passwordHash, username || null, resolvedSupervisorId, resolvedDomain, employeeCode || null]
     );
     const newEmployee = rows[0];
     // Auto-assign all active checklist templates if the new employee is a catalyst supervisor
