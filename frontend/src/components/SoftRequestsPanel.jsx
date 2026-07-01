@@ -268,7 +268,7 @@ function ViewModal({ req, token, onClose }) {
 }
 
 /* ── Main Panel ────────────────────────────────────────────────────────────── */
-export default function SoftRequestsPanel({ token, currentUser }) {
+export default function SoftRequestsPanel({ token, currentUser, allCompanies = false }) {
   const [requests, setRequests]         = useState([]);
   const [users, setUsers]               = useState([]);
   const [loading, setLoading]           = useState(true);
@@ -287,11 +287,11 @@ export default function SoftRequestsPanel({ token, currentUser }) {
   const load = useCallback(() => {
     setLoading(true);
     setSelected(new Set());
-    getSoftServiceRequestsAll(token)
+    getSoftServiceRequestsAll(token, allCompanies ? "companyId=all" : "")
       .then((d) => setRequests(Array.isArray(d) ? d : []))
       .catch(() => setRequests([]))
       .finally(() => setLoading(false));
-  }, [token]);
+  }, [token, allCompanies]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {

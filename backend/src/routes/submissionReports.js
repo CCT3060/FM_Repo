@@ -26,6 +26,39 @@ const router = Router();
 const flexCid = (req) =>
   req.companyUser?.companyId || (req.query.companyId ? parseInt(req.query.companyId, 10) : null);
 
+/**
+ * Resolve company scope – supports UCA multi-company mode.
+ * Returns { cCond, cParam } for use in SQL: WHERE company_id ${cCond}  [cParam]
+ *   ?companyId=all  → UCA subquery (all assigned companies)
+ *   ?companyId=N    → specific company (after UCA access check)
+ *   (none)          → JWT company (default)
+ */
+async function resolveScope(req) {
+  if (req.companyUser) {
+    const reqCid = req.query.companyId;
+    if (reqCid === "all") {
+      return { cCond: "IN (SELECT company_id FROM user_company_assignments WHERE user_id = ?)", cParam: req.companyUser.id };
+    }
+    if (reqCid && !isNaN(parseInt(reqCid, 10))) {
+      const targetCid = parseInt(reqCid, 10);
+      if (targetCid !== req.companyUser.companyId) {
+        const [[ucaRow]] = await pool.query(
+          `SELECT 1 FROM user_company_assignments WHERE user_id = ? AND company_id = ?`,
+          [req.companyUser.id, targetCid]
+        );
+        if (ucaRow) return { cCond: "= ?", cParam: targetCid };
+      } else {
+        return { cCond: "= ?", cParam: targetCid };
+      }
+    }
+    return { cCond: "= ?", cParam: req.companyUser.companyId };
+  }
+  // Platform admin / legacy
+  const companyId = flexCid(req);
+  const userId = req.user?.id;
+  return { cCond: companyId ? "= ?" : "IN (SELECT id FROM companies WHERE user_id = ?)", cParam: companyId || userId };
+}
+
 /*──────────────────────────────────────────────────────────────────────────────
   FILTER META  GET /submissions/filters/:type
   Returns distinct templates, employees, assets and shifts for UI dropdowns.
@@ -35,18 +68,12 @@ router.get(
   flexCompanyAuth,
   async (req, res, next) => {
     try {
-      const companyId = flexCid(req);
-      const userId = req.user?.id;
-      if (!companyId && !userId)
-        return res.status(400).json({ message: "Authentication required" });
+      const { cCond, cParam } = await resolveScope(req);
+      if (!cParam) return res.status(400).json({ message: "Authentication required" });
 
       const { type } = req.params;
       if (!["checklists", "logsheets"].includes(type))
         return res.status(400).json({ message: "type must be checklists or logsheets" });
-
-      // Build scope condition: single company or all companies belonging to this portal user
-      const cCond  = companyId ? "= ?" : "IN (SELECT id FROM companies WHERE user_id = ?)";
-      const cParam = companyId || userId;
 
       if (type === "checklists") {
         const [templates] = await pool.query(
@@ -156,14 +183,12 @@ router.get(
   flexCompanyAuth,
   async (req, res, next) => {
     try {
-      const companyId = flexCid(req);
-      const userId = req.user?.id;
-      if (!companyId && !userId)
-        return res.status(400).json({ message: "Authentication required" });
+      const { cCond, cParam } = await resolveScope(req);
+      if (!cParam) return res.status(400).json({ message: "Authentication required" });
 
       const { dateFrom, dateTo, period, templateId, assetId, building, floor, room, status, submittedBy, search } = req.query;
-      const conditions = companyId ? ["ct.company_id = ?"] : ["co.user_id = ?"];
-      const params     = companyId ? [companyId] : [userId];
+      const conditions = [`ct.company_id ${cCond}`];
+      const params     = [cParam];
 
       if (period === "today") {
         conditions.push("DATE(cs.submitted_at) = CURRENT_DATE");
@@ -240,14 +265,12 @@ router.get(
   flexCompanyAuth,
   async (req, res, next) => {
     try {
-      const companyId = flexCid(req);
-      const userId = req.user?.id;
-      if (!companyId && !userId)
-        return res.status(400).json({ message: "Authentication required" });
+      const { cCond, cParam } = await resolveScope(req);
+      if (!cParam) return res.status(400).json({ message: "Authentication required" });
 
       const { dateFrom, dateTo, period, templateId, assetId, building, floor, room, status, shift, submittedBy, search } = req.query;
-      const conditions = companyId ? ["lt.company_id = ?"] : ["co.user_id = ?"];
-      const params     = companyId ? [companyId] : [userId];
+      const conditions = [`lt.company_id ${cCond}`];
+      const params     = [cParam];
       const dateExpr   = "COALESCE(le.submitted_at, le.entry_date)";
 
       if (period === "today") {
@@ -324,14 +347,12 @@ router.get(
   validate([param("id").isInt({ min: 1 })]),
   async (req, res, next) => {
     try {
-      const companyId = flexCid(req);
-      const userId = req.user?.id;
-      if (!companyId && !userId)
-        return res.status(400).json({ message: "Authentication required" });
+      const { cCond, cParam } = await resolveScope(req);
+      if (!cParam) return res.status(400).json({ message: "Authentication required" });
 
       const { id } = req.params;
-      const scopeCond  = companyId ? "ct.company_id = ?" : "co.user_id = ?";
-      const scopeParam = companyId || userId;
+      const scopeCond  = `ct.company_id ${cCond}`;
+      const scopeParam = cParam;
       const [[submission]] = await pool.query(
         `SELECT
            cs.id,
@@ -387,14 +408,12 @@ router.get(
   validate([param("id").isInt({ min: 1 })]),
   async (req, res, next) => {
     try {
-      const companyId = flexCid(req);
-      const userId = req.user?.id;
-      if (!companyId && !userId)
-        return res.status(400).json({ message: "Authentication required" });
+      const { cCond, cParam } = await resolveScope(req);
+      if (!cParam) return res.status(400).json({ message: "Authentication required" });
 
       const { id } = req.params;
-      const scopeCond  = companyId ? "lt.company_id = ?" : "co.user_id = ?";
-      const scopeParam = companyId || userId;
+      const scopeCond  = `lt.company_id ${cCond}`;
+      const scopeParam = cParam;
       const [[submission]] = await pool.query(
         `SELECT
            le.id,

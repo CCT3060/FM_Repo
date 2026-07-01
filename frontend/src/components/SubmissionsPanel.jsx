@@ -1538,6 +1538,7 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
   const [detail,  setDetail]  = useState(null);
   const [xlsxLoading, setXlsxLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [selected, setSelected] = useState(new Set());
 
   /* -- User drilldown -- */
   const [userView, setUserView] = useState({ active: false, userName: "", submittedById: null });
@@ -1620,6 +1621,7 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setRows(await res.json());
+      setSelected(new Set());
     } catch (e) {
       setError(e.message || "Failed to load");
     } finally {
@@ -1648,6 +1650,27 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setDetail(await res.json());
     } catch (e) { alert(e.message || "Failed to load details"); }
+  };
+
+  /* -- Bulk select helpers -- */
+  const toggleSelect = (id) => setSelected((prev) => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
+  const toggleAll = () => setSelected((prev) => prev.size === sorted.length && sorted.length > 0 ? new Set() : new Set(sorted.map((r) => r.id)));
+  const deleteBulk = async () => {
+    if (!selected.size) return;
+    if (!window.confirm(`Delete ${selected.size} submission${selected.size > 1 ? "s" : ""}? This cannot be undone.`)) return;
+    setDeleting(true);
+    try {
+      const qs = companyId ? `?companyId=${companyId}` : "";
+      const res = await fetch(`${API_BASE}/api/company-portal/checklist-submissions/bulk-delete${qs}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: [...selected] }),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || "Bulk delete failed"); }
+      setRows((prev) => prev.filter((r) => !selected.has(r.id)));
+      setSelected(new Set());
+    } catch (e) { alert(e.message); }
+    finally { setDeleting(false); }
   };
 
   /* -- Delete one submission (admin only) -- */
@@ -2066,6 +2089,14 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
             </span>
           </div>
           <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+            {isAdmin && selected.size > 0 && (
+              <button onClick={deleteBulk} disabled={deleting}
+                style={{ padding: "7px 14px", border: "1px solid #fecaca", borderRadius: "8px",
+                  background: "#fef2f2", cursor: deleting ? "not-allowed" : "pointer",
+                  fontSize: "13px", fontWeight: 600, color: "#dc2626", opacity: deleting ? 0.6 : 1 }}>
+                🗑 Delete Selected ({selected.size})
+              </button>
+            )}
             <button onClick={() => handleManualRefresh()}
               style={{ padding: "7px 14px", border: "1px solid #e2e8f0", borderRadius: "8px",
                 background: "#f8fafc", cursor: "pointer", fontSize: "13px", fontWeight: 600, color: "#475569" }}>
@@ -2122,6 +2153,12 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13.5px" }}>
               <thead>
                 <tr>
+                  {isAdmin && (
+                    <th style={{ padding: "11px 14px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", width: "36px" }}>
+                      <input type="checkbox" checked={selected.size === sorted.length && sorted.length > 0}
+                        onChange={toggleAll} style={{ cursor: "pointer", width: "15px", height: "15px" }} />
+                    </th>
+                  )}
                   {["#", "Template", "Building", "Floor", "Room", "Company", "Submitted By", "Date & Time", "Status", ""].map((h, hi) => (
                     <th key={hi} style={{ padding: "11px 14px", textAlign: "left", background: "#f8fafc",
                       color: "#475569", fontWeight: 600, fontSize: "11.5px", textTransform: "uppercase",
@@ -2134,9 +2171,15 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
               <tbody>
                 {sorted.map((r, i) => (
                   <tr key={r.id}
-                    onMouseEnter={(e) => e.currentTarget.style.background = "#f8fafc"}
-                    onMouseLeave={(e) => e.currentTarget.style.background = ""}
-                    style={{ borderBottom: "1px solid #f1f5f9", transition: "background 0.1s" }}>
+                    onMouseEnter={(e) => { if (!selected.has(r.id)) e.currentTarget.style.background = "#f8fafc"; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = selected.has(r.id) ? "#fff7ed" : ""; }}
+                    style={{ borderBottom: "1px solid #f1f5f9", transition: "background 0.1s", background: selected.has(r.id) ? "#fff7ed" : "" }}>
+                    {isAdmin && (
+                      <td style={{ padding: "10px 14px" }}>
+                        <input type="checkbox" checked={selected.has(r.id)}
+                          onChange={() => toggleSelect(r.id)} style={{ cursor: "pointer", width: "15px", height: "15px" }} />
+                      </td>
+                    )}
                     <td style={{ padding: "10px 14px", color: "#94a3b8", fontSize: "12px", fontWeight: 600 }}>
                       {i + 1}
                     </td>

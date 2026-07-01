@@ -120,6 +120,14 @@ export const getCompanyPortalChartStats = (token, params = {}) => {
   return request("GET", `/api/company-portal/dashboard/chart-stats${q ? "?" + q : ""}`, null, { authToken: token });
 };
 export const getCompanyPortalSiteScore = (token) => request("GET", "/api/template-assignments/site-score", undefined, { authToken: token });
+export const getCompanyPortalSiteScoreHistory = (token, params = {}) => {
+  const q = new URLSearchParams(params).toString();
+  return request("GET", `/api/company-portal/dashboard/site-score-history${q ? "?" + q : ""}`, null, { authToken: token });
+};
+export const getCompanyPortalCompaniesSiteScore = (token, params = {}) => {
+  const q = new URLSearchParams(params).toString();
+  return request("GET", `/api/company-portal/dashboard/companies-site-score${q ? "?" + q : ""}`, null, { authToken: token });
+};
 export const getCompanyPortalDashboard = (token) => request("GET", "/api/company-portal/dashboard", undefined, { authToken: token });
 export const getCompanyPortalDepartments = (token) => request("GET", "/api/company-portal/departments", undefined, { authToken: token });
 export const createCompanyPortalDepartment = (token, data) => request("POST", "/api/company-portal/departments", data, { authToken: token });
@@ -141,10 +149,17 @@ export const deleteCompanyPortalLogsheetTemplate = (token, id) => request("DELET
 export const submitCompanyPortalLogsheetEntry = (token, templateId, data) => request("POST", `/api/company-portal/logsheet-templates/${templateId}/entries`, data, { authToken: token });
 export const getCompanyPortalLogsheetEntries = (token, templateId, params = "") => request("GET", `/api/company-portal/logsheet-templates/${templateId}/entries${params ? `?${params}` : ""}`, undefined, { authToken: token });
 export const getCompanyPortalRecentLogsheetEntries = (token) => request("GET", "/api/company-portal/logsheet-templates/entries/recent", undefined, { authToken: token });
-export const getCompanyPortalRecentChecklistSubmissions = (token) => request("GET", "/api/company-portal/checklist-submissions/recent", undefined, { authToken: token });
+export const getCompanyPortalRecentChecklistSubmissions = (token, date) => {
+  const url = date ? `/api/company-portal/checklist-submissions/recent?date=${encodeURIComponent(date)}` : "/api/company-portal/checklist-submissions/recent";
+  return request("GET", url, undefined, { authToken: token });
+};
+export const getCompanyPortalCombinedDashboard = (token, date) => {
+  const url = date ? `/api/company-portal/combined-dashboard?date=${encodeURIComponent(date)}` : "/api/company-portal/combined-dashboard";
+  return request("GET", url, undefined, { authToken: token });
+};
 export const createCompanyPortalLogsheetTemplate = (token, data) => request("POST", "/api/company-portal/logsheet-templates", data, { authToken: token });
 export const assignCompanyPortalLogsheetTemplate = (token, templateId, assetId) => request("POST", `/api/company-portal/logsheet-templates/${templateId}/assign`, { assetId }, { authToken: token });
-export const getCompanyPortalEmployees = (token) => request("GET", "/api/company-portal/employees", undefined, { authToken: token });
+export const getCompanyPortalEmployees = (token, companyId) => request("GET", `/api/company-portal/employees${companyId ? `?companyId=${companyId}` : ""}`, undefined, { authToken: token });
 export const createCompanyPortalEmployee = (token, data) => request("POST", "/api/company-portal/employees", data, { authToken: token });
 export const updateCompanyPortalEmployee = (token, id, data) => request("PUT", `/api/company-portal/employees/${id}`, data, { authToken: token });
 export const deleteCompanyPortalEmployee = (token, id) => request("DELETE", `/api/company-portal/employees/${id}`, undefined, { authToken: token });

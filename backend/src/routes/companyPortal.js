@@ -485,7 +485,8 @@ router.get("/dashboard/chart-stats", async (req, res, next) => {
       `SELECT COUNT(*) AS cnt
          FROM checklist_templates
         WHERE company_id = ?
-          AND LOWER(TRIM(COALESCE(frequency, 'daily'))) = 'daily'`,
+          AND LOWER(TRIM(COALESCE(frequency, 'daily'))) = 'daily'
+          AND COALESCE(status, 'active') != 'inactive'`,
       [companyId]
     ));
     const [[subLSRows]] = await safe(() => pool.query(
@@ -498,12 +499,13 @@ router.get("/dashboard/chart-stats", async (req, res, next) => {
       [companyId, dateFrom, dateTo]
     ));
     const [[subCSRows]] = await safe(() => pool.query(
-      // Count one fill per template per day for daily checklist templates.
+      // Count one fill per template per day for daily checklist templates (active only).
       `SELECT COUNT(DISTINCT (cs.template_id::text || '|' || COALESCE(cs.submitted_at, cs.created_at)::date::text)) AS cnt
          FROM checklist_submissions cs
          JOIN checklist_templates ct ON ct.id = cs.template_id
         WHERE ct.company_id = ?
           AND LOWER(TRIM(COALESCE(ct.frequency, 'daily'))) = 'daily'
+          AND COALESCE(ct.status, 'active') != 'inactive'
           AND COALESCE(cs.submitted_at, cs.created_at)::date BETWEEN ? AND ?`,
       [companyId, dateFrom, dateTo]
     ));
@@ -527,6 +529,87 @@ router.get("/dashboard/chart-stats", async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+/* ── GET /api/company-portal/dashboard/site-score-history ─────────────────────
+   Returns daily site score (% of active templates submitted) for the
+   company's date range. Used for the Site Score Overview bar chart.           */
+router.get("/dashboard/site-score-history", async (req, res, next) => {
+  try {
+    const companyId = cid(req);
+    const { startDate, endDate } = req.query;
+    if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate are required" });
+    const [rows] = await pool.query(
+      `SELECT to_char(d::date, 'YYYY-MM-DD') AS date,
+         ROUND(
+           COALESCE(
+             (SELECT COUNT(DISTINCT cs.template_id)
+              FROM checklist_submissions cs
+              JOIN checklist_templates ct ON ct.id = cs.template_id
+              WHERE ct.company_id = ? AND cs.submitted_at::date = d::date
+                AND cs.status NOT IN ('rejected')), 0
+           )::numeric
+           / GREATEST(
+             (SELECT COUNT(*) FROM checklist_templates
+              WHERE company_id = ? AND COALESCE(status, 'active') != 'inactive'), 1
+           ) * 100, 1
+         ) AS "siteScore"
+       FROM generate_series(?::date, ?::date, '1 day'::interval) AS d
+       ORDER BY d`,
+      [companyId, companyId, startDate, endDate]
+    );
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
+/* ── GET /api/company-portal/dashboard/companies-site-score ───────────────────
+   Returns average site score per company for the user's assigned companies
+   over a date range. Used for multi-company Site Score comparison chart.      */
+router.get("/dashboard/companies-site-score", async (req, res, next) => {
+  try {
+    const userId = req.companyUser.id;
+    const { startDate, endDate } = req.query;
+    if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate are required" });
+    const [rows] = await pool.query(
+      `WITH assigned AS (
+         SELECT uca.company_id, c.company_name AS "companyName"
+         FROM user_company_assignments uca
+         JOIN companies c ON c.id = uca.company_id
+         WHERE uca.user_id = ?
+       ),
+       date_range AS (
+         SELECT generate_series(?::date, ?::date, '1 day'::interval)::date AS d
+       ),
+       total_tpls AS (
+         SELECT company_id, GREATEST(COUNT(*), 1) AS total
+         FROM checklist_templates
+         WHERE company_id IN (SELECT company_id FROM assigned)
+           AND COALESCE(status, 'active') != 'inactive'
+         GROUP BY company_id
+       ),
+       daily_fills AS (
+         SELECT ct.company_id, cs.submitted_at::date AS d,
+                COUNT(DISTINCT cs.template_id) AS filled
+         FROM checklist_submissions cs
+         JOIN checklist_templates ct ON ct.id = cs.template_id
+         WHERE ct.company_id IN (SELECT company_id FROM assigned)
+           AND cs.submitted_at::date BETWEEN ? AND ?
+           AND cs.status NOT IN ('rejected')
+         GROUP BY ct.company_id, cs.submitted_at::date
+       )
+       SELECT a.company_id AS "companyId", a."companyName",
+         ROUND(AVG(ROUND(COALESCE(df.filled, 0)::numeric
+               / COALESCE(tt.total, 1) * 100, 0)), 0) AS "avgSiteScore"
+       FROM assigned a
+       CROSS JOIN date_range dr
+       LEFT JOIN total_tpls tt ON tt.company_id = a.company_id
+       LEFT JOIN daily_fills df ON df.company_id = a.company_id AND df.d = dr.d
+       GROUP BY a.company_id, a."companyName"
+       ORDER BY a."companyName"`,
+      [userId, startDate, endDate, startDate, endDate]
+    );
+    res.json(rows);
+  } catch (err) { next(err); }
 });
 
 /* ── Asset Types (company portal admin CRUD) ───────────────────────────────── */
@@ -920,12 +1003,25 @@ router.delete("/assets/:id", async (req, res, next) => {
 
 router.get("/locations", async (req, res, next) => {
   try {
-    const companyId = cid(req);
+    const qCid = req.query.companyId;
+    let companyCond, companyParam;
+    if (qCid === "all") {
+      companyCond = "IN (SELECT company_id FROM user_company_assignments WHERE user_id = ?)";
+      companyParam = req.companyUser.id;
+    } else {
+      companyCond = "= ?";
+      companyParam = cid(req);
+    }
     const [rows] = await pool.query(
-      `SELECT id, name, campus, building, floor, room, qr_code AS "qrCode", status, created_at AS "createdAt",
-              building_id AS "buildingId", floor_id AS "floorId", room_id AS "roomId"
-       FROM locations WHERE company_id = ? ORDER BY name ASC`,
-      [companyId]
+      `SELECT l.id, l.name, l.campus, l.building, l.floor, l.room,
+              l.qr_code AS "qrCode", l.status, l.created_at AS "createdAt",
+              l.building_id AS "buildingId", l.floor_id AS "floorId", l.room_id AS "roomId",
+              l.company_id AS "companyId", c.company_name AS "companyName"
+       FROM locations l
+       JOIN companies c ON c.id = l.company_id
+       WHERE l.company_id ${companyCond}
+       ORDER BY c.company_name ASC, l.name ASC`,
+      [companyParam]
     );
     res.json(rows);
   } catch (err) { next(err); }
@@ -2619,6 +2715,15 @@ router.delete("/logsheet-templates/:templateId", async (req, res, next) => {
 /* ── Employees ──────────────────────────────────────────────────────────────── */
 router.get("/employees", async (req, res, next) => {
   try {
+    const qCid = req.query.companyId;
+    let companyCond, companyParam;
+    if (qCid === "all") {
+      companyCond = "IN (SELECT company_id FROM user_company_assignments WHERE user_id = ?)";
+      companyParam = req.companyUser.id;
+    } else {
+      companyCond = "= ?";
+      companyParam = cid(req);
+    }
     const [rows] = await pool.query(
       `SELECT cu.id, cu.company_id AS "companyId",
               cu.full_name AS "fullName", cu.email, cu.phone,
@@ -2630,12 +2735,14 @@ router.get("/employees", async (req, res, next) => {
               cu.module_access AS "moduleAccess",
               s.full_name AS "supervisorName",
               s.role AS "supervisorRole",
-              cu.created_at AS "createdAt"
+              cu.created_at AS "createdAt",
+              c.company_name AS "companyName"
        FROM company_users cu
        LEFT JOIN company_users s ON s.id = cu.supervisor_id
-       WHERE cu.company_id = ?
-       ORDER BY cu.role ASC, cu.full_name ASC`,
-      [cid(req)]
+       LEFT JOIN companies c ON c.id = cu.company_id
+       WHERE cu.company_id ${companyCond}
+       ORDER BY cu.company_id ASC, cu.role ASC, cu.full_name ASC`,
+      [companyParam]
     );
     res.json(rows);
   } catch (err) {
@@ -2911,12 +3018,12 @@ router.get("/me", async (req, res, next) => {
   try {
     const [[row]] = await pool.query(
       `SELECT cu.id, cu.full_name AS "fullName", cu.email, cu.phone, cu.designation, cu.role,
-              cu.status, cu.company_id AS "companyId", c.company_name AS "companyName",
+              cu.status, c.id AS "companyId", c.company_name AS "companyName",
               c.enabled_modules AS "enabledModules", c.logo_url AS "logoUrl"
        FROM company_users cu
-       JOIN companies c ON c.id = cu.company_id
+       JOIN companies c ON c.id = ?
        WHERE cu.id = ?`,
-      [req.companyUser.id]
+      [cid(req), req.companyUser.id]
     );
     if (!row) return res.status(404).json({ message: "User not found" });
     row.enabledModules = row.enabledModules
@@ -2960,8 +3067,8 @@ router.get("/logsheet-templates/entries/recent", async (req, res, next) => {
 router.get("/checklist-submissions/recent", async (req, res, next) => {
   try {
     const companyId = cid(req);
-    const [rows] = await pool.query(
-            `SELECT cs.id, cs.submitted_at AS "submittedAt",
+    const { date } = req.query;
+    const SELECT = `SELECT cs.id, cs.submitted_at AS "submittedAt",
               ct.template_name AS "templateName", ct.id AS "templateId",
               a.asset_name AS "assetName", a.id AS "assetId",
               COALESCE(loc.name, NULLIF(TRIM(CONCAT_WS(', ', a.building, a.floor, a.room)), '')) AS "locationName",
@@ -2974,12 +3081,22 @@ router.get("/checklist-submissions/recent", async (req, res, next) => {
        LEFT JOIN assets a ON a.id = cs.asset_id
        LEFT JOIN locations loc ON loc.id = ct.location_id
        LEFT JOIN rooms r ON r.id = ct.room_id
-       LEFT JOIN company_users cu ON cu.id = COALESCE(cs.company_user_id, cs.submitted_by)
-       WHERE ct.company_id = ?
-       ORDER BY cs.submitted_at DESC NULLS LAST
-       LIMIT 50`,
-      [companyId]
-    );
+       LEFT JOIN company_users cu ON cu.id = COALESCE(cs.company_user_id, cs.submitted_by)`;
+    let rows;
+    if (date) {
+      // Fetch all submissions for the specific dashboard date
+      [rows] = await pool.query(
+        `${SELECT} WHERE ct.company_id = ? AND cs.submitted_at::date = ?::date
+         ORDER BY cs.submitted_at DESC NULLS LAST`,
+        [companyId, date]
+      );
+    } else {
+      [rows] = await pool.query(
+        `${SELECT} WHERE ct.company_id = ?
+         ORDER BY cs.submitted_at DESC NULLS LAST LIMIT 50`,
+        [companyId]
+      );
+    }
     res.json(rows);
   } catch (err) {
     next(err);
@@ -3372,11 +3489,19 @@ router.get("/work-orders/:id", async (req, res, next) => {
 /* GET /work-orders  – list all work orders for this company */
 router.get("/work-orders", async (req, res, next) => {
   try {
-    const companyId = cid(req);
     const { status, priority, assignedTo, limit = 200, offset = 0 } = req.query;
+    const qCid = req.query.companyId;
+    let woCompanyCond, woCompanyParam;
+    if (qCid === "all") {
+      woCompanyCond = "IN (SELECT company_id FROM user_company_assignments WHERE user_id = ?)";
+      woCompanyParam = req.companyUser.id;
+    } else {
+      woCompanyCond = "= ?";
+      woCompanyParam = cid(req);
+    }
 
-    let where = "WHERE wo.company_id = ?";
-    const params = [companyId];
+    let where = `WHERE wo.company_id ${woCompanyCond}`;
+    const params = [woCompanyParam];
 
     if (status)     { where += " AND wo.status = ?";      params.push(status); }
     if (priority)   { where += " AND wo.priority = ?";    params.push(priority); }
@@ -5152,34 +5277,33 @@ router.get("/ojt/mobile/test-attempts/:trainingId", async (req, res, next) => {
 });
 
 /* ── GET /api/company-portal/my-companies ───────────────────────────────────
-   Returns all companies the logged-in user has access to (primary + assigned).
-   Used by multi-company admins to populate the company switcher dropdown.     */
+   Returns companies the logged-in user has access to.
+   If explicit UCA entries exist, they are the COMPLETE access list.
+   Otherwise falls back to the user's primary company.                         */
 router.get("/my-companies", async (req, res, next) => {
   try {
     const userId = req.companyUser.id;
-    // Primary company
-    const [[primary]] = await pool.query(
-      `SELECT id, company_name AS "companyName", company_code AS "companyCode"
-       FROM companies WHERE id = ?`,
-      [cid(req)]
-    );
-    // Extra assigned companies
+    // Explicit company assignments — source of truth for multi-company access
     const [extras] = await pool.query(
-      `SELECT c.id, c.company_name AS "companyName", c.company_code AS "companyCode"
+      `SELECT c.id, c.company_name AS "companyName", c.company_code AS "companyCode",
+              c.enabled_modules AS "enabledModules"
        FROM user_company_assignments uca
        JOIN companies c ON c.id = uca.company_id
        WHERE uca.user_id = ?
        ORDER BY c.company_name`,
       [userId]
     );
-    // Merge; primary first, no duplicates
-    const allIds = new Set();
-    const result = [];
-    if (primary) { allIds.add(primary.id); result.push({ ...primary, isPrimary: true }); }
-    for (const e of extras) {
-      if (!allIds.has(e.id)) { allIds.add(e.id); result.push({ ...e, isPrimary: false }); }
+    if (extras.length > 0) {
+      return res.json(extras.map(e => ({ ...e, isPrimary: false })));
     }
-    res.json(result);
+    // No explicit assignments — return primary company only
+    const [[primary]] = await pool.query(
+      `SELECT id, company_name AS "companyName", company_code AS "companyCode",
+              enabled_modules AS "enabledModules"
+       FROM companies WHERE id = ?`,
+      [cid(req)]
+    );
+    res.json(primary ? [{ ...primary, isPrimary: true }] : []);
   } catch (err) { next(err); }
 });
 
@@ -5195,16 +5319,17 @@ router.post("/switch-company", async (req, res, next) => {
     const userId = req.companyUser.id;
     const primaryCompanyId = cid(req);
 
-    // Allow if target is primary company
-    let allowed = Number(targetId) === Number(primaryCompanyId);
-
-    if (!allowed) {
-      // Check user_company_assignments
-      const [[row]] = await pool.query(
-        `SELECT id FROM user_company_assignments WHERE user_id = ? AND company_id = ?`,
-        [userId, targetId]
-      );
-      allowed = !!row;
+    // Use same access-list logic as /my-companies:
+    // if UCA has entries → those are the complete allowed set; else only primary
+    const [ucaRows] = await pool.query(
+      `SELECT company_id FROM user_company_assignments WHERE user_id = ?`,
+      [userId]
+    );
+    let allowed;
+    if (ucaRows.length > 0) {
+      allowed = ucaRows.some(r => Number(r.company_id) === Number(targetId));
+    } else {
+      allowed = Number(targetId) === Number(primaryCompanyId);
     }
 
     if (!allowed) return res.status(403).json({ message: "You do not have access to this company" });
@@ -5235,6 +5360,240 @@ router.post("/switch-company", async (req, res, next) => {
           ? (typeof company.enabledModules === "string" ? JSON.parse(company.enabledModules) : company.enabledModules)
           : null,
       },
+    });
+  } catch (err) { next(err); }
+});
+
+/* ── GET /api/company-portal/combined-dashboard ──────────────────────────────
+   Returns aggregated stats across all UCA companies for the logged-in user.
+   Used by the "All Companies" combined dashboard view.                        */
+router.get("/combined-dashboard", async (req, res, next) => {
+  try {
+    const userId = req.companyUser.id;
+    const { date } = req.query;
+    const targetDate = date || new Date().toISOString().slice(0, 10);
+
+    const [companies] = await pool.query(
+      `SELECT c.id, c.company_name AS "companyName", c.enabled_modules AS "enabledModules"
+       FROM user_company_assignments uca
+       JOIN companies c ON c.id = uca.company_id
+       WHERE uca.user_id = ?
+       ORDER BY c.company_name`,
+      [userId]
+    );
+    if (companies.length === 0) return res.json({ companies: [], totals: {} });
+
+    const companyIds = companies.map(c => c.id);
+    const idPH = companyIds.map(() => "?").join(",");
+
+    const safe = async (fn) => { try { return await fn(); } catch (e) { console.error("[combined-dashboard]", e.message); return [[]]; } };
+
+    const [
+      statsResults,
+      [alertRows],
+      [woRows],
+      [srRows],
+      [notifRows],
+      [csRows],
+      [leRows],
+      [nscsRows],
+      [nsleRows],
+    ] = await Promise.all([
+      // Per-company stats
+      Promise.all(companies.map(async (co) => {
+        const [[row]] = await pool.query(
+          `SELECT
+             (SELECT COUNT(*) FROM checklist_templates WHERE company_id = ? AND COALESCE(status,'active') != 'inactive') AS total_tpls,
+             (SELECT COUNT(DISTINCT cs.template_id) FROM checklist_submissions cs JOIN checklist_templates ct ON ct.id = cs.template_id WHERE ct.company_id = ? AND cs.submitted_at::date = ?::date AND cs.status NOT IN ('rejected')) AS filled_today,
+             (SELECT COUNT(*) FROM locations WHERE company_id = ? AND LOWER(COALESCE(status,'active')) = 'active') AS locations,
+             (SELECT COUNT(*) FROM soft_service_requests WHERE company_id = ? AND status NOT IN ('closed','resolved')) AS open_soft,
+             (SELECT COUNT(*) FROM assets WHERE company_id = ?) AS total_assets,
+             (SELECT COUNT(*) FROM assets WHERE company_id = ? AND status = 'Active') AS active_assets,
+             (SELECT COUNT(*) FROM departments WHERE company_id = ?) AS total_departments,
+             (SELECT COUNT(*) FROM company_users WHERE company_id = ? AND status = 'Active') AS active_employees,
+             (SELECT COUNT(*) FROM work_orders wo JOIN assets a ON wo.asset_id = a.id WHERE a.company_id = ? AND wo.status = 'open') AS open_issues,
+             (SELECT COUNT(*) FROM flags WHERE company_id = ? AND status IN ('open','in_progress')) AS open_flags,
+             (SELECT COUNT(*) FROM flags WHERE company_id = ? AND severity = 'critical' AND status IN ('open','in_progress')) AS critical_flags,
+             (SELECT COUNT(*) FROM logsheet_templates WHERE company_id = ?) AS total_logsheet_tpls,
+             (SELECT COUNT(*) FROM logsheet_entries le JOIN logsheet_templates lt ON lt.id = le.template_id WHERE lt.company_id = ? AND le.submitted_at::date = ?::date) AS filled_logsheets_today`,
+          [co.id, co.id, targetDate, co.id, co.id, co.id, co.id, co.id, co.id, co.id, co.id, co.id, co.id, co.id, targetDate]
+        );
+        const totalTpls   = Number(row?.total_tpls   ?? 0);
+        const filledToday = Number(row?.filled_today  ?? 0);
+        return {
+          id: co.id,
+          companyName: co.companyName,
+          enabledModules: typeof co.enabledModules === "string"
+            ? JSON.parse(co.enabledModules || "null")
+            : co.enabledModules,
+          totalTemplates:        totalTpls,
+          filledToday,
+          siteScore:             totalTpls > 0 ? Math.round((filledToday / totalTpls) * 100) : 0,
+          activeLocations:       Number(row?.locations      ?? 0),
+          openSoftRequests:      Number(row?.open_soft      ?? 0),
+          totalAssets:           Number(row?.total_assets   ?? 0),
+          activeAssets:          Number(row?.active_assets  ?? 0),
+          totalDepartments:      Number(row?.total_departments ?? 0),
+          activeEmployees:       Number(row?.active_employees  ?? 0),
+          openIssues:            Number(row?.open_issues    ?? 0),
+          openFlags:             Number(row?.open_flags     ?? 0),
+          criticalFlags:         Number(row?.critical_flags ?? 0),
+          totalLogsheetTemplates:Number(row?.total_logsheet_tpls    ?? 0),
+          filledLogsheetsToday:  Number(row?.filled_logsheets_today ?? 0),
+        };
+      })),
+      // Recent open alerts across all companies
+      safe(() => pool.query(
+        `SELECT f.id, f.title, f.severity, f.status, f.created_at AS "createdAt",
+                f.company_id AS "companyId", c.company_name AS "companyName",
+                a.asset_name AS "assetName"
+         FROM flags f
+         JOIN companies c ON c.id = f.company_id
+         LEFT JOIN assets a ON a.id = f.asset_id
+         WHERE f.company_id IN (${idPH}) AND f.status IN ('open','in_progress')
+         ORDER BY f.created_at DESC LIMIT 20`,
+        companyIds
+      )),
+      // Recent open work orders across all companies
+      safe(() => pool.query(
+        `SELECT wo.id, wo.wo_number AS "woNumber", wo.description, wo.status,
+                wo.priority, wo.created_at AS "createdAt",
+                a.asset_name AS "assetName", a.company_id AS "companyId",
+                c.company_name AS "companyName",
+                cu.full_name AS "assignedTo"
+         FROM work_orders wo
+         JOIN assets a ON wo.asset_id = a.id
+         JOIN companies c ON c.id = a.company_id
+         LEFT JOIN company_users cu ON cu.id = wo.assigned_to
+         WHERE a.company_id IN (${idPH}) AND wo.status = 'open'
+         ORDER BY wo.created_at DESC LIMIT 20`,
+        companyIds
+      )),
+      // Recent open soft service requests across all companies
+      safe(() => pool.query(
+        `SELECT ssr.id, ssr.request_type AS "requestType", ssr.description, ssr.status,
+                ssr.escalation_level AS "escalationLevel", ssr.created_at AS "createdAt",
+                ssr.company_id AS "companyId", c.company_name AS "companyName",
+                cu.full_name AS "raisedBy"
+         FROM soft_service_requests ssr
+         JOIN companies c ON c.id = ssr.company_id
+         LEFT JOIN company_users cu ON cu.id = ssr.raised_by
+         WHERE ssr.company_id IN (${idPH}) AND ssr.status NOT IN ('closed','resolved')
+         ORDER BY ssr.created_at DESC LIMIT 20`,
+        companyIds
+      )),
+      // Recent notifications across all companies
+      safe(() => pool.query(
+        `SELECT n.id, n.title, n.message, n.type, n.is_read AS "isRead",
+                n.created_at AS "createdAt", n.company_id AS "companyId",
+                c.company_name AS "companyName"
+         FROM notifications n
+         JOIN companies c ON c.id = n.company_id
+         WHERE n.company_id IN (${idPH})
+         ORDER BY n.created_at DESC LIMIT 20`,
+        companyIds
+      )),
+      // Recent checklist submissions for the target date
+      safe(() => pool.query(
+        `SELECT cs.id, cs.submitted_at AS "submittedAt", cs.status,
+                ct.template_name AS "templateName", ct.company_id AS "companyId",
+                c.company_name AS "companyName",
+                cu.full_name AS "submittedBy",
+                r.room_name AS "roomName"
+         FROM checklist_submissions cs
+         JOIN checklist_templates ct ON cs.template_id = ct.id
+         JOIN companies c ON c.id = ct.company_id
+         LEFT JOIN company_users cu ON cu.id = COALESCE(cs.company_user_id, cs.submitted_by)
+         LEFT JOIN rooms r ON r.id = ct.room_id
+         WHERE ct.company_id IN (${idPH}) AND cs.submitted_at::date = ?::date
+         ORDER BY c.company_name ASC, cs.submitted_at DESC`,
+        [...companyIds, targetDate]
+      )),
+      // Recent logsheet entries for the target date
+      safe(() => pool.query(
+        `SELECT le.id, le.submitted_at AS "submittedAt", le.month, le.year, le.shift,
+                lt.template_name AS "templateName", lt.company_id AS "companyId",
+                c.company_name AS "companyName",
+                cu.full_name AS "submittedBy"
+         FROM logsheet_entries le
+         JOIN logsheet_templates lt ON le.template_id = lt.id
+         JOIN companies c ON c.id = lt.company_id
+         LEFT JOIN company_users cu ON cu.id = COALESCE(le.company_user_id, le.submitted_by)
+         WHERE lt.company_id IN (${idPH}) AND le.submitted_at::date = ?::date
+         ORDER BY c.company_name ASC, le.submitted_at DESC`,
+        [...companyIds, targetDate]
+      )),
+      // Not-submitted checklist templates for the target date
+      safe(() => pool.query(
+        `SELECT ct.id AS "templateId", ct.template_name AS "templateName",
+                ct.company_id AS "companyId", c.company_name AS "companyName",
+                COALESCE(r.room_name, '') AS "roomName"
+         FROM checklist_templates ct
+         JOIN companies c ON c.id = ct.company_id
+         LEFT JOIN rooms r ON r.id = ct.room_id
+         WHERE ct.company_id IN (${idPH})
+           AND COALESCE(ct.status,'active') != 'inactive'
+           AND ct.is_active = 1
+           AND NOT EXISTS (
+             SELECT 1 FROM checklist_submissions cs
+             WHERE cs.template_id = ct.id
+               AND cs.submitted_at::date = ?::date
+               AND LOWER(cs.status) NOT IN ('rejected')
+           )
+         ORDER BY c.company_name ASC, ct.template_name ASC`,
+        [...companyIds, targetDate]
+      )),
+      // Not-submitted logsheet templates for the target date
+      safe(() => pool.query(
+        `SELECT lt.id AS "templateId", lt.template_name AS "templateName",
+                lt.company_id AS "companyId", c.company_name AS "companyName"
+         FROM logsheet_templates lt
+         JOIN companies c ON c.id = lt.company_id
+         WHERE lt.company_id IN (${idPH})
+           AND COALESCE(lt.status,'active') != 'inactive'
+           AND NOT EXISTS (
+             SELECT 1 FROM logsheet_entries le
+             WHERE le.template_id = lt.id
+               AND le.submitted_at::date = ?::date
+           )
+         ORDER BY c.company_name ASC, lt.template_name ASC`,
+        [...companyIds, targetDate]
+      )),
+    ]);
+
+    const stats = statsResults;
+    const totals = {
+      totalTemplates:        stats.reduce((s, c) => s + c.totalTemplates,        0),
+      filledToday:           stats.reduce((s, c) => s + c.filledToday,           0),
+      activeLocations:       stats.reduce((s, c) => s + c.activeLocations,       0),
+      openSoftRequests:      stats.reduce((s, c) => s + c.openSoftRequests,      0),
+      totalAssets:           stats.reduce((s, c) => s + c.totalAssets,           0),
+      activeAssets:          stats.reduce((s, c) => s + c.activeAssets,          0),
+      totalDepartments:      stats.reduce((s, c) => s + c.totalDepartments,      0),
+      activeEmployees:       stats.reduce((s, c) => s + c.activeEmployees,       0),
+      openIssues:            stats.reduce((s, c) => s + c.openIssues,            0),
+      openFlags:             stats.reduce((s, c) => s + c.openFlags,             0),
+      criticalFlags:         stats.reduce((s, c) => s + c.criticalFlags,         0),
+      totalLogsheetTemplates:stats.reduce((s, c) => s + c.totalLogsheetTemplates,0),
+      filledLogsheetsToday:  stats.reduce((s, c) => s + c.filledLogsheetsToday,  0),
+    };
+    totals.siteScore = totals.totalTemplates > 0
+      ? Math.round((totals.filledToday / totals.totalTemplates) * 100) : 0;
+    totals.pendingChecklists = Math.max(0, totals.totalTemplates - totals.filledToday);
+    totals.pendingLogsheets  = Math.max(0, totals.totalLogsheetTemplates - totals.filledLogsheetsToday);
+
+    res.json({
+      companies: stats,
+      totals,
+      date: targetDate,
+      recentAlerts:           alertRows  || [],
+      recentWorkOrders:       woRows     || [],
+      recentSoftRequests:     srRows     || [],
+      recentNotifications:    notifRows  || [],
+      recentChecklists:       csRows     || [],
+      recentLogsheets:        leRows     || [],
+      notSubmittedChecklists: nscsRows   || [],
+      notSubmittedLogsheets:  nsleRows   || [],
     });
   } catch (err) { next(err); }
 });

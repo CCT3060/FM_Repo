@@ -398,24 +398,33 @@ router.get("/requests/all", async (req, res, next) => {
     const companyId = req.companyUser.companyId;
     const status    = req.query.status;
     const assetId   = req.query.assetId;
+    const qCid      = req.query.companyId;
 
-    const params = [companyId];
+    // Determine company scope (single company or all UCA companies)
+    let companyWhere, companyParams;
+    if (qCid === "all") {
+      companyWhere  = "ssr.company_id IN (SELECT company_id FROM user_company_assignments WHERE user_id = ?)";
+      companyParams = [userId];
+    } else {
+      companyWhere  = "ssr.company_id = ?";
+      companyParams = [companyId];
+    }
+
     const conditions = [];
+    const extraParams = [];
     const isSoftManagerRole = roleKey === "admin"
       ? true
       : await hasCapability(companyId, roleKey, "is_soft_manager");
 
     if (!isSoftManagerRole) {
-      // Resolver users can only see requests that are specifically assigned to them.
-      // Unassigned requests are only visible to managers (who can then assign them).
       conditions.push("ssr.assigned_to_user_id = ?");
-      params.push(userId);
+      extraParams.push(userId);
     }
 
-    if (status)  { conditions.push("ssr.status = ?");   params.push(status); }
-    if (assetId) { conditions.push("ssr.asset_id = ?"); params.push(Number(assetId)); }
+    if (status)  { conditions.push("ssr.status = ?");   extraParams.push(status); }
+    if (assetId) { conditions.push("ssr.asset_id = ?"); extraParams.push(Number(assetId)); }
 
-    const where = conditions.length ? " AND " + conditions.join(" AND ") : "";
+    const andWhere = conditions.length ? " AND " + conditions.join(" AND ") : "";
 
     const [rows] = await pool.query(
       `SELECT
@@ -441,7 +450,8 @@ router.get("/requests/all", async (req, res, next) => {
          ssr.escalation_level      AS "escalationLevel",
          ssr.escalated_at          AS "escalatedAt",
          COALESCE(ses.cutoff_hours, 24) AS "cutoffHours",
-         CONCAT('SR-', LPAD(CAST(ssr.id AS VARCHAR), 5, '0')) AS "requestNumber"
+         CONCAT('SR-', LPAD(CAST(ssr.id AS VARCHAR), 5, '0')) AS "requestNumber",
+         co.company_name           AS "companyName"
        FROM soft_service_requests ssr
        LEFT JOIN assets a ON a.id = ssr.asset_id
        LEFT JOIN locations loc ON loc.id = ssr.location_id
@@ -452,10 +462,11 @@ router.get("/requests/all", async (req, res, next) => {
        LEFT JOIN company_users assignee ON assignee.id = ssr.assigned_to_user_id
        LEFT JOIN company_users escuser ON escuser.id = ssr.cutoff_escalation_user_id
        LEFT JOIN soft_escalation_settings ses ON ses.company_id = ssr.company_id
-       WHERE ssr.company_id = ?${where}
+       LEFT JOIN companies co ON co.id = ssr.company_id
+       WHERE ${companyWhere}${andWhere}
        ORDER BY ssr.raised_at DESC
        LIMIT 200`,
-      params
+      [...companyParams, ...extraParams]
     );
 
     res.json(rows);

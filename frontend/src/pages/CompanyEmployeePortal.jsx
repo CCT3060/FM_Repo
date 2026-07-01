@@ -20,6 +20,9 @@ import {
   getCompanyPortalDashboard,
   getCompanyPortalChartStats,
   getCompanyPortalSiteScore,
+  getCompanyPortalSiteScoreHistory,
+  getCompanyPortalCompaniesSiteScore,
+  getCompanyPortalCombinedDashboard,
   getCompanyPortalLogsheetGrid,
   getCompanyPortalDepartments,
   createCompanyPortalDepartment,
@@ -685,12 +688,12 @@ function ScheduleMailModal({ companyUser }) {
               {/* Regards text */}
               <div>
                 <span style={{ ...label(), textTransform: "none", fontWeight: 600, fontSize: "12px", color: "#64748b" }}>Regards Text</span>
-                <input
-                  type="text"
+                <textarea
+                  rows={3}
                   value={form.regardsText}
                   onChange={(e) => setForm((x) => ({ ...x, regardsText: e.target.value }))}
                   placeholder="e.g. Regards, FM Team — Thermax"
-                  style={inp()}
+                  style={{ ...inp(), resize: "vertical", minHeight: "72px" }}
                 />
               </div>
             </div>
@@ -4700,6 +4703,19 @@ export default function CompanyEmployeePortal() {
     }).catch(() => {});
   }, [cpToken, currentUser?.role]);
 
+  // Auto-enable All Companies dashboard on first load when employee has multiple sites
+  const allCompaniesInitRef = useRef(false);
+  useEffect(() => {
+    if (!allCompaniesInitRef.current && myCompanies.length > 1) {
+      allCompaniesInitRef.current = true;
+      // Only auto-enable if the user hasn't explicitly chosen a single company
+      const hasExplicitChoice = sessionStorage.getItem("cp_explicit_company_choice");
+      if (!hasExplicitChoice) {
+        setIsAllCompaniesDashboard(true);
+      }
+    }
+  }, [myCompanies.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleSwitchCompany = async (targetCompanyId) => {
     if (!cpToken || !targetCompanyId) return;
     setSwitchingCompany(true);
@@ -4743,28 +4759,44 @@ export default function CompanyEmployeePortal() {
   const STANDARD_ROLES = new Set(["admin", "supervisor", "employee", "catalyst_admin"]);
   const isCustomRole = !!(currentUser?.role && !STANDARD_ROLES.has(currentUser.role));
   const isViewOnly = isCustomRole; // custom company roles are view-only observers
+  // All Companies combined dashboard — must be declared BEFORE visibleNav useMemo
+  const [isAllCompaniesDashboard, setIsAllCompaniesDashboard] = useState(false);
+  const [combinedDashboard, setCombinedDashboard] = useState(null);
+  // Site filter for modules when in All Companies mode: "all" or a specific companyId
+  const [moduleSiteFilter, setModuleSiteFilter] = useState("all");
   const visibleNav = useMemo(() => {
     const STANDARD = new Set(["admin", "supervisor", "employee", "catalyst_admin"]);
     const isCustom = !!(currentUser?.role && !STANDARD.has(currentUser.role));
     const base = getNav(isCustom ? "admin" : (currentUser?.role || "employee"));
     const isAdmin = currentUser?.role === "admin" || currentUser?.role === "catalyst_admin";
-    // Admin-only management tabs that are always visible for admins regardless of module settings
     const ADMIN_ALWAYS = new Set(["dashboard", "employees", "notifications"]);
     const ALWAYS_VISIBLE = new Set(["dashboard", "mytasks", "employees"]);
-    // Map nav key to the key used in enabledModules array (softrequests → soft-requests)
     const toModuleKey = (k) => k === "softrequests" ? "soft-requests" : k;
 
-    // Sort a filtered nav list by the order of enabledModules, keeping ADMIN_ALWAYS first
+    // When in "All Companies" mode, use the union of all companies' enabled modules
+    const effectiveModules = (isAllCompaniesDashboard && myCompanies.length > 0)
+      ? (() => {
+          const union = new Set();
+          for (const co of myCompanies) {
+            const mods = Array.isArray(co.enabledModules) ? co.enabledModules
+              : (typeof co.enabledModules === "string" && co.enabledModules)
+                ? JSON.parse(co.enabledModules) : [];
+            mods.forEach(m => union.add(m));
+          }
+          return union.size > 0 ? [...union] : null;
+        })()
+      : enabledModules;
+
     const sortByModuleOrder = (list) => {
-      if (!enabledModules) return list;
+      if (!effectiveModules) return list;
       return [...list].sort((a, b) => {
         const aAlways = ADMIN_ALWAYS.has(a.key);
         const bAlways = ADMIN_ALWAYS.has(b.key);
         if (aAlways && bAlways) return 0;
         if (aAlways) return -1;
         if (bAlways) return 1;
-        const ai = enabledModules.indexOf(toModuleKey(a.key));
-        const bi = enabledModules.indexOf(toModuleKey(b.key));
+        const ai = effectiveModules.indexOf(toModuleKey(a.key));
+        const bi = effectiveModules.indexOf(toModuleKey(b.key));
         if (ai === -1 && bi === -1) return 0;
         if (ai === -1) return 1;
         if (bi === -1) return -1;
@@ -4773,23 +4805,20 @@ export default function CompanyEmployeePortal() {
     };
 
     if (isAdmin || isCustom) {
-      // If no modules restriction set by super-admin, show everything
-      if (!enabledModules) return base;
-      // Otherwise apply company-level module filter but keep admin management tabs
-      const filtered = base.filter((n) => ADMIN_ALWAYS.has(n.key) || enabledModules.includes(toModuleKey(n.key)));
+      if (!effectiveModules) return base;
+      const filtered = base.filter((n) => ADMIN_ALWAYS.has(n.key) || effectiveModules.includes(toModuleKey(n.key)));
       return sortByModuleOrder(filtered);
     }
 
-    // Non-admin: filter by company enabledModules first
-    const byCompany = !enabledModules
+    const byCompany = !effectiveModules
       ? base
-      : base.filter((n) => ALWAYS_VISIBLE.has(n.key) || enabledModules.includes(toModuleKey(n.key)));
+      : base.filter((n) => ALWAYS_VISIBLE.has(n.key) || effectiveModules.includes(toModuleKey(n.key)));
     const userModules = currentUser?.moduleAccess;
     if (!Array.isArray(userModules) || userModules.length === 0) {
       return sortByModuleOrder(byCompany);
     }
     return sortByModuleOrder(byCompany.filter((n) => ALWAYS_VISIBLE.has(n.key) || userModules.includes(n.key)));
-  }, [enabledModules, currentUser?.role, currentUser?.moduleAccess]);
+  }, [enabledModules, currentUser?.role, currentUser?.moduleAccess, isAllCompaniesDashboard, myCompanies]);
   const [dashboard, setDashboard] = useState(null);
 
   // ── Alert sound / toast / bell notification state ───────────────
@@ -4839,6 +4868,17 @@ export default function CompanyEmployeePortal() {
   const [chartCustomStart, setChartCustomStart] = useState("");
   const [chartCustomEnd, setChartCustomEnd] = useState("");
   const [chartError, setChartError] = useState(null);
+  // Site Score chart states
+  const [siteScoreHistory, setSiteScoreHistory] = useState(null);
+  const [siteScoreChartRange, setSiteScoreChartRange] = useState(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    return { startDate: today, endDate: today };
+  });
+  const [companiesSiteScore, setCompaniesSiteScore] = useState(null);
+  const [companiesSiteScoreRange, setCompaniesSiteScoreRange] = useState(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    return { startDate: today, endDate: today };
+  });
   // Global dashboard date filter — all cards show data for this date (default: today)
   const [dashboardDate, setDashboardDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [recentEntries, setRecentEntries] = useState([]);
@@ -5142,6 +5182,46 @@ export default function CompanyEmployeePortal() {
     }
   }, [nav, token]);
 
+  // ── Fetch site score history (single-company) ────────────────────────────
+  useEffect(() => {
+    if (!token || (currentUser?.role !== "admin" && !isCustomRole)) return;
+    setSiteScoreHistory(null);
+    getCompanyPortalSiteScoreHistory(token, siteScoreChartRange)
+      .then(d => { if (Array.isArray(d)) setSiteScoreHistory(d); })
+      .catch(() => setSiteScoreHistory([]));
+  }, [token, siteScoreChartRange, currentUser?.role, isCustomRole]);
+
+  // ── Sync site score chart range with dashboard date picker ────────────────
+  useEffect(() => {
+    if (!token) return;
+    setSiteScoreChartRange({ startDate: dashboardDate, endDate: dashboardDate });
+    setCompaniesSiteScoreRange({ startDate: dashboardDate, endDate: dashboardDate });
+    // Re-fetch checklists for the selected dashboard date
+    setRecentChecklistsLoading(true);
+    getCompanyPortalRecentChecklistSubmissions(token, dashboardDate)
+      .then(d => { if (Array.isArray(d)) setRecentChecklists(d); })
+      .catch(() => {})
+      .finally(() => setRecentChecklistsLoading(false));
+  }, [token, dashboardDate]);
+
+  // ── Fetch companies site score (multi-company) ───────────────────────────
+  useEffect(() => {
+    if (!token || myCompanies.length < 2) return;
+    setCompaniesSiteScore(null);
+    getCompanyPortalCompaniesSiteScore(token, companiesSiteScoreRange)
+      .then(d => { if (Array.isArray(d)) setCompaniesSiteScore(d); })
+      .catch(() => setCompaniesSiteScore([]));
+  }, [token, companiesSiteScoreRange, myCompanies.length]);
+
+  // ── Fetch combined dashboard data (all-companies mode) ────────────────────
+  useEffect(() => {
+    if (!token || !isAllCompaniesDashboard) { setModuleSiteFilter("all"); return; }
+    setCombinedDashboard(null);
+    getCompanyPortalCombinedDashboard(token, dashboardDate)
+      .then(d => { if (d) setCombinedDashboard(d); })
+      .catch(() => {});
+  }, [token, isAllCompaniesDashboard, dashboardDate]);
+
   // ── Poll for new flags / work orders / assignments every 15 s ───────────
   useEffect(() => {
     if (!token || (currentUser?.role !== "admin" && currentUser?.role !== "supervisor")) return;
@@ -5292,7 +5372,8 @@ export default function CompanyEmployeePortal() {
       if (!assets.length) getCompanyPortalAssets(token).then((d) => d && setAssets(d)).catch(() => {});
     }
     if (nav === "employees") {
-      load("employees", () => getCompanyPortalEmployees(token)).then((d) => d && setEmployees(d));
+      const empCid = isAllCompaniesDashboard ? (moduleSiteFilter === "all" ? "all" : moduleSiteFilter) : undefined;
+      load("employees", () => getCompanyPortalEmployees(token, empCid)).then((d) => d && setEmployees(d));
       getCompanyRoles(token)
         .then((d) => {
           const list = Array.isArray(d) ? d : [];
@@ -5328,8 +5409,9 @@ export default function CompanyEmployeePortal() {
       if (!employees.length) getCompanyPortalEmployees(token).then((d) => d && setEmployees(d)).catch(() => {});
     }
     if (nav === "locations") {
+      const locCid = isAllCompaniesDashboard ? (moduleSiteFilter === "all" ? "all" : moduleSiteFilter) : undefined;
       setLocationsLoading(true);
-      fetch("/api/company-portal/locations", { headers: { Authorization: `Bearer ${token}` } })
+      fetch(`/api/company-portal/locations${locCid ? `?companyId=${locCid}` : ""}`, { headers: { Authorization: `Bearer ${token}` } })
         .then((r) => r.json())
         .then((d) => setLocations(Array.isArray(d) ? d : []))
         .catch(() => {})
@@ -5342,7 +5424,7 @@ export default function CompanyEmployeePortal() {
       fetch("/api/company-portal/rooms", { headers: { Authorization: `Bearer ${token}` } })
         .then((r) => r.json()).then((d) => setRooms(Array.isArray(d) ? d : [])).catch(() => {});
     }
-  }, [nav, token, load, assets.length]);
+  }, [nav, token, load, assets.length, isAllCompaniesDashboard, moduleSiteFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Auto-refresh current page data every 60 seconds ──
   useEffect(() => {
@@ -5350,9 +5432,13 @@ export default function CompanyEmployeePortal() {
     const refresh = () => {
       if (nav === "warnings") { /* WarningsPanel has its own refresh */ }
       if (nav === "workorders") load("workorders", () => getCompanyPortalWorkOrders ? getCompanyPortalWorkOrders(token) : Promise.resolve([])).then((d) => d && setDashboardWorkOrders(d));
-      if (nav === "employees") load("employees", () => getCompanyPortalEmployees(token)).then((d) => d && setEmployees(d));
+      if (nav === "employees") {
+        const empCidR = isAllCompaniesDashboard ? (moduleSiteFilter === "all" ? "all" : moduleSiteFilter) : undefined;
+        load("employees", () => getCompanyPortalEmployees(token, empCidR)).then((d) => d && setEmployees(d));
+      }
       if (nav === "locations") {
-        fetch("/api/company-portal/locations", { headers: { Authorization: `Bearer ${token}` } })
+        const locCidR = isAllCompaniesDashboard ? (moduleSiteFilter === "all" ? "all" : moduleSiteFilter) : undefined;
+        fetch(`/api/company-portal/locations${locCidR ? `?companyId=${locCidR}` : ""}`, { headers: { Authorization: `Bearer ${token}` } })
           .then((r) => r.json()).then((d) => setLocations(Array.isArray(d) ? d : [])).catch(() => {});
       }
       if (nav === "softrequests") load("softrequests", () => getSoftRequests ? getSoftRequests(token) : Promise.resolve([])).then(() => {});
@@ -6119,12 +6205,26 @@ export default function CompanyEmployeePortal() {
           <p style={{ fontSize: "11px", fontWeight: 600, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "4px" }}>
             {currentUser.role === "supervisor" ? "Supervisor Portal" : "Company Portal"}
           </p>
-          <p style={{ fontSize: "13.5px", fontWeight: 700, color: "#0f172a", lineHeight: 1.3 }}>{currentUser.companyName || "Company"}</p>
+          <p style={{ fontSize: "13.5px", fontWeight: 700, color: "#0f172a", lineHeight: 1.3 }}>{isAllCompaniesDashboard ? "All Companies" : (currentUser.companyName || "Company")}</p>
           {myCompanies.length > 1 && (
             <SearchableSelect
-              value=""
-              onChange={(v) => { if (v) handleSwitchCompany(Number(v)); }}
-              options={myCompanies.map(c => ({ value: String(c.id), label: c.companyName }))}
+              value={isAllCompaniesDashboard ? "all" : ""}
+              onChange={(v) => {
+                if (!v) return;
+                if (v === "all") {
+                  sessionStorage.removeItem("cp_explicit_company_choice");
+                  setIsAllCompaniesDashboard(true);
+                  setNav("dashboard");
+                } else {
+                  sessionStorage.setItem("cp_explicit_company_choice", v);
+                  setIsAllCompaniesDashboard(false);
+                  handleSwitchCompany(Number(v));
+                }
+              }}
+              options={[
+                { value: "all", label: "✦ All Companies" },
+                ...myCompanies.map(c => ({ value: String(c.id), label: c.companyName })),
+              ]}
               placeholder={switchingCompany ? "Switching…" : "Switch company…"}
               disabled={switchingCompany}
               style={{ marginTop: "6px" }}
@@ -6293,6 +6393,29 @@ export default function CompanyEmployeePortal() {
 
       {/* Main content */}
       <main style={{ marginLeft: "240px", flex: 1, padding: "28px 32px", minHeight: "100vh", overflowX: "hidden" }}>
+
+        {/* ── All-Companies site filter bar (shown in every non-dashboard module) ── */}
+        {isAllCompaniesDashboard && nav !== "dashboard" && myCompanies.length > 1 && (
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "20px", padding: "10px 16px", background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: "10px" }} className="no-print">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0369a1" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+            <span style={{ fontSize: "13px", fontWeight: 600, color: "#0369a1" }}>Viewing:</span>
+            <select
+              value={moduleSiteFilter}
+              onChange={e => setModuleSiteFilter(e.target.value)}
+              style={{ padding: "5px 10px", borderRadius: "7px", border: "1.5px solid #7dd3fc", fontSize: "13px", fontWeight: 600, color: "#0369a1", background: "#fff", cursor: "pointer", outline: "none" }}
+            >
+              <option value="all">All Sites (Combined)</option>
+              {myCompanies.map(c => (
+                <option key={c.id} value={String(c.id)}>{c.companyName}</option>
+              ))}
+            </select>
+            {moduleSiteFilter !== "all" && (
+              <span style={{ fontSize: "12px", color: "#64748b", marginLeft: "4px" }}>
+                — showing data for <strong>{myCompanies.find(c => String(c.id) === moduleSiteFilter)?.companyName || "selected site"}</strong>
+              </span>
+            )}
+          </div>
+        )}
 
         {/* ── Dashboard ──────────────────────────────────────────── */}
         {nav === "dashboard" && (() => {
@@ -6593,6 +6716,523 @@ export default function CompanyEmployeePortal() {
 
           /* ── ADMIN DASHBOARD ── */
           return (() => {
+
+            // ── COMBINED (ALL COMPANIES) DASHBOARD ─────────────────────────
+            if (isAllCompaniesDashboard && myCompanies.length > 1) {
+              const cd = combinedDashboard;
+              const perComp = cd?.companies || [];
+              const totals = cd?.totals || {};
+              const recentAlerts = cd?.recentAlerts || [];
+              const recentWorkOrders = cd?.recentWorkOrders || [];
+              const recentSoftRequests = cd?.recentSoftRequests || [];
+              const recentNotifications = cd?.recentNotifications || [];
+              const recentChecklists = cd?.recentChecklists || [];
+              const recentLogsheets = cd?.recentLogsheets || [];
+              const anyUnrestricted = perComp.some(c => !c.enabledModules);
+              const hasAnyModule = (m) => anyUnrestricted || perComp.some(c => c.enabledModules && c.enabledModules.includes(m));
+              const combinedHasLogsheets = hasAnyModule("logsheets");
+              const combinedHasWarnings = hasAnyModule("warnings") || hasAnyModule("flags");
+              const combinedHasWorkOrders = hasAnyModule("workorders") || hasAnyModule("work-orders");
+              const combinedHasSoftRequests = hasAnyModule("soft-requests") || hasAnyModule("softrequests");
+              const combinedHasAssets = hasAnyModule("assets");
+              const combinedDonutData = totals.totalTemplates > 0 ? [
+                { label: "Filled Checklists", value: totals.filledToday || 0, color: "#16a34a" },
+                { label: "Pending Checklists", value: totals.pendingChecklists || 0, color: "#86efac" },
+                ...(combinedHasLogsheets && (totals.filledLogsheetsToday || 0) > 0 ? [{ label: "Filled Logsheets", value: totals.filledLogsheetsToday, color: "#2563eb" }] : []),
+                ...(combinedHasLogsheets && (totals.pendingLogsheets || 0) > 0 ? [{ label: "Pending Logsheets", value: totals.pendingLogsheets, color: "#93c5fd" }] : []),
+              ] : [];
+              return (
+                <div>
+                  {/* Schedule Mail Modal (shared with regular dashboard) */}
+                  <ScheduleMailModal companyUser={currentUser} />
+
+                  {/* Welcome header */}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "24px", gap: "16px", flexWrap: "wrap" }}>
+                    <div>
+                      <h1 style={{ fontSize: "26px", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px", marginBottom: "4px" }}>
+                        All Companies Dashboard 🏢
+                      </h1>
+                      <p style={{ color: "#64748b", fontSize: "14px" }}>
+                        {myCompanies.length} sites — {new Date(dashboardDate + "T00:00:00").toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}
+                      </p>
+                    </div>
+                    {/* Actions + Date picker */}
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", flexShrink: 0 }} className="no-print">
+                      <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "6px 10px", borderRadius: "8px", border: "1.5px solid #e2e8f0", background: "#f8fafc" }}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#475569" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                        <input type="date" value={dashboardDate}
+                          onChange={e => setDashboardDate(e.target.value || new Date().toISOString().slice(0, 10))}
+                          style={{ border: "none", background: "transparent", fontSize: "13px", fontWeight: 600, color: "#0f172a", outline: "none", cursor: "pointer" }} />
+                      </div>
+                      {currentUser?.role === "admin" && (
+                        <button type="button"
+                          onClick={() => { window._openScheduleMailModal && window._openScheduleMailModal(); }}
+                          style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "8px", fontSize: "13px", fontWeight: 600, cursor: "pointer", border: "1.5px solid #2563eb", background: "#eff6ff", color: "#2563eb" }}>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 7L2 7"/></svg>
+                          Schedule Mail
+                        </button>
+                      )}
+                      <button type="button"
+                        onClick={() => window.print()}
+                        style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "8px", fontSize: "13px", fontWeight: 600, cursor: "pointer", border: "1.5px solid #64748b", background: "#f8fafc", color: "#475569" }}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                        Print
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Combined totals row */}
+                  {!cd ? (
+                    <p style={{ color: "#94a3b8", textAlign: "center", padding: "40px" }}>Loading…</p>
+                  ) : (
+                    <>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "16px", marginBottom: "24px" }}>
+                        {[
+                          { label: "Combined Site Score", value: totals.siteScore + "%", sub: `${totals.filledToday}/${totals.totalTemplates} templates`, color: "#16a34a", bg: "#f0fdf4" },
+                          { label: "Total Active Locations", value: totals.activeLocations, sub: "Across all sites", color: "#2563eb", bg: "#eff6ff" },
+                          { label: "Open HK Requests", value: totals.openSoftRequests, sub: totals.openSoftRequests > 0 ? "Needs attention" : "All clear", color: totals.openSoftRequests > 0 ? "#dc2626" : "#16a34a", bg: totals.openSoftRequests > 0 ? "#fef2f2" : "#f0fdf4" },
+                          { label: "Total Sites", value: myCompanies.length, sub: "Assigned to you", color: "#7c3aed", bg: "#f3e8ff" },
+                        ].map(s => (
+                          <div key={s.label} style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", padding: "18px 16px" }}>
+                            <p style={{ fontSize: "11.5px", color: "#94a3b8", margin: "0 0 6px", fontWeight: 600 }}>{s.label}</p>
+                            <p style={{ fontSize: "28px", fontWeight: 800, color: "#0f172a", margin: "0 0 4px" }}>{s.value}</p>
+                            <p style={{ fontSize: "11.5px", color: s.color, margin: 0 }}>{s.sub}</p>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Per-company stat cards */}
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "14px", marginBottom: "24px" }}>
+                        {perComp.map(co => (
+                          <div key={co.id}
+                            style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", padding: "16px", cursor: "pointer" }}
+                            onClick={() => { setIsAllCompaniesDashboard(false); handleSwitchCompany(co.id); }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "12px" }}>
+                              <p style={{ fontWeight: 700, fontSize: "13px", color: "#0f172a", margin: 0 }}>{co.companyName}</p>
+                              <span style={{ fontSize: "10.5px", background: "#f0fdf4", color: "#16a34a", padding: "2px 8px", borderRadius: "20px", fontWeight: 700 }}>
+                                {co.siteScore}%
+                              </span>
+                            </div>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                              <div style={{ textAlign: "center", background: "#f8fafc", borderRadius: "8px", padding: "8px 4px" }}>
+                                <p style={{ fontSize: "18px", fontWeight: 800, color: "#16a34a", margin: 0 }}>{co.filledToday}</p>
+                                <p style={{ fontSize: "10px", color: "#64748b", margin: 0 }}>Filled</p>
+                              </div>
+                              <div style={{ textAlign: "center", background: "#f8fafc", borderRadius: "8px", padding: "8px 4px" }}>
+                                <p style={{ fontSize: "18px", fontWeight: 800, color: "#f97316", margin: 0 }}>{co.totalTemplates - co.filledToday}</p>
+                                <p style={{ fontSize: "10px", color: "#64748b", margin: 0 }}>Pending</p>
+                              </div>
+                            </div>
+                            <p style={{ fontSize: "10.5px", color: "#2563eb", marginTop: "10px", marginBottom: 0, textAlign: "center" }}>
+                              Click to view site →
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Extended combined stat cards */}
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "12px", marginBottom: "20px" }}>
+                        {combinedHasAssets && (
+                          <div style={{ background: "linear-gradient(135deg, #f0fdf4 0%, #f8fafc 100%)", border: "1px solid #bbf7d0", borderRadius: "12px", padding: "12px 14px" }}>
+                            <p style={{ margin: 0, fontSize: "11px", fontWeight: 700, color: "#15803d", textTransform: "uppercase" }}>Active Assets</p>
+                            <p style={{ margin: "6px 0 2px", fontSize: "22px", fontWeight: 800, color: "#0f172a" }}>{totals.activeAssets}</p>
+                            <p style={{ margin: 0, fontSize: "12px", color: "#64748b" }}>{totals.totalAssets} total</p>
+                          </div>
+                        )}
+                        {combinedHasWorkOrders && (
+                          <div style={{ background: "linear-gradient(135deg, #fef2f2 0%, #f8fafc 100%)", border: "1px solid #fecaca", borderRadius: "12px", padding: "12px 14px" }}>
+                            <p style={{ margin: 0, fontSize: "11px", fontWeight: 700, color: "#b91c1c", textTransform: "uppercase" }}>Open Requests</p>
+                            <p style={{ margin: "6px 0 2px", fontSize: "22px", fontWeight: 800, color: "#0f172a" }}>{totals.openIssues}</p>
+                            <p style={{ margin: 0, fontSize: "12px", color: totals.openIssues > 0 ? "#dc2626" : "#64748b" }}>{totals.openIssues > 0 ? "Needs attention" : "All clear"}</p>
+                          </div>
+                        )}
+                        {combinedHasWarnings && (
+                          <div style={{ background: "linear-gradient(135deg, #fff7ed 0%, #f8fafc 100%)", border: "1px solid #fed7aa", borderRadius: "12px", padding: "12px 14px" }}>
+                            <p style={{ margin: 0, fontSize: "11px", fontWeight: 700, color: "#c2410c", textTransform: "uppercase" }}>Total Warnings</p>
+                            <p style={{ margin: "6px 0 2px", fontSize: "22px", fontWeight: 800, color: "#0f172a" }}>{totals.openFlags}</p>
+                            <p style={{ margin: 0, fontSize: "12px", color: totals.criticalFlags > 0 ? "#dc2626" : "#64748b" }}>{totals.criticalFlags} critical flags</p>
+                          </div>
+                        )}
+                        <div style={{ background: "linear-gradient(135deg, #eff6ff 0%, #f8fafc 100%)", border: "1px solid #bfdbfe", borderRadius: "12px", padding: "12px 14px" }}>
+                          <p style={{ margin: 0, fontSize: "11px", fontWeight: 700, color: "#1d4ed8", textTransform: "uppercase" }}>Total Filled Checklists</p>
+                          <p style={{ margin: "6px 0 2px", fontSize: "22px", fontWeight: 800, color: "#0f172a" }}>{totals.filledToday}</p>
+                          <p style={{ margin: 0, fontSize: "12px", color: "#64748b" }}>{totals.pendingChecklists} pending</p>
+                        </div>
+                        {combinedHasLogsheets && (
+                          <div style={{ background: "linear-gradient(135deg, #f3e8ff 0%, #f8fafc 100%)", border: "1px solid #e9d5ff", borderRadius: "12px", padding: "12px 14px" }}>
+                            <p style={{ margin: 0, fontSize: "11px", fontWeight: 700, color: "#7c3aed", textTransform: "uppercase" }}>Total Filled Logsheets</p>
+                            <p style={{ margin: "6px 0 2px", fontSize: "22px", fontWeight: 800, color: "#0f172a" }}>{totals.filledLogsheetsToday}</p>
+                            <p style={{ margin: 0, fontSize: "12px", color: "#64748b" }}>{totals.pendingLogsheets} pending</p>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+
+                  {/* Site Score Overview chart */}
+                  {(() => {
+                    const chartRange = companiesSiteScoreRange;
+                    const setRange = (fn) => setCompaniesSiteScoreRange(prev => typeof fn === "function" ? fn(prev) : fn);
+                    const toDateStr = (d) => d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10);
+                    const displayData = companiesSiteScore
+                      ? companiesSiteScore.map(c => ({ label: c.companyName || "", companyId: c.companyId, value: Math.round(Number(c.avgSiteScore) || 0) }))
+                      : null;
+                    return (
+                      <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px", marginBottom: "24px" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "18px", flexWrap: "wrap", gap: "10px" }}>
+                          <div>
+                            <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", margin: 0 }}>Site Score Overview</p>
+                            <p style={{ fontSize: "12px", color: "#94a3b8", margin: 0, marginTop: "3px" }}>Average checklist completion per site</p>
+                          </div>
+                          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                            <span style={{ fontSize: "11.5px", color: "#64748b" }}>From</span>
+                            <input type="date" value={chartRange.startDate} onChange={e => setRange(prev => ({ ...prev, startDate: e.target.value }))}
+                              style={{ padding: "4px 8px", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "11.5px", color: "#0f172a" }} />
+                            <span style={{ fontSize: "11.5px", color: "#64748b" }}>To</span>
+                            <input type="date" value={chartRange.endDate} onChange={e => setRange(prev => ({ ...prev, endDate: e.target.value }))}
+                              style={{ padding: "4px 8px", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "11.5px", color: "#0f172a" }} />
+                          </div>
+                        </div>
+                        {!displayData ? (
+                          <p style={{ textAlign: "center", color: "#94a3b8", padding: "40px 0", margin: 0 }}>Loading…</p>
+                        ) : displayData.length === 0 ? (
+                          <p style={{ textAlign: "center", color: "#94a3b8", padding: "40px 0", margin: 0 }}>No data</p>
+                        ) : (() => {
+                          const W = 700, H = 240, padL = 48, padR = 18, padT = 22, padB = 78;
+                          const cW = W - padL - padR, cH = H - padT - padB;
+                          const yTk = [0, 20, 40, 60, 80, 100];
+                          const gap = cW / displayData.length;
+                          const bW = Math.max(6, Math.min(38, gap * 0.62));
+                          return (
+                            <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto" }}>
+                              <defs>
+                                <linearGradient id="ssBarGrad2" x1="0" y1="0" x2="0" y2="1">
+                                  <stop offset="0%" stopColor="#fb923c" /><stop offset="100%" stopColor="#ea580c" />
+                                </linearGradient>
+                              </defs>
+                              {yTk.map(tick => {
+                                const y = padT + cH - (tick / 100) * cH;
+                                return (<g key={tick}>
+                                  <line x1={padL} y1={y} x2={padL + cW} y2={y} stroke={tick === 0 ? "#cbd5e1" : "#f1f5f9"} strokeWidth={tick === 0 ? "1.5" : "1"} />
+                                  <text x={padL - 6} y={y + 4} textAnchor="end" fontSize="10" fill="#94a3b8">{tick}</text>
+                                </g>);
+                              })}
+                              <line x1={padL} y1={padT} x2={padL} y2={padT + cH} stroke="#cbd5e1" strokeWidth="1.5" />
+                              <text transform={`translate(12,${padT + cH / 2}) rotate(-90)`} textAnchor="middle" fontSize="10" fill="#64748b">Avg Score %</text>
+                              {displayData.map((item, i) => {
+                                const cx = padL + gap * i + gap / 2;
+                                const bH = Math.max((item.value / 100) * cH, item.value > 0 ? 2 : 0);
+                                const bX = cx - bW / 2, bY = padT + cH - bH;
+                                const lY = padT + cH + 12;
+                                return (<g key={i} style={{ cursor: "pointer" }} onClick={() => { setIsAllCompaniesDashboard(false); handleSwitchCompany(item.companyId); }}>
+                                  <rect x={bX - 4} y={padT} width={bW + 8} height={cH} fill="transparent" />
+                                  <rect x={bX} y={bY} width={bW} height={bH} fill="url(#ssBarGrad2)" rx="3" />
+                                  {bH > 4 && <ellipse cx={cx} cy={bY} rx={bW / 2} ry={Math.max(bW / 8, 2)} fill="#fb923c" opacity="0.85" />}
+                                  {item.value > 0 && <text x={cx} y={bY - 4} textAnchor="middle" fontSize="9" fill="#374151" fontWeight="600">{item.value}%</text>}
+                                  <text x={cx} y={lY} textAnchor="end" fontSize="9" fill="#2563eb" fontWeight="600" transform={`rotate(-40,${cx},${lY})`}>{item.label}</text>
+                                </g>);
+                              })}
+                              <text x={padL + cW / 2} y={H - 2} textAnchor="middle" fontSize="9" fill="#94a3b8">Click a bar to switch to that site</text>
+                            </svg>
+                          );
+                        })()}
+                      </div>
+                    );
+                  })()}
+
+                  {/* Submission Overview + Latest Alerts */}
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px", marginBottom: "20px" }}>
+                    <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px" }}>
+                      <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", margin: "0 0 4px" }}>Submission Overview</p>
+                      <p style={{ fontSize: "12px", color: "#94a3b8", margin: "0 0 16px" }}>Data for {new Date(dashboardDate + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}</p>
+                      {combinedDonutData.length === 0 ? (
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "120px" }}>
+                          <p style={{ color: "#94a3b8", fontSize: "13px", margin: 0 }}>No submissions for this date</p>
+                        </div>
+                      ) : (() => {
+                        const donutVals = combinedDonutData.map(d => Math.max(0, d.value || 0));
+                        const donutTotal = donutVals.reduce((s, v) => s + v, 0);
+                        const sz = 150, th = 28, rr = (sz - th) / 2;
+                        const ccx = sz / 2, ccy = sz / 2, circ = 2 * Math.PI * rr;
+                        const pct = totals.totalTemplates > 0 ? Math.round((totals.filledToday / totals.totalTemplates) * 100) : 0;
+                        let off = 0;
+                        return (
+                          <div style={{ display: "flex", alignItems: "center", gap: "16px", flexWrap: "wrap" }}>
+                            <svg width={sz} height={sz} style={{ flexShrink: 0 }}>
+                              {donutTotal === 0
+                                ? <circle cx={ccx} cy={ccy} r={rr} fill="none" stroke="#f1f5f9" strokeWidth={th} />
+                                : donutVals.map((v, i) => {
+                                    const len = donutTotal > 0 ? (v / donutTotal) * circ : 0;
+                                    const el = <circle key={i} cx={ccx} cy={ccy} r={rr} fill="none" stroke={combinedDonutData[i].color}
+                                      strokeWidth={th} strokeDasharray={`${len} ${circ - len}`} strokeDashoffset={-off}
+                                      style={{ transform: "rotate(-90deg)", transformOrigin: `${ccx}px ${ccy}px` }} />;
+                                    off += len; return el;
+                                  })
+                              }
+                              <text x={ccx} y={ccy + 2} textAnchor="middle" fontSize="16" fontWeight="800" fill="#0f172a">{pct}%</text>
+                              <text x={ccx} y={ccy + 15} textAnchor="middle" fontSize="8" fontWeight="600" fill="#94a3b8">SITE SCORE</text>
+                            </svg>
+                            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                              {combinedDonutData.map((d, i) => (
+                                <div key={i} style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                  <span style={{ width: "9px", height: "9px", borderRadius: "50%", background: d.color, flexShrink: 0 }} />
+                                  <span style={{ fontSize: "11.5px", color: "#475569", flex: 1 }}>{d.label}</span>
+                                  <span style={{ fontSize: "12px", fontWeight: 700, color: "#0f172a" }}>{d.value}</span>
+                                  <span style={{ fontSize: "10px", color: "#94a3b8" }}>{donutTotal > 0 ? Math.round(d.value / donutTotal * 100) : 0}%</span>
+                                </div>
+                              ))}
+                              <div style={{ marginTop: "4px", paddingTop: "6px", borderTop: "1px solid #f1f5f9" }}>
+                                <span style={{ fontSize: "11px", color: "#475569" }}>Site Score: </span>
+                                <span style={{ fontSize: "11px", fontWeight: 700, color: "#2563eb" }}>{pct}%</span>
+                                <span style={{ fontSize: "11px", color: "#94a3b8" }}> ({totals.filledToday}/{totals.totalTemplates})</span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                    <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px" }}>
+                      <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", margin: "0 0 2px" }}>Latest Alerts</p>
+                      <p style={{ fontSize: "12px", color: "#94a3b8", margin: "0 0 14px" }}>Open warnings &amp; flags</p>
+                      {recentAlerts.length === 0
+                        ? <div style={{ textAlign: "center", padding: "24px 0", color: "#22c55e", fontSize: "13px" }}>✓ No open alerts across all sites</div>
+                        : <div style={{ display: "flex", flexDirection: "column", gap: "8px", maxHeight: "240px", overflowY: "auto" }}>
+                            {recentAlerts.map(a => (
+                              <div key={a.id} style={{ display: "flex", alignItems: "flex-start", gap: "10px", padding: "8px 10px", borderRadius: "8px", background: "#f8fafc" }}>
+                                <span style={{ width: "8px", height: "8px", borderRadius: "50%", marginTop: "5px", flexShrink: 0, background: a.severity === "critical" ? "#dc2626" : a.severity === "high" ? "#f97316" : "#f59e0b" }} />
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <p style={{ margin: 0, fontSize: "12.5px", fontWeight: 600, color: "#0f172a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.title || a.assetName || "Alert"}</p>
+                                  <p style={{ margin: 0, fontSize: "11px", color: "#94a3b8" }}>{a.companyName} · {a.severity}</p>
+                                </div>
+                                <span style={{ fontSize: "10px", color: "#94a3b8", whiteSpace: "nowrap" }}>{a.createdAt ? new Date(a.createdAt).toLocaleDateString("en-GB") : ""}</span>
+                              </div>
+                            ))}
+                          </div>
+                      }
+                    </div>
+                  </div>
+
+                  {/* Requests + HK Request */}
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px", marginBottom: "20px" }}>
+                    {combinedHasWorkOrders && (
+                      <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px" }}>
+                        <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", margin: "0 0 2px" }}>Requests</p>
+                        <p style={{ fontSize: "12px", color: "#94a3b8", margin: "0 0 14px" }}>Open work orders</p>
+                        {recentWorkOrders.length === 0
+                          ? <div style={{ textAlign: "center", padding: "24px 0", color: "#22c55e", fontSize: "13px" }}>✓ No open work orders</div>
+                          : <div style={{ display: "flex", flexDirection: "column", gap: "8px", maxHeight: "200px", overflowY: "auto" }}>
+                              {recentWorkOrders.map(wo => (
+                                <div key={wo.id} style={{ padding: "8px 10px", borderRadius: "8px", background: "#f8fafc" }}>
+                                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                                    <p style={{ margin: 0, fontSize: "12.5px", fontWeight: 600, color: "#0f172a" }}>{wo.woNumber || `WO-${wo.id}`}</p>
+                                    <span style={{ fontSize: "10px", background: "#fef2f2", color: "#dc2626", padding: "1px 6px", borderRadius: "4px" }}>{wo.priority || "open"}</span>
+                                  </div>
+                                  <p style={{ margin: "2px 0 0", fontSize: "11px", color: "#94a3b8" }}>{wo.companyName} · {wo.assetName || "—"}</p>
+                                </div>
+                              ))}
+                            </div>
+                        }
+                      </div>
+                    )}
+                    {combinedHasSoftRequests && (
+                      <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px" }}>
+                        <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", margin: "0 0 2px" }}>HK Request</p>
+                        <p style={{ fontSize: "12px", color: "#94a3b8", margin: "0 0 14px" }}>Open soft service requests</p>
+                        {recentSoftRequests.length === 0
+                          ? <div style={{ textAlign: "center", padding: "24px 0", color: "#22c55e", fontSize: "13px" }}>✓ No open soft service requests</div>
+                          : <div style={{ display: "flex", flexDirection: "column", gap: "8px", maxHeight: "200px", overflowY: "auto" }}>
+                              {recentSoftRequests.map(sr => (
+                                <div key={sr.id} style={{ padding: "8px 10px", borderRadius: "8px", background: "#f8fafc" }}>
+                                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                                    <p style={{ margin: 0, fontSize: "12.5px", fontWeight: 600, color: "#0f172a" }}>{sr.requestType || "Request"}</p>
+                                    {sr.escalationLevel > 0 && <span style={{ fontSize: "10px", background: "#fff7ed", color: "#c2410c", padding: "1px 6px", borderRadius: "4px" }}>Escalated</span>}
+                                  </div>
+                                  <p style={{ margin: "2px 0 0", fontSize: "11px", color: "#94a3b8" }}>{sr.companyName} · {sr.raisedBy || "—"}</p>
+                                </div>
+                              ))}
+                            </div>
+                        }
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Notifications */}
+                  {recentNotifications.length > 0 && (
+                    <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px", marginBottom: "20px" }}>
+                      <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", margin: "0 0 2px" }}>Notifications</p>
+                      <p style={{ fontSize: "12px", color: "#94a3b8", margin: "0 0 14px" }}>Latest alerts &amp; reminders</p>
+                      <div style={{ display: "flex", flexDirection: "column", gap: "8px", maxHeight: "180px", overflowY: "auto" }}>
+                        {recentNotifications.map(n => (
+                          <div key={n.id} style={{ display: "flex", alignItems: "flex-start", gap: "10px", padding: "8px 10px", borderRadius: "8px", background: n.isRead ? "#f8fafc" : "#eff6ff" }}>
+                            <span style={{ fontSize: "14px" }}>🔔</span>
+                            <div style={{ flex: 1 }}>
+                              <p style={{ margin: 0, fontSize: "12.5px", fontWeight: 600, color: "#0f172a" }}>{n.title}</p>
+                              <p style={{ margin: "2px 0 0", fontSize: "11px", color: "#64748b" }}>{n.message}</p>
+                              <p style={{ margin: "2px 0 0", fontSize: "10px", color: "#94a3b8" }}>{n.companyName} · {n.createdAt ? new Date(n.createdAt).toLocaleDateString("en-GB") : ""}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Recent Submissions — grouped by company, submitted + not-submitted */}
+                  {(() => {
+                    const notSubmittedChecklists = cd?.notSubmittedChecklists || [];
+                    const notSubmittedLogsheets  = cd?.notSubmittedLogsheets  || [];
+                    const allCompanyIds = Array.from(new Set([
+                      ...recentChecklists.map(r => r.companyId),
+                      ...recentLogsheets.map(r => r.companyId),
+                      ...notSubmittedChecklists.map(r => r.companyId),
+                      ...notSubmittedLogsheets.map(r => r.companyId),
+                    ])).filter(Boolean);
+                    const companyNameMap = {};
+                    [...recentChecklists, ...recentLogsheets, ...notSubmittedChecklists, ...notSubmittedLogsheets]
+                      .forEach(r => { if (r.companyId && r.companyName) companyNameMap[r.companyId] = r.companyName; });
+                    const sortedCompanyIds = allCompanyIds.sort((a, b) =>
+                      (companyNameMap[a] || "").localeCompare(companyNameMap[b] || "")
+                    );
+                    const totalSubmitted    = recentChecklists.length + recentLogsheets.length;
+                    const totalNotSubmitted = notSubmittedChecklists.length + notSubmittedLogsheets.length;
+                    return (
+                      <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px", marginBottom: "20px" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
+                          <div>
+                            <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", margin: 0 }}>Daily Submissions</p>
+                            <p style={{ fontSize: "12px", color: "#94a3b8", margin: 0 }}>{new Date(dashboardDate + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}</p>
+                          </div>
+                          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                            <span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "11px", fontWeight: 600, background: "#f0fdf4", color: "#16a34a" }}>Submitted: {totalSubmitted}</span>
+                            <span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "11px", fontWeight: 600, background: "#fff7ed", color: "#ea580c" }}>Not Submitted: {totalNotSubmitted}</span>
+                          </div>
+                        </div>
+                        {sortedCompanyIds.length === 0
+                          ? <div style={{ textAlign: "center", padding: "32px", color: "#94a3b8", fontSize: "13px" }}>No data for this date</div>
+                          : <div style={{ overflowX: "auto" }}>
+                              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+                                <thead>
+                                  <tr>
+                                    {["#", "Template", "Room / Location", "Filled By", "Submitted", "Status"].map((h, i) => (
+                                      <th key={i} style={{ padding: "9px 12px", textAlign: "left", background: "#f8fafc", color: "#475569", fontWeight: 600, fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>{h}</th>
+                                    ))}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {sortedCompanyIds.flatMap((cid) => {
+                                    const cName = companyNameMap[cid] || `Company ${cid}`;
+                                    const subCL  = recentChecklists.filter(r => r.companyId === cid).sort((a,b) => new Date(b.submittedAt||0)-new Date(a.submittedAt||0));
+                                    const subLG  = combinedHasLogsheets ? recentLogsheets.filter(r => r.companyId === cid).sort((a,b) => new Date(b.submittedAt||0)-new Date(a.submittedAt||0)) : [];
+                                    const nsCL   = notSubmittedChecklists.filter(r => r.companyId === cid);
+                                    const nsLG   = combinedHasLogsheets ? notSubmittedLogsheets.filter(r => r.companyId === cid) : [];
+                                    const rows = [];
+                                    let rowIdx = 0;
+                                    // Company heading row
+                                    rows.push(
+                                      <tr key={`chead-${cid}`}>
+                                        <td colSpan={6} style={{ padding: "10px 12px", background: "#f0f9ff", color: "#0369a1", fontWeight: 700, fontSize: "12px", borderTop: "2px solid #bae6fd", borderBottom: "1px solid #bae6fd" }}>
+                                          {cName}
+                                        </td>
+                                      </tr>
+                                    );
+                                    // Submitted checklists
+                                    subCL.forEach((r) => {
+                                      rowIdx++;
+                                      rows.push(
+                                        <tr key={`scl-${r.id}`} style={{ borderBottom: "1px solid #f1f5f9" }}
+                                          onMouseEnter={(e) => e.currentTarget.style.background = "#f8fafc"}
+                                          onMouseLeave={(e) => e.currentTarget.style.background = ""}>
+                                          <td style={{ padding: "8px 12px", color: "#94a3b8", fontSize: "12px" }}>{rowIdx}</td>
+                                          <td style={{ padding: "8px 12px", fontWeight: 600, color: "#0f172a" }}>{r.templateName}</td>
+                                          <td style={{ padding: "8px 12px", color: "#64748b", fontSize: "12px" }}>{r.roomName || "—"}</td>
+                                          <td style={{ padding: "8px 12px", color: "#475569", fontSize: "12px" }}>{r.submittedBy || "—"}</td>
+                                          <td style={{ padding: "8px 12px", color: "#64748b", fontSize: "12px", whiteSpace: "nowrap" }}>
+                                            {r.submittedAt ? new Date(r.submittedAt).toLocaleString("en-US", { month: "numeric", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—"}
+                                          </td>
+                                          <td style={{ padding: "8px 12px" }}>
+                                            <span style={{ padding: "2px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: 600, background: "#f0fdf4", color: "#16a34a" }}>
+                                              {r.status ? (r.status.charAt(0).toUpperCase() + r.status.slice(1)) : "Submitted"}
+                                            </span>
+                                          </td>
+                                        </tr>
+                                      );
+                                    });
+                                    // Submitted logsheets
+                                    subLG.forEach((r) => {
+                                      rowIdx++;
+                                      rows.push(
+                                        <tr key={`slg-${r.id}`} style={{ borderBottom: "1px solid #f1f5f9" }}
+                                          onMouseEnter={(e) => e.currentTarget.style.background = "#f8fafc"}
+                                          onMouseLeave={(e) => e.currentTarget.style.background = ""}>
+                                          <td style={{ padding: "8px 12px", color: "#94a3b8", fontSize: "12px" }}>{rowIdx}</td>
+                                          <td style={{ padding: "8px 12px", fontWeight: 600, color: "#0f172a" }}>
+                                            <span style={{ fontSize: "9px", padding: "1px 5px", borderRadius: "3px", fontWeight: 700, marginRight: "5px", background: "#f3e8ff", color: "#7c3aed" }}>LOG</span>
+                                            {r.templateName}
+                                          </td>
+                                          <td style={{ padding: "8px 12px", color: "#64748b", fontSize: "12px" }}>{r.month ? `M${r.month}/${r.year}` : "—"}</td>
+                                          <td style={{ padding: "8px 12px", color: "#475569", fontSize: "12px" }}>{r.submittedBy || "—"}</td>
+                                          <td style={{ padding: "8px 12px", color: "#64748b", fontSize: "12px", whiteSpace: "nowrap" }}>
+                                            {r.submittedAt ? new Date(r.submittedAt).toLocaleString("en-US", { month: "numeric", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—"}
+                                          </td>
+                                          <td style={{ padding: "8px 12px" }}>
+                                            <span style={{ padding: "2px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: 600, background: "#f3e8ff", color: "#7c3aed" }}>
+                                              {r.status ? (r.status.charAt(0).toUpperCase() + r.status.slice(1)) : "Submitted"}
+                                            </span>
+                                          </td>
+                                        </tr>
+                                      );
+                                    });
+                                    // Not-submitted checklists
+                                    nsCL.forEach((r) => {
+                                      rowIdx++;
+                                      rows.push(
+                                        <tr key={`nscl-${r.templateId}`} style={{ borderBottom: "1px solid #f1f5f9", background: "#fffbf5" }}
+                                          onMouseEnter={(e) => e.currentTarget.style.background = "#fff7ed"}
+                                          onMouseLeave={(e) => e.currentTarget.style.background = "#fffbf5"}>
+                                          <td style={{ padding: "8px 12px", color: "#94a3b8", fontSize: "12px" }}>{rowIdx}</td>
+                                          <td style={{ padding: "8px 12px", fontWeight: 600, color: "#0f172a" }}>{r.templateName}</td>
+                                          <td style={{ padding: "8px 12px", color: "#64748b", fontSize: "12px" }}>{r.roomName || "—"}</td>
+                                          <td style={{ padding: "8px 12px", color: "#94a3b8", fontSize: "12px" }}>—</td>
+                                          <td style={{ padding: "8px 12px", color: "#94a3b8", fontSize: "12px" }}>—</td>
+                                          <td style={{ padding: "8px 12px" }}>
+                                            <span style={{ padding: "2px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: 600, background: "#fff7ed", color: "#ea580c" }}>Not Submitted</span>
+                                          </td>
+                                        </tr>
+                                      );
+                                    });
+                                    // Not-submitted logsheets
+                                    nsLG.forEach((r) => {
+                                      rowIdx++;
+                                      rows.push(
+                                        <tr key={`nslg-${r.templateId}`} style={{ borderBottom: "1px solid #f1f5f9", background: "#fdf4ff" }}
+                                          onMouseEnter={(e) => e.currentTarget.style.background = "#fae8ff"}
+                                          onMouseLeave={(e) => e.currentTarget.style.background = "#fdf4ff"}>
+                                          <td style={{ padding: "8px 12px", color: "#94a3b8", fontSize: "12px" }}>{rowIdx}</td>
+                                          <td style={{ padding: "8px 12px", fontWeight: 600, color: "#0f172a" }}>
+                                            <span style={{ fontSize: "9px", padding: "1px 5px", borderRadius: "3px", fontWeight: 700, marginRight: "5px", background: "#f3e8ff", color: "#7c3aed" }}>LOG</span>
+                                            {r.templateName}
+                                          </td>
+                                          <td style={{ padding: "8px 12px", color: "#94a3b8", fontSize: "12px" }}>—</td>
+                                          <td style={{ padding: "8px 12px", color: "#94a3b8", fontSize: "12px" }}>—</td>
+                                          <td style={{ padding: "8px 12px", color: "#94a3b8", fontSize: "12px" }}>—</td>
+                                          <td style={{ padding: "8px 12px" }}>
+                                            <span style={{ padding: "2px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: 600, background: "#fae8ff", color: "#7c3aed" }}>Not Submitted</span>
+                                          </td>
+                                        </tr>
+                                      );
+                                    });
+                                    return rows;
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                        }
+                      </div>
+                    );
+                  })()}
+                </div>
+              );
+            }
+
             // SVG Donut Chart helper
             const DonutChart = ({ data, size = 200, thickness = 38, centerLabel }) => {
               const vals = data.map((d) => Math.max(0, d.value || 0));
@@ -6640,9 +7280,12 @@ export default function CompanyEmployeePortal() {
 
             const PERIOD_LABELS = { day: "Today", week: "This Week", month: "This Month", year: "This Year" };
             const cs = chartStats;
+            const hasLogsheets = !enabledModules || enabledModules.includes("logsheets");
             const chartData = cs ? [
               { label: "Filled Checklists",  value: cs.filledChecklists,  color: "#16a34a" },
               { label: "Pending Checklists", value: cs.pendingChecklists, color: "#86efac" },
+              ...(hasLogsheets && (cs.filledLogsheets || 0) > 0  ? [{ label: "Filled Logsheets",  value: cs.filledLogsheets,  color: "#2563eb" }] : []),
+              ...(hasLogsheets && (cs.pendingLogsheets || 0) > 0 ? [{ label: "Pending Logsheets", value: cs.pendingLogsheets, color: "#93c5fd" }] : []),
             ] : [];
             const chartSubtitle = chartError
               ? `⚠ ${chartError}`
@@ -6653,20 +7296,25 @@ export default function CompanyEmployeePortal() {
               : 0;
             const filledSubmissions = cs ? (cs.filledLogsheets || 0) + (cs.filledChecklists || 0) : 0;
             const completionRate = totalSubmissions > 0 ? Math.round((filledSubmissions / totalSubmissions) * 100) : 0;
-            const checklistTotalToday = cs ? (cs.filledChecklists || 0) + (cs.pendingChecklists || 0) : 0;
-            const checklistRateFromChart = checklistTotalToday > 0 ? Math.round(((cs?.filledChecklists || 0) / checklistTotalToday) * 100) : 0;
+            const checklistTotalChart = cs ? (cs.filledChecklists || 0) + (cs.pendingChecklists || 0) : 0;
+            const checklistRateFromChart = checklistTotalChart > 0 ? Math.round(((cs?.filledChecklists || 0) / checklistTotalChart) * 100) : 0;
             // For today, trust todaySiteScore (more accurate); for other dates use chart stats
             const isToday = dashboardDate === new Date().toISOString().slice(0, 10);
             const siteScoreRate = isToday && typeof todaySiteScore?.percentage === "number" ? todaySiteScore.percentage : checklistRateFromChart;
+            // Site score subtitle values: use todaySiteScore for today, chartStats for other dates
+            const scoreDisplayFilled = isToday ? (todaySiteScore?.filled || 0) : (cs?.filledChecklists || 0);
+            const scoreDisplayTotal  = isToday ? (todaySiteScore?.total  || 0) : checklistTotalChart;
             const donutData = isToday && todaySiteScore && (todaySiteScore.total || 0) > 0
               ? [
                   { label: "Filled Checklists",  value: todaySiteScore.filled || 0, color: "#16a34a" },
                   { label: "Pending Checklists", value: Math.max(0, (todaySiteScore.total || 0) - (todaySiteScore.filled || 0)), color: "#86efac" },
+                  ...(hasLogsheets && (cs?.filledLogsheets || 0) > 0  ? [{ label: "Filled Logsheets",  value: cs.filledLogsheets,  color: "#2563eb" }] : []),
+                  ...(hasLogsheets && (cs?.pendingLogsheets || 0) > 0 ? [{ label: "Pending Logsheets", value: cs.pendingLogsheets, color: "#93c5fd" }] : []),
                 ]
               : chartData;
             const openAlertsCount = dashboardAlerts.length;
             const criticalAlertsCount = dashboardAlerts.filter((f) => f.severity === "critical").length;
-            const unassignedOpenWorkOrders = dashboardWorkOrders.filter((wo) => !wo.assignedTo).length;
+            const unassignedOpenWorkOrders = dashboardWorkOrders.filter((wo) => !wo.assignedTo);
 
             return (
               <div>
@@ -6795,23 +7443,22 @@ export default function CompanyEmployeePortal() {
                   marginBottom: "20px",
                 }}>
                   <div style={{ background: "linear-gradient(135deg, #eff6ff 0%, #f8fafc 100%)", border: "1px solid #bfdbfe", borderRadius: "12px", padding: "12px 14px" }}>
-                    <p style={{ margin: 0, fontSize: "11px", fontWeight: 700, color: "#1d4ed8", letterSpacing: "0.03em", textTransform: "uppercase" }}>Today's Site Score</p>
+                    <p style={{ margin: 0, fontSize: "11px", fontWeight: 700, color: "#1d4ed8", letterSpacing: "0.03em", textTransform: "uppercase" }}>{isToday ? "Today's Site Score" : "Site Score"}</p>
                     <p style={{ margin: "6px 0 2px", fontSize: "22px", fontWeight: 800, color: "#0f172a" }}>{siteScoreRate}%</p>
                     <p style={{ margin: 0, fontSize: "12px", color: "#64748b" }}>
-                      {todaySiteScore ? `${todaySiteScore.filled || 0} of ${todaySiteScore.total || 0} checklists filled today` : "Today's checklist completion rate"}
+                      {scoreDisplayTotal > 0 ? `${scoreDisplayFilled} of ${scoreDisplayTotal} checklists filled` : "Checklist completion rate"}
                     </p>
                   </div>
-                  {isSoftServices ? (
-                    <div style={{ background: "linear-gradient(135deg, #f0fdf4 0%, #f8fafc 100%)", border: "1px solid #bbf7d0", borderRadius: "12px", padding: "12px 14px" }}>
-                      <p style={{ margin: 0, fontSize: "11px", fontWeight: 700, color: "#15803d", letterSpacing: "0.03em", textTransform: "uppercase" }}>Total Filled Checklists</p>
-                      <p style={{ margin: "6px 0 2px", fontSize: "22px", fontWeight: 800, color: "#0f172a" }}>{cs?.filledChecklists ?? 0}</p>
-                      <p style={{ margin: 0, fontSize: "12px", color: "#64748b" }}>Filled checklists for selected date</p>
-                    </div>
-                  ) : (
                   <div style={{ background: "linear-gradient(135deg, #f0fdf4 0%, #f8fafc 100%)", border: "1px solid #bbf7d0", borderRadius: "12px", padding: "12px 14px" }}>
-                    <p style={{ margin: 0, fontSize: "11px", fontWeight: 700, color: "#15803d", letterSpacing: "0.03em", textTransform: "uppercase" }}>Execution Volume</p>
-                    <p style={{ margin: "6px 0 2px", fontSize: "22px", fontWeight: 800, color: "#0f172a" }}>{totalSubmissions}</p>
-                    <p style={{ margin: 0, fontSize: "12px", color: "#64748b" }}>Total checklist/logsheet outcomes tracked</p>
+                    <p style={{ margin: 0, fontSize: "11px", fontWeight: 700, color: "#15803d", letterSpacing: "0.03em", textTransform: "uppercase" }}>Total Filled Checklists</p>
+                    <p style={{ margin: "6px 0 2px", fontSize: "22px", fontWeight: 800, color: "#0f172a" }}>{cs?.filledChecklists ?? 0}</p>
+                    <p style={{ margin: 0, fontSize: "12px", color: "#64748b" }}>Filled checklists for selected date</p>
+                  </div>
+                  {hasLogsheets && (
+                  <div style={{ background: "linear-gradient(135deg, #eff6ff 0%, #f8fafc 100%)", border: "1px solid #bfdbfe", borderRadius: "12px", padding: "12px 14px" }}>
+                    <p style={{ margin: 0, fontSize: "11px", fontWeight: 700, color: "#1d4ed8", letterSpacing: "0.03em", textTransform: "uppercase" }}>Total Filled Logsheets</p>
+                    <p style={{ margin: "6px 0 2px", fontSize: "22px", fontWeight: 800, color: "#0f172a" }}>{cs?.filledLogsheets ?? 0}</p>
+                    <p style={{ margin: 0, fontSize: "12px", color: "#64748b" }}>Filled logsheets for selected date</p>
                   </div>
                   )}
                   {hasWarnings && (
@@ -6824,7 +7471,7 @@ export default function CompanyEmployeePortal() {
                   {hasWorkOrders && (
                   <div style={{ background: "linear-gradient(135deg, #fef2f2 0%, #f8fafc 100%)", border: "1px solid #fecaca", borderRadius: "12px", padding: "12px 14px" }}>
                     <p style={{ margin: 0, fontSize: "11px", fontWeight: 700, color: "#b91c1c", letterSpacing: "0.03em", textTransform: "uppercase" }}>Request Coverage</p>
-                    <p style={{ margin: "6px 0 2px", fontSize: "22px", fontWeight: 800, color: "#0f172a" }}>{unassignedOpenWorkOrders}</p>
+                    <p style={{ margin: "6px 0 2px", fontSize: "22px", fontWeight: 800, color: "#0f172a" }}>{unassignedOpenWorkOrders.length}</p>
                     <p style={{ margin: 0, fontSize: "12px", color: "#64748b" }}>Open requests without an assignee</p>
                   </div>
                   )}
@@ -7192,6 +7839,165 @@ export default function CompanyEmployeePortal() {
                   </div>
                 )}
 
+                {/* ── Site Score Overview ───────────────────────────────── */}
+                {(() => {
+                  const isMultiCo = myCompanies.length > 1;
+                  const chartData  = isMultiCo ? companiesSiteScore : siteScoreHistory;
+                  const chartRange = isMultiCo ? companiesSiteScoreRange : siteScoreChartRange;
+                  const setRange   = isMultiCo
+                    ? (fn) => setCompaniesSiteScoreRange(prev => typeof fn === "function" ? fn(prev) : fn)
+                    : (fn) => setSiteScoreChartRange(prev => typeof fn === "function" ? fn(prev) : fn);
+
+                  // Safely extract YYYY-MM-DD string (pg may return date columns as JS Date objects)
+                  const toDateStr = (d) => {
+                    if (d instanceof Date) return d.toISOString().slice(0, 10);
+                    return String(d).slice(0, 10);
+                  };
+
+                  // Build display data
+                  const displayData = (() => {
+                    if (!chartData) return null;
+                    if (isMultiCo) {
+                      return chartData.map(c => ({
+                        label: c.companyName || "",
+                        companyId: c.companyId,
+                        value: Math.round(Number(c.avgSiteScore) || 0),
+                      }));
+                    }
+                    const raw = chartData;
+                    if (raw.length <= 35) {
+                      return raw.map(r => {
+                        const s = toDateStr(r.date);
+                        const [, month, day] = s.split("-");
+                        return { label: `${day}/${month}`, fullLabel: s, value: Math.round(Number(r.siteScore) || 0) };
+                      });
+                    }
+                    // Monthly aggregation for long ranges
+                    const monthly = {};
+                    for (const r of raw) {
+                      const m = toDateStr(r.date).slice(0, 7);
+                      if (!monthly[m]) monthly[m] = { total: 0, count: 0 };
+                      monthly[m].total += Number(r.siteScore) || 0;
+                      monthly[m].count++;
+                    }
+                    return Object.entries(monthly).map(([m, v]) => ({
+                      label: new Date(m + "-01T00:00:00").toLocaleDateString("en-GB", { month: "short", year: "2-digit" }),
+                      fullLabel: m,
+                      value: Math.round(v.total / v.count),
+                    }));
+                  })();
+
+                  return (
+                    <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px", marginBottom: "24px" }}>
+                      {/* Card header */}
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "18px", flexWrap: "wrap", gap: "10px" }}>
+                        <div>
+                          <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", margin: 0 }}>Site Score Overview</p>
+                          <p style={{ fontSize: "12px", color: "#94a3b8", margin: 0, marginTop: "3px" }}>
+                            {isMultiCo ? "Average checklist completion per site" : "Daily checklist completion rate"}
+                          </p>
+                        </div>
+                        {/* Date range pickers — defaults to today */}
+                        <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+                          <span style={{ fontSize: "11.5px", color: "#64748b" }}>From</span>
+                          <input type="date" value={chartRange.startDate}
+                            onChange={e => setRange(prev => ({ ...prev, startDate: e.target.value }))}
+                            style={{ padding: "4px 8px", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "11.5px", color: "#0f172a" }} />
+                          <span style={{ fontSize: "11.5px", color: "#64748b" }}>To</span>
+                          <input type="date" value={chartRange.endDate}
+                            onChange={e => setRange(prev => ({ ...prev, endDate: e.target.value }))}
+                            style={{ padding: "4px 8px", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "11.5px", color: "#0f172a" }} />
+                        </div>
+                      </div>
+
+                      {/* Chart area */}
+                      {!displayData ? (
+                        <p style={{ textAlign: "center", color: "#94a3b8", padding: "40px 0", margin: 0 }}>Loading…</p>
+                      ) : displayData.length === 0 ? (
+                        <p style={{ textAlign: "center", color: "#94a3b8", padding: "40px 0", margin: 0 }}>No data for selected range</p>
+                      ) : (() => {
+                        const W = 700, H = 240;
+                        const padL = 48, padR = 18, padT = 22;
+                        const padB = isMultiCo ? 78 : 52; // extra space for rotated company names
+                        const cW   = W - padL - padR;
+                        const cH   = H - padT - padB;
+                        const yTk  = [0, 20, 40, 60, 80, 100];
+                        const gap  = cW / displayData.length;
+                        const bW   = Math.max(6, Math.min(38, gap * 0.62));
+                        const rotateLabels = isMultiCo || displayData.length > 12;
+
+                        return (
+                          <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto" }} aria-label="Site Score Overview chart">
+                            <defs>
+                              <linearGradient id="ssBarGrad" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stopColor="#fb923c" />
+                                <stop offset="100%" stopColor="#ea580c" />
+                              </linearGradient>
+                            </defs>
+
+                            {/* Grid + Y-axis labels */}
+                            {yTk.map(tick => {
+                              const y = padT + cH - (tick / 100) * cH;
+                              return (
+                                <g key={tick}>
+                                  <line x1={padL} y1={y} x2={padL + cW} y2={y}
+                                    stroke={tick === 0 ? "#cbd5e1" : "#f1f5f9"}
+                                    strokeWidth={tick === 0 ? "1.5" : "1"} />
+                                  <text x={padL - 6} y={y + 4} textAnchor="end" fontSize="10" fill="#94a3b8">{tick}</text>
+                                </g>
+                              );
+                            })}
+                            <line x1={padL} y1={padT} x2={padL} y2={padT + cH} stroke="#cbd5e1" strokeWidth="1.5" />
+                            <text transform={`translate(12,${padT + cH / 2}) rotate(-90)`}
+                              textAnchor="middle" fontSize="10" fill="#64748b">
+                              {isMultiCo ? "Avg Score %" : "Score %"}
+                            </text>
+
+                            {/* Bars + X labels */}
+                            {displayData.map((item, i) => {
+                              const cx = padL + gap * i + gap / 2;
+                              const bH = Math.max((item.value / 100) * cH, item.value > 0 ? 2 : 0);
+                              const bX = cx - bW / 2;
+                              const bY = padT + cH - bH;
+                              const labelY = padT + cH + (rotateLabels ? 12 : 15);
+                              return (
+                                <g key={i}
+                                  style={isMultiCo ? { cursor: "pointer" } : {}}
+                                  onClick={isMultiCo && item.companyId ? () => handleSwitchCompany(item.companyId) : undefined}>
+                                  {/* Invisible hit area for click */}
+                                  {isMultiCo && <rect x={bX - 4} y={padT} width={bW + 8} height={cH} fill="transparent" />}
+                                  {/* Bar */}
+                                  <rect x={bX} y={bY} width={bW} height={bH} fill="url(#ssBarGrad)" rx="3" />
+                                  {/* 3D top cap */}
+                                  {bH > 4 && <ellipse cx={cx} cy={bY} rx={bW / 2} ry={Math.max(bW / 8, 2)} fill="#fb923c" opacity="0.85" />}
+                                  {/* Value label */}
+                                  {item.value > 0 && (
+                                    <text x={cx} y={bY - 4} textAnchor="middle" fontSize="9" fill="#374151" fontWeight="600">
+                                      {item.value}%
+                                    </text>
+                                  )}
+                                  {/* X label */}
+                                  <text x={cx} y={labelY} textAnchor={rotateLabels ? "end" : "middle"}
+                                    fontSize="9" fill={isMultiCo ? "#2563eb" : "#64748b"}
+                                    fontWeight={isMultiCo ? "600" : "400"}
+                                    transform={rotateLabels ? `rotate(-40,${cx},${labelY})` : undefined}>
+                                    {item.label}
+                                  </text>
+                                </g>
+                              );
+                            })}
+
+                            {/* Footer */}
+                            <text x={padL + cW / 2} y={H - 2} textAnchor="middle" fontSize="9" fill="#94a3b8">
+                              {isMultiCo ? "Click a bar to switch to that site" : "Date"}
+                            </text>
+                          </svg>
+                        );
+                      })()}
+                    </div>
+                  );
+                })()}
+
                 {recentTable}
               </div>
             );
@@ -7472,7 +8278,7 @@ export default function CompanyEmployeePortal() {
               />
             )}
             {checklistSubNav === "submissions" && (
-              <SubmissionsPanel token={token} type="checklists" isAdmin={currentUser?.role === "admin"} />
+              <SubmissionsPanel token={token} type="checklists" isAdmin={currentUser?.role === "admin"} companyId={isAllCompaniesDashboard ? moduleSiteFilter : undefined} />
             )}
           </div>
         )}
@@ -7514,7 +8320,7 @@ export default function CompanyEmployeePortal() {
               />
             )}
             {logsheetSubNav === "submissions" && (
-              <SubmissionsPanel token={token} type="logsheets" isAdmin={currentUser?.role === "admin"} />
+              <SubmissionsPanel token={token} type="logsheets" isAdmin={currentUser?.role === "admin"} companyId={isAllCompaniesDashboard ? moduleSiteFilter : undefined} />
             )}
           </div>
         )}
@@ -7539,11 +8345,12 @@ export default function CompanyEmployeePortal() {
             token={token}
             companyId={currentUser.companyId}
             assets={assets}
+            allCompanies={isAllCompaniesDashboard && moduleSiteFilter === "all"}
           />
         )}
 
         {/* ── Soft Service Requests ─────────────────────────────── */}
-        {nav === "softrequests" && <SoftRequestsPanel token={token} currentUser={currentUser} />}
+        {nav === "softrequests" && <SoftRequestsPanel token={token} currentUser={currentUser} allCompanies={isAllCompaniesDashboard && moduleSiteFilter === "all"} />}
 
         {/* ── Locations ─────────────────────────────────────────── */}
         {nav === "locations" && (() => {

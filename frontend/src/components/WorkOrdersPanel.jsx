@@ -316,7 +316,7 @@ function CreateWOModal({ assets, users, companyPortalToken, preselectedAssetId, 
 }
 
 /* ── Main Panel ─────────────────────────────────────────────────────────── */
-export default function WorkOrdersPanel({ token, companyId, assets = [], preselectedAssetId = null }) {
+export default function WorkOrdersPanel({ token, companyId, assets = [], preselectedAssetId = null, allCompanies = false }) {
   const [workOrders, setWorkOrders] = useState([]);
   const [total, setTotal]           = useState(0);
   const [users, setUsers]           = useState([]);
@@ -330,12 +330,13 @@ export default function WorkOrdersPanel({ token, companyId, assets = [], presele
   const [showCreate, setShowCreate] = useState(false);
 
   const load = useCallback(async () => {
-    if (!token || !companyId) return;
+    if (!token || (!companyId && !allCompanies)) return;
     setLoading(true); setError(null);
     try {
       const params = new URLSearchParams({ limit: 200 });
       // "escalated" is a client-side filter (escalationLevel > 0); load all for it
       if (filter !== "all" && filter !== "escalated") params.set("status", filter);
+      if (allCompanies) params.set("companyId", "all");
 
       const [woRes, usersRes] = await Promise.all([
         apiFetch("GET", `/api/company-portal/work-orders?${params}`, undefined, token),
@@ -349,7 +350,7 @@ export default function WorkOrdersPanel({ token, companyId, assets = [], presele
     } finally {
       setLoading(false);
     }
-  }, [token, companyId, filter]);
+  }, [token, companyId, filter, allCompanies]);
 
   useEffect(() => { load(); }, [load]);
 

@@ -453,16 +453,17 @@ router.delete("/shifts/:id", requireAuth, async (req, res, next) => {
 });
 
 // ── Admin: employees by company (CRUD) ────────────────────────────────────
-// Helper: sync user_company_assignments for a given user (replaces all extra companies)
-async function syncCompanyAssignments(userId, primaryCompanyId, extraCompanyIds = []) {
-  // Remove all existing extra assignments
+// Helper: sync user_company_assignments for a given user (replaces all assignments)
+// companyIds is the COMPLETE list of companies the user should have access to.
+async function syncCompanyAssignments(userId, primaryCompanyId, companyIds = []) {
+  // Remove all existing assignments
   await pool.query(`DELETE FROM user_company_assignments WHERE user_id = ?`, [userId]);
-  // Insert new extra companies (excluding the primary company)
-  const extras = (extraCompanyIds || []).map(Number).filter(id => id && id !== Number(primaryCompanyId));
-  for (const cid of extras) {
+  // Insert all assigned companies — this is the authoritative access list
+  const ids = (companyIds || []).map(Number).filter(id => id > 0);
+  for (const id of ids) {
     await pool.query(
       `INSERT INTO user_company_assignments (user_id, company_id) VALUES (?, ?) ON CONFLICT DO NOTHING`,
-      [userId, cid]
+      [userId, id]
     );
   }
 }
@@ -582,7 +583,8 @@ router.delete("/employees/:id", requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// GET /api/company-users/employees/:id/companies – extra companies assigned to a user
+// GET /api/company-users/employees/:id/companies – companies the user has access to
+// Returns UCA entries if any exist, otherwise falls back to the user's primary company.
 router.get("/employees/:id/companies", requireAuth, async (req, res, next) => {
   try {
     const [rows] = await pool.query(
@@ -593,7 +595,18 @@ router.get("/employees/:id/companies", requireAuth, async (req, res, next) => {
        ORDER BY c.company_name`,
       [req.params.id]
     );
-    res.json(rows);
+    if (rows.length > 0) return res.json(rows);
+    // No explicit assignments — return primary company as the single accessible company
+    const [[user]] = await pool.query(
+      `SELECT company_id AS "companyId" FROM company_users WHERE id = ?`,
+      [req.params.id]
+    );
+    if (!user) return res.json([]);
+    const [[primary]] = await pool.query(
+      `SELECT id, company_name AS "companyName", company_code AS "companyCode" FROM companies WHERE id = ?`,
+      [user.companyId]
+    );
+    res.json(primary ? [primary] : []);
   } catch (err) { next(err); }
 });
 
