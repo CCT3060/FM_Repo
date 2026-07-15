@@ -65,6 +65,26 @@ const verifyCompanyOwner = async (companyId) => {
   return rows.length > 0;
 };
 
+const parseCompanyFilter = (rawCompanyId) => {
+  const raw = String(rawCompanyId ?? "").trim();
+  if (!raw || raw.toLowerCase() === "all") return { all: true, ids: [] };
+  const ids = raw
+    .split(",")
+    .map((v) => Number(v.trim()))
+    .filter((n) => Number.isInteger(n) && n > 0);
+  if (!ids.length) return { all: true, ids: [] };
+  return { all: false, ids: Array.from(new Set(ids)) };
+};
+
+const buildCompanyInClause = (columnSql, filter) => {
+  if (filter.all) return { whereSql: "", params: [] };
+  const placeholders = filter.ids.map(() => "?").join(",");
+  return {
+    whereSql: `${columnSql} IN (${placeholders})`,
+    params: filter.ids,
+  };
+};
+
 // ── GET /api/company-users?companyId=:id ──────────────────────────────────────
 router.get("/", async (req, res, next) => {
   try {
@@ -274,8 +294,8 @@ router.post("/template-assignments", requireAuth, async (req, res, next) => {
 // GET /api/company-users/ojt-trainings?companyId=X
 router.get("/ojt-trainings", requireAuth, async (req, res, next) => {
   try {
-    const { companyId } = req.query;
-    if (!companyId) return res.status(400).json({ message: "companyId is required" });
+    const filter = parseCompanyFilter(req.query.companyId);
+    const { whereSql, params } = buildCompanyInClause("t.company_id", filter);
     const [rows] = await pool.query(
       `SELECT t.id, t.title, t.description, t.status, t.passing_percentage AS "passingPercentage",
               t.created_at AS "createdAt",
@@ -283,10 +303,10 @@ router.get("/ojt-trainings", requireAuth, async (req, res, next) => {
               COUNT(DISTINCT CASE WHEN p.status = 'completed' THEN p.id END) AS "completedCount"
        FROM ojt_trainings t
        LEFT JOIN ojt_user_progress p ON p.training_id = t.id
-       WHERE t.company_id = ?
+       ${whereSql ? `WHERE ${whereSql}` : ""}
        GROUP BY t.id
        ORDER BY t.created_at DESC`,
-      [companyId]
+      params
     );
     res.json(rows);
   } catch (err) {
@@ -298,8 +318,8 @@ router.get("/ojt-trainings", requireAuth, async (req, res, next) => {
 // GET /api/company-users/ojt-progress?companyId=X
 router.get("/ojt-progress", requireAuth, async (req, res, next) => {
   try {
-    const { companyId } = req.query;
-    if (!companyId) return res.status(400).json({ message: "companyId is required" });
+    const filter = parseCompanyFilter(req.query.companyId);
+    const { whereSql, params } = buildCompanyInClause("t.company_id", filter);
     const [rows] = await pool.query(
       `SELECT p.id, p.status, p.score, p.certificate_url AS "certificateUrl",
               t.title AS "trainingTitle",
@@ -307,9 +327,9 @@ router.get("/ojt-progress", requireAuth, async (req, res, next) => {
        FROM ojt_user_progress p
        JOIN ojt_trainings t ON t.id = p.training_id
        JOIN company_users u ON u.id = p.user_id
-       WHERE t.company_id = ?
+       ${whereSql ? `WHERE ${whereSql}` : ""}
        ORDER BY p.created_at DESC`,
-      [companyId]
+      params
     );
     res.json(rows);
   } catch (err) {
@@ -323,9 +343,14 @@ router.get("/work-orders", requireAuth, async (req, res, next) => {
   try {
     const { companyId, status, limit = 200, offset = 0 } = req.query;
     if (!companyId) return res.status(400).json({ message: "companyId is required" });
-    let where = "WHERE wo.company_id = ?";
-    const params = [companyId];
-    if (status) { where += " AND wo.status = ?"; params.push(status); }
+    const filter = parseCompanyFilter(companyId);
+    const { whereSql, params: companyParams } = buildCompanyInClause("wo.company_id", filter);
+    let where = whereSql ? `WHERE ${whereSql}` : "";
+    const params = [...companyParams];
+    if (status) {
+      where += where ? " AND wo.status = ?" : "WHERE wo.status = ?";
+      params.push(status);
+    }
     const [rows] = await pool.query(
       `SELECT wo.id, wo.work_order_number AS "workOrderNumber",
               wo.asset_id AS "assetId", wo.asset_name AS "assetName",
@@ -398,17 +423,17 @@ router.put("/work-orders/:id/assign", requireAuth, async (req, res, next) => {
 // GET /api/company-users/shifts?companyId=X
 router.get("/shifts", requireAuth, async (req, res, next) => {
   try {
-    const { companyId } = req.query;
-    if (!companyId) return res.status(400).json({ message: "companyId is required" });
+    const filter = parseCompanyFilter(req.query.companyId);
+    const { whereSql, params } = buildCompanyInClause("s.company_id", filter);
     const [rows] = await pool.query(
       `SELECT s.id, s.name, s.start_time AS "startTime", s.end_time AS "endTime",
               s.description, s.status, s.created_at AS "createdAt",
               COUNT(DISTINCT es.company_user_id)::int AS "employeeCount"
        FROM shifts s
        LEFT JOIN employee_shifts es ON es.shift_id = s.id
-       WHERE s.company_id = ?
+       ${whereSql ? `WHERE ${whereSql}` : ""}
        GROUP BY s.id ORDER BY s.start_time`,
-      [companyId]
+      params
     );
     res.json(rows);
   } catch (err) { next(err); }
@@ -474,28 +499,33 @@ router.get("/employees", requireAuth, async (req, res, next) => {
     const { companyId } = req.query;
     if (!companyId) return res.status(400).json({ message: "companyId is required" });
     let rows;
-    if (companyId === "all") {
+    const filter = parseCompanyFilter(companyId);
+    if (filter.all) {
       // Return all employees across all companies with the company name included
       [rows] = await pool.query(
         `SELECT cu.id, cu.full_name AS "fullName", cu.email, cu.phone, cu.role, cu.designation,
                 cu.department_id AS "departmentId", cu.status, cu.username,
                 cu.company_id AS "companyId", c.company_name AS "companyName",
-                cu.permissions, cu.module_access AS "moduleAccess", cu.created_at AS "createdAt"
+                cu.permissions, cu.module_access AS "moduleAccess", cu.created_at AS "createdAt",
+                CASE WHEN cu.password_hash IS NOT NULL AND cu.password_hash <> '' THEN TRUE ELSE FALSE END AS "hasPassword"
          FROM company_users cu
          JOIN companies c ON c.id = cu.company_id
          ORDER BY c.company_name, cu.full_name`,
         []
       );
     } else {
+      const placeholders = filter.ids.map(() => "?").join(",");
       [rows] = await pool.query(
         `SELECT cu.id, cu.full_name AS "fullName", cu.email, cu.phone, cu.role, cu.designation,
                 cu.department_id AS "departmentId", cu.status, cu.username,
                 cu.company_id AS "companyId", c.company_name AS "companyName",
-                cu.permissions, cu.module_access AS "moduleAccess", cu.created_at AS "createdAt"
+                cu.permissions, cu.module_access AS "moduleAccess", cu.created_at AS "createdAt",
+                CASE WHEN cu.password_hash IS NOT NULL AND cu.password_hash <> '' THEN TRUE ELSE FALSE END AS "hasPassword"
          FROM company_users cu
          JOIN companies c ON c.id = cu.company_id
-         WHERE cu.company_id = ? ORDER BY cu.full_name`,
-        [companyId]
+         WHERE cu.company_id IN (${placeholders})
+         ORDER BY c.company_name, cu.full_name`,
+        filter.ids
       );
     }
     res.json(rows);
@@ -614,8 +644,9 @@ router.get("/employees/:id/companies", requireAuth, async (req, res, next) => {
 // GET /api/company-users/company-roles?companyId=X
 router.get("/company-roles", requireAuth, async (req, res, next) => {
   try {
-    const { companyId } = req.query;
-    if (!companyId) return res.status(400).json({ message: "companyId is required" });
+    const filter = parseCompanyFilter(req.query.companyId);
+    const { whereSql, params } = buildCompanyInClause("company_id", filter);
+    const whereClause = whereSql ? `WHERE ${whereSql} AND is_active = TRUE` : "WHERE is_active = TRUE";
     let rows;
     try {
       [rows] = await pool.query(
@@ -627,18 +658,18 @@ router.get("/company-roles", requireAuth, async (req, res, next) => {
                 is_soft_manager AS "isSoftManager",
                 is_technical_supervisor AS "isTechnicalSupervisor",
                 is_technician AS "isTechnician"
-         FROM company_roles WHERE company_id = ? AND is_active = TRUE
+         FROM company_roles ${whereClause}
          ORDER BY sort_order ASC, id ASC`,
-        [companyId]
+        params
       );
     } catch {
       [rows] = await pool.query(
         `SELECT id, company_id AS "companyId", role_key AS "roleKey", label,
                 parent_role_key AS "parentRoleKey", sort_order AS "sortOrder",
                 color, bg_color AS "bgColor", is_active AS "isActive"
-         FROM company_roles WHERE company_id = ? AND is_active = TRUE
+         FROM company_roles ${whereClause}
          ORDER BY sort_order ASC, id ASC`,
-        [companyId]
+        params
       );
     }
     res.json(rows);
@@ -704,12 +735,14 @@ router.delete("/company-roles/:id", requireAuth, async (req, res, next) => {
 // GET /api/company-users/locations?companyId=X
 router.get("/locations", requireAuth, async (req, res, next) => {
   try {
-    const { companyId } = req.query;
-    if (!companyId) return res.status(400).json({ message: "companyId is required" });
+    const filter = parseCompanyFilter(req.query.companyId);
+    const { whereSql, params } = buildCompanyInClause("company_id", filter);
     const [rows] = await pool.query(
       `SELECT id, name, campus, building, floor, room, status, qr_code AS "qrCode", created_at AS "createdAt"
-       FROM locations WHERE company_id = ? ORDER BY name ASC`,
-      [companyId]
+       FROM locations
+       ${whereSql ? `WHERE ${whereSql}` : ""}
+       ORDER BY name ASC`,
+      params
     );
     res.json(rows);
   } catch (err) { next(err); }
@@ -729,7 +762,13 @@ router.get("/soft-requests", async (req, res, next) => {
     const { companyId, status } = req.query;
     let whereClause = "WHERE 1=1";
     const params = [];
-    if (companyId) { whereClause += " AND ssr.company_id = ?"; params.push(Number(companyId)); }
+    if (companyId) {
+      const filter = parseCompanyFilter(companyId);
+      if (!filter.all) {
+        whereClause += ` AND ssr.company_id IN (${filter.ids.map(() => "?").join(",")})`;
+        params.push(...filter.ids);
+      }
+    }
     if (status && status !== "all") { whereClause += " AND ssr.status = ?"; params.push(status); }
 
     const [rows] = await pool.query(

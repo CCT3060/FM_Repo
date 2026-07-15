@@ -110,16 +110,30 @@ router.post("/", async (req, res, next) => {
   try {
     const { label, parentRoleKey, color, bgColor, sortOrder,
             canRaiseSoftIssue, canResolveSoftIssue, isSoftManager,
-            isTechnicalSupervisor, isTechnician } = req.body || {};
+            isTechnicalSupervisor, isTechnician, companyId } = req.body || {};
     if (!label || !String(label).trim()) {
       return res.status(400).json({ message: "label is required" });
     }
     const key = req.body.roleKey ? slugify(req.body.roleKey) : slugify(label);
 
+    // Determine target company: use provided companyId or JWT's company
+    let targetCompanyId = companyId ? Number(companyId) : cid(req);
+    
+    // If companyId provided, verify user has access to that company
+    if (companyId && Number(companyId) !== cid(req)) {
+      const [[access]] = await pool.query(
+        `SELECT 1 FROM user_company_assignments WHERE user_id = ? AND company_id = ?`,
+        [req.companyUser.id, targetCompanyId]
+      );
+      if (!access) {
+        return res.status(403).json({ message: "You don't have access to this company" });
+      }
+    }
+
     // Block duplicate active roles (ignore soft-deleted rows so they can be re-created)
     const [activeExists] = await pool.query(
       `SELECT id FROM company_roles WHERE company_id = ? AND role_key = ? AND is_active = TRUE`,
-      [cid(req), key]
+      [targetCompanyId, key]
     );
     if (activeExists.length) {
       return res.status(409).json({ message: "Role with that key already exists" });
@@ -127,12 +141,12 @@ router.post("/", async (req, res, next) => {
 
     const [[nextOrder]] = await pool.query(
       `SELECT COALESCE(MAX(sort_order), -1) + 1 AS "next" FROM company_roles WHERE company_id = ?`,
-      [cid(req)]
+      [targetCompanyId]
     );
     const order = Number.isFinite(sortOrder) ? sortOrder : nextOrder.next;
 
     const baseValues = [
-      cid(req),
+      targetCompanyId,
       key,
       String(label).trim().slice(0, 120),
       parentRoleKey ? slugify(parentRoleKey) : null,

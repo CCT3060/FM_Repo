@@ -673,22 +673,39 @@ export default function ChecklistEntryScreen() {
                           />
                         )}
                       </View>
-                      {/* Question image (photo-as-question) */}
-                      {field.questionImageUrl ? (
-                        <QuestionImage uri={field.questionImageUrl} />
-                      ) : null}
-                      {/* Reference image (admin-uploaded for this question) */}
-                      {field.referenceImageUrl ? (
-                        <View style={styles.refImageWrap}>
-                          <Text style={[styles.refImageLabel, { color: theme.textMuted }]}>Reference</Text>
-                          <QuestionImage uri={field.referenceImageUrl} style={styles.refImage} />
+                      {/* Question image (photo-as-question): show inline with input buttons */}
+                      {(field.questionImageUrl || (field.referenceImageUrl && (field.type === 'boolean' || field.type === 'select'))) ? (
+                        <View style={{ flexDirection: 'row', gap: 10, marginTop: 6, alignItems: 'center' }}>
+                          <View style={styles.questionImgThumbWrap}>
+                            <QuestionImage
+                              uri={(field.questionImageUrl || field.referenceImageUrl)!}
+                              style={styles.questionImgThumb}
+                            />
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <FieldInput
+                              field={field}
+                              value={answers[field.id]}
+                              onChange={(v) => setAnswer(field.id, v)}
+                            />
+                          </View>
                         </View>
-                      ) : null}
-                      <FieldInput
-                        field={field}
-                        value={answers[field.id]}
-                        onChange={(v) => setAnswer(field.id, v)}
-                      />
+                      ) : (
+                        <>
+                          {/* Reference image (admin-uploaded for this question) — full-width for non-boolean */}
+                          {field.referenceImageUrl ? (
+                            <View style={styles.refImageWrap}>
+                              <Text style={[styles.refImageLabel, { color: theme.textMuted }]}>Reference</Text>
+                              <QuestionImage uri={field.referenceImageUrl} style={styles.refImage} />
+                            </View>
+                          ) : null}
+                          <FieldInput
+                            field={field}
+                            value={answers[field.id]}
+                            onChange={(v) => setAnswer(field.id, v)}
+                          />
+                        </>
+                      )}
                       {/* Additional input types (multiselect template) */}
                       {field.additionalTypes?.map((addType, addIdx) => {
                         const addKey = `${field.id}_extra_${addIdx}`;
@@ -884,7 +901,10 @@ const styles = StyleSheet.create({
   refImageWrap:   { marginBottom: Spacing.sm },
   refImageLabel:  { ...Typography.micro, marginBottom: 4 },
   refImage:       { width: '100%', height: 160, borderRadius: Radius.md, backgroundColor: '#E2E8F0' },
-  // Question image (photo used as the question itself — shown as small icon)
+  // Question image (photo used as the question itself — base style for QuestionImage component)
   questionImage:  { width: '100%', height: 160, borderRadius: Radius.md, backgroundColor: '#E2E8F0', marginBottom: Spacing.sm },
+  // Compact thumbnail wrapper + image for side-by-side layout (image left, buttons right)
+  questionImgThumbWrap: { width: 100, height: 100, borderRadius: Radius.md, overflow: 'hidden' as const, backgroundColor: '#E2E8F0', flexShrink: 0 },
+  questionImgThumb:     { width: 100, height: 100, borderRadius: Radius.md },
   submitText:        { fontSize: 14, fontWeight: '700' as const, color: '#fff' },
 });

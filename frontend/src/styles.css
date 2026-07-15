@@ -535,6 +535,15 @@ tr:last-child td {
   overflow-x: hidden;
 }
 
+/* Print: hide sidebar, reset layout */
+@media print {
+  aside.client-side-panel { display: none !important; }
+  .client-main-area { padding: 8px !important; }
+  .no-print { display: none !important; }
+  .client-portal-shell { display: block !important; }
+  body { background: #fff !important; }
+}
+
 .client-side-panel {
   width: 200px;
   background: var(--card);

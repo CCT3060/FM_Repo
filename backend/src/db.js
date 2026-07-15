@@ -26,6 +26,19 @@ poolInstance.on("error", (err) => {
   console.error("[pg-pool] Idle client error (safe to ignore):", err.message);
 });
 
+// Sync the PostgreSQL session timezone with the business timezone.
+// Set APP_TIMEZONE in .env (e.g. APP_TIMEZONE=Asia/Kolkata for IST).
+// This ensures EXTRACT(HOUR FROM submitted_at) and EXTRACT(HOUR FROM NOW())
+// both return hours in the same timezone as the stored start_time strings.
+const _appTimezone = process.env.APP_TIMEZONE;
+if (_appTimezone) {
+  poolInstance.on("connect", (client) => {
+    client.query(`SET timezone = '${_appTimezone}'`).catch((err) => {
+      console.warn("[db] Failed to set session timezone:", err.message);
+    });
+  });
+}
+
 const RETRY_ATTEMPTS = Number(process.env.DB_RETRY_ATTEMPTS || 3);
 const RETRY_BASE_DELAY_MS = Number(process.env.DB_RETRY_BASE_DELAY_MS || 300);
 

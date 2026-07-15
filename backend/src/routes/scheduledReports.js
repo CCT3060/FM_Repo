@@ -19,6 +19,7 @@ const router = express.Router();
 router.use(requireCompanyAuth);
 
 const cid = (req) => req.companyUser.companyId;
+const MAIL_FROM_ADDRESS = process.env.MAIL_FROM || "system.user@cctindia.in";
 
 /* â”€â”€ Startup migration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 (async () => {
@@ -50,7 +51,7 @@ const cid = (req) => req.companyUser.companyId;
 
 /* â”€â”€ Helper: build nodemailer transporter â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 function buildTransporter() {
-  const provider = (process.env.MAIL_PROVIDER || "gmail").toLowerCase();
+  const provider = (process.env.MAIL_PROVIDER || "office365").toLowerCase();
 
   if (provider === "outlook" || provider === "hotmail" || provider === "office365") {
     return nodemailer.createTransport({
@@ -65,9 +66,7 @@ function buildTransporter() {
     });
   }
 
-  // Default: Gmail via explicit SMTP (port 465 SSL)
-  // IMPORTANT: MAIL_PASS must be a Gmail App Password (not your account password).
-  // To generate: myaccount.google.com â†’ Security â†’ 2-Step Verification â†’ App Passwords
+  // Fallback SMTP transport (used when MAIL_PROVIDER is not set to Outlook/Office365)
   return nodemailer.createTransport({
     host: "smtp.gmail.com",
     port: 465,
@@ -178,11 +177,67 @@ async function generateCSV(companyId) {
        (SELECT COUNT(*) FROM assets WHERE company_id = ?) AS total_assets,
        (SELECT COUNT(*) FROM assets WHERE company_id = ? AND status = 'Active') AS active_assets,
        (SELECT COUNT(*) FROM work_orders WHERE company_id = ? AND status NOT IN ('closed','completed','cancelled')) AS open_requests,
-       (SELECT COUNT(*) FROM soft_service_requests WHERE company_id = ? AND status NOT IN ('closed','resolved')) AS open_soft,
-       (SELECT COUNT(*) FROM checklist_submissions cs JOIN checklist_templates ct ON ct.id=cs.template_id WHERE ct.company_id = ? AND cs.submitted_at >= CURRENT_DATE) AS filled_today,
-       (SELECT COUNT(*) FROM checklist_templates WHERE company_id = ? AND is_active=1) AS total_templates`,
-    [companyId, companyId, companyId, companyId, companyId, companyId]
+      (SELECT COUNT(*) FROM soft_service_requests WHERE company_id = ? AND LOWER(TRIM(COALESCE(status, ''))) NOT IN ('closed','resolved','cancelled','rejected')) AS open_soft`,
+    [companyId, companyId, companyId, companyId]
   );
+
+  // Slot-based filled/total for today
+  const [[nowRowCSV]] = await pool.query(
+    `SELECT EXTRACT(HOUR FROM NOW())::int AS h, EXTRACT(MINUTE FROM NOW())::int AS m`
+  );
+  const nowMinsCSV = Number(nowRowCSV.h) * 60 + Number(nowRowCSV.m);
+  const [templatesCSV] = await pool.query(
+    `SELECT id, frequency, hourly_interval AS "hourlyInterval", start_time AS "startTime", end_time AS "endTime"
+     FROM checklist_templates WHERE company_id = ? AND is_active = 1`,
+    [companyId]
+  );
+  let totalExpectedCSV = 0;
+  const tplExpCSV = {};
+  for (const t of templatesCSV) {
+    const freq = (t.frequency || 'Daily').toLowerCase();
+    let exp = 1;
+    if (freq === 'hourly') {
+      const interval = Math.max(1, Number(t.hourlyInterval) || 1);
+      if (t.startTime && t.endTime) {
+        const [sh, sm = 0] = t.startTime.split(':').map(Number);
+        const [eh, em = 0] = t.endTime.split(':').map(Number);
+        const startMins = sh * 60 + sm;
+        const endMins = eh * 60 + em;
+        // Full-day slot count — not capped by current time
+        if (endMins > startMins) {
+          exp = Math.max(1, Math.floor((endMins - startMins) / (interval * 60)));
+        }
+      } else {
+        exp = Math.max(1, Math.floor(1440 / (interval * 60)));
+      }
+    }
+    tplExpCSV[t.id] = exp;
+    totalExpectedCSV += exp;
+  }
+  const [subCountsCSV] = await pool.query(
+    `SELECT cs.template_id AS "templateId", COUNT(*) AS "count"
+     FROM checklist_submissions cs
+     JOIN checklist_templates ct ON cs.template_id = ct.id
+     WHERE ct.company_id = ? AND cs.submitted_at::date = CURRENT_DATE
+       AND ct.is_active = 1 AND cs.status NOT IN ('rejected')
+       AND (
+         LOWER(COALESCE(ct.frequency, 'daily')) != 'hourly'
+         OR ct.start_time IS NULL OR ct.end_time IS NULL
+         OR (
+           (EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at))
+             >= (EXTRACT(HOUR FROM ct.start_time::time)*60+EXTRACT(MINUTE FROM ct.start_time::time))
+           AND (EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at))
+             < (EXTRACT(HOUR FROM ct.end_time::time)*60+EXTRACT(MINUTE FROM ct.end_time::time))
+         )
+       )
+     GROUP BY cs.template_id`,
+    [companyId]
+  );
+  let filledSlotsCSV = 0;
+  for (const row of subCountsCSV) {
+    const exp = tplExpCSV[row.templateId] ?? 1;
+    filledSlotsCSV += Math.min(Number(row.count) || 0, exp);
+  }
 
   const [submissions] = await pool.query(
     `SELECT cs.id, ct.template_name, cu.full_name AS submitted_by, cs.status, cs.submitted_at
@@ -206,8 +261,8 @@ async function generateCSV(companyId) {
     ["Active Assets", dashRow?.active_assets ?? 0],
     ["Open Work Orders", dashRow?.open_requests ?? 0],
     ["Open Soft Requests", dashRow?.open_soft ?? 0],
-    ["Checklists Filled Today", dashRow?.filled_today ?? 0],
-    ["Total Active Templates", dashRow?.total_templates ?? 0],
+    ["Checklists Filled Today (Slots)", filledSlotsCSV],
+    ["Total Expected Slots Today", totalExpectedCSV],
     ["Generated At", new Date().toLocaleString("en-IN")],
     [""],
     ["CHECKLIST SUBMISSIONS"],
@@ -234,11 +289,67 @@ async function generateExcel(companyId) {
        (SELECT COUNT(*) FROM assets WHERE company_id = ?) AS total_assets,
        (SELECT COUNT(*) FROM assets WHERE company_id = ? AND status = 'Active') AS active_assets,
        (SELECT COUNT(*) FROM work_orders WHERE company_id = ? AND status NOT IN ('closed','completed','cancelled')) AS open_requests,
-       (SELECT COUNT(*) FROM soft_service_requests WHERE company_id = ? AND status NOT IN ('closed','resolved')) AS open_soft,
-       (SELECT COUNT(*) FROM checklist_submissions cs JOIN checklist_templates ct ON ct.id=cs.template_id WHERE ct.company_id = ? AND cs.submitted_at >= CURRENT_DATE) AS filled_today,
-       (SELECT COUNT(*) FROM checklist_templates WHERE company_id = ? AND is_active=1) AS total_templates`,
-    [companyId, companyId, companyId, companyId, companyId, companyId]
+      (SELECT COUNT(*) FROM soft_service_requests WHERE company_id = ? AND LOWER(TRIM(COALESCE(status, ''))) NOT IN ('closed','resolved','cancelled','rejected')) AS open_soft`,
+    [companyId, companyId, companyId, companyId]
   );
+
+  // Slot-based filled/total for today
+  const [[nowRowXl]] = await pool.query(
+    `SELECT EXTRACT(HOUR FROM NOW())::int AS h, EXTRACT(MINUTE FROM NOW())::int AS m`
+  );
+  const nowMinsXl = Number(nowRowXl.h) * 60 + Number(nowRowXl.m);
+  const [templatesXl] = await pool.query(
+    `SELECT id, frequency, hourly_interval AS "hourlyInterval", start_time AS "startTime", end_time AS "endTime"
+     FROM checklist_templates WHERE company_id = ? AND is_active = 1`,
+    [companyId]
+  );
+  let totalExpectedXl = 0;
+  const tplExpXl = {};
+  for (const t of templatesXl) {
+    const freq = (t.frequency || 'Daily').toLowerCase();
+    let exp = 1;
+    if (freq === 'hourly') {
+      const interval = Math.max(1, Number(t.hourlyInterval) || 1);
+      if (t.startTime && t.endTime) {
+        const [sh, sm = 0] = t.startTime.split(':').map(Number);
+        const [eh, em = 0] = t.endTime.split(':').map(Number);
+        const startMins = sh * 60 + sm;
+        const endMins = eh * 60 + em;
+        // Full-day slot count — not capped by current time
+        if (endMins > startMins) {
+          exp = Math.max(1, Math.floor((endMins - startMins) / (interval * 60)));
+        }
+      } else {
+        exp = Math.max(1, Math.floor(1440 / (interval * 60)));
+      }
+    }
+    tplExpXl[t.id] = exp;
+    totalExpectedXl += exp;
+  }
+  const [subCountsXl] = await pool.query(
+    `SELECT cs.template_id AS "templateId", COUNT(*) AS "count"
+     FROM checklist_submissions cs
+     JOIN checklist_templates ct ON cs.template_id = ct.id
+     WHERE ct.company_id = ? AND cs.submitted_at::date = CURRENT_DATE
+       AND ct.is_active = 1 AND cs.status NOT IN ('rejected')
+       AND (
+         LOWER(COALESCE(ct.frequency, 'daily')) != 'hourly'
+         OR ct.start_time IS NULL OR ct.end_time IS NULL
+         OR (
+           (EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at))
+             >= (EXTRACT(HOUR FROM ct.start_time::time)*60+EXTRACT(MINUTE FROM ct.start_time::time))
+           AND (EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at))
+             < (EXTRACT(HOUR FROM ct.end_time::time)*60+EXTRACT(MINUTE FROM ct.end_time::time))
+         )
+       )
+     GROUP BY cs.template_id`,
+    [companyId]
+  );
+  let filledSlotsXl = 0;
+  for (const row of subCountsXl) {
+    const exp = tplExpXl[row.templateId] ?? 1;
+    filledSlotsXl += Math.min(Number(row.count) || 0, exp);
+  }
 
   // All checklist submissions
   const [submissions] = await pool.query(
@@ -269,8 +380,8 @@ async function generateExcel(companyId) {
     { metric: "Active Assets", value: dashRow?.active_assets ?? 0 },
     { metric: "Open Work Orders", value: dashRow?.open_requests ?? 0 },
     { metric: "Open Soft Requests", value: dashRow?.open_soft ?? 0 },
-    { metric: "Checklists Filled Today", value: dashRow?.filled_today ?? 0 },
-    { metric: "Total Active Templates", value: dashRow?.total_templates ?? 0 },
+    { metric: "Checklists Filled Today (Slots)", value: filledSlotsXl },
+    { metric: "Total Expected Slots Today", value: totalExpectedXl },
     { metric: "Generated At", value: new Date().toLocaleString("en-IN") },
   ]);
 
@@ -305,62 +416,208 @@ async function generatePDF(companyId) {
   const [[dashRow]] = await pool.query(
     `SELECT
        (SELECT COUNT(*) FROM locations WHERE company_id = ? AND LOWER(COALESCE(status,'Active')) = 'active') AS active_locations,
-       (SELECT COUNT(*) FROM soft_service_requests WHERE company_id = ? AND status NOT IN ('closed','resolved')) AS open_soft,
-       (SELECT COUNT(*) FROM checklist_submissions cs JOIN checklist_templates ct ON ct.id=cs.template_id WHERE ct.company_id = ? AND cs.submitted_at >= CURRENT_DATE) AS filled_today,
-       (SELECT COUNT(*) FROM checklist_templates WHERE company_id = ? AND is_active=1) AS total_templates`,
-    [companyId, companyId, companyId, companyId]
-  );
-  // Site score for today only — matches dashboard when date is set to today
-  const [siteScoreRows] = await pool.query(
-    `SELECT to_char(CURRENT_DATE, 'YYYY-MM-DD') AS date,
-       ROUND(
-         COALESCE(
-           (SELECT COUNT(DISTINCT cs.template_id)
-            FROM checklist_submissions cs
-            JOIN checklist_templates ct ON ct.id = cs.template_id
-            WHERE ct.company_id = ? AND cs.submitted_at::date = CURRENT_DATE
-              AND cs.status NOT IN ('rejected')), 0
-         )::numeric
-         / GREATEST(
-           (SELECT COUNT(*) FROM checklist_templates
-            WHERE company_id = ? AND COALESCE(status,'active') != 'inactive'), 1
-         ) * 100, 1
-       ) AS score`,
+      (SELECT COUNT(*) FROM soft_service_requests WHERE company_id = ? AND LOWER(TRIM(COALESCE(status, ''))) NOT IN ('closed','resolved','cancelled','rejected')) AS open_soft`,
     [companyId, companyId]
   );
-  // Today's submissions — same query as /checklist-submissions/recent, filtered to today
-  const [todaySubmissions] = await pool.query(
-    `SELECT cs.id, cs.template_id, ct.template_name,
-       COALESCE(r.room_name, '—') AS room_name,
-       cs.status, cs.submitted_at,
-       cu.full_name AS submitted_by
-     FROM checklist_submissions cs
-     JOIN checklist_templates ct ON ct.id = cs.template_id
-     LEFT JOIN rooms r ON r.id = ct.room_id
-     LEFT JOIN company_users cu ON cu.id = COALESCE(cs.company_user_id, cs.submitted_by)
-     WHERE ct.company_id = ? AND cs.submitted_at::date = CURRENT_DATE
-     ORDER BY cs.submitted_at DESC`,
+
+  // Slot-based site score — mirrors /site-score endpoint logic
+  const [[nowRow]] = await pool.query(
+    `SELECT EXTRACT(HOUR FROM NOW())::int AS h, EXTRACT(MINUTE FROM NOW())::int AS m,
+            to_char(NOW(), 'YYYY-MM-DD') AS today`
+  );
+  const nowMins    = Number(nowRow.h) * 60 + Number(nowRow.m);
+  const todayDbStr = nowRow.today; // IST date string e.g. '2026-07-03'
+
+  const [templates] = await pool.query(
+    `SELECT id, frequency, hourly_interval AS "hourlyInterval",
+            start_time AS "startTime", end_time AS "endTime"
+     FROM checklist_templates WHERE company_id = ? AND is_active = 1`,
     [companyId]
   );
-  const submittedTplIds = new Set(todaySubmissions.map(s => s.template_id));
-  // Active templates not yet submitted today — matches dashboard "not_submitted" rows
-  const [activeTemplates] = await pool.query(
-    `SELECT ct.id, ct.template_name, COALESCE(r.room_name, '—') AS room_name
+
+  let totalExpected = 0;
+  const tplExpected = {};
+  for (const t of templates) {
+    const freq = (t.frequency || 'Daily').toLowerCase();
+    let exp = 1;
+    if (freq === 'hourly') {
+      const interval = Math.max(1, Number(t.hourlyInterval) || 1);
+      if (t.startTime && t.endTime) {
+        const [sh, sm = 0] = t.startTime.split(':').map(Number);
+        const [eh, em = 0] = t.endTime.split(':').map(Number);
+        const startMins = sh * 60 + sm;
+        const endMins = eh * 60 + em;
+        // Full-day slot count — not capped by current time
+        if (endMins > startMins) {
+          exp = Math.max(1, Math.floor((endMins - startMins) / (interval * 60)));
+        }
+      } else {
+        exp = Math.max(1, Math.floor(1440 / (interval * 60)));
+      }
+    }
+    tplExpected[t.id] = exp;
+    totalExpected += exp;
+  }
+
+  const [subCounts] = await pool.query(
+    `SELECT cs.template_id AS "templateId", COUNT(*) AS "count"
+     FROM checklist_submissions cs
+     JOIN checklist_templates ct ON cs.template_id = ct.id
+     WHERE ct.company_id = ? AND cs.submitted_at::date = CURRENT_DATE
+       AND ct.is_active = 1 AND cs.status NOT IN ('rejected')
+       AND (
+         LOWER(COALESCE(ct.frequency, 'daily')) != 'hourly'
+         OR ct.start_time IS NULL OR ct.end_time IS NULL
+         OR (
+           (EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at))
+             >= (EXTRACT(HOUR FROM ct.start_time::time)*60+EXTRACT(MINUTE FROM ct.start_time::time))
+           AND (EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at))
+             < (EXTRACT(HOUR FROM ct.end_time::time)*60+EXTRACT(MINUTE FROM ct.end_time::time))
+         )
+       )
+     GROUP BY cs.template_id`,
+    [companyId]
+  );
+
+  let filledSlots = 0;
+  for (const row of subCounts) {
+    const exp = tplExpected[row.templateId] ?? 1;
+    filledSlots += Math.min(Number(row.count) || 0, exp);
+  }
+  const pendingSlots  = Math.max(0, totalExpected - filledSlots);
+  const siteScorePct  = totalExpected > 0 ? Math.round(filledSlots / totalExpected * 1000) / 10 : 0;
+
+  // Bar chart — today only with correct slot-based score already computed
+  const siteScoreRows = [{ date: todayDbStr, score: siteScorePct }];
+
+  // Helper: format minutes → 'H:MM AM/PM'
+  const fmtTime = (mins) => {
+    const h24 = Math.floor(mins / 60) % 24;
+    const m   = mins % 60;
+    const h12 = h24 % 12 || 12;
+    return h12 + ':' + String(m).padStart(2, '0') + ' ' + (h24 < 12 ? 'AM' : 'PM');
+  };
+
+  // Fetch today's submissions with DB-side IST minutes for slot matching
+  const [todaySubmissions] = await pool.query(
+    `SELECT cs.id, cs.template_id, ct.template_name,
+       cs.status, cs.submitted_at,
+       cu.full_name AS submitted_by,
+       EXTRACT(HOUR FROM cs.submitted_at)::int * 60 + EXTRACT(MINUTE FROM cs.submitted_at)::int AS sub_mins,
+       to_char(cs.submitted_at, 'HH12:MI AM') AS submitted_time
+     FROM checklist_submissions cs
+     JOIN checklist_templates ct ON ct.id = cs.template_id
+     LEFT JOIN company_users cu ON cu.id = COALESCE(cs.company_user_id, cs.submitted_by)
+     WHERE ct.company_id = ? AND cs.submitted_at::date = CURRENT_DATE
+     ORDER BY cs.submitted_at ASC`,
+    [companyId]
+  );
+
+  // Fetch active templates with slot config (for slot expansion)
+  const [tplWithConfig] = await pool.query(
+    `SELECT ct.id, ct.template_name, COALESCE(r.room_name, '—') AS room_name,
+            ct.frequency, ct.hourly_interval AS "hourlyInterval",
+            ct.start_time AS "startTime", ct.end_time AS "endTime"
      FROM checklist_templates ct
      LEFT JOIN rooms r ON r.id = ct.room_id
      WHERE ct.company_id = ? AND COALESCE(ct.status, 'active') != 'inactive'
      ORDER BY ct.template_name`,
     [companyId]
   );
-  const notSubmittedRows = activeTemplates
-    .filter(t => !submittedTplIds.has(t.id))
-    .map(t => ({ id: null, template_id: t.id, template_name: t.template_name, room_name: t.room_name, status: 'not_submitted', submitted_by: null, submitted_at: null }));
-  const allChecklistRows = [...todaySubmissions, ...notSubmittedRows];
+
+  // Group submissions by template_id for fast lookup
+  const subsByTpl = {};
+  for (const s of todaySubmissions) {
+    if (!subsByTpl[s.template_id]) subsByTpl[s.template_id] = [];
+    subsByTpl[s.template_id].push(s);
+  }
+
+  // Build slot-expanded rows — mirrors dashboard Recent Submissions view
+  const allChecklistRows = [];
+  for (const tpl of tplWithConfig) {
+    const freq = (tpl.frequency || 'daily').toLowerCase();
+    const subs = subsByTpl[tpl.id] || [];
+
+    if (freq === 'hourly' && tpl.startTime && tpl.endTime) {
+      const interval  = Math.max(1, Number(tpl.hourlyInterval) || 1);
+      const [sh, sm = 0] = tpl.startTime.split(':').map(Number);
+      const [eh, em = 0] = tpl.endTime.split(':').map(Number);
+      const startMins = sh * 60 + sm;
+      const endMins   = eh * 60 + em;
+      const usedSubIds = new Set();
+
+      // Generate each slot and match to submissions
+      for (let slotStart = startMins; slotStart < endMins; slotStart += interval * 60) {
+        const slotEnd   = slotStart + interval * 60;
+        const slotLabel = fmtTime(slotStart) + ' – ' + fmtTime(slotEnd);
+
+        const matchSub = subs.find(s => {
+          if (usedSubIds.has(s.id)) return false;
+          const sm2 = Number(s.sub_mins);
+          return sm2 >= slotStart && sm2 < slotEnd;
+        });
+
+        if (matchSub) {
+          usedSubIds.add(matchSub.id);
+          allChecklistRows.push({
+            id: matchSub.id, template_id: tpl.id,
+            template_name: tpl.template_name, room_name: slotLabel,
+            status: matchSub.status || 'submitted',
+            submitted_by: matchSub.submitted_by,
+            submitted_at: matchSub.submitted_at,
+            submitted_time: matchSub.submitted_time,
+          });
+        } else {
+          allChecklistRows.push({
+            id: null, template_id: tpl.id,
+            template_name: tpl.template_name, room_name: slotLabel,
+            status: 'not_submitted', submitted_by: null, submitted_at: null, submitted_time: null,
+          });
+        }
+      }
+
+      // Add outside-window submissions
+      for (const s of subs) {
+        if (!usedSubIds.has(s.id)) {
+          allChecklistRows.push({
+            id: s.id, template_id: tpl.id,
+            template_name: tpl.template_name,
+            room_name: fmtTime(Number(s.sub_mins)) + ' (outside window)',
+            status: s.status || 'submitted',
+            submitted_by: s.submitted_by,
+            submitted_at: s.submitted_at,
+            submitted_time: s.submitted_time,
+          });
+        }
+      }
+    } else {
+      // Daily / no slot config
+      if (subs.length > 0) {
+        for (const s of subs) {
+          allChecklistRows.push({
+            id: s.id, template_id: tpl.id,
+            template_name: tpl.template_name, room_name: tpl.room_name,
+            status: s.status || 'submitted',
+            submitted_by: s.submitted_by,
+            submitted_at: s.submitted_at,
+            submitted_time: s.submitted_time,
+          });
+        }
+      } else {
+        allChecklistRows.push({
+          id: null, template_id: tpl.id,
+          template_name: tpl.template_name, room_name: tpl.room_name,
+          status: 'not_submitted', submitted_by: null, submitted_at: null, submitted_time: null,
+        });
+      }
+    }
+  }
   const [softReqs] = await pool.query(
     `SELECT ssr.id, ssr.status, ssr.raised_at, l.name AS location_name, cu.full_name AS raised_by
      FROM soft_service_requests ssr LEFT JOIN locations l ON l.id = ssr.location_id
      LEFT JOIN company_users cu ON cu.id = ssr.raised_by_user_id
-     WHERE ssr.company_id = ? AND ssr.status NOT IN ('closed','resolved')
+     WHERE ssr.company_id = ?
+       AND LOWER(TRIM(COALESCE(ssr.status, ''))) NOT IN ('closed','resolved','cancelled','rejected')
      ORDER BY ssr.raised_at DESC NULLS LAST LIMIT 10`,
     [companyId]
   );
@@ -369,10 +626,6 @@ async function generatePDF(companyId) {
     [companyId]
   ).catch(() => [[]]);
 
-  const filledToday     = Number(dashRow?.filled_today    ?? 0);
-  const totalTemplates  = Number(dashRow?.total_templates ?? 0);
-  const pendingToday    = Math.max(0, totalTemplates - filledToday);
-  const siteScorePct    = totalTemplates > 0 ? Math.round((filledToday / totalTemplates) * 100) : 0;
   const activeLocations = Number(dashRow?.active_locations ?? 0);
   const openSoft        = Number(dashRow?.open_soft ?? 0);
   const companyName     = co?.company_name ?? "Company";
@@ -455,11 +708,11 @@ async function generatePDF(companyId) {
     doc.roundedRect(M, y, cardW, 58, 6).fillAndStroke("#fff", "#e2e8f0");
     doc.fillColor(LGRAY).fontSize(7).font("Helvetica").text("TODAY'S SITE SCORE", M + 10, y + 8, { width: cardW - 20 });
     doc.fillColor(GREEN).fontSize(26).font("Helvetica-Bold").text(siteScorePct + "%", M + 10, y + 17, { width: cardW - 20 });
-    doc.fillColor(GRAY).fontSize(7).font("Helvetica").text(filledToday + " of " + totalTemplates + " checklists filled today", M + 10, y + 46, { width: cardW - 20 });
+    doc.fillColor(GRAY).fontSize(7).font("Helvetica").text(filledSlots + " of " + totalExpected + " checklists filled today", M + 10, y + 46, { width: cardW - 20 });
     // Card 4: Total Filled Checklists
     doc.roundedRect(c2x, y, cardW, 58, 6).fillAndStroke("#fff", "#e2e8f0");
     doc.fillColor(LGRAY).fontSize(7).font("Helvetica").text("TOTAL FILLED CHECKLISTS", c2x + 10, y + 8, { width: cardW - 20 });
-    doc.fillColor(DARK).fontSize(26).font("Helvetica-Bold").text(String(filledToday), c2x + 10, y + 17, { width: cardW - 20 });
+    doc.fillColor(DARK).fontSize(26).font("Helvetica-Bold").text(String(filledSlots), c2x + 10, y + 17, { width: cardW - 20 });
     doc.fillColor(GRAY).fontSize(7).font("Helvetica").text("Filled checklists for selected date", c2x + 10, y + 46, { width: cardW - 20 });
     y += 68;
 
@@ -473,9 +726,9 @@ async function generatePDF(companyId) {
     doc.fillColor(LGRAY).fontSize(6).font("Helvetica").text("SITE SCORE", donutCx - 17, donutCy + 6, { width: 34, align: "center" });
     const lx = M + 158;
     const legendItems = [
-      { dot: GREEN,     label: "Filled Checklists",  val: String(filledToday),  pct: totalTemplates > 0 ? Math.round((filledToday / totalTemplates) * 100) + "%" : "0%" },
-      { dot: "#bbf7d0", label: "Pending Checklists", val: String(pendingToday), pct: totalTemplates > 0 ? Math.round((pendingToday / totalTemplates) * 100) + "%" : "0%" },
-      { dot: BLUE,      label: "Site Score",         val: siteScorePct + "%",   pct: filledToday + "/" + totalTemplates },
+      { dot: GREEN,     label: "Filled Checklists",  val: String(filledSlots),   pct: totalExpected > 0 ? Math.round((filledSlots / totalExpected) * 100) + "%" : "0%" },
+      { dot: "#bbf7d0", label: "Pending Checklists", val: String(pendingSlots),  pct: totalExpected > 0 ? Math.round((pendingSlots / totalExpected) * 100) + "%" : "0%" },
+      { dot: BLUE,      label: "Site Score",         val: siteScorePct + "%",    pct: filledSlots + "/" + totalExpected },
     ];
     let ly = y + 44;
     for (const item of legendItems) {
@@ -535,7 +788,7 @@ async function generatePDF(companyId) {
       if (y + sectionH > H - 40) { doc.addPage(); y = 32; }
       doc.roundedRect(M, y, IW, sectionH, 6).fillAndStroke("#fff", "#e2e8f0");
       doc.fillColor(DARK).fontSize(11).font("Helvetica-Bold").text("Site Score Overview", M + 12, y + 10);
-      doc.fillColor(LGRAY).fontSize(8).font("Helvetica").text("Today \u2014 Daily checklist completion rate", M + 12, y + 24);
+      doc.fillColor(LGRAY).fontSize(8).font("Helvetica").text("Today (" + todayDbStr + ") \u2014 Slot-based completion rate", M + 12, y + 24);
       const barAreaX = M + chartPad + 28;
       const barAreaW = IW - chartPad * 2 - 28;
       const barAreaY = y + 38;
@@ -582,10 +835,10 @@ async function generatePDF(companyId) {
       const cols = [
         { x: M + 2,   w: 18,  t: "#" },
         { x: M + 24,  w: 145, t: "Template" },
-        { x: M + 173, w: 100, t: "Room" },
+        { x: M + 173, w: 100, t: "Slot / Room" },
         { x: M + 277, w: 60,  t: "Status" },
         { x: M + 341, w: 100, t: "Filled By" },
-        { x: M + 445, w: 80,  t: "Submitted" },
+        { x: M + 445, w: 80,  t: "Time" },
       ];
       doc.rect(M, y, IW, 18).fill("#EFF6FF");
       doc.fillColor(BLUE).font("Helvetica-Bold").fontSize(7.5);
@@ -611,7 +864,7 @@ async function generatePDF(companyId) {
         doc.text(s.room_name ?? "—", cols[2].x, y + 3, { width: cols[2].w, ellipsis: true });
         doc.fillColor(statusColor(s.status)).text(statusLabel(s.status), cols[3].x, y + 3, { width: cols[3].w, ellipsis: true });
         doc.fillColor(s.submitted_by ? DARK : LGRAY).text(s.submitted_by ?? "—", cols[4].x, y + 3, { width: cols[4].w, ellipsis: true });
-        doc.fillColor(DARK).text(s.submitted_at ? new Date(s.submitted_at).toLocaleDateString("en-GB") : "—", cols[5].x, y + 3, { width: cols[5].w });
+        doc.fillColor(DARK).text(s.submitted_time ?? "—", cols[5].x, y + 3, { width: cols[5].w });
         y += 17;
       }
     }
@@ -689,7 +942,7 @@ async function sendScheduledReport(config) {
     : "";
 
   await transporter.sendMail({
-    from: `"FM App - ${companyName}" <${process.env.MAIL_USER}>`,
+    from: `"FM App - ${companyName}" <${MAIL_FROM_ADDRESS}>`,
     to: recipients.join(", "),
     subject: emailSubject,
     html: `
@@ -739,6 +992,124 @@ cron.schedule("* * * * *", async () => {
     }
   } catch (err) {
     console.error("[scheduled-reports] Cron error:", err.message);
+  }
+});
+
+/* ── Cron: daily at 00:05 IST, snapshot yesterday's site scores ───────────── */
+cron.schedule("5 0 * * *", async () => {
+  try {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.toISOString().split('T')[0];
+
+    console.log(`[daily-snapshots] Creating snapshots for ${yesterdayStr}...`);
+
+    // Get all active companies
+    const [companies] = await pool.query(`SELECT id FROM companies WHERE COALESCE(status, 'Active') = 'Active'`);
+
+    let successCount = 0;
+    let skipCount = 0;
+    let errorCount = 0;
+
+    for (const co of companies) {
+      try {
+        // Check if snapshot already exists
+        const [[existing]] = await pool.query(
+          `SELECT id FROM daily_checklist_snapshots WHERE company_id = ? AND snapshot_date = ?::date`,
+          [co.id, yesterdayStr]
+        );
+
+        if (existing) {
+          skipCount++;
+          continue;
+        }
+
+        // Fetch templates with frequency metadata
+        const [templates] = await pool.query(
+          `SELECT id, frequency, hourly_interval AS "hourlyInterval",
+                  start_time AS "startTime", end_time AS "endTime"
+           FROM checklist_templates
+           WHERE company_id = ?
+             AND COALESCE(status, 'active') != 'inactive'`,
+          [co.id]
+        );
+
+        // Fetch submission counts for yesterday
+        const [subCounts] = await pool.query(
+          `SELECT cs.template_id AS "templateId", COUNT(*) AS "count"
+           FROM checklist_submissions cs
+           JOIN checklist_templates ct ON ct.id = cs.template_id
+           WHERE ct.company_id = ?
+             AND cs.submitted_at::date = ?::date
+             AND COALESCE(ct.status, 'active') != 'inactive'
+             AND cs.status NOT IN ('rejected')
+             AND (
+               LOWER(COALESCE(ct.frequency, 'daily')) != 'hourly'
+               OR ct.start_time IS NULL
+               OR ct.end_time IS NULL
+               OR (
+                 (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
+                   >= (EXTRACT(HOUR FROM ct.start_time::time) * 60 + EXTRACT(MINUTE FROM ct.start_time::time))
+                 AND (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
+                   < (EXTRACT(HOUR FROM ct.end_time::time) * 60 + EXTRACT(MINUTE FROM ct.end_time::time))
+               )
+             )
+           GROUP BY cs.template_id`,
+          [co.id, yesterdayStr]
+        );
+
+        const subMap = Object.fromEntries(subCounts.map(s => [s.templateId, Number(s.count) || 0]));
+
+        let totalExpected = 0;
+        let filledSlots = 0;
+        const breakdown = [];
+
+        for (const t of templates) {
+          const freq = (t.frequency || 'Daily').toLowerCase();
+          let exp = 1;
+          if (freq === 'hourly') {
+            const interval = Math.max(1, Number(t.hourlyInterval) || 1);
+            if (t.startTime && t.endTime) {
+              const [sh, sm = 0] = t.startTime.split(':').map(Number);
+              const [eh, em = 0] = t.endTime.split(':').map(Number);
+              const startMins = sh * 60 + (sm || 0);
+              const endMins = eh * 60 + (em || 0);
+              if (endMins > startMins) {
+                exp = Math.max(1, Math.floor((endMins - startMins) / (interval * 60)));
+              }
+            } else {
+              exp = Math.max(1, Math.floor(1440 / (interval * 60)));
+            }
+          }
+          if (exp <= 0) continue;
+          totalExpected += exp;
+          const actual = subMap[t.id] || 0;
+          const filled = Math.min(actual, exp);
+          filledSlots += filled;
+          breakdown.push({ templateId: t.id, expectedSlots: exp, filledSlots: filled });
+        }
+
+        const siteScorePct = totalExpected > 0 ? Math.round((filledSlots / totalExpected) * 100) : 0;
+
+        // Insert snapshot
+        await pool.query(
+          `INSERT INTO daily_checklist_snapshots 
+           (company_id, snapshot_date, total_expected_slots, filled_slots, site_score_pct, template_breakdown)
+           VALUES (?, ?::date, ?, ?, ?, ?::jsonb)
+           ON CONFLICT (company_id, snapshot_date) DO NOTHING`,
+          [co.id, yesterdayStr, totalExpected, filledSlots, siteScorePct, JSON.stringify(breakdown)]
+        );
+
+        successCount++;
+      } catch (coErr) {
+        errorCount++;
+        console.error(`[daily-snapshots] Error for company ${co.id}:`, coErr.message);
+      }
+    }
+
+    console.log(`[daily-snapshots] Complete: ${successCount} created, ${skipCount} skipped, ${errorCount} errors`);
+  } catch (err) {
+    console.error("[daily-snapshots] Cron error:", err.message);
   }
 });
 
@@ -886,9 +1257,7 @@ router.post("/:id/send-now", async (req, res) => {
     console.error("[send-now] SMTP verify failed:", smtpErr.message);
     let hint = smtpErr.message || "SMTP connection failed";
     if (/535|BadCredentials|Username and Password|Invalid login/i.test(hint)) {
-      hint = "Gmail rejected the password. MAIL_PASS must be a Gmail App Password (16-char code), " +
-             "NOT your regular account password. " +
-             "Go to myaccount.google.com \u2192 Security \u2192 2-Step Verification \u2192 App Passwords \u2192 Generate.";
+      hint = "SMTP authentication failed. For Microsoft 365, set MAIL_PROVIDER=office365 and use valid MAIL_USER/MAIL_PASS credentials for the mailbox.";
     }
     return res.status(502).json({ message: hint });
   }

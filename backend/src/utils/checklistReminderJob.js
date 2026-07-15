@@ -108,7 +108,7 @@ async function runChecklistReminderJob() {
   }
 }
 
-// ── Hourly: same as before ───────────────────────────────────────────────────
+// ── Hourly: reminder X min BEFORE each slot's deadline + post-slot admin notif ─
 async function processHourlyTemplate(tpl, now) {
   const { id: templateId, companyId, templateName, hourlyInterval, notificationTimer, startTime, endTime } = tpl;
 
@@ -125,30 +125,107 @@ async function processHourlyTemplate(tpl, now) {
   const windowEnd = new Date(windowStart);
   windowEnd.setHours(windowStart.getHours() + interval, 0, 0, 0);
 
+  // ── Determine boundaries ──────────────────────────────────────────────────
   if (startTime) {
     const [sh, sm] = startTime.split(":").map(Number);
     const boundary = new Date(todayMidnight);
     boundary.setHours(sh, sm, 0, 0);
-    if (now < boundary) return;
+    if (now < boundary) return; // Before template's active start
   }
+
+  // Allow slightly past endTime so we can still fire the post-slot Phase 2
+  let afterEndTime = false;
   if (endTime) {
     const [eh, em] = endTime.split(":").map(Number);
-    const boundary = new Date(todayMidnight);
-    boundary.setHours(eh, em, 0, 0);
-    if (now > boundary) return;
+    const endBoundary = new Date(todayMidnight);
+    endBoundary.setHours(eh, em, 0, 0);
+    if (now > endBoundary) afterEndTime = true;
+    // If far past end time (more than job interval + 2 min), skip entirely
+    if (now > new Date(endBoundary.getTime() + RUN_INTERVAL_MS + 2 * 60 * 1000)) return;
   }
 
-  const elapsedMinutes = (now - windowStart) / (1000 * 60);
-  if (elapsedMinutes < reminderMinutes) return;
+  // ── Phase 1: Pre-deadline FCM push + in-app — X min BEFORE slot END ──────
+  if (!afterEndTime) {
+    const minutesUntilEnd = (windowEnd - now) / (1000 * 60);
+    if (minutesUntilEnd <= reminderMinutes && now < windowEnd) {
+      const windowLabel = `${String(windowStart.getHours()).padStart(2, "0")}:00–${String(windowEnd.getHours()).padStart(2, "0")}:00`;
+      const pushBody = `"${templateName}" has not been submitted yet. Deadline in ${Math.ceil(minutesUntilEnd)} min (${windowLabel}). Please fill it in now!`;
+      const inAppMessage = `The checklist "${templateName}" has not been submitted for the ${windowLabel} window.`;
+      await sendReminderIfNeeded({ templateId, companyId, templateName, windowStart, windowEnd, windowLabel, pushBody, inAppMessage });
+    }
+  }
 
-  const windowLabel = `${String(windowStart.getHours()).padStart(2, "0")}:00–${String(windowEnd.getHours()).padStart(2, "0")}:00`;
-  const pushBody = `"${templateName}" has not been submitted yet for the ${windowLabel} window. Please fill it in now.`;
-  const inAppMessage = `The checklist "${templateName}" has not been submitted for the ${windowLabel} window.`;
+  // ── Phase 2: Post-slot in-app notification for admins — after slot ends ───
+  // "justEnded" window = the one that just ended (its end = current windowStart)
+  const justEndedWindowEnd = windowStart; // current window's start = previous window's end
+  const justEndedWindowStartHour = windowStartHour - interval;
+  if (justEndedWindowStartHour >= 0) {
+    const justEndedWindowStart = new Date(todayMidnight);
+    justEndedWindowStart.setHours(justEndedWindowStartHour, 0, 0, 0);
 
-  await sendReminderIfNeeded({ templateId, companyId, templateName, windowStart, windowEnd, windowLabel, pushBody, inAppMessage });
+    // Verify the just-ended window was within the template's active start time
+    let isValidWindow = true;
+    if (startTime) {
+      const [sh, sm] = startTime.split(":").map(Number);
+      const startBoundary = new Date(todayMidnight);
+      startBoundary.setHours(sh, sm, 0, 0);
+      if (justEndedWindowStart < startBoundary) isValidWindow = false;
+    }
+
+    const msAfterEnd = now - justEndedWindowEnd;
+    if (isValidWindow && msAfterEnd >= 0 && msAfterEnd <= RUN_INTERVAL_MS + 60000) {
+      const prevLabel = `${String(justEndedWindowStart.getHours()).padStart(2, "0")}:00–${String(justEndedWindowEnd.getHours()).padStart(2, "0")}:00`;
+      await sendPostSlotAdminNotif({ templateId, companyId, templateName,
+        windowStart: justEndedWindowStart, windowEnd: justEndedWindowEnd, windowLabel: prevLabel });
+    }
+  }
 }
 
-// ── Custom: reminder X min before each custom hour ───────────────────────────
+// ── Post-slot: admin-only in-app notification after a slot ends ──────────────
+async function sendPostSlotAdminNotif({ templateId, companyId, templateName, windowStart, windowEnd, windowLabel }) {
+  // Use windowEnd as the dedup key (distinct from Phase 1 which uses windowStart)
+  const [[alreadySent]] = await pool.query(
+    `SELECT id FROM checklist_reminder_log WHERE template_id = ? AND window_start = ?`,
+    [templateId, windowEnd.toISOString()]
+  ).catch(() => [[]]);
+  if (alreadySent) return;
+
+  // Skip if submission exists in this window
+  const [[submission]] = await pool.query(
+    `SELECT id FROM checklist_submissions
+     WHERE template_id = ? AND submitted_at >= ? AND submitted_at < ? LIMIT 1`,
+    [templateId, windowStart.toISOString(), windowEnd.toISOString()]
+  ).catch(() => [[]]);
+  if (submission) return;
+
+  // Mark post-slot as notified
+  await pool.query(
+    `INSERT INTO checklist_reminder_log (template_id, window_start) VALUES (?, ?) ON CONFLICT (template_id, window_start) DO NOTHING`,
+    [templateId, windowEnd.toISOString()]
+  ).catch(() => {});
+
+  const inAppTitle = "Checklist Not Submitted";
+  const inAppMessage = `The checklist "${templateName}" was not submitted for the ${windowLabel} window.`;
+
+  // Notify admins only (post-slot is an admin audit notification in the portal)
+  const [admins] = await pool.query(
+    `SELECT id FROM company_users WHERE company_id = ? AND role = 'admin' AND status = 'Active'`,
+    [companyId]
+  ).catch(() => [[]]);
+
+  for (const admin of (admins || [])) {
+    await createNotification({
+      companyId, recipientId: admin.id, flagId: null,
+      type: "checklist_reminder", title: inAppTitle, message: inAppMessage,
+    }).catch(() => {});
+  }
+
+  if ((admins || []).length > 0) {
+    console.log(`[ChecklistReminder] Post-slot admin notification — template ${templateId} ("${templateName}") — ${windowLabel}`);
+  }
+}
+
+// ── Custom: reminder X min BEFORE each custom hour's deadline ────────────────
 async function processCustomTemplate(tpl, now) {
   const { id: templateId, companyId, templateName, notificationTimer, customHoursRaw } = tpl;
 
@@ -166,16 +243,21 @@ async function processCustomTemplate(tpl, now) {
     const windowEnd = new Date(windowStart);
     windowEnd.setHours(h + 1, 0, 0, 0);
 
-    const elapsedMinutes = (now - windowStart) / (1000 * 60);
-    // Fire when: elapsedMinutes >= reminderMinutes AND we're still in the window
-    if (elapsedMinutes < reminderMinutes) continue;
-    if (now >= windowEnd) continue; // window already passed
+    // Phase 1: X min BEFORE window END (not after start)
+    const minutesUntilEnd = (windowEnd - now) / (1000 * 60);
+    if (minutesUntilEnd <= reminderMinutes && now < windowEnd) {
+      const windowLabel = `${String(h).padStart(2, "0")}:00–${String(h + 1).padStart(2, "0")}:00`;
+      const pushBody = `"${templateName}" has not been submitted yet. Deadline in ${Math.ceil(minutesUntilEnd)} min (${windowLabel}). Please fill it in now!`;
+      const inAppMessage = `The checklist "${templateName}" has not been submitted for the ${windowLabel} window.`;
+      await sendReminderIfNeeded({ templateId, companyId, templateName, windowStart, windowEnd, windowLabel, pushBody, inAppMessage });
+    }
 
-    const windowLabel = `${String(h).padStart(2, "0")}:00–${String(h + 1).padStart(2, "0")}:00`;
-    const pushBody = `"${templateName}" has not been submitted yet for the ${windowLabel} window. Please fill it in now.`;
-    const inAppMessage = `The checklist "${templateName}" has not been submitted for the ${windowLabel} window.`;
-
-    await sendReminderIfNeeded({ templateId, companyId, templateName, windowStart, windowEnd, windowLabel, pushBody, inAppMessage });
+    // Phase 2: Post-slot admin notification (just after window ends)
+    const msAfterEnd = now - windowEnd;
+    if (msAfterEnd >= 0 && msAfterEnd <= RUN_INTERVAL_MS + 60000) {
+      const windowLabel = `${String(h).padStart(2, "0")}:00–${String(h + 1).padStart(2, "0")}:00`;
+      await sendPostSlotAdminNotif({ templateId, companyId, templateName, windowStart, windowEnd, windowLabel });
+    }
   }
 }
 

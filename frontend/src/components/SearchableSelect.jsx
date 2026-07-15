@@ -19,6 +19,7 @@ export default function SearchableSelect({
   onChange,
   options = [],
   placeholder = "Select…",
+  isMulti = false,
   disabled = false,
   style = {},
   inputStyle = {},
@@ -28,6 +29,14 @@ export default function SearchableSelect({
   const [dropUp, setDropUp] = useState(false);
   const containerRef = useRef(null);
   const inputRef = useRef(null);
+
+  const selectedValues = isMulti
+    ? (Array.isArray(value)
+        ? value.map((v) => String(v))
+        : (value == null || value === "" || String(value).toLowerCase() === "all")
+          ? []
+          : String(value).split(",").map((v) => v.trim()).filter(Boolean))
+    : [];
 
   const selected = options.find((o) => String(o.value) === String(value));
   const filtered = options.filter(
@@ -51,10 +60,35 @@ export default function SearchableSelect({
   }, []);
 
   const handleSelect = (opt) => {
-    onChange(String(opt.value));
-    setOpen(false);
-    setSearch("");
+    if (!isMulti) {
+      onChange(String(opt.value));
+      setOpen(false);
+      setSearch("");
+      return;
+    }
+
+    const optVal = String(opt.value);
+    if (optVal.toLowerCase() === "all") {
+      onChange([]);
+      return;
+    }
+    const next = selectedValues.includes(optVal)
+      ? selectedValues.filter((v) => v !== optVal)
+      : [...selectedValues, optVal];
+    onChange(next);
   };
+
+  const selectedLabel = isMulti
+    ? (() => {
+        if (!selectedValues.length) {
+          const allOpt = options.find((o) => String(o.value).toLowerCase() === "all");
+          return allOpt?.label || placeholder;
+        }
+        const selectedOptions = options.filter((o) => selectedValues.includes(String(o.value)));
+        if (selectedOptions.length <= 2) return selectedOptions.map((o) => o.label).join(", ");
+        return `${selectedOptions.length} selected`;
+      })()
+    : (selected?.label ?? "");
 
   // Calculate whether dropdown should open upward
   const openDropdown = () => {
@@ -102,7 +136,7 @@ export default function SearchableSelect({
           ref={inputRef}
           type="text"
           readOnly={!open}
-          value={open ? search : (selected?.label ?? "")}
+          value={open ? search : selectedLabel}
           placeholder={placeholder}
           disabled={disabled}
           onClick={() => { if (!disabled) { openDropdown(); } }}
@@ -118,7 +152,7 @@ export default function SearchableSelect({
             background: disabled ? "#f8fafc" : "#fff",
             cursor: disabled ? "not-allowed" : "pointer",
             outline: "none",
-            color: open && !search && !selected ? "#94a3b8" : "#0f172a",
+            color: open && !search && !selectedLabel ? "#94a3b8" : "#0f172a",
             ...inputStyle,
           }}
           autoComplete="off"
@@ -169,21 +203,47 @@ export default function SearchableSelect({
                 data-opt
                 tabIndex={0}
                 role="option"
-                aria-selected={String(opt.value) === String(value)}
+                aria-selected={isMulti ? selectedValues.includes(String(opt.value)) : String(opt.value) === String(value)}
                 onClick={() => handleSelect(opt)}
                 onKeyDown={(e) => handleItemKeyDown(e, opt, idx)}
                 style={{
                   padding: "9px 14px",
                   fontSize: "13.5px",
                   cursor: "pointer",
-                  background: String(opt.value) === String(value) ? "#eff6ff" : "transparent",
-                  color: String(opt.value) === String(value) ? "#2563eb" : "#0f172a",
-                  fontWeight: String(opt.value) === String(value) ? 600 : 400,
+                  background: (isMulti
+                    ? (String(opt.value).toLowerCase() === "all" ? selectedValues.length === 0 : selectedValues.includes(String(opt.value)))
+                    : String(opt.value) === String(value)) ? "#eff6ff" : "transparent",
+                  color: (isMulti
+                    ? (String(opt.value).toLowerCase() === "all" ? selectedValues.length === 0 : selectedValues.includes(String(opt.value)))
+                    : String(opt.value) === String(value)) ? "#2563eb" : "#0f172a",
+                  fontWeight: (isMulti
+                    ? (String(opt.value).toLowerCase() === "all" ? selectedValues.length === 0 : selectedValues.includes(String(opt.value)))
+                    : String(opt.value) === String(value)) ? 600 : 400,
                   borderBottom: idx < filtered.length - 1 ? "1px solid #f1f5f9" : "none",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: isMulti ? "8px" : "0",
                 }}
-                onMouseEnter={(e) => { if (String(opt.value) !== String(value)) e.currentTarget.style.background = "#f8fafc"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = String(opt.value) === String(value) ? "#eff6ff" : "transparent"; }}
+                onMouseEnter={(e) => {
+                  const isSelected = isMulti
+                    ? (String(opt.value).toLowerCase() === "all" ? selectedValues.length === 0 : selectedValues.includes(String(opt.value)))
+                    : String(opt.value) === String(value);
+                  if (!isSelected) e.currentTarget.style.background = "#f8fafc";
+                }}
+                onMouseLeave={(e) => {
+                  const isSelected = isMulti
+                    ? (String(opt.value).toLowerCase() === "all" ? selectedValues.length === 0 : selectedValues.includes(String(opt.value)))
+                    : String(opt.value) === String(value);
+                  e.currentTarget.style.background = isSelected ? "#eff6ff" : "transparent";
+                }}
               >
+                {isMulti && (
+                  <span style={{ width: "14px", height: "14px", borderRadius: "3px", border: "1.5px solid #94a3b8", display: "inline-flex", alignItems: "center", justifyContent: "center", background: (String(opt.value).toLowerCase() === "all" ? selectedValues.length === 0 : selectedValues.includes(String(opt.value))) ? "#2563eb" : "#fff", borderColor: (String(opt.value).toLowerCase() === "all" ? selectedValues.length === 0 : selectedValues.includes(String(opt.value))) ? "#2563eb" : "#94a3b8" }}>
+                    {(String(opt.value).toLowerCase() === "all" ? selectedValues.length === 0 : selectedValues.includes(String(opt.value))) && (
+                      <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
+                    )}
+                  </span>
+                )}
                 {opt.label}
               </div>
             ))

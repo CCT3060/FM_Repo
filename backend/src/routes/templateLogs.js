@@ -390,6 +390,8 @@ router.get(
 /* ── Recent filled logsheet entries (admin) ────────────────────────────────── */
 router.get("/entries/recent", async (req, res, next) => {
   try {
+    const { date } = req.query;
+    const targetDate = date || new Date().toISOString().slice(0, 10);
     const [rows] = await pool.query(
       `SELECT le.id, le.month, le.year, le.shift,
               COALESCE(le.submitted_at, le.entry_date) AS "submittedAt",
@@ -404,9 +406,10 @@ router.get("/entries/recent", async (req, res, next) => {
        LEFT JOIN company_users cu ON cu.id = COALESCE(le.company_user_id, le.submitted_by)
        LEFT JOIN companies c ON c.id = lt.company_id
        WHERE c.user_id = ?
+         AND COALESCE(le.submitted_at, le.entry_date)::date = ?::date
        ORDER BY le.submitted_at DESC NULLS LAST, le.entry_date DESC
-       LIMIT 30`,
-      [req.user.id]
+       LIMIT 100`,
+      [req.user.id, targetDate]
     );
     res.json(rows);
   } catch (err) {

@@ -209,7 +209,16 @@ router.get("/my-assignments", async (req, res, next) => {
                WHERE cs.template_id = tua.template_id
                  AND cs.company_user_id = tua.assigned_to
                  AND (
-                   (ct.frequency = 'Hourly'  AND cs.submitted_at >= NOW() - INTERVAL '1 hour')
+                   (LOWER(ct.frequency) = 'hourly' AND cs.submitted_at::date = CURRENT_DATE AND
+                     FLOOR(GREATEST(0::numeric,
+                       (EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at))
+                       - COALESCE(EXTRACT(HOUR FROM ct.start_time::time)*60+EXTRACT(MINUTE FROM ct.start_time::time),0)
+                     )/(COALESCE(ct.hourly_interval,1)*60.0)) =
+                     FLOOR(GREATEST(0::numeric,
+                       (EXTRACT(HOUR FROM NOW())*60+EXTRACT(MINUTE FROM NOW()))
+                       - COALESCE(EXTRACT(HOUR FROM ct.start_time::time)*60+EXTRACT(MINUTE FROM ct.start_time::time),0)
+                     )/(COALESCE(ct.hourly_interval,1)*60.0))
+                   )
                    OR (ct.frequency = 'Weekly'  AND cs.submitted_at >= date_trunc('week', NOW()))
                    OR (ct.frequency = 'Monthly' AND cs.submitted_at >= date_trunc('month', NOW()))
                    OR (ct.frequency NOT IN ('Hourly','Weekly','Monthly') AND cs.submitted_at >= CURRENT_DATE)
@@ -244,7 +253,16 @@ router.get("/my-assignments", async (req, res, next) => {
              WHERE cs.template_id = tua.template_id
                AND cs.company_user_id = tua.assigned_to
                AND (
-                 (ct.frequency = 'Hourly'  AND cs.submitted_at >= NOW() - INTERVAL '1 hour')
+                 (LOWER(ct.frequency) = 'hourly' AND cs.submitted_at::date = CURRENT_DATE AND
+                   FLOOR(GREATEST(0::numeric,
+                     (EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at))
+                     - COALESCE(EXTRACT(HOUR FROM ct.start_time::time)*60+EXTRACT(MINUTE FROM ct.start_time::time),0)
+                   )/(COALESCE(ct.hourly_interval,1)*60.0)) =
+                   FLOOR(GREATEST(0::numeric,
+                     (EXTRACT(HOUR FROM NOW())*60+EXTRACT(MINUTE FROM NOW()))
+                     - COALESCE(EXTRACT(HOUR FROM ct.start_time::time)*60+EXTRACT(MINUTE FROM ct.start_time::time),0)
+                   )/(COALESCE(ct.hourly_interval,1)*60.0))
+                 )
                  OR (ct.frequency = 'Weekly'  AND cs.submitted_at >= date_trunc('week', NOW()))
                  OR (ct.frequency = 'Monthly' AND cs.submitted_at >= date_trunc('month', NOW()))
                  OR (ct.frequency NOT IN ('Hourly','Weekly','Monthly') AND cs.submitted_at >= CURRENT_DATE)
@@ -703,9 +721,11 @@ router.post(
         }
       }
 
-      // Fetch template (includes asset_id + questions column)
+      // Fetch template (includes asset_id + questions column + frequency settings)
       const [[tmplWithQ]] = await pool.query(
-        `SELECT ct.questions, ct.asset_id AS assetId
+        `SELECT ct.questions, ct.asset_id AS assetId,
+                ct.frequency, ct.hourly_interval AS "hourlyInterval",
+                ct.start_time AS "startTime", ct.end_time AS "endTime"
          FROM checklist_templates ct WHERE ct.id = ?`,
         [templateId]
       );
@@ -727,14 +747,50 @@ router.post(
       // Use linked asset if none supplied
       const effectiveAssetId = assetId || tmplWithQ?.assetId || null;
 
-      // ── Upsert: if user already submitted this checklist today, update instead of insert ──
-      const _today = new Date().toISOString().slice(0, 10);
-      const [[existingChecklistSub]] = await pool.query(
-        `SELECT id FROM checklist_submissions
-         WHERE template_id = ? AND company_user_id = ? AND DATE(submitted_at) = ?
-         LIMIT 1`,
-        [templateId, req.companyUser.id, _today]
-      ).catch(() => [[null]]);
+      // ── Upsert logic: prevent duplicate within the same time slot ──────────
+      // For Hourly templates: only upsert if a submission already exists within
+      // the same hourly slot (based on hourly_interval + start_time).
+      // For Daily/Weekly/Monthly/Custom: upsert once per day.
+      const _freq = (tmplWithQ?.frequency || 'Daily').toLowerCase();
+      const _interval = Number(tmplWithQ?.hourlyInterval) || 1;
+
+      // Parse start_time string ('HH:MM' or 'HH:MM:SS') into minutes-since-midnight.
+      // This is pure arithmetic on a text value — no timezone involved.
+      const _startMins = (() => {
+        const t = tmplWithQ?.startTime;
+        if (!t) return 0;
+        const [sh, sm = 0] = t.split(':').map(Number);
+        return ((sh || 0) * 60) + (sm || 0);
+      })();
+
+      let [[existingChecklistSub]] = await (() => {
+        if (_freq === 'hourly') {
+          // Pure SQL slot detection — both submitted_at and NOW() are evaluated in the
+          // PostgreSQL session timezone (set via APP_TIMEZONE in .env / db.js) so the
+          // comparison is internally consistent regardless of server TZ.
+          return pool.query(
+            `SELECT id FROM checklist_submissions
+             WHERE template_id = ? AND company_user_id = ?
+               AND submitted_at::date = CURRENT_DATE
+               AND FLOOR(GREATEST(0::numeric,
+                     (EXTRACT(HOUR FROM submitted_at)*60+EXTRACT(MINUTE FROM submitted_at)) - ?
+                   ) / (? * 60.0))
+                 = FLOOR(GREATEST(0::numeric,
+                     (EXTRACT(HOUR FROM NOW())*60+EXTRACT(MINUTE FROM NOW())) - ?
+                   ) / (? * 60.0))
+             LIMIT 1`,
+            [templateId, req.companyUser.id, _startMins, _interval, _startMins, _interval]
+          ).catch(() => [[null]]);
+        } else {
+          // Daily/Weekly/Monthly: one submission per calendar day
+          return pool.query(
+            `SELECT id FROM checklist_submissions
+             WHERE template_id = ? AND company_user_id = ? AND submitted_at::date = CURRENT_DATE
+             LIMIT 1`,
+            [templateId, req.companyUser.id]
+          ).catch(() => [[null]]);
+        }
+      })();
 
       let submissionId;
       if (existingChecklistSub) {
@@ -1217,7 +1273,16 @@ router.get("/location-templates/:locationId", async (req, res, next) => {
            WHERE cs.template_id = ct.id
              AND cs.company_user_id = ?
              AND (
-               (ct.frequency = 'Hourly'  AND cs.submitted_at >= NOW() - INTERVAL '1 hour')
+               (LOWER(ct.frequency) = 'hourly' AND cs.submitted_at::date = CURRENT_DATE AND
+                 FLOOR(GREATEST(0::numeric,
+                   (EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at))
+                   - COALESCE(EXTRACT(HOUR FROM ct.start_time::time)*60+EXTRACT(MINUTE FROM ct.start_time::time),0)
+                 )/(COALESCE(ct.hourly_interval,1)*60.0)) =
+                 FLOOR(GREATEST(0::numeric,
+                   (EXTRACT(HOUR FROM NOW())*60+EXTRACT(MINUTE FROM NOW()))
+                   - COALESCE(EXTRACT(HOUR FROM ct.start_time::time)*60+EXTRACT(MINUTE FROM ct.start_time::time),0)
+                 )/(COALESCE(ct.hourly_interval,1)*60.0))
+               )
                OR (ct.frequency = 'Weekly'  AND cs.submitted_at >= date_trunc('week', NOW()))
                OR (ct.frequency = 'Monthly' AND cs.submitted_at >= date_trunc('month', NOW()))
                OR (ct.frequency NOT IN ('Hourly','Weekly','Monthly') AND cs.submitted_at >= CURRENT_DATE)
@@ -1228,7 +1293,16 @@ router.get("/location-templates/:locationId", async (req, res, next) => {
            SELECT 1 FROM checklist_submissions cs2
            WHERE cs2.template_id = ct.id
              AND (
-               (ct.frequency = 'Hourly'  AND cs2.submitted_at >= NOW() - INTERVAL '1 hour')
+               (LOWER(ct.frequency) = 'hourly' AND cs2.submitted_at::date = CURRENT_DATE AND
+                 FLOOR(GREATEST(0::numeric,
+                   (EXTRACT(HOUR FROM cs2.submitted_at)*60+EXTRACT(MINUTE FROM cs2.submitted_at))
+                   - COALESCE(EXTRACT(HOUR FROM ct.start_time::time)*60+EXTRACT(MINUTE FROM ct.start_time::time),0)
+                 )/(COALESCE(ct.hourly_interval,1)*60.0)) =
+                 FLOOR(GREATEST(0::numeric,
+                   (EXTRACT(HOUR FROM NOW())*60+EXTRACT(MINUTE FROM NOW()))
+                   - COALESCE(EXTRACT(HOUR FROM ct.start_time::time)*60+EXTRACT(MINUTE FROM ct.start_time::time),0)
+                 )/(COALESCE(ct.hourly_interval,1)*60.0))
+               )
                OR (ct.frequency = 'Weekly'  AND cs2.submitted_at >= date_trunc('week', NOW()))
                OR (ct.frequency = 'Monthly' AND cs2.submitted_at >= date_trunc('month', NOW()))
                OR (ct.frequency NOT IN ('Hourly','Weekly','Monthly') AND cs2.submitted_at >= CURRENT_DATE)
@@ -1360,7 +1434,16 @@ router.get("/check-location-filled", async (req, res, next) => {
          AND ct.company_id = ?
          AND ct.location_id = ?
          AND (
-           (? = 'Hourly'  AND cs.submitted_at >= NOW() - INTERVAL '1 hour')
+           (? = 'Hourly' AND cs.submitted_at::date = CURRENT_DATE AND
+             FLOOR(GREATEST(0::numeric,
+               (EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at))
+               - COALESCE(EXTRACT(HOUR FROM ct.start_time::time)*60+EXTRACT(MINUTE FROM ct.start_time::time),0)
+             )/(COALESCE(ct.hourly_interval,1)*60.0)) =
+             FLOOR(GREATEST(0::numeric,
+               (EXTRACT(HOUR FROM NOW())*60+EXTRACT(MINUTE FROM NOW()))
+               - COALESCE(EXTRACT(HOUR FROM ct.start_time::time)*60+EXTRACT(MINUTE FROM ct.start_time::time),0)
+             )/(COALESCE(ct.hourly_interval,1)*60.0))
+           )
            OR (? = 'Weekly'  AND cs.submitted_at >= date_trunc('week', NOW()))
            OR (? = 'Monthly' AND cs.submitted_at >= date_trunc('month', NOW()))
            OR (? NOT IN ('Hourly','Weekly','Monthly') AND cs.submitted_at >= CURRENT_DATE)
@@ -1649,12 +1732,18 @@ router.get("/my-submission-detail/:type/:id", async (req, res, next) => {
    ──────────────────────────────────────────────────────────────────────────── */
 router.get("/submissions/checklists", async (req, res, next) => {
   try {
-    const { dateFrom, dateTo, period } = req.query;
+    const {
+      dateFrom, dateTo, period,
+      templateId, assetId, building, floor, room,
+      submittedBy, status, search,
+    } = req.query;
     const conditions = ["ct.company_id = ?"];
     const params = [cid(req)];
 
-    // period shorthand: week / month / year
-    if (period === 'week') {
+    // period shorthand: week / month / year / today
+    if (period === 'today') {
+      conditions.push("cs.submitted_at::date = CURRENT_DATE");
+    } else if (period === 'week') {
       conditions.push("cs.submitted_at >= NOW() - INTERVAL '7 days'");
     } else if (period === 'month') {
       conditions.push("DATE_TRUNC('month', cs.submitted_at) = DATE_TRUNC('month', NOW())");
@@ -1663,6 +1752,33 @@ router.get("/submissions/checklists", async (req, res, next) => {
     }
     if (dateFrom) { conditions.push("cs.submitted_at >= ?"); params.push(dateFrom); }
     if (dateTo)   { conditions.push("cs.submitted_at <= ?"); params.push(dateTo + " 23:59:59"); }
+
+    // Advanced filters sent by the frontend
+    if (templateId) { conditions.push("cs.template_id = ?"); params.push(Number(templateId)); }
+    if (assetId)    { conditions.push("cs.asset_id = ?");    params.push(Number(assetId)); }
+    if (building)   {
+      conditions.push("(b.name ILIKE ? OR loc.building ILIKE ? OR loc.campus ILIKE ?)");
+      params.push(`%${building}%`, `%${building}%`, `%${building}%`);
+    }
+    if (floor) {
+      conditions.push("(f.floor_number ILIKE ? OR loc.floor ILIKE ?)");
+      params.push(`%${floor}%`, `%${floor}%`);
+    }
+    if (room) {
+      conditions.push("(r.room_name ILIKE ? OR loc.room ILIKE ? OR loc.name ILIKE ?)");
+      params.push(`%${room}%`, `%${room}%`, `%${room}%`);
+    }
+    if (submittedBy) {
+      conditions.push("cu.full_name ILIKE ?");
+      params.push(`%${submittedBy}%`);
+    }
+    if (status) { conditions.push("cs.status = ?"); params.push(status); }
+    if (search) {
+      conditions.push(
+        "(ct.template_name ILIKE ? OR cu.full_name ILIKE ? OR a.asset_name ILIKE ?)"
+      );
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+    }
 
     const [submissions] = await pool.query(
       `SELECT
@@ -1695,7 +1811,7 @@ router.get("/submissions/checklists", async (req, res, next) => {
        LEFT JOIN company_users cu ON cs.company_user_id = cu.id
        WHERE ${conditions.join(" AND ")}
        ORDER BY cs.submitted_at DESC NULLS LAST
-       LIMIT 500`,
+       LIMIT 1000`,
       params
     );
     res.json(submissions);
@@ -1704,11 +1820,16 @@ router.get("/submissions/checklists", async (req, res, next) => {
 
 router.get("/submissions/logsheets", async (req, res, next) => {
   try {
-    const { dateFrom, dateTo, period } = req.query;
+    const {
+      dateFrom, dateTo, period,
+      templateId, assetId, submittedBy, status, search,
+    } = req.query;
     const conditions = ["lt.company_id = ?"];
     const params = [cid(req)];
 
-    if (period === 'week') {
+    if (period === 'today') {
+      conditions.push("COALESCE(le.submitted_at, le.entry_date)::date = CURRENT_DATE");
+    } else if (period === 'week') {
       conditions.push("COALESCE(le.submitted_at, le.entry_date) >= NOW() - INTERVAL '7 days'");
     } else if (period === 'month') {
       conditions.push("le.month = EXTRACT(MONTH FROM NOW()) AND le.year = EXTRACT(YEAR FROM NOW())");
@@ -1717,6 +1838,19 @@ router.get("/submissions/logsheets", async (req, res, next) => {
     }
     if (dateFrom) { conditions.push("COALESCE(le.submitted_at, le.entry_date) >= ?"); params.push(dateFrom); }
     if (dateTo)   { conditions.push("COALESCE(le.submitted_at, le.entry_date) <= ?"); params.push(dateTo + " 23:59:59"); }
+
+    // Advanced filters sent by the frontend
+    if (templateId) { conditions.push("le.template_id = ?");  params.push(Number(templateId)); }
+    if (assetId)    { conditions.push("le.asset_id = ?");      params.push(Number(assetId)); }
+    if (submittedBy) {
+      conditions.push("cu.full_name ILIKE ?");
+      params.push(`%${submittedBy}%`);
+    }
+    if (status)  { conditions.push("le.status = ?"); params.push(status); }
+    if (search) {
+      conditions.push("(lt.template_name ILIKE ? OR cu.full_name ILIKE ? OR a.asset_name ILIKE ?)");
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+    }
 
     const [submissions] = await pool.query(
       `SELECT
@@ -1737,7 +1871,7 @@ router.get("/submissions/logsheets", async (req, res, next) => {
        LEFT JOIN company_users cu ON le.company_user_id = cu.id
        WHERE ${conditions.join(" AND ")}
        ORDER BY le.submitted_at DESC NULLS LAST, le.entry_date DESC
-       LIMIT 500`,
+       LIMIT 1000`,
       params
     );
     res.json(submissions);
@@ -2198,33 +2332,85 @@ router.get("/site-score", async (req, res, next) => {
     const softFilter = '';
     const isSoftUser = true; // kept for compatibility, always include open requests
 
-    // Total active checklist templates for the company (exclude soft service for tech users)
-    const [[{ total }]] = await pool.query(
-      `SELECT COUNT(*) AS total
+    // Fetch all active templates with frequency settings
+    const [templates] = await pool.query(
+      `SELECT id, frequency, hourly_interval AS "hourlyInterval",
+              start_time AS "startTime", end_time AS "endTime"
        FROM checklist_templates ct
        WHERE ct.company_id = ? AND ct.is_active = 1 ${softFilter}`,
       [companyId]
     );
 
-    // Distinct templates that have at least one submission today
-    const [[{ filled }]] = await pool.query(
-      `SELECT COUNT(DISTINCT cs.template_id) AS filled
+    // Calculate expected submission slots per template for today (elapsed slots only).
+    // Use DB-side NOW() so currentMins is in the same timezone as start_time values
+    // (PostgreSQL session timezone is set by APP_TIMEZONE in db.js).
+    const [[_siteScoreNowRow]] = await pool.query(
+      `SELECT EXTRACT(HOUR FROM NOW())::int AS h, EXTRACT(MINUTE FROM NOW())::int AS m`
+    );
+    const currentMins = Number(_siteScoreNowRow.h) * 60 + Number(_siteScoreNowRow.m);
+    const templateExpected = {};
+    let totalExpected = 0;
+
+    for (const t of templates) {
+      const freq = (t.frequency || 'Daily').toLowerCase();
+      let expected = 1;
+      if (freq === 'hourly') {
+        const interval = Math.max(1, Number(t.hourlyInterval) || 1);
+        if (t.startTime && t.endTime) {
+          const [sh, sm = 0] = t.startTime.split(':').map(Number);
+          const [eh, em = 0] = t.endTime.split(':').map(Number);
+          const startMins = sh * 60 + sm;
+          const endMins = eh * 60 + em;
+          // Count ALL slots for the full day (not capped by current time).
+          // Future slots that haven't started yet still count as pending.
+          if (endMins > startMins) {
+            expected = Math.max(1, Math.floor((endMins - startMins) / (interval * 60)));
+          }
+        } else {
+          // No time range: count all interval blocks in a full 24-hour day
+          expected = Math.max(1, Math.floor(1440 / (interval * 60)));
+        }
+      }
+      templateExpected[t.id] = expected;
+      totalExpected += expected;
+    }
+
+    // Count actual submissions per template today, capped at expected slots.
+    // For hourly templates with a defined time window, only count submissions
+    // that fall within [start_time, end_time) — out-of-window submissions are
+    // stored in the DB but must not inflate the site score.
+    const [submissionCounts] = await pool.query(
+      `SELECT cs.template_id AS "templateId", COUNT(*) AS "count"
        FROM checklist_submissions cs
        JOIN checklist_templates ct ON cs.template_id = ct.id
-       WHERE ct.company_id = ?
-         AND cs.submitted_at >= CURRENT_DATE ${softFilter}`,
+       WHERE ct.company_id = ? AND cs.submitted_at::date = CURRENT_DATE
+         AND ct.is_active = 1 ${softFilter}
+         AND (
+           LOWER(COALESCE(ct.frequency, 'daily')) != 'hourly'
+           OR ct.start_time IS NULL
+           OR ct.end_time IS NULL
+           OR (
+             (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
+               >= (EXTRACT(HOUR FROM ct.start_time::time) * 60 + EXTRACT(MINUTE FROM ct.start_time::time))
+             AND (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
+               < (EXTRACT(HOUR FROM ct.end_time::time) * 60 + EXTRACT(MINUTE FROM ct.end_time::time))
+           )
+         )
+       GROUP BY cs.template_id`,
       [companyId]
     );
 
-    // Total submissions today (for display)
-    const [[{ totalFilled }]] = await pool.query(
-      `SELECT COUNT(*) AS "totalFilled"
-       FROM checklist_submissions cs
-       JOIN checklist_templates ct ON cs.template_id = ct.id
-       WHERE ct.company_id = ?
-         AND cs.submitted_at >= CURRENT_DATE ${softFilter}`,
-      [companyId]
-    );
+    let filledN = 0;
+    let totalFilledN = 0; // raw actual submissions (uncapped)
+    for (const row of submissionCounts) {
+      const expected = templateExpected[row.templateId] ?? 1;
+      const actual = Number(row.count) || 0;
+      totalFilledN += actual;
+      filledN += Math.min(actual, expected);
+    }
+
+    const totalN = totalExpected;
+    const percentage = totalN > 0 ? Math.round((filledN / totalN) * 1000) / 10 : 0;
 
     // Open soft-service requests — always compute so any role with soft access sees the count
     const [[{ openRequests }]] = await pool.query(
@@ -2283,13 +2469,9 @@ router.get("/site-score", async (req, res, next) => {
       [companyId, companyId]
     );
 
-    const totalN                  = Number(total)                   || 0;
-    const filledN                 = Math.min(Number(filled) || 0, totalN);
-    const totalFilledN            = Number(totalFilled)             || 0;
     const checklistTemplatesN     = Number(totalChecklistTemplates) || 0;
     const logsheetTemplatesN      = Number(totalLogsheetTemplates)  || 0;
     const totalSubmissionsTodayN  = Number(totalSubmissionsToday)   || 0;
-    const percentage              = totalN > 0 ? Math.round((filledN / totalN) * 1000) / 10 : 0;
 
     res.json({
       total:                   totalN,

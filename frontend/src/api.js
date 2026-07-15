@@ -50,6 +50,10 @@ export const createCompany = (token, data) => request("POST", "/api/companies", 
 export const updateCompany = (token, id, data) => request("PUT", `/api/companies/${id}`, data, { authToken: token });
 export const deleteCompany = (token, id) => request("DELETE", `/api/companies/${id}`, undefined, { authToken: token });
 export const getCompanyOverview = (token, id) => request("GET", `/api/companies/${id}/overview`, undefined, { authToken: token });
+export const getAdminDashboardOverview = (token, params = {}) => {
+  const q = new URLSearchParams(params).toString();
+  return request("GET", `/api/companies/dashboard-overview${q ? `?${q}` : ""}`, undefined, { authToken: token });
+};
 export const getRolePermissions = (token, companyId) => request("GET", `/api/companies/${companyId}/role-permissions`, undefined, { authToken: token });
 export const saveRolePermissions = (token, companyId, data) => request("PUT", `/api/companies/${companyId}/role-permissions`, data, { authToken: token });
 
@@ -106,9 +110,16 @@ export const deleteLogsheetTemplate = (token, id) => request("DELETE", `/api/log
 export const assignLogsheetTemplate = (token, templateId, assetId) => request("POST", `/api/logsheet-templates/${templateId}/assign`, { assetId }, { authToken: token });
 export const getLogsheetEntriesByTemplate = (token, templateId, params = "") => request("GET", `/api/logsheet-templates/${templateId}/entries${params ? `?${params}` : ""}`, undefined, { authToken: token });
 export const submitLogsheetEntry = (token, templateId, data) => request("POST", `/api/logsheet-templates/${templateId}/entries`, data, { authToken: token });
-export const getRecentLogsheetEntries = (token) => request("GET", "/api/logsheet-templates/entries/recent", undefined, { authToken: token });
+export const getRecentLogsheetEntries = (token, date) => { const q = date ? `?date=${encodeURIComponent(date)}` : ""; return request("GET", `/api/logsheet-templates/entries/recent${q}`, undefined, { authToken: token }); };
 export const getLogsheetEntryDetail = (token, entryId) => request("GET", `/api/logsheet-templates/entries/${entryId}`, undefined, { authToken: token });
-export const getRecentChecklistSubmissions = (token) => request("GET", "/api/checklist-templates/submissions/recent", undefined, { authToken: token });
+export const getRecentChecklistSubmissions = (token, date, companyIds) => {
+  let url = "/api/checklist-templates/submissions/recent";
+  const params = [];
+  if (date) params.push(`date=${encodeURIComponent(date)}`);
+  if (companyIds) params.push(`companyIds=${encodeURIComponent(companyIds)}`);
+  if (params.length > 0) url += `?${params.join("&")}`;
+  return request("GET", url, undefined, { authToken: token });
+};
 export const getChecklistSubmissionDetail = (token, submissionId) => request("GET", `/api/checklist-templates/submissions/${submissionId}`, undefined, { authToken: token });
 export const getTemplatesForAsset = (token, assetId) => request("GET", `/api/logsheet-templates/asset/${assetId}`, undefined, { authToken: token });
 
@@ -138,7 +149,7 @@ export const getCompanyPortalAssets = (token) => request("GET", "/api/company-po
 export const createCompanyPortalAsset = (token, data) => request("POST", "/api/company-portal/assets", data, { authToken: token });
 export const updateCompanyPortalAsset = (token, id, data) => request("PUT", `/api/company-portal/assets/${id}`, data, { authToken: token });
 export const deleteCompanyPortalAsset = (token, id) => request("DELETE", `/api/company-portal/assets/${id}`, undefined, { authToken: token });
-export const getCompanyPortalChecklists = (token) => request("GET", "/api/company-portal/checklists", undefined, { authToken: token });
+export const getCompanyPortalChecklists = (token, params = "") => request("GET", `/api/company-portal/checklists${params ? `?${params}` : ""}`, undefined, { authToken: token });
 export const createCompanyPortalChecklist = (token, data) => request("POST", "/api/company-portal/checklists", data, { authToken: token });
 export const updateCompanyPortalChecklist = (token, id, data) => request("PUT", `/api/company-portal/checklists/${id}`, data, { authToken: token });
 export const deleteCompanyPortalChecklist = (token, id) => request("DELETE", `/api/company-portal/checklists/${id}`, undefined, { authToken: token });
@@ -149,12 +160,17 @@ export const deleteCompanyPortalLogsheetTemplate = (token, id) => request("DELET
 export const submitCompanyPortalLogsheetEntry = (token, templateId, data) => request("POST", `/api/company-portal/logsheet-templates/${templateId}/entries`, data, { authToken: token });
 export const getCompanyPortalLogsheetEntries = (token, templateId, params = "") => request("GET", `/api/company-portal/logsheet-templates/${templateId}/entries${params ? `?${params}` : ""}`, undefined, { authToken: token });
 export const getCompanyPortalRecentLogsheetEntries = (token) => request("GET", "/api/company-portal/logsheet-templates/entries/recent", undefined, { authToken: token });
-export const getCompanyPortalRecentChecklistSubmissions = (token, date) => {
-  const url = date ? `/api/company-portal/checklist-submissions/recent?date=${encodeURIComponent(date)}` : "/api/company-portal/checklist-submissions/recent";
+export const getCompanyPortalRecentChecklistSubmissions = (token, date, companyIds) => {
+  let url = "/api/company-portal/checklist-submissions/recent";
+  const params = [];
+  if (date) params.push(`date=${encodeURIComponent(date)}`);
+  if (companyIds) params.push(`companyIds=${encodeURIComponent(companyIds)}`);
+  if (params.length > 0) url += `?${params.join("&")}`;
   return request("GET", url, undefined, { authToken: token });
 };
-export const getCompanyPortalCombinedDashboard = (token, date) => {
-  const url = date ? `/api/company-portal/combined-dashboard?date=${encodeURIComponent(date)}` : "/api/company-portal/combined-dashboard";
+export const getCompanyPortalCombinedDashboard = (token, params = {}) => {
+  const q = new URLSearchParams(params).toString();
+  const url = `/api/company-portal/combined-dashboard${q ? `?${q}` : ""}`;
   return request("GET", url, undefined, { authToken: token });
 };
 export const createCompanyPortalLogsheetTemplate = (token, data) => request("POST", "/api/company-portal/logsheet-templates", data, { authToken: token });

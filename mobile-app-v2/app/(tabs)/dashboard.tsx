@@ -203,7 +203,7 @@ export default function DashboardScreen() {
               <StatCard
                 icon="clipboard-list-outline"
                 label="Total Checklist"
-                value={score?.totalChecklistTemplates ?? 0}
+                value={score?.total ?? 0}
                 color={theme.primary}
                 onPress={() => router.push({ pathname: '/all-templates', params: { initialFilter: 'all', type: 'checklist' } } as any)}
               />
@@ -217,7 +217,7 @@ export default function DashboardScreen() {
               <StatCard
                 icon="clipboard-alert-outline"
                 label="Pending Checklist"
-                value={(score?.totalChecklistTemplates ?? 0) - (score?.filled ?? 0)}
+                value={Math.max(0, (score?.total ?? 0) - (score?.filled ?? 0))}
                 color="#F59E0B"
                 onPress={() => router.push({ pathname: '/all-templates', params: { initialFilter: 'pending', type: 'checklist' } } as any)}
               />

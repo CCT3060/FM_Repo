@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, useRef, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
+import { Eye, EyeOff } from "lucide-react";
 import {
   login,
   getCompanies,
@@ -71,8 +72,10 @@ import {
   deleteAdminLocation,
   getAdminSoftRequests,
   resolveAdminSoftRequest,
+  getAdminDashboardOverview,
 } from "../api";
 import ChecklistBuilder from "../components/ChecklistBuilder";
+import SearchableSelect from "../components/SearchableSelect";
 import LogsheetModule from "../components/LogsheetModule.jsx";
 import ChecklistTemplateModule from "../components/ChecklistTemplateModule.jsx";
 import SubmissionsPanel from "../components/SubmissionsPanel.jsx";
@@ -233,23 +236,23 @@ const assetTypeLabels = {
 
 /* ─── Admin OJT Section ──────────────────────────────────────────── */
 function AdminOjtSection({ token, companies = [] }) {
-  const [selectedCo, setSelectedCo] = useState(companies[0]?.id || null);
+  const [selectedCoIds, setSelectedCoIds] = useState([]);
   const [trainings, setTrainings] = useState([]);
   const [progress, setProgress] = useState([]);
   const [loading, setLoading] = useState(false);
   const [subTab, setSubTab] = useState("trainings"); // trainings | progress
 
   useEffect(() => {
-    if (!selectedCo) return;
+    const companyFilter = selectedCoIds.length ? selectedCoIds.join(",") : "all";
     setLoading(true);
     Promise.all([
-      getAdminOjtTrainings(token, selectedCo),
-      getAdminOjtProgress(token, selectedCo),
+      getAdminOjtTrainings(token, companyFilter),
+      getAdminOjtProgress(token, companyFilter),
     ])
       .then(([t, p]) => { setTrainings(Array.isArray(t) ? t : []); setProgress(Array.isArray(p) ? p : []); })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [selectedCo, token]);
+  }, [selectedCoIds, token]);
 
   return (
     <div>
@@ -258,17 +261,17 @@ function AdminOjtSection({ token, companies = [] }) {
         <p style={{ color: "#64748b", fontSize: "13.5px" }}>View On-the-Job Training programs and employee progress across companies.</p>
       </div>
 
-      {/* Company selector */}
-      <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", padding: "14px 20px", marginBottom: "20px", display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap" }}>
-        <span style={{ fontSize: "13.5px", fontWeight: 700, color: "#374151" }}>Company:</span>
-        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-          {companies.map((c) => (
-            <button key={c.id} type="button" onClick={() => setSelectedCo(c.id)}
-              style={{ padding: "6px 14px", borderRadius: "8px", fontSize: "13px", fontWeight: 600, cursor: "pointer", border: selectedCo === c.id ? "none" : "1px solid #e2e8f0", background: selectedCo === c.id ? "#2563eb" : "#f8fafc", color: selectedCo === c.id ? "#fff" : "#475569" }}>
-              {c.companyName || c.name}
-            </button>
-          ))}
-        </div>
+      {/* Company filter */}
+      <div style={{ display:"flex", justifyContent:"flex-end", alignItems:"center", gap:"8px", marginBottom:"20px" }}>
+        <span style={{ fontSize:"13px", fontWeight:500, color:"#64748b" }}>Company:</span>
+        <SearchableSelect
+          value={selectedCoIds.map(String)}
+          onChange={(vals) => setSelectedCoIds((Array.isArray(vals) ? vals : []).map((v) => Number(v)).filter((v) => Number.isFinite(v)))}
+          options={[{ value:"all", label:"All Companies" }, ...companies.map(c => ({ value:String(c.id), label:c.companyName||c.name }))]}
+          placeholder="All Companies"
+          isMulti
+          style={{ width:"220px" }}
+        />
       </div>
 
       {/* Sub tabs */}
@@ -283,8 +286,6 @@ function AdminOjtSection({ token, companies = [] }) {
 
       {loading ? (
         <div style={{ padding: "40px", textAlign: "center", color: "#64748b", background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0" }}>Loading OJT data…</div>
-      ) : !selectedCo ? (
-        <div style={{ padding: "40px", textAlign: "center", color: "#94a3b8", background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0" }}>Select a company to view OJT trainings.</div>
       ) : subTab === "trainings" ? (
         <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
           {trainings.length === 0 ? (
@@ -369,7 +370,7 @@ const WO_STATUS_COLORS = { open: { bg:"#fef2f2",color:"#dc2626" }, in_progress: 
 const WO_PRI_COLORS    = { critical: { bg:"#fee2e2",color:"#991b1b" }, high: { bg:"#ffedd5",color:"#9a3412" }, medium: { bg:"#fef9c3",color:"#854d0e" }, low: { bg:"#dcfce7",color:"#166534" } };
 
 function AdminWorkOrdersSection({ token, companies = [] }) {
-  const [selCo, setSelCo]   = useState(companies[0]?.id || null);
+  const [selCoIds, setSelCoIds] = useState([]);
   const [wos, setWos]       = useState([]);
   const [users, setUsers]   = useState([]);
   const [loading, setLoading] = useState(false);
@@ -380,12 +381,12 @@ function AdminWorkOrdersSection({ token, companies = [] }) {
   const [saving, setSaving] = useState(false);
   const [error, setError]   = useState(null);
 
-  const load = useCallback(async (cid) => {
-    if (!cid) return; setLoading(true);
+  const load = useCallback(async (cidFilter) => {
+    setLoading(true);
     try {
       const [data, usrs] = await Promise.all([
-        getAdminWorkOrders(token, cid),
-        getAdminEmployees(token, cid),
+        getAdminWorkOrders(token, cidFilter || "all"),
+        getAdminEmployees(token, cidFilter || "all"),
       ]);
       setWos(Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : []);
       setUsers(Array.isArray(usrs) ? usrs : []);
@@ -393,14 +394,21 @@ function AdminWorkOrdersSection({ token, companies = [] }) {
     setLoading(false);
   }, [token]);
 
-  useEffect(() => { if (selCo) load(selCo); }, [selCo, load]);
+  useEffect(() => {
+    const companyFilter = selCoIds.length ? selCoIds.join(",") : "all";
+    load(companyFilter);
+  }, [selCoIds, load]);
 
   const handleCreate = async () => {
     if (!form.issueDescription) return;
+    if (selCoIds.length !== 1) {
+      alert("Select exactly one company to create a work order.");
+      return;
+    }
     setSaving(true);
     try {
-      await createAdminWorkOrder(token, { ...form, companyId: selCo, assignedTo: form.assignedTo ? Number(form.assignedTo) : undefined });
-      await load(selCo);
+      await createAdminWorkOrder(token, { ...form, companyId: Number(selCoIds[0]), assignedTo: form.assignedTo ? Number(form.assignedTo) : undefined });
+      await load(selCoIds.join(","));
       setShowCreate(false);
       setForm({ issueDescription:"", priority:"medium", assignedTo:"", assetName:"" });
     } catch(e) { alert(e.message); }
@@ -432,12 +440,17 @@ function AdminWorkOrdersSection({ token, companies = [] }) {
         <button type="button" onClick={() => setShowCreate(true)} style={{ padding:"9px 18px", background:"#2563eb", color:"#fff", border:"none", borderRadius:"8px", fontSize:"13.5px", fontWeight:700, cursor:"pointer" }}>+ New Work Order</button>
       </div>
 
-      {/* Company selector */}
-      <div style={{ background:"#fff", borderRadius:"12px", border:"1px solid #e2e8f0", padding:"12px 16px", marginBottom:"16px", display:"flex", alignItems:"center", gap:"10px", flexWrap:"wrap" }}>
-        <span style={{ fontSize:"13px", fontWeight:700, color:"#374151" }}>Company:</span>
-        {companies.map(c => (
-          <button key={c.id} type="button" onClick={() => setSelCo(c.id)} style={{ padding:"5px 12px", borderRadius:"7px", fontSize:"12.5px", fontWeight:600, cursor:"pointer", border: selCo===c.id ? "none":"1px solid #e2e8f0", background: selCo===c.id ? "#2563eb":"#f8fafc", color: selCo===c.id ? "#fff":"#475569" }}>{c.companyName||c.name}</button>
-        ))}
+      {/* Company filter */}
+      <div style={{ display:"flex", justifyContent:"flex-end", alignItems:"center", gap:"8px", marginBottom:"16px" }}>
+        <span style={{ fontSize:"13px", fontWeight:500, color:"#64748b" }}>Company:</span>
+        <SearchableSelect
+          value={selCoIds.map(String)}
+          onChange={(vals) => setSelCoIds(Array.isArray(vals) ? vals.map(String) : [])}
+          options={[{ value:"all", label:"All Companies" }, ...companies.map(c => ({ value:String(c.id), label:c.companyName||c.name }))]}
+          placeholder="All Companies"
+          isMulti
+          style={{ width:"220px" }}
+        />
       </div>
 
       {/* Stat row */}
@@ -531,7 +544,7 @@ function AdminWorkOrdersSection({ token, companies = [] }) {
 
 /* ─── Admin Shifts Section ───────────────────────────────────────────────── */
 function AdminShiftsSection({ token, companies = [] }) {
-  const [selCo, setSelCo]   = useState(companies[0]?.id || null);
+  const [selCoIds, setSelCoIds] = useState([]);
   const [shifts, setShifts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
@@ -540,25 +553,32 @@ function AdminShiftsSection({ token, companies = [] }) {
   const [form, setForm]     = useState(emptyForm);
   const [saving, setSaving] = useState(false);
 
-  const load = useCallback(async (cid) => {
-    if (!cid) return; setLoading(true);
-    try { const d = await getAdminShifts(token, cid); setShifts(Array.isArray(d) ? d : []); }
+  const load = useCallback(async (cidFilter) => {
+    setLoading(true);
+    try { const d = await getAdminShifts(token, cidFilter || "all"); setShifts(Array.isArray(d) ? d : []); }
     catch(e) { console.error(e); }
     setLoading(false);
   }, [token]);
 
-  useEffect(() => { if (selCo) load(selCo); }, [selCo, load]);
+  useEffect(() => {
+    const companyFilter = selCoIds.length ? selCoIds.join(",") : "all";
+    load(companyFilter);
+  }, [selCoIds, load]);
 
   const handleSave = async () => {
     if (!form.name || !form.startTime || !form.endTime) return;
+    if (!editShift && selCoIds.length !== 1) {
+      alert("Select exactly one company to create a shift.");
+      return;
+    }
     setSaving(true);
     try {
       if (editShift) {
         await updateAdminShift(token, editShift.id, form);
       } else {
-        await createAdminShift(token, { ...form, companyId: selCo });
+        await createAdminShift(token, { ...form, companyId: Number(selCoIds[0]) });
       }
-      await load(selCo);
+      await load(selCoIds.length ? selCoIds.join(",") : "all");
       setShowCreate(false); setEditShift(null); setForm(emptyForm);
     } catch(e) { alert(e.message); }
     setSaving(false);
@@ -579,12 +599,17 @@ function AdminShiftsSection({ token, companies = [] }) {
         <button type="button" onClick={() => { setForm(emptyForm); setEditShift(null); setShowCreate(true); }} style={{ padding:"9px 18px", background:"#2563eb", color:"#fff", border:"none", borderRadius:"8px", fontSize:"13.5px", fontWeight:700, cursor:"pointer" }}>+ Create Shift</button>
       </div>
 
-      {/* Company selector */}
-      <div style={{ background:"#fff", borderRadius:"12px", border:"1px solid #e2e8f0", padding:"12px 16px", marginBottom:"20px", display:"flex", alignItems:"center", gap:"10px", flexWrap:"wrap" }}>
-        <span style={{ fontSize:"13px", fontWeight:700, color:"#374151" }}>Company:</span>
-        {companies.map(c => (
-          <button key={c.id} type="button" onClick={() => setSelCo(c.id)} style={{ padding:"5px 12px", borderRadius:"7px", fontSize:"12.5px", fontWeight:600, cursor:"pointer", border: selCo===c.id ? "none":"1px solid #e2e8f0", background: selCo===c.id ? "#2563eb":"#f8fafc", color: selCo===c.id ? "#fff":"#475569" }}>{c.companyName||c.name}</button>
-        ))}
+      {/* Company filter */}
+      <div style={{ display:"flex", justifyContent:"flex-end", alignItems:"center", gap:"8px", marginBottom:"20px" }}>
+        <span style={{ fontSize:"13px", fontWeight:500, color:"#64748b" }}>Company:</span>
+        <SearchableSelect
+          value={selCoIds.map(String)}
+          onChange={(vals) => setSelCoIds(Array.isArray(vals) ? vals.map(String) : [])}
+          options={[{ value:"all", label:"All Companies" }, ...companies.map(c => ({ value:String(c.id), label:c.companyName||c.name }))]}
+          placeholder="All Companies"
+          isMulti
+          style={{ width:"220px" }}
+        />
       </div>
 
       {/* Create/Edit modal */}
@@ -642,7 +667,7 @@ function AdminShiftsSection({ token, companies = [] }) {
 
 /* ─── Admin Roles Section ────────────────────────────────────────────────── */
 function AdminRolesSection({ token, companies = [] }) {
-  const [selCo, setSelCo]   = useState(companies[0]?.id || null);
+  const [selCoIds, setSelCoIds] = useState([]);
   const [roles, setRoles]   = useState([]);
   const [loading, setLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -652,18 +677,22 @@ function AdminRolesSection({ token, companies = [] }) {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (!selCo) return;
+    const companyFilter = selCoIds.length ? selCoIds.join(",") : "all";
     setLoading(true);
-    getAdminCompanyRoles(token, selCo).then(d => setRoles(Array.isArray(d) ? d : [])).catch(()=>{}).finally(()=>setLoading(false));
-  }, [selCo, token]);
+    getAdminCompanyRoles(token, companyFilter).then(d => setRoles(Array.isArray(d) ? d : [])).catch(()=>{}).finally(()=>setLoading(false));
+  }, [selCoIds, token]);
 
   const handleSave = async () => {
     if (!form.label.trim()) return;
+    if (!editRole && !form.companyId) {
+      alert("Please select a company for this role.");
+      return;
+    }
     setSaving(true);
     try {
       if (editRole) { await updateAdminCompanyRole(token, editRole.id, form); }
-      else { await createAdminCompanyRole(token, { ...form, companyId: selCo }); }
-      const d = await getAdminCompanyRoles(token, selCo);
+      else { await createAdminCompanyRole(token, { ...form, companyId: Number(form.companyId) }); }
+      const d = await getAdminCompanyRoles(token, selCoIds.length ? selCoIds.join(",") : "all");
       setRoles(Array.isArray(d) ? d : []);
       setShowForm(false); setEditRole(null); setForm(emptyRole);
     } catch(e) { alert(e.message); }
@@ -691,12 +720,17 @@ function AdminRolesSection({ token, companies = [] }) {
         <button type="button" onClick={() => { setForm(emptyRole); setEditRole(null); setShowForm(true); }} style={{ padding:"9px 16px", background:"#2563eb", color:"#fff", border:"none", borderRadius:"8px", fontSize:"13px", fontWeight:700, cursor:"pointer" }}>+ Add Role</button>
       </div>
 
-      {/* Company selector */}
-      <div style={{ background:"#fff", borderRadius:"12px", border:"1px solid #e2e8f0", padding:"12px 16px", marginBottom:"16px", display:"flex", alignItems:"center", gap:"8px", flexWrap:"wrap" }}>
-        <span style={{ fontSize:"13px", fontWeight:700, color:"#374151" }}>Company:</span>
-        {companies.map(c => (
-          <button key={c.id} type="button" onClick={() => setSelCo(c.id)} style={{ padding:"5px 12px", borderRadius:"7px", fontSize:"12px", fontWeight:600, cursor:"pointer", border: selCo===c.id ? "none":"1px solid #e2e8f0", background: selCo===c.id ? "#2563eb":"#f8fafc", color: selCo===c.id ? "#fff":"#475569" }}>{c.companyName||c.name}</button>
-        ))}
+      {/* Company filter */}
+      <div style={{ display:"flex", justifyContent:"flex-end", alignItems:"center", gap:"8px", marginBottom:"16px" }}>
+        <span style={{ fontSize:"13px", fontWeight:500, color:"#64748b" }}>Company:</span>
+        <SearchableSelect
+          value={selCoIds.map(String)}
+          onChange={(vals) => setSelCoIds(Array.isArray(vals) ? vals.map(String) : [])}
+          options={[{ value:"all", label:"All Companies" }, ...companies.map(c => ({ value:String(c.id), label:c.companyName||c.name }))]}
+          placeholder="All Companies"
+          isMulti
+          style={{ width:"220px" }}
+        />
       </div>
 
       {/* Add/Edit form modal */}
@@ -705,6 +739,15 @@ function AdminRolesSection({ token, companies = [] }) {
           <div style={{ background:"#fff", borderRadius:"14px", padding:"24px", width:"460px", maxWidth:"92vw", maxHeight:"90vh", overflowY:"auto" }}>
             <h3 style={{ margin:"0 0 18px", fontSize:"16px", fontWeight:800 }}>{editRole ? "Edit Role" : "Add Role"}</h3>
             <div style={{ display:"flex", flexDirection:"column", gap:"10px" }}>
+              {!editRole && (
+                <div>
+                  <label style={{ display:"block", fontSize:"12px", fontWeight:600, color:"#475569", marginBottom:"6px" }}>Company <span style={{ color:"#ef4444" }}>*</span></label>
+                  <select value={form.companyId || ""} onChange={e=>setForm(p=>({...p,companyId:e.target.value}))} style={{ width:"100%", padding:"8px 11px", borderRadius:"7px", border:"1px solid #e2e8f0", fontSize:"13.5px", background:"#fff" }}>
+                    <option value="">— Select company —</option>
+                    {companies.map(c=><option key={c.id} value={c.id}>{c.companyName||c.name}</option>)}
+                  </select>
+                </div>
+              )}
               <input value={form.label} onChange={e=>setForm(p=>({...p,label:e.target.value}))} placeholder="Role label *" style={{ padding:"8px 11px", borderRadius:"7px", border:"1px solid #e2e8f0", fontSize:"13.5px" }} />
               {!editRole && <input value={form.roleKey} onChange={e=>setForm(p=>({...p,roleKey:e.target.value}))} placeholder="Role key (auto if blank, e.g. hse_supervisor)" style={{ padding:"8px 11px", borderRadius:"7px", border:"1px solid #e2e8f0", fontSize:"13px", fontFamily:"monospace" }} />}
               <select value={form.parentRoleKey} onChange={e=>setForm(p=>({...p,parentRoleKey:e.target.value}))} style={{ padding:"8px 11px", borderRadius:"7px", border:"1px solid #e2e8f0", fontSize:"13.5px" }}>
@@ -758,7 +801,7 @@ function AdminRolesSection({ token, companies = [] }) {
                     <td style={{ padding:"10px 12px", color:"#64748b", fontFamily:"monospace", fontSize:"12px" }}>{r.roleKey}</td>
                     <td style={{ padding:"10px 12px", color:"#64748b", fontSize:"12px" }}>{r.parentRoleKey||"—"}</td>
                     <td style={{ padding:"10px 12px" }}>
-                      {caps.length ? caps.map(c=><span key={c} style={{ display:"inline-block", marginRight:"4px", marginBottom:"2px", padding:"2px 7px", borderRadius:"10px", background:"#eff6ff", color:"#2563eb", fontSize:"10.5px", fontWeight:600 }}>{c}</span>) : <span style={{ color:"#94a3b8", fontSize:"12px" }}>—</span>}
+                      {caps.length ? caps.map((c, idx)=><span key={`${r.id}-${idx}`} style={{ display:"inline-block", marginRight:"4px", marginBottom:"2px", padding:"2px 7px", borderRadius:"10px", background:"#eff6ff", color:"#2563eb", fontSize:"10.5px", fontWeight:600 }}>{c}</span>) : <span style={{ color:"#94a3b8", fontSize:"12px" }}>—</span>}
                     </td>
                     <td style={{ padding:"10px 12px" }}><span style={{ padding:"3px 10px", borderRadius:"20px", fontSize:"12px", fontWeight:700, background:r.bgColor||"#f1f5f9", color:r.color||"#475569" }}>{r.label}</span></td>
                     <td style={{ padding:"10px 12px" }}>
@@ -780,16 +823,16 @@ function AdminRolesSection({ token, companies = [] }) {
 
 /* ─── Admin Locations Section ────────────────────────────────────────────── */
 function AdminLocationsSection({ token, companies = [] }) {
-  const [selCo, setSelCo]   = useState(companies[0]?.id || null);
+  const [selCoIds, setSelCoIds] = useState([]);
   const [locations, setLocs] = useState([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch]  = useState("");
 
   useEffect(() => {
-    if (!selCo) return;
+    const companyFilter = selCoIds.length ? selCoIds.join(",") : "all";
     setLoading(true);
-    getAdminLocations(token, selCo).then(d => setLocs(Array.isArray(d) ? d : [])).catch(()=>{}).finally(()=>setLoading(false));
-  }, [selCo, token]);
+    getAdminLocations(token, companyFilter).then(d => setLocs(Array.isArray(d) ? d : [])).catch(()=>{}).finally(()=>setLoading(false));
+  }, [selCoIds, token]);
 
   const handleDelete = async (id) => {
     if (!window.confirm("Delete this location?")) return;
@@ -811,12 +854,17 @@ function AdminLocationsSection({ token, companies = [] }) {
         <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search locations…" style={{ padding:"8px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13px", outline:"none", width:"200px" }} />
       </div>
 
-      {/* Company selector */}
-      <div style={{ background:"#fff", borderRadius:"12px", border:"1px solid #e2e8f0", padding:"12px 16px", marginBottom:"16px", display:"flex", alignItems:"center", gap:"8px", flexWrap:"wrap" }}>
-        <span style={{ fontSize:"13px", fontWeight:700, color:"#374151" }}>Company:</span>
-        {companies.map(c => (
-          <button key={c.id} type="button" onClick={() => setSelCo(c.id)} style={{ padding:"5px 12px", borderRadius:"7px", fontSize:"12px", fontWeight:600, cursor:"pointer", border: selCo===c.id ? "none":"1px solid #e2e8f0", background: selCo===c.id ? "#2563eb":"#f8fafc", color: selCo===c.id ? "#fff":"#475569" }}>{c.companyName||c.name}</button>
-        ))}
+      {/* Company filter */}
+      <div style={{ display:"flex", justifyContent:"flex-end", alignItems:"center", gap:"8px", marginBottom:"16px" }}>
+        <span style={{ fontSize:"13px", fontWeight:500, color:"#64748b" }}>Company:</span>
+        <SearchableSelect
+          value={selCoIds.map(String)}
+          onChange={(vals) => setSelCoIds(Array.isArray(vals) ? vals.map(String) : [])}
+          options={[{ value:"all", label:"All Companies" }, ...companies.map(c => ({ value:String(c.id), label:c.companyName||c.name }))]}
+          placeholder="All Companies"
+          isMulti
+          style={{ width:"220px" }}
+        />
       </div>
 
       {loading ? (
@@ -859,7 +907,7 @@ function AdminLocationsSection({ token, companies = [] }) {
 
 /* ─── Admin Soft Requests Section ───────────────────────────────────────── */
 function AdminSoftRequestsSection({ token, companies = [] }) {
-  const [selCo, setSelCo]   = useState(null); // null = all companies
+  const [selCoIds, setSelCoIds] = useState([]);
   const [requests, setReqs] = useState([]);
   const [loading, setLoading] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
@@ -870,11 +918,11 @@ function AdminSoftRequestsSection({ token, companies = [] }) {
 
   const load = useCallback(() => {
     setLoading(true);
-    getAdminSoftRequests(token, selCo, statusFilter)
+    getAdminSoftRequests(token, selCoIds.length ? selCoIds.join(",") : null, statusFilter)
       .then(d => setReqs(Array.isArray(d) ? d : []))
       .catch(() => setReqs([]))
       .finally(() => setLoading(false));
-  }, [token, selCo, statusFilter]);
+  }, [token, selCoIds, statusFilter]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -917,13 +965,17 @@ function AdminSoftRequestsSection({ token, companies = [] }) {
       </div>
 
       {/* Company + Status filters */}
-      <div style={{ background:"#fff", borderRadius:"12px", border:"1px solid #e2e8f0", padding:"12px 16px", marginBottom:"16px", display:"flex", flexWrap:"wrap", gap:"12px", alignItems:"center" }}>
-        <div style={{ display:"flex", alignItems:"center", gap:"6px", flexWrap:"wrap" }}>
-          <span style={{ fontSize:"13px", fontWeight:700, color:"#374151" }}>Company:</span>
-          <button type="button" onClick={() => setSelCo(null)} style={{ padding:"5px 12px", borderRadius:"7px", fontSize:"12px", fontWeight:600, cursor:"pointer", border: selCo===null ? "none":"1px solid #e2e8f0", background: selCo===null ? "#2563eb":"#f8fafc", color: selCo===null ? "#fff":"#475569" }}>All</button>
-          {companies.map(c => (
-            <button key={c.id} type="button" onClick={() => setSelCo(c.id)} style={{ padding:"5px 12px", borderRadius:"7px", fontSize:"12px", fontWeight:600, cursor:"pointer", border: selCo===c.id ? "none":"1px solid #e2e8f0", background: selCo===c.id ? "#2563eb":"#f8fafc", color: selCo===c.id ? "#fff":"#475569" }}>{c.companyName||c.name}</button>
-          ))}
+      <div style={{ background:"#fff", borderRadius:"12px", border:"1px solid #e2e8f0", padding:"12px 16px", marginBottom:"16px", display:"flex", flexWrap:"wrap", gap:"12px", alignItems:"center", justifyContent:"space-between" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:"6px" }}>
+          <span style={{ fontSize:"13px", fontWeight:500, color:"#64748b" }}>Company:</span>
+          <SearchableSelect
+            value={selCoIds.map(String)}
+            onChange={(vals) => setSelCoIds(Array.isArray(vals) ? vals.map(String) : [])}
+            options={[{ value:"all", label:"All Companies" }, ...companies.map(c => ({ value:String(c.id), label:c.companyName||c.name }))]}
+            placeholder="All Companies"
+            isMulti
+            style={{ width:"200px" }}
+          />
         </div>
         <div style={{ display:"flex", alignItems:"center", gap:"6px" }}>
           <span style={{ fontSize:"13px", fontWeight:700, color:"#374151" }}>Status:</span>
@@ -1025,8 +1077,7 @@ function AdminSoftRequestsSection({ token, companies = [] }) {
 
 /* ─── Admin Employees Section ────────────────────────────────────────────── */
 function AdminEmployeesSection({ token, companies = [] }) {
-  // null = All Companies view
-  const [selCo, setSelCo]     = useState(null);
+  const [selCoIds, setSelCoIds] = useState([]);
   const [employees, setEmp]   = useState([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch]   = useState("");
@@ -1034,23 +1085,28 @@ function AdminEmployeesSection({ token, companies = [] }) {
   const [editEmp, setEditEmp] = useState(null);
   const emptyForm = { fullName:"", email:"", phone:"", role:"technician", designation:"", username:"", status:"Active", password:"" };
   const [form, setForm]       = useState(emptyForm);
+  const [initialPassword, setInitialPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [saving, setSaving]   = useState(false);
   // Multi-company: IDs of companies this employee is assigned to
   const [selectedCompanyIds, setSelectedCompanyIds] = useState([]);
   const [ddOpen, setDdOpen]   = useState(false);
   const [companyRoles, setCompanyRoles] = useState([]);
 
-  const load = useCallback(async (cid) => {
+  const load = useCallback(async (cidFilter) => {
     setLoading(true);
     try {
-      const d = await getAdminEmployees(token, cid === null ? "all" : cid);
+      const d = await getAdminEmployees(token, cidFilter || "all");
       setEmp(Array.isArray(d) ? d : []);
     } catch(e) { console.error("loadEmployees error:", e, e?.body); }
     setLoading(false);
   }, [token]);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { load(selCo); }, [selCo]);
+  useEffect(() => {
+    const companyFilter = selCoIds.length ? selCoIds.join(",") : "all";
+    load(companyFilter);
+  }, [selCoIds]);
 
   // When opening edit modal, load the employee's company assignments and company roles
   useEffect(() => {
@@ -1069,21 +1125,22 @@ function AdminEmployeesSection({ token, companies = [] }) {
   const handleSave = async () => {
     if (!form.fullName || !form.email) return;
     // If no specific company selected and not editing, require at least one company checked
-    if (!editEmp && !selCo && selectedCompanyIds.length === 0) {
+    if (!editEmp && selCoIds.length === 0 && selectedCompanyIds.length === 0) {
       alert("Please select at least one company for this employee."); return;
     }
     setSaving(true);
     try {
       // Primary company: if a specific company tab is selected use it, else use first selected
-      const primaryCompanyId = selCo || selectedCompanyIds[0];
+      const primaryCompanyId = selCoIds[0] || selectedCompanyIds[0];
       const payload = { ...form, companyIds: selectedCompanyIds };
       if (editEmp) {
+        if (payload.password === initialPassword) delete payload.password;
         await updateAdminEmployee(token, editEmp.id, payload);
       } else {
         await createAdminEmployee(token, { ...payload, companyId: primaryCompanyId });
       }
-      await load(selCo);
-      setShowCreate(false); setEditEmp(null); setForm(emptyForm); setSelectedCompanyIds([]);
+      await load(selCoIds.length ? selCoIds.join(",") : "all");
+      setShowCreate(false); setEditEmp(null); setForm(emptyForm); setSelectedCompanyIds([]); setInitialPassword(""); setShowPassword(false);
     } catch(e) { alert(e.message); }
     setSaving(false);
   };
@@ -1108,7 +1165,7 @@ function AdminEmployeesSection({ token, companies = [] }) {
   const roleColors = { admin:"#dbeafe", supervisor:"#fef9c3", technician:"#dcfce7", employee:"#f1f5f9" };
   const roleTextColors = { admin:"#1d4ed8", supervisor:"#854d0e", technician:"#166534", employee:"#475569" };
   // Show company column when viewing "All Companies"
-  const showCompanyCol = selCo === null;
+  const showCompanyCol = selCoIds.length !== 1;
 
   return (
     <div style={{ padding:"16px", maxWidth:"100%" }}>
@@ -1116,17 +1173,21 @@ function AdminEmployeesSection({ token, companies = [] }) {
         <div><h1 style={{ fontSize:"22px", fontWeight:800, color:"#0f172a", margin:0 }}>Employees</h1><p style={{ color:"#64748b", fontSize:"13.5px", margin:"4px 0 0" }}>Manage employees across companies</p></div>
         <div style={{ display:"flex", gap:"10px" }}>
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search employees…" style={{ padding:"8px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13px", outline:"none", width:"200px" }} />
-          <button type="button" onClick={() => { setForm(emptyForm); setEditEmp(null); setSelectedCompanyIds(selCo ? [selCo] : []); setShowCreate(true); if (selCo) getAdminCompanyRoles(token, selCo).then(roles => setCompanyRoles(Array.isArray(roles) ? roles : [])).catch(() => setCompanyRoles([])); else setCompanyRoles([]); }} style={{ padding:"9px 18px", background:"#2563eb", color:"#fff", border:"none", borderRadius:"8px", fontSize:"13.5px", fontWeight:700, cursor:"pointer" }}>+ Add Employee</button>
+          <button type="button" onClick={() => { const primary = selCoIds[0]; setForm(emptyForm); setInitialPassword(""); setEditEmp(null); setSelectedCompanyIds(primary ? [Number(primary)] : []); setShowPassword(false); setShowCreate(true); if (primary) getAdminCompanyRoles(token, primary).then(roles => setCompanyRoles(Array.isArray(roles) ? roles : [])).catch(() => setCompanyRoles([])); else setCompanyRoles([]); }} style={{ padding:"9px 18px", background:"#2563eb", color:"#fff", border:"none", borderRadius:"8px", fontSize:"13.5px", fontWeight:700, cursor:"pointer" }}>+ Add Employee</button>
         </div>
       </div>
 
-      {/* Company selector — "All Companies" first, then individual */}
-      <div style={{ background:"#fff", borderRadius:"12px", border:"1px solid #e2e8f0", padding:"12px 16px", marginBottom:"20px", display:"flex", alignItems:"center", gap:"10px", flexWrap:"wrap" }}>
-        <span style={{ fontSize:"13px", fontWeight:700, color:"#374151" }}>Company:</span>
-        <button type="button" onClick={() => setSelCo(null)} style={{ padding:"5px 12px", borderRadius:"7px", fontSize:"12.5px", fontWeight:600, cursor:"pointer", border: selCo===null ? "none":"1px solid #e2e8f0", background: selCo===null ? "#0f172a":"#f8fafc", color: selCo===null ? "#fff":"#475569" }}>All Companies</button>
-        {companies.map(c => (
-          <button key={c.id} type="button" onClick={() => setSelCo(c.id)} style={{ padding:"5px 12px", borderRadius:"7px", fontSize:"12.5px", fontWeight:600, cursor:"pointer", border: selCo===c.id ? "none":"1px solid #e2e8f0", background: selCo===c.id ? "#2563eb":"#f8fafc", color: selCo===c.id ? "#fff":"#475569" }}>{c.companyName||c.name}</button>
-        ))}
+      {/* Company filter */}
+      <div style={{ display:"flex", justifyContent:"flex-end", alignItems:"center", gap:"8px", marginBottom:"20px" }}>
+        <span style={{ fontSize:"13px", fontWeight:500, color:"#64748b" }}>Company:</span>
+        <SearchableSelect
+          value={selCoIds.map(String)}
+          onChange={(vals) => setSelCoIds(Array.isArray(vals) ? vals.map(String) : [])}
+          options={[{ value:"all", label:"All Companies" }, ...companies.map(c => ({ value:String(c.id), label:c.companyName||c.name }))]}
+          placeholder="All Companies"
+          isMulti
+          style={{ width:"220px" }}
+        />
       </div>
 
       {/* Create/Edit modal */}
@@ -1155,12 +1216,17 @@ function AdminEmployeesSection({ token, companies = [] }) {
                   <option value="Inactive">Inactive</option>
                 </select>
               </div>
-              <input value={form.password} onChange={e=>setForm({...form,password:e.target.value})} placeholder={editEmp ? "New password (leave blank to keep current)" : "Password (leave blank for default)"} type="password" style={{ padding:"9px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13.5px" }} />
+              <div style={{ position:"relative" }}>
+                <input value={form.password} onChange={e=>setForm({...form,password:e.target.value})} placeholder={editEmp ? "Enter password" : "Password (leave blank for default)"} type={showPassword ? "text" : "password"} style={{ padding:"9px 42px 9px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13.5px", width:"100%", boxSizing:"border-box" }} />
+                <button type="button" onClick={() => setShowPassword((prev) => !prev)} aria-label={showPassword ? "Hide password" : "Show password"} title={showPassword ? "Hide password" : "Show password"} style={{ position:"absolute", right:"10px", top:"50%", transform:"translateY(-50%)", background:"transparent", border:"none", padding:"4px", cursor:"pointer", color:"#64748b", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
               {/* Company multiselect dropdown — shown for ALL roles */}
               {companies.length > 1 && (
                 <div style={{ position:"relative" }}>
                   <p style={{ fontSize:"12.5px", fontWeight:700, color:"#374151", marginBottom:"6px" }}>
-                    Assign to Companies {!editEmp && !selCo ? <span style={{ color:"#dc2626" }}>*</span> : ""}
+                    Assign to Companies {!editEmp && selCoIds.length === 0 ? <span style={{ color:"#dc2626" }}>*</span> : ""}
                   </p>
                   <button
                     type="button"
@@ -1196,7 +1262,7 @@ function AdminEmployeesSection({ token, companies = [] }) {
               )}
             </div>
             <div style={{ display:"flex", gap:"10px", justifyContent:"flex-end", marginTop:"20px" }}>
-              <button type="button" onClick={() => { setShowCreate(false); setEditEmp(null); }} style={{ padding:"9px 18px", borderRadius:"8px", border:"1px solid #e2e8f0", background:"#f8fafc", fontWeight:600, cursor:"pointer" }}>Cancel</button>
+              <button type="button" onClick={() => { setShowCreate(false); setEditEmp(null); setInitialPassword(""); }} style={{ padding:"9px 18px", borderRadius:"8px", border:"1px solid #e2e8f0", background:"#f8fafc", fontWeight:600, cursor:"pointer" }}>Cancel</button>
               <button type="button" onClick={handleSave} disabled={saving} style={{ padding:"9px 18px", borderRadius:"8px", border:"none", background:"#2563eb", color:"#fff", fontWeight:700, cursor:"pointer" }}>{saving ? "Saving…":editEmp ? "Save Changes":"Add Employee"}</button>
             </div>
           </div>
@@ -1230,7 +1296,7 @@ function AdminEmployeesSection({ token, companies = [] }) {
                   <td style={{ padding:"10px 12px" }}><span style={{ padding:"3px 8px", borderRadius:"20px", fontSize:"11px", fontWeight:700, background:(e.status||"Active")==="Active"?"#dcfce7":"#f1f5f9", color:(e.status||"Active")==="Active"?"#166534":"#475569", whiteSpace:"nowrap" }}>{e.status||"Active"}</span></td>
                   <td style={{ padding:"10px 12px" }}>
                     <div style={{ display:"flex", gap:"5px" }}>
-                      <button type="button" onClick={() => { setForm({ fullName:e.fullName, email:e.email, phone:e.phone||"", role:e.role||"technician", designation:e.designation||"", username:e.username||"", status:e.status||"Active", password:"" }); setEditEmp(e); setSelectedCompanyIds([]); setShowCreate(false); }} style={{ padding:"4px 8px", borderRadius:"6px", border:"1px solid #e2e8f0", background:"#f8fafc", fontSize:"11px", cursor:"pointer", fontWeight:600, whiteSpace:"nowrap" }}>Edit</button>
+                      <button type="button" onClick={() => { const existingPassword = e.password || (e.hasPassword ? "********" : ""); setForm({ fullName:e.fullName, email:e.email, phone:e.phone||"", role:e.role||"technician", designation:e.designation||"", username:e.username||"", status:e.status||"Active", password:existingPassword }); setInitialPassword(existingPassword); setEditEmp(e); setSelectedCompanyIds([]); setShowPassword(false); setShowCreate(false); }} style={{ padding:"4px 8px", borderRadius:"6px", border:"1px solid #e2e8f0", background:"#f8fafc", fontSize:"11px", cursor:"pointer", fontWeight:600, whiteSpace:"nowrap" }}>Edit</button>
                       <button type="button" onClick={() => handleDelete(e.id)} style={{ padding:"4px 8px", borderRadius:"6px", border:"1px solid #fee2e2", background:"#fef2f2", color:"#dc2626", fontSize:"11px", cursor:"pointer", fontWeight:600, whiteSpace:"nowrap" }}>Del</button>
                     </div>
                   </td>
@@ -1339,6 +1405,18 @@ const CompanyPortal = () => {
   const [dashboardTab, setDashboardTab] = useState("logsheets");
   const [logsheetShowAll, setLogsheetShowAll] = useState(false);
   const [checklistShowAll, setChecklistShowAll] = useState(false);
+  // Dashboard filter state
+  const [dashDate, setDashDate] = useState(new Date().toISOString().slice(0, 10));
+  const [dashCompanyIds, setDashCompanyIds] = useState([]); // [] = all companies
+  const [dashEmployeeName, setDashEmployeeName] = useState(""); // "" = all
+  const [dashAllEmployees, setDashAllEmployees] = useState([]);
+  const [cpOpen, setCpOpen] = useState(false);
+  const [cpSearch, setCpSearch] = useState("");
+  const [epOpen, setEpOpen] = useState(false);
+  const [epSearch, setEpSearch] = useState("");
+  const [adminDashboard, setAdminDashboard] = useState(null);
+  const [adminDashboardLoading, setAdminDashboardLoading] = useState(false);
+  const [adminDashboardError, setAdminDashboardError] = useState(false);
   const [detailModal, setDetailModal] = useState({ open: false, type: null, data: null, loading: false, error: null });
 
   const getQrBaseUrl = () => {
@@ -1717,12 +1795,12 @@ const CompanyPortal = () => {
   useEffect(() => {
     if (!token) return;
     setRecentEntriesLoading(true);
-    getRecentLogsheetEntries(token)
+    getRecentLogsheetEntries(token, dashDate)
       .then((data) => setRecentEntries(data))
       .catch(() => {})
       .finally(() => setRecentEntriesLoading(false));
     setRecentChecklistsLoading(true);
-    getRecentChecklistSubmissions(token)
+    getRecentChecklistSubmissions(token, dashDate)
       .then((data) => setRecentChecklists(data))
       .catch(() => {})
       .finally(() => setRecentChecklistsLoading(false));
@@ -1731,6 +1809,17 @@ const CompanyPortal = () => {
       .then((data) => setIssuesReport(data))
       .catch(() => {})
       .finally(() => setIssuesReportLoading(false));
+    // Load all employees for dashboard filter
+    getAdminEmployees(token, "all")
+      .then((d) => setDashAllEmployees(Array.isArray(d) ? d : []))
+      .catch(() => {});
+    // Load admin dashboard overview (real-time per-company stats)
+    setAdminDashboardLoading(true);
+    setAdminDashboardError(false);
+    getAdminDashboardOverview(token, { date: dashDate })
+      .then((d) => { setAdminDashboard(d); setAdminDashboardError(false); })
+      .catch(() => setAdminDashboardError(true))
+      .finally(() => setAdminDashboardLoading(false));
     // Pre-load open flag count for nav badge — use admin endpoint
     const cid = selectedCompanyId || companies[0]?.id;
     if (cid) {
@@ -1746,6 +1835,32 @@ const CompanyPortal = () => {
         .catch(() => {});
     }
   }, [token]);
+
+  // Reload dashboard overview + recent submissions when date filter changes
+  useEffect(() => {
+    if (!token) return;
+    setAdminDashboardLoading(true);
+    setAdminDashboardError(false);
+    getAdminDashboardOverview(token, { date: dashDate })
+      .then((d) => { setAdminDashboard(d); setAdminDashboardError(false); })
+      .catch(() => setAdminDashboardError(true))
+      .finally(() => setAdminDashboardLoading(false));
+    // Also reload the recent submissions table for the selected date
+    setRecentEntriesLoading(true);
+    getRecentLogsheetEntries(token, dashDate)
+      .then((data) => setRecentEntries(data))
+      .catch(() => {})
+      .finally(() => setRecentEntriesLoading(false));
+    setRecentChecklistsLoading(true);
+    // Pass companyIds to aggregate submissions from all selected companies
+    const companyIdsParam = selectedCompanyId && selectedCompanyId !== "all"
+      ? String(selectedCompanyId)
+      : companies.map(c => c.id).join(",");
+    getRecentChecklistSubmissions(token, dashDate, companyIdsParam)
+      .then((data) => setRecentChecklists(data))
+      .catch(() => {})
+      .finally(() => setRecentChecklistsLoading(false));
+  }, [token, dashDate, selectedCompanyId, companies]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -4376,23 +4491,16 @@ const CompanyPortal = () => {
               ))}
             </div>
 
-            {/* Company selector */}
-            <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", padding: "14px 20px", marginBottom: "22px", display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap" }}>
-              <span style={{ fontSize: "13.5px", fontWeight: 700, color: "#374151", whiteSpace: "nowrap" }}>Company:</span>
-              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                <button type="button"
-                  onClick={() => setChecklistSelectedCompanyId(null)}
-                  style={{ padding: "6px 14px", borderRadius: "8px", fontSize: "13px", fontWeight: 600, cursor: "pointer", border: clCompanyId === (companies[0]?.id || null) && !checklistSelectedCompanyId ? "none" : (checklistSelectedCompanyId === null ? "none" : "1px solid #e2e8f0"), background: checklistSelectedCompanyId === null ? "#2563eb" : "#f8fafc", color: checklistSelectedCompanyId === null ? "#fff" : "#475569" }}>
-                  All Companies
-                </button>
-                {companies.map((c) => (
-                  <button key={c.id} type="button"
-                    onClick={() => setChecklistSelectedCompanyId(c.id)}
-                    style={{ padding: "6px 14px", borderRadius: "8px", fontSize: "13px", fontWeight: 600, cursor: "pointer", border: checklistSelectedCompanyId === c.id ? "none" : "1px solid #e2e8f0", background: checklistSelectedCompanyId === c.id ? "#2563eb" : "#f8fafc", color: checklistSelectedCompanyId === c.id ? "#fff" : "#475569" }}>
-                    {c.companyName || c.name}
-                  </button>
-                ))}
-              </div>
+            {/* Company filter */}
+            <div style={{ display:"flex", justifyContent:"flex-end", alignItems:"center", gap:"8px", marginBottom:"22px" }}>
+              <span style={{ fontSize:"13px", fontWeight:500, color:"#64748b" }}>Company:</span>
+              <SearchableSelect
+                value={checklistSelectedCompanyId || "all"}
+                onChange={v => setChecklistSelectedCompanyId(v)}
+                options={[{ value:"all", label:"All Companies" }, ...companies.map(c => ({ value:String(c.id), label:c.companyName||c.name }))]}
+                placeholder="All Companies"
+                style={{ width:"220px" }}
+              />
             </div>
 
             {checklistSubNav === "templates" && (
@@ -4400,7 +4508,7 @@ const CompanyPortal = () => {
                 token={token}
                 companies={companies}
                 assets={assets}
-                companyId={checklistSelectedCompanyId || null}
+                companyId={checklistSelectedCompanyId || "all"}
                 fetchTemplates={getChecklistTemplates}
                 createTemplate={createChecklistTemplate}
                 fetchTemplate={getChecklistTemplate}
@@ -4412,7 +4520,7 @@ const CompanyPortal = () => {
             )}
 
             {checklistSubNav === "submissions" && (
-              <SubmissionsPanel token={token} type="checklists" companyId={checklistSelectedCompanyId || null} />
+              <SubmissionsPanel token={token} type="checklists" companyId={checklistSelectedCompanyId === "all" ? null : checklistSelectedCompanyId} />
             )}
           </div>
           );
@@ -4434,23 +4542,16 @@ const CompanyPortal = () => {
               ))}
             </div>
 
-            {/* Company selector */}
-            <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", padding: "14px 20px", marginBottom: "22px", display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap" }}>
-              <span style={{ fontSize: "13.5px", fontWeight: 700, color: "#374151", whiteSpace: "nowrap" }}>Company:</span>
-              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                <button type="button"
-                  onClick={() => setLogsheetSelectedCompanyId(null)}
-                  style={{ padding: "6px 14px", borderRadius: "8px", fontSize: "13px", fontWeight: 600, cursor: "pointer", border: logsheetSelectedCompanyId === null ? "none" : "1px solid #e2e8f0", background: logsheetSelectedCompanyId === null ? "#2563eb" : "#f8fafc", color: logsheetSelectedCompanyId === null ? "#fff" : "#475569" }}>
-                  All Companies
-                </button>
-                {companies.map((c) => (
-                  <button key={c.id} type="button"
-                    onClick={() => setLogsheetSelectedCompanyId(c.id)}
-                    style={{ padding: "6px 14px", borderRadius: "8px", fontSize: "13px", fontWeight: 600, cursor: "pointer", border: logsheetSelectedCompanyId === c.id ? "none" : "1px solid #e2e8f0", background: logsheetSelectedCompanyId === c.id ? "#2563eb" : "#f8fafc", color: logsheetSelectedCompanyId === c.id ? "#fff" : "#475569" }}>
-                    {c.companyName || c.name}
-                  </button>
-                ))}
-              </div>
+            {/* Company filter */}
+            <div style={{ display:"flex", justifyContent:"flex-end", alignItems:"center", gap:"8px", marginBottom:"22px" }}>
+              <span style={{ fontSize:"13px", fontWeight:500, color:"#64748b" }}>Company:</span>
+              <SearchableSelect
+                value={logsheetSelectedCompanyId || "all"}
+                onChange={v => setLogsheetSelectedCompanyId(v)}
+                options={[{ value:"all", label:"All Companies" }, ...companies.map(c => ({ value:String(c.id), label:c.companyName||c.name }))]}
+                placeholder="All Companies"
+                style={{ width:"220px" }}
+              />
             </div>
 
             {logsheetSubNav === "templates" && (
@@ -4458,12 +4559,12 @@ const CompanyPortal = () => {
                 token={token}
                 assets={assets}
                 companies={companies}
-                companyId={logsheetSelectedCompanyId || null}
+                companyId={logsheetSelectedCompanyId || "all"}
                 fetchTemplates={(tok, params) => getLogsheetTemplates(tok, params)}
                 fetchTemplate={(tok, id) => getLogsheetTemplate(tok, id)}
                 createTemplate={(tok, data) => createLogsheetTemplate(tok, data)}
                 updateTemplate={(tok, id, data) => updateLogsheetTemplate(tok, id, data)}
-                deleteTemplate={(tok, id) => deleteLogsheetTemplate(tok, id)}
+                deleteTemplate={(tok, id) => deleteLogsheetTemplate(tok, id, data)}
                 assignTemplate={(tok, templateId, assetId) => assignLogsheetTemplate(tok, templateId, assetId)}
                 fetchEntries={(tok, templateId, params) => getLogsheetEntriesByTemplate(tok, templateId, params)}
                 submitEntry={(tok, templateId, data) => submitLogsheetEntry(tok, templateId, data)}
@@ -4472,7 +4573,7 @@ const CompanyPortal = () => {
             )}
 
             {logsheetSubNav === "submissions" && (
-              <SubmissionsPanel token={token} type="logsheets" companyId={logsheetSelectedCompanyId || null} />
+              <SubmissionsPanel token={token} type="logsheets" companyId={logsheetSelectedCompanyId === "all" ? null : logsheetSelectedCompanyId} />
             )}
           </div>
           );
@@ -4741,32 +4842,490 @@ const CompanyPortal = () => {
           const FREQ_LABELS = { daily: "Daily", weekly: "Weekly", monthly: "Monthly", quarterly: "Quarterly", half_yearly: "Half-Yearly", yearly: "Yearly" };
           const FREQ_COLORS = { daily: ["#dcfce7","#16a34a"], weekly: ["#dbeafe","#1d4ed8"], monthly: ["#fef9c3","#ca8a04"], quarterly: ["#ede9fe","#7c3aed"], half_yearly: ["#fce7f3","#be185d"], yearly: ["#ffedd5","#c2410c"] };
           const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+          // ── Filter helpers ──────────────────────────────────────────────
+          const filterRow = (row) => {
+            const matchCompany = dashCompanyIds.length === 0 || dashCompanyIds.includes(String(row.companyId));
+            const matchEmployee = !dashEmployeeName || row.submittedBy === dashEmployeeName;
+            // Date is already filtered server-side; client-side date check removed to avoid empty table
+            return matchCompany && matchEmployee;
+          };
+          const filteredEntries = recentEntries.filter(filterRow);
+          const filteredChecklists = recentChecklists.filter(filterRow);
+          const filteredIssuesRows = issuesReport.issues.filter((row) => {
+            const matchCompany = dashCompanyIds.length === 0 || dashCompanyIds.includes(String(row.companyId));
+            const matchEmployee = !dashEmployeeName || row.submittedBy === dashEmployeeName;
+            return matchCompany && matchEmployee;
+          });
+          const filteredCompanies = dashCompanyIds.length === 0 ? companies : companies.filter((c) => dashCompanyIds.includes(String(c.id)));
+          const filteredAssets = dashCompanyIds.length === 0 ? assets : assets.filter((a) => dashCompanyIds.includes(String(a.companyId)));
+
+          // ── Chart / analytics computations ────────────────────────────
+          const last7Days = Array.from({ length: 7 }, (_, i) => { const d = new Date(); d.setDate(d.getDate() - (6 - i)); return d.toISOString().slice(0, 10); });
+          const barEntriesAll = dashCompanyIds.length === 0 ? recentEntries : recentEntries.filter((e) => dashCompanyIds.includes(String(e.companyId)));
+          const barChecklistsAll = dashCompanyIds.length === 0 ? recentChecklists : recentChecklists.filter((c) => dashCompanyIds.includes(String(c.companyId)));
+          const barData = last7Days.map((dt) => {
+            const ls = barEntriesAll.filter((e) => e.submittedAt?.slice(0, 10) === dt).length;
+            const cl = barChecklistsAll.filter((c) => c.submittedAt?.slice(0, 10) === dt).length;
+            const wd = new Date(dt + "T12:00:00");
+            return { dt, label: wd.toLocaleDateString("en", { weekday: "short" }).slice(0, 3) + " " + wd.getDate(), ls, cl, total: ls + cl };
+          });
+          const maxBar = Math.max(1, ...barData.map((d) => d.total));
+          const totalSubs = filteredEntries.length + filteredChecklists.length;
+          const ARC_C = 2 * Math.PI * 50;
+          const lsFrac = totalSubs > 0 ? filteredEntries.length / totalSubs : 0;
+          const clFrac = totalSubs > 0 ? filteredChecklists.length / totalSubs : 0;
+          const lsDash = lsFrac * ARC_C;
+          const clDash = clFrac * ARC_C;
+          const companyStats = filteredCompanies.map((c) => {
+            const cid = String(c.id);
+            return { ...c, ls: filteredEntries.filter((e) => String(e.companyId) === cid).length, cl: filteredChecklists.filter((s) => String(s.companyId) === cid).length, iss: filteredIssuesRows.filter((r) => String(r.companyId) === cid).length, ac: (assets || []).filter((a) => String(a.companyId) === cid).length };
+          });
+
+          // ── Company multiselect options (filtered by search) ────────────
+          const cpOptions = companies.filter((c) => {
+            const n = (c.companyName || "").toLowerCase();
+            return !cpSearch || n.includes(cpSearch.toLowerCase());
+          });
+
+          // ── Employee dropdown options (filtered by selected companies + search) ─
+          const epPool = dashCompanyIds.length === 0
+            ? dashAllEmployees
+            : dashAllEmployees.filter((e) => dashCompanyIds.includes(String(e.companyId)));
+          const epOptions = epPool.filter((e) =>
+            !epSearch || (e.fullName || "").toLowerCase().includes(epSearch.toLowerCase())
+          );
+
+          // ── Dropdown toggle helpers ────────────────────────────────────
+          const toggleCompany = (id) => {
+            setDashCompanyIds((prev) => {
+              const s = String(id);
+              return prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s];
+            });
+            setDashEmployeeName(""); // reset employee when company changes
+          };
+
+          const companyLabel = dashCompanyIds.length === 0
+            ? "All Companies"
+            : dashCompanyIds.length === 1
+              ? (companies.find((c) => String(c.id) === dashCompanyIds[0])?.companyName || "1 company")
+              : `${dashCompanyIds.length} companies`;
+
           return (
             <div>
-              {/* Header */}
-              <div style={{ marginBottom: "24px" }}>
-                <h1 style={{ fontSize: "26px", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px", marginBottom: "4px" }}>Client Portal Dashboard</h1>
-                <p style={{ color: "#64748b", fontSize: "14px" }}>{new Date().toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}</p>
+              {/* ── Print CSS ── */}
+              <style>{`@media print { aside.client-side-panel { display: none !important; } .client-main-area { padding: 0 !important; } .no-print { display: none !important; } .client-portal-shell { display: block !important; } }`}</style>
+
+              {/* ── Header + Filters ── */}
+              <div style={{ marginBottom: "24px", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "16px", flexWrap: "wrap" }}>
+                <div>
+                  <h1 style={{ fontSize: "26px", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px", marginBottom: "4px" }}>Client Portal Dashboard</h1>
+                  <p style={{ color: "#64748b", fontSize: "14px" }}>{new Date((dashDate || new Date().toISOString().slice(0,10)) + "T12:00:00").toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}</p>
+                </div>
+
+                {/* Filter Controls */}
+                <div className="no-print" style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+
+                  {/* Date filter */}
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px", background: "#fff", border: "1px solid #e2e8f0", borderRadius: "8px", padding: "0 10px", height: "38px" }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                    <input type="date" value={dashDate} onChange={(e) => setDashDate(e.target.value || new Date().toISOString().slice(0, 10))}
+                      style={{ border: "none", outline: "none", fontSize: "13px", color: "#0f172a", background: "transparent", fontWeight: 500, width: "132px" }} />
+                    {dashDate !== new Date().toISOString().slice(0, 10) && (
+                      <button onClick={() => setDashDate(new Date().toISOString().slice(0, 10))} title="Reset to today" style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", padding: 0, lineHeight: 1, fontSize: "16px" }}>×</button>
+                    )}
+                  </div>
+
+                  {/* Company multiselect */}
+                  <div style={{ position: "relative" }}>
+                    <button onClick={() => { setCpOpen((v) => !v); setEpOpen(false); }}
+                      style={{ height: "38px", padding: "0 12px", borderRadius: "8px", border: "1px solid #e2e8f0", background: dashCompanyIds.length > 0 ? "#eff6ff" : "#fff", color: dashCompanyIds.length > 0 ? "#1d4ed8" : "#0f172a", fontWeight: 600, fontSize: "13px", cursor: "pointer", display: "flex", alignItems: "center", gap: "7px", whiteSpace: "nowrap", minWidth: "160px", justifyContent: "space-between" }}>
+                      <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+                        {companyLabel}
+                      </span>
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+                    </button>
+                    {cpOpen && (
+                      <div style={{ position: "absolute", top: "calc(100% + 4px)", right: 0, background: "#fff", border: "1px solid #e2e8f0", borderRadius: "10px", boxShadow: "0 10px 30px rgba(0,0,0,0.1)", zIndex: 500, width: "240px", maxHeight: "320px", display: "flex", flexDirection: "column" }}>
+                        <div style={{ padding: "8px" }}>
+                          <input autoFocus value={cpSearch} onChange={(e) => setCpSearch(e.target.value)} placeholder="Search companies…"
+                            style={{ width: "100%", padding: "7px 10px", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "13px", outline: "none", boxSizing: "border-box" }} />
+                        </div>
+                        <div style={{ padding: "4px 8px 2px" }}>
+                          <button onClick={() => { setDashCompanyIds([]); setCpSearch(""); setCpOpen(false); setDashEmployeeName(""); }}
+                            style={{ width: "100%", textAlign: "left", padding: "7px 8px", borderRadius: "6px", border: "none", background: dashCompanyIds.length === 0 ? "#eff6ff" : "transparent", color: dashCompanyIds.length === 0 ? "#1d4ed8" : "#0f172a", fontWeight: 600, fontSize: "13px", cursor: "pointer" }}>
+                            ✓ All Companies
+                          </button>
+                        </div>
+                        <div style={{ overflowY: "auto", maxHeight: "220px", padding: "4px 8px 8px" }}>
+                          {cpOptions.map((c) => {
+                            const cid = String(c.id);
+                            const sel = dashCompanyIds.includes(cid);
+                            return (
+                              <button key={c.id} onClick={() => toggleCompany(c.id)}
+                                style={{ width: "100%", textAlign: "left", padding: "7px 8px", borderRadius: "6px", border: "none", background: sel ? "#eff6ff" : "transparent", color: sel ? "#1d4ed8" : "#0f172a", fontWeight: sel ? 600 : 400, fontSize: "13px", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}>
+                                <span style={{ width: "14px", height: "14px", borderRadius: "3px", border: `2px solid ${sel ? "#2563eb" : "#cbd5e1"}`, background: sel ? "#2563eb" : "transparent", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                                  {sel && <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>}
+                                </span>
+                                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.companyName}</span>
+                              </button>
+                            );
+                          })}
+                          {cpOptions.length === 0 && <p style={{ padding: "8px", color: "#94a3b8", fontSize: "12px" }}>No companies found</p>}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Employee searchable dropdown */}
+                  <div style={{ position: "relative" }}>
+                    <button onClick={() => { setEpOpen((v) => !v); setCpOpen(false); }}
+                      style={{ height: "38px", padding: "0 12px", borderRadius: "8px", border: "1px solid #e2e8f0", background: dashEmployeeName ? "#f0fdf4" : "#fff", color: dashEmployeeName ? "#15803d" : "#0f172a", fontWeight: 600, fontSize: "13px", cursor: "pointer", display: "flex", alignItems: "center", gap: "7px", whiteSpace: "nowrap", minWidth: "160px", justifyContent: "space-between" }}>
+                      <span style={{ display: "flex", alignItems: "center", gap: "6px", overflow: "hidden" }}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100px" }}>{dashEmployeeName || "All Employees"}</span>
+                      </span>
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+                    </button>
+                    {epOpen && (
+                      <div style={{ position: "absolute", top: "calc(100% + 4px)", right: 0, background: "#fff", border: "1px solid #e2e8f0", borderRadius: "10px", boxShadow: "0 10px 30px rgba(0,0,0,0.1)", zIndex: 500, width: "220px", maxHeight: "300px", display: "flex", flexDirection: "column" }}>
+                        <div style={{ padding: "8px" }}>
+                          <input autoFocus value={epSearch} onChange={(e) => setEpSearch(e.target.value)} placeholder="Search employees…"
+                            style={{ width: "100%", padding: "7px 10px", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "13px", outline: "none", boxSizing: "border-box" }} />
+                        </div>
+                        <div style={{ overflowY: "auto", maxHeight: "230px", padding: "4px 8px 8px" }}>
+                          <button onClick={() => { setDashEmployeeName(""); setEpOpen(false); setEpSearch(""); }}
+                            style={{ width: "100%", textAlign: "left", padding: "7px 8px", borderRadius: "6px", border: "none", background: !dashEmployeeName ? "#f0fdf4" : "transparent", color: !dashEmployeeName ? "#15803d" : "#0f172a", fontWeight: !dashEmployeeName ? 600 : 400, fontSize: "13px", cursor: "pointer" }}>
+                            All Employees
+                          </button>
+                          {epOptions.map((e) => {
+                            const sel = dashEmployeeName === e.fullName;
+                            return (
+                              <button key={e.id} onClick={() => { setDashEmployeeName(e.fullName); setEpOpen(false); setEpSearch(""); }}
+                                style={{ width: "100%", textAlign: "left", padding: "7px 8px", borderRadius: "6px", border: "none", background: sel ? "#f0fdf4" : "transparent", color: sel ? "#15803d" : "#0f172a", fontWeight: sel ? 600 : 400, fontSize: "13px", cursor: "pointer", display: "flex", flexDirection: "column", gap: "1px" }}>
+                                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.fullName}</span>
+                                {e.companyName && <span style={{ fontSize: "10px", color: "#94a3b8" }}>{e.companyName}</span>}
+                              </button>
+                            );
+                          })}
+                          {epOptions.length === 0 && <p style={{ padding: "8px", color: "#94a3b8", fontSize: "12px" }}>No employees found</p>}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Print button */}
+                  <button onClick={() => window.print()}
+                    style={{ height: "38px", padding: "0 14px", borderRadius: "8px", border: "1px solid #e2e8f0", background: "#0f172a", color: "#fff", fontWeight: 600, fontSize: "13px", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px", whiteSpace: "nowrap" }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                    Print
+                  </button>
+                </div>
               </div>
+              {/* Click outside to close dropdowns */}
+              {(cpOpen || epOpen) && (
+                <div style={{ position: "fixed", inset: 0, zIndex: 499 }} onClick={() => { setCpOpen(false); setEpOpen(false); }} />
+              )}
 
               {/* Quick stat cards */}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px", marginBottom: "28px" }}>
-                {[
-                  { label: "Total Companies", value: companies.length, sub: "Registered", iconBg: "#eff6ff", iconCol: "#2563eb", icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg> },
-                  { label: "Total Assets", value: assets.length, sub: "Across all companies", iconBg: "#f0fdf4", iconCol: "#22c55e", icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 19.07a10 10 0 0 1 0-14.14"/></svg> },
-                  { label: "Logsheet Entries", value: recentEntries.length, sub: "Recent submissions", iconBg: "#ede9fe", iconCol: "#7c3aed", icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> },
-                  { label: "Companies Active", value: companies.filter((c) => (c.status || "Active").toLowerCase() === "active").length, sub: "Active", iconBg: "#fef3c7", iconCol: "#d97706", icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> },
-                ].map((s) => (
-                  <div key={s.label} style={{ background: "#fff", borderRadius: "12px", padding: "20px 24px", border: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                    <div>
-                      <p style={{ color: "#64748b", fontSize: "14px", marginBottom: "10px", fontWeight: 500 }}>{s.label}</p>
-                      <p style={{ fontSize: "34px", fontWeight: 800, color: "#0f172a", lineHeight: 1, letterSpacing: "-1px" }}>{s.value}</p>
-                      <p style={{ color: "#64748b", fontSize: "13px", marginTop: "10px", fontWeight: 500 }}>{s.sub}</p>
+              {(() => {
+                const adv = adminDashboard;
+                const adCompanies = adv?.companies || [];
+                const displayCompanies = dashCompanyIds.length === 0
+                  ? adCompanies
+                  : adCompanies.filter((c) => dashCompanyIds.includes(String(c.id)));
+                const DKEYS = ["totalTemplates","filledToday","pendingChecklists","activeLocations","openSoftRequests","totalAssets","activeAssets","openIssues","openFlags","criticalFlags","filledLogsheetsToday","pendingLogsheets"];
+                const dt = displayCompanies.reduce((acc, c) => { DKEYS.forEach((k) => { acc[k] = (acc[k] || 0) + (c[k] || 0); }); return acc; }, Object.fromEntries(DKEYS.map((k) => [k, 0])));
+                dt.siteScore = dt.totalTemplates > 0 ? Math.round((dt.filledToday / dt.totalTemplates) * 100) : 0;
+                const isSingle = dashCompanyIds.length === 1;
+                const co = isSingle ? displayCompanies[0] : null;
+                const fAlerts = (adv?.recentAlerts || []).filter((a) => dashCompanyIds.length === 0 || dashCompanyIds.includes(String(a.companyId)));
+                const fOrders = (adv?.recentWorkOrders || []).filter((w) => dashCompanyIds.length === 0 || dashCompanyIds.includes(String(w.companyId)));
+                const fSoft   = (adv?.recentSoftRequests || []).filter((s) => dashCompanyIds.length === 0 || dashCompanyIds.includes(String(s.companyId)));
+                const ARC_C = 2 * Math.PI * 44;
+                const total = (co?.filledToday || 0) + (co?.pendingChecklists || 0);
+                const filledArc = total > 0 ? ((co?.filledToday || 0) / total) * ARC_C : 0;
+
+                if (adminDashboardLoading && !adv) {
+                  return <div style={{ padding: "60px", textAlign: "center", color: "#94a3b8", fontSize: "14px" }}>Loading dashboard…</div>;
+                }
+
+                if (adminDashboardError && !adv) {
+                  return (
+                    <div style={{ padding: "48px", textAlign: "center" }}>
+                      <p style={{ color: "#dc2626", fontWeight: 600, marginBottom: "12px" }}>Failed to load dashboard data.</p>
+                      <button onClick={() => {
+                        setAdminDashboardError(false);
+                        setAdminDashboardLoading(true);
+                        getAdminDashboardOverview(token, { date: dashDate })
+                          .then((d) => { setAdminDashboard(d); setAdminDashboardError(false); })
+                          .catch(() => setAdminDashboardError(true))
+                          .finally(() => setAdminDashboardLoading(false));
+                      }} style={{ padding: "8px 20px", borderRadius: "8px", border: "1px solid #e2e8f0", background: "#f8fafc", color: "#475569", fontWeight: 600, fontSize: "13px", cursor: "pointer" }}>
+                        Retry
+                      </button>
                     </div>
-                    <div style={{ width: "50px", height: "50px", background: s.iconBg, borderRadius: "10px", display: "flex", alignItems: "center", justifyContent: "center", color: s.iconCol, flexShrink: 0 }}>{s.icon}</div>
+                  );
+                }
+
+                return isSingle ? (
+                  /* ── SINGLE COMPANY VIEW (matches company portal dashboard) ── */
+                  <div>
+                    {/* Header */}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "20px" }}>
+                      <div>
+                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                          <button type="button" onClick={() => setDashCompanyIds([])} style={{ padding: "4px 10px", borderRadius: "6px", border: "1px solid #e2e8f0", background: "#f8fafc", color: "#475569", fontSize: "12px", cursor: "pointer", fontWeight: 600 }}>← All Companies</button>
+                          <h2 style={{ fontSize: "18px", fontWeight: 800, color: "#0f172a", margin: 0 }}>{co?.companyName || "Company"}</h2>
+                        </div>
+                        <p style={{ fontSize: "12px", color: "#94a3b8", marginTop: "6px" }}>{new Date((dashDate || new Date().toISOString().slice(0,10)) + "T12:00:00").toLocaleDateString("en", { weekday:"long", day:"numeric", month:"long", year:"numeric" })}</p>
+                      </div>
+                    </div>
+
+                    {/* Row 1: 2 large KPI cards — Active Locations + Open HK Requests */}
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginBottom: "16px" }}>
+                      {[
+                        { label: "Active Locations",  value: co?.activeLocations || 0,   sub: "Location records",                                                                       col: "#0891b2", bg: "#ecfeff" },
+                        { label: "Open HK Requests",  value: co?.openSoftRequests || 0,  sub: (co?.openSoftRequests||0) > 0 ? "Needs attention" : "No open requests",                  col: (co?.openSoftRequests||0) > 0 ? "#dc2626" : "#16a34a", bg: (co?.openSoftRequests||0) > 0 ? "#fef2f2" : "#f0fdf4" },
+                      ].map((s) => (
+                        <div key={s.label} style={{ background: s.bg, borderRadius: "16px", border: `1px solid ${s.col}25`, padding: "28px 32px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <div>
+                            <p style={{ fontSize: "13px", color: "#64748b", fontWeight: 600, marginBottom: "10px" }}>{s.label}</p>
+                            <p style={{ fontSize: "52px", fontWeight: 900, color: s.col, lineHeight: 1, letterSpacing: "-2px" }}>{s.value}</p>
+                            <p style={{ fontSize: "12px", color: s.col, marginTop: "8px", opacity: 0.85 }}>{s.sub}</p>
+                          </div>
+                          <div style={{ fontSize: "44px", opacity: 0.18 }}>{s.label === "Active Locations" ? "📍" : "🔔"}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Row 2: 3 metric cards */}
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "14px", marginBottom: "18px" }}>
+                      {[
+                        { label: "TODAY'S SITE SCORE",       value: `${co?.siteScore||0}%`,        sub: `${co?.filledToday||0} of ${co?.totalTemplates||0} checklists filled`, col: "#2563eb", bg: "#eff6ff" },
+                        { label: "TOTAL FILLED CHECKLISTS",  value: co?.filledToday || 0,           sub: `${co?.pendingChecklists||0} pending for today`,                       col: "#16a34a", bg: "#f0fdf4" },
+                        { label: "TOTAL FILLED LOGSHEETS",   value: co?.filledLogsheetsToday || 0, sub: `${co?.pendingLogsheets||0} pending for today`,                        col: "#7c3aed", bg: "#faf5ff" },
+                      ].map((s) => (
+                        <div key={s.label} style={{ background: s.bg, borderRadius: "12px", border: `1px solid ${s.col}22`, padding: "18px 20px" }}>
+                          <p style={{ fontSize: "10px", color: s.col, fontWeight: 700, letterSpacing: "0.06em", marginBottom: "8px" }}>{s.label}</p>
+                          <p style={{ fontSize: "30px", fontWeight: 800, color: s.col, lineHeight: 1 }}>{s.value}</p>
+                          <p style={{ fontSize: "11px", color: "#64748b", marginTop: "6px" }}>{s.sub}</p>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Row 3: Submission Overview donut + HK Request list */}
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "18px", marginBottom: "18px" }}>
+                      <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", padding: "20px" }}>
+                        <h3 style={{ fontSize: "15px", fontWeight: 700, color: "#0f172a", marginBottom: "2px" }}>Submission Overview</h3>
+                        <p style={{ fontSize: "11px", color: "#94a3b8", marginBottom: "14px" }}>Data for {dashDate || new Date().toISOString().slice(0,10)}</p>
+                        <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
+                          <svg viewBox="0 0 120 120" width="120" height="120" style={{ flexShrink: 0 }}>
+                            <circle cx="60" cy="60" r="44" fill="none" stroke="#dcfce7" strokeWidth="20"/>
+                            {filledArc > 0 && <circle cx="60" cy="60" r="44" fill="none" stroke="#16a34a" strokeWidth="20" strokeDasharray={`${filledArc} ${ARC_C - filledArc}`} transform="rotate(-90 60 60)"/>}
+                            <text x="60" y="55" textAnchor="middle" fontSize="17" fontWeight="bold" fill="#0f172a">{co?.siteScore||0}%</text>
+                            <text x="60" y="69" textAnchor="middle" fontSize="8" fill="#94a3b8">SITE SCORE</text>
+                          </svg>
+                          <div style={{ flex: 1 }}>
+                            {[
+                              { label: "Filled Checklists",  value: co?.filledToday||0,      pct: total > 0 ? Math.round(((co?.filledToday||0)/total)*100) : 0,      col: "#16a34a" },
+                              { label: "Pending Checklists", value: co?.pendingChecklists||0, pct: total > 0 ? Math.round(((co?.pendingChecklists||0)/total)*100) : 0, col: "#86efac" },
+                              { label: "Site Score",         value: `${co?.siteScore||0}%`,   pct: null, col: "#2563eb" },
+                            ].map((item) => (
+                              <div key={item.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: "7px" }}>
+                                  <span style={{ width: "9px", height: "9px", borderRadius: "50%", background: item.col, flexShrink: 0 }}/>
+                                  <span style={{ fontSize: "12px", color: "#64748b" }}>{item.label}</span>
+                                </div>
+                                <div style={{ textAlign: "right" }}>
+                                  <span style={{ fontSize: "14px", fontWeight: 700, color: "#0f172a" }}>{item.value}</span>
+                                  <span style={{ fontSize: "10px", color: "#94a3b8", display: "block" }}>{item.pct !== null ? `${item.pct}%` : `${co?.filledToday||0}/${co?.totalTemplates||0}`}</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
+                        <div style={{ padding: "14px 18px", borderBottom: "1px solid #f1f5f9" }}>
+                          <h3 style={{ fontSize: "15px", fontWeight: 700, color: "#0f172a" }}>HK Request</h3>
+                          <p style={{ fontSize: "11px", color: "#94a3b8" }}>Open requests raised by supervisors</p>
+                        </div>
+                        <div style={{ overflowY: "auto", maxHeight: "210px" }}>
+                          {fSoft.length === 0 ? (
+                            <div style={{ padding: "32px", textAlign: "center", color: "#94a3b8", fontSize: "13px" }}>✅ No open soft service requests</div>
+                          ) : fSoft.map((sr) => (
+                            <div key={sr.id} style={{ padding: "9px 18px", borderBottom: "1px solid #f8fafc" }}>
+                              <p style={{ fontSize: "12px", fontWeight: 600, color: "#0f172a", margin: "0 0 2px" }}>{sr.requestType || "Request"}</p>
+                              <p style={{ fontSize: "11px", color: "#94a3b8", margin: 0 }}>By: {sr.raisedBy || "Unknown"} • {sr.status}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Row 4: Open Alerts + Open Work Orders */}
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "18px", marginBottom: "20px" }}>
+                      <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
+                        <div style={{ padding: "14px 18px", borderBottom: "1px solid #f1f5f9" }}>
+                          <h3 style={{ fontSize: "15px", fontWeight: 700, color: "#0f172a" }}>Open Alerts</h3>
+                          <p style={{ fontSize: "11px", color: "#94a3b8" }}>Active warnings &amp; flags</p>
+                        </div>
+                        <div style={{ overflowY: "auto", maxHeight: "200px" }}>
+                          {fAlerts.length === 0 ? (
+                            <div style={{ padding: "28px", textAlign: "center", color: "#94a3b8", fontSize: "13px" }}>✅ No open alerts</div>
+                          ) : fAlerts.map((a) => (
+                            <div key={a.id} style={{ padding: "9px 18px", borderBottom: "1px solid #f8fafc", display: "flex", gap: "9px", alignItems: "flex-start" }}>
+                              <span style={{ padding: "2px 7px", borderRadius: "20px", fontSize: "10px", fontWeight: 700, flexShrink: 0, marginTop: "2px",
+                                background: a.severity === "critical" ? "#fef2f2" : a.severity === "high" ? "#fff7ed" : "#fffbeb",
+                                color: a.severity === "critical" ? "#dc2626" : a.severity === "high" ? "#ea580c" : "#ca8a04" }}>
+                                {a.severity || "Low"}
+                              </span>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <p style={{ fontSize: "12px", fontWeight: 600, color: "#0f172a", margin: "0 0 1px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.assetName || a.title || "Alert"}</p>
+                                <p style={{ fontSize: "11px", color: "#94a3b8", margin: 0 }}>{a.title}</p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
+                        <div style={{ padding: "14px 18px", borderBottom: "1px solid #f1f5f9" }}>
+                          <h3 style={{ fontSize: "15px", fontWeight: 700, color: "#0f172a" }}>Open Requests</h3>
+                          <p style={{ fontSize: "11px", color: "#94a3b8" }}>Work orders assigned to team</p>
+                        </div>
+                        <div style={{ overflowY: "auto", maxHeight: "200px" }}>
+                          {fOrders.length === 0 ? (
+                            <div style={{ padding: "28px", textAlign: "center", color: "#94a3b8", fontSize: "13px" }}>✅ No open work orders</div>
+                          ) : fOrders.map((wo) => (
+                            <div key={wo.id} style={{ padding: "9px 18px", borderBottom: "1px solid #f8fafc" }}>
+                              <p style={{ fontSize: "12px", fontWeight: 600, color: "#0f172a", margin: "0 0 2px" }}>#{wo.woNumber || wo.id} — {(wo.description || "Work Order").slice(0, 40)}</p>
+                              <p style={{ fontSize: "11px", color: "#94a3b8", margin: 0 }}>{wo.assignedTo ? `Assigned: ${wo.assignedTo}` : "Unassigned"} • {wo.priority || "Normal"}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                ))}
-              </div>
+                ) : (
+                  /* ── ALL / MULTI-COMPANY VIEW ── */
+                  <div>
+                    {/* 4 big stat cards */}
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px", marginBottom: "18px" }}>
+                      {[
+                        { label: "Combined Site Score", value: `${dt.siteScore}%`, sub: `${dt.filledToday}/${dt.totalTemplates} templates`, col: "#16a34a", bg: "#f0fdf4" },
+                        { label: "Total Active Locations", value: dt.activeLocations, sub: "Across all sites", col: "#2563eb", bg: "#eff6ff" },
+                        { label: "Open HK Requests", value: dt.openSoftRequests, sub: dt.openSoftRequests > 0 ? "Needs attention" : "All clear", col: dt.openSoftRequests > 0 ? "#dc2626" : "#16a34a", bg: dt.openSoftRequests > 0 ? "#fef2f2" : "#f0fdf4" },
+                        { label: "Total Sites", value: adCompanies.length, sub: dashCompanyIds.length > 0 ? `${displayCompanies.length} of ${adCompanies.length} selected` : "All companies", col: "#7c3aed", bg: "#faf5ff" },
+                      ].map((s) => (
+                        <div key={s.label} style={{ background: s.bg, borderRadius: "14px", border: `1px solid ${s.col}22`, padding: "22px 24px" }}>
+                          <p style={{ fontSize: "13px", color: "#64748b", fontWeight: 500, marginBottom: "10px" }}>{s.label}</p>
+                          <p style={{ fontSize: "36px", fontWeight: 800, color: s.col, lineHeight: 1, letterSpacing: "-1px" }}>{s.value}</p>
+                          <p style={{ fontSize: "12px", color: s.col, marginTop: "8px", opacity: 0.8 }}>{s.sub}</p>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Per-company mini cards */}
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: "12px", marginBottom: "18px" }}>
+                      {displayCompanies.map((c) => {
+                        const sc = c.siteScore >= 80 ? "#16a34a" : c.siteScore >= 50 ? "#d97706" : "#dc2626";
+                        return (
+                          <div key={c.id} style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", padding: "15px", cursor: "pointer" }}
+                            onClick={() => setDashCompanyIds([String(c.id)])}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "10px" }}>
+                              <p style={{ fontSize: "13px", fontWeight: 700, color: "#0f172a", lineHeight: 1.3, flex: 1, marginRight: "6px" }}>{c.companyName}</p>
+                              <span style={{ fontSize: "14px", fontWeight: 800, color: sc, flexShrink: 0 }}>{c.siteScore}%</span>
+                            </div>
+                            <div style={{ display: "flex", justifyContent: "space-around", marginBottom: "10px" }}>
+                              <div style={{ textAlign: "center" }}>
+                                <p style={{ fontSize: "20px", fontWeight: 800, color: "#16a34a" }}>{c.filledToday}</p>
+                                <p style={{ fontSize: "10px", color: "#94a3b8" }}>Filled</p>
+                              </div>
+                              <div style={{ width: "1px", background: "#f1f5f9" }}/>
+                              <div style={{ textAlign: "center" }}>
+                                <p style={{ fontSize: "20px", fontWeight: 800, color: "#f59e0b" }}>{c.pendingChecklists}</p>
+                                <p style={{ fontSize: "10px", color: "#94a3b8" }}>Pending</p>
+                              </div>
+                            </div>
+                            <p style={{ fontSize: "11px", color: "#2563eb", textAlign: "center", fontWeight: 500 }}>Click to view site →</p>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* 5 summary cards */}
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "12px", marginBottom: "18px" }}>
+                      {[
+                        { label: "ACTIVE ASSETS",            value: dt.activeAssets,         sub: `${dt.totalAssets} total`,           col: "#0284c7" },
+                        { label: "OPEN REQUESTS",            value: dt.openIssues,           sub: dt.openIssues > 0 ? "Needs attention" : "All clear", col: dt.openIssues > 0 ? "#dc2626" : "#16a34a" },
+                        { label: "TOTAL WARNINGS",           value: dt.openFlags,            sub: `${dt.criticalFlags} critical flags`, col: "#d97706" },
+                        { label: "TOTAL FILLED CHECKLISTS",  value: dt.filledToday,          sub: `${dt.pendingChecklists} pending`,    col: "#16a34a" },
+                        { label: "TOTAL FILLED LOGSHEETS",   value: dt.filledLogsheetsToday, sub: `${dt.pendingLogsheets} pending`,     col: "#7c3aed" },
+                      ].map((s) => (
+                        <div key={s.label} style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", padding: "16px 18px" }}>
+                          <p style={{ fontSize: "10px", fontWeight: 700, color: s.col, letterSpacing: "0.05em", marginBottom: "7px" }}>{s.label}</p>
+                          <p style={{ fontSize: "26px", fontWeight: 800, color: "#0f172a", lineHeight: 1 }}>{s.value}</p>
+                          <p style={{ fontSize: "11px", color: "#64748b", marginTop: "5px" }}>{s.sub}</p>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Site Score bar chart */}
+                    {displayCompanies.length > 0 && (
+                      <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", padding: "20px", marginBottom: "18px" }}>
+                        <h3 style={{ fontSize: "15px", fontWeight: 700, color: "#0f172a", marginBottom: "2px" }}>Site Score Overview</h3>
+                        <p style={{ fontSize: "12px", color: "#94a3b8", marginBottom: "14px" }}>Average checklist completion per site</p>
+                        <div style={{ display: "flex", alignItems: "flex-end", gap: "14px", height: "110px" }}>
+                          {displayCompanies.map((c) => {
+                            const h = Math.max(4, (c.siteScore / 100) * 90);
+                            const col = c.siteScore >= 80 ? "#f97316" : c.siteScore >= 50 ? "#f59e0b" : c.siteScore >= 20 ? "#fb923c" : "#e2e8f0";
+                            return (
+                              <div key={c.id} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: "3px", cursor: "pointer" }}
+                                onClick={() => setDashCompanyIds([String(c.id)])}>
+                                <span style={{ fontSize: "11px", fontWeight: 700, color: "#0f172a", minHeight: "16px" }}>{c.siteScore > 0 ? `${c.siteScore}%` : ""}</span>
+                                <div style={{ width: "100%", height: `${h}px`, background: col, borderRadius: "4px 4px 0 0" }}/>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <div style={{ display: "flex", gap: "14px", borderTop: "2px solid #f1f5f9", paddingTop: "8px", marginTop: "4px" }}>
+                          {displayCompanies.map((c) => (
+                            <div key={c.id} style={{ flex: 1, textAlign: "center" }}>
+                              <span style={{ fontSize: "10px", color: "#64748b" }}>{c.companyName}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Open alerts across companies */}
+                    {fAlerts.length > 0 && (
+                      <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden", marginBottom: "18px" }}>
+                        <div style={{ padding: "14px 18px", borderBottom: "1px solid #f1f5f9" }}>
+                          <h3 style={{ fontSize: "15px", fontWeight: 700, color: "#0f172a" }}>Open Alerts</h3>
+                          <p style={{ fontSize: "11px", color: "#94a3b8" }}>Flags across all companies</p>
+                        </div>
+                        {fAlerts.slice(0, 6).map((a) => (
+                          <div key={a.id} style={{ padding: "9px 18px", borderBottom: "1px solid #f8fafc", display: "flex", gap: "9px", alignItems: "center" }}>
+                            <span style={{ padding: "2px 7px", borderRadius: "20px", fontSize: "10px", fontWeight: 700, flexShrink: 0,
+                              background: a.severity === "critical" ? "#fef2f2" : a.severity === "high" ? "#fff7ed" : "#fffbeb",
+                              color: a.severity === "critical" ? "#dc2626" : a.severity === "high" ? "#ea580c" : "#ca8a04" }}>
+                              {a.severity || "Low"}
+                            </span>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <p style={{ fontSize: "12px", fontWeight: 600, color: "#0f172a", margin: "0 0 1px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.assetName || a.title || "Alert"}</p>
+                              <p style={{ fontSize: "11px", color: "#94a3b8", margin: 0 }}>{a.companyName}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Recent Filled Checklists & Logsheets (tabbed) */}
               <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
@@ -4802,12 +5361,12 @@ const CompanyPortal = () => {
                       <tbody>
                         {recentEntriesLoading ? (
                           <tr><td colSpan="8" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>Loading…</td></tr>
-                        ) : recentEntries.length === 0 ? (
+                        ) : filteredEntries.length === 0 ? (
                           <tr><td colSpan="8" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>
-                            No logsheets filled yet.{" "}
+                            No logsheets found for the selected filters.{" "}
                             <button onClick={() => setNav("logsheets")} style={{ color: "#2563eb", background: "none", border: "none", cursor: "pointer", fontWeight: 600, fontSize: "14px" }}>Go to Logsheets →</button>
                           </td></tr>
-                        ) : (logsheetShowAll ? recentEntries : recentEntries.slice(0, 5)).map((e, i) => {
+                        ) : (logsheetShowAll ? filteredEntries : filteredEntries.slice(0, 5)).map((e, i) => {
                           const freq = e.frequency || "daily";
                           const [fbg, ftx] = FREQ_COLORS[freq] || ["#f1f5f9","#475569"];
                           return (
@@ -4841,12 +5400,12 @@ const CompanyPortal = () => {
                       <tbody>
                         {recentChecklistsLoading ? (
                           <tr><td colSpan="7" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>Loading…</td></tr>
-                        ) : recentChecklists.length === 0 ? (
+                        ) : filteredChecklists.length === 0 ? (
                           <tr><td colSpan="7" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>
-                            No checklists filled yet.{" "}
+                            No checklists found for the selected filters.{" "}
                             <button onClick={() => setNav("checklists")} style={{ color: "#2563eb", background: "none", border: "none", cursor: "pointer", fontWeight: 600, fontSize: "14px" }}>Go to Checklists →</button>
                           </td></tr>
-                        ) : (checklistShowAll ? recentChecklists : recentChecklists.slice(0, 5)).map((c, i) => {
+                        ) : (checklistShowAll ? filteredChecklists : filteredChecklists.slice(0, 5)).map((c, i) => {
                           const statusColors = { completed: ["#f0fdf4","#16a34a"], partial: ["#fffbeb","#ca8a04"], pending: ["#f1f5f9","#64748b"] };
                           const [sbg, stx] = statusColors[c.status] || ["#f1f5f9","#64748b"];
                           return (
@@ -4870,17 +5429,17 @@ const CompanyPortal = () => {
                   )}
                 </div>
                 {/* Load More */}
-                {dashboardTab === "logsheets" && !logsheetShowAll && recentEntries.length > 5 && (
+                {dashboardTab === "logsheets" && !logsheetShowAll && filteredEntries.length > 5 && (
                   <div style={{ padding: "12px 20px", borderTop: "1px solid #e2e8f0", textAlign: "center" }}>
                     <button onClick={() => setLogsheetShowAll(true)} style={{ padding: "8px 24px", borderRadius: "8px", border: "1px solid #e2e8f0", background: "#f8fafc", color: "#475569", fontWeight: 600, fontSize: "13px", cursor: "pointer" }}>
-                      Load More ({recentEntries.length - 5} more)
+                      Load More ({filteredEntries.length - 5} more)
                     </button>
                   </div>
                 )}
-                {dashboardTab === "checklists" && !checklistShowAll && recentChecklists.length > 5 && (
+                {dashboardTab === "checklists" && !checklistShowAll && filteredChecklists.length > 5 && (
                   <div style={{ padding: "12px 20px", borderTop: "1px solid #e2e8f0", textAlign: "center" }}>
                     <button onClick={() => setChecklistShowAll(true)} style={{ padding: "8px 24px", borderRadius: "8px", border: "1px solid #e2e8f0", background: "#f8fafc", color: "#475569", fontWeight: 600, fontSize: "13px", cursor: "pointer" }}>
-                      Load More ({recentChecklists.length - 5} more)
+                      Load More ({filteredChecklists.length - 5} more)
                     </button>
                   </div>
                 )}
@@ -4892,20 +5451,20 @@ const CompanyPortal = () => {
                   <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
                     <h2 style={{ fontSize: "16px", fontWeight: 700, color: "#991b1b", margin: 0 }}>Logsheet Issues Report</h2>
-                    {issuesReport.summary && (
+                    {filteredIssuesRows.length > 0 && (
                       <span style={{ fontSize: "12px", color: "#dc2626", background: "#fee2e2", padding: "2px 10px", borderRadius: "20px", fontWeight: 700 }}>
-                        {issuesReport.summary.total || 0} flagged readings
+                        {filteredIssuesRows.length} flagged readings
                       </span>
                     )}
                   </div>
-                  {/* Summary badges */}
-                  {issuesReport.summary && (
+                  {/* Summary badges — computed from filtered rows */}
+                  {filteredIssuesRows.length > 0 && (
                     <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
                       {[
-                        { label: "Critical", val: issuesReport.summary.critical, bg: "#fef2f2", col: "#dc2626" },
-                        { label: "High",     val: issuesReport.summary.high,     bg: "#fff7ed", col: "#ea580c" },
-                        { label: "Medium",   val: issuesReport.summary.medium,   bg: "#fffbeb", col: "#ca8a04" },
-                        { label: "Low",      val: issuesReport.summary.low,      bg: "#f0fdf4", col: "#16a34a" },
+                        { label: "Critical", val: filteredIssuesRows.filter(i => i.priority === "critical").length, bg: "#fef2f2", col: "#dc2626" },
+                        { label: "High",     val: filteredIssuesRows.filter(i => i.priority === "high").length,     bg: "#fff7ed", col: "#ea580c" },
+                        { label: "Medium",   val: filteredIssuesRows.filter(i => i.priority === "medium").length,   bg: "#fffbeb", col: "#ca8a04" },
+                        { label: "Low",      val: filteredIssuesRows.filter(i => i.priority === "low").length,      bg: "#f0fdf4", col: "#16a34a" },
                       ].map((s) => (
                         <span key={s.label} style={{ fontSize: "12px", fontWeight: 700, padding: "3px 10px", borderRadius: "20px", background: s.bg, color: s.col }}>
                           {s.label}: {s.val || 0}
@@ -4926,11 +5485,11 @@ const CompanyPortal = () => {
                     <tbody>
                       {issuesReportLoading ? (
                         <tr><td colSpan="11" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>Loading issues…</td></tr>
-                      ) : issuesReport.issues.length === 0 ? (
+                      ) : filteredIssuesRows.length === 0 ? (
                         <tr><td colSpan="11" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>
                           No issues detected. All logsheet readings are within normal range. ✓
                         </td></tr>
-                      ) : issuesReport.issues.map((iss, i) => {
+                      ) : filteredIssuesRows.map((iss, i) => {
                         const priorityColors = { critical: ["#fef2f2","#dc2626"], high: ["#fff7ed","#ea580c"], medium: ["#fffbeb","#ca8a04"], low: ["#f0fdf4","#16a34a"] };
                         const [pbg, ptx] = priorityColors[iss.priority] || ["#f8fafc","#64748b"];
                         return (
@@ -4959,9 +5518,9 @@ const CompanyPortal = () => {
                     </tbody>
                   </table>
                 </div>
-                {issuesReport.issues.length > 0 && (
+                {filteredIssuesRows.length > 0 && (
                   <div style={{ padding: "10px 20px", borderTop: "1px solid #fecaca", fontSize: "12px", color: "#991b1b", background: "#fef2f2" }}>
-                    Showing {issuesReport.issues.length} flagged readings. Red cells in the grid view (View → Logsheets) show the exact day and parameter.
+                    Showing {filteredIssuesRows.length} flagged readings. Red cells in the grid view (View → Logsheets) show the exact day and parameter.
                   </div>
                 )}
               </div>

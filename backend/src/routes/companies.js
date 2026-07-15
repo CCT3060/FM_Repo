@@ -50,6 +50,25 @@ const uploadLogo = multer({
         UNIQUE(company_id, role)
       )`);
   } catch (err) { /* ignore */ }
+  // Phase 2: Historical snapshot table for immutable past site scores
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS daily_checklist_snapshots (
+        id SERIAL PRIMARY KEY,
+        company_id INTEGER NOT NULL,
+        snapshot_date DATE NOT NULL,
+        total_expected_slots INTEGER NOT NULL,
+        filled_slots INTEGER NOT NULL,
+        site_score_pct DECIMAL(5,2) NOT NULL,
+        template_breakdown JSONB DEFAULT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(company_id, snapshot_date)
+      )`);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_snapshots_company_date 
+      ON daily_checklist_snapshots(company_id, snapshot_date)
+    `);
+  } catch (err) { console.warn("[daily-snapshots] migration warning:", err.message); }
 })();
 
 const companyRules = [];
@@ -409,5 +428,281 @@ router.post(
     });
   }
 );
+
+/* ── Helper: Calculate expected slots for a template on a given date ────────── */
+function expectedSlotsForDate(template) {
+  const freq = (template.frequency || 'Daily').toLowerCase();
+  if (freq !== 'hourly') return 1;
+  const interval = Math.max(1, Number(template.hourlyInterval) || 1);
+  if (template.startTime && template.endTime) {
+    const [sh, sm = 0] = template.startTime.split(':').map(Number);
+    const [eh, em = 0] = template.endTime.split(':').map(Number);
+    const startMins = sh * 60 + (sm || 0);
+    const endMins = eh * 60 + (em || 0);
+    if (endMins <= startMins) return 1;
+    return Math.max(1, Math.floor((endMins - startMins) / (interval * 60)));
+  }
+  return Math.max(1, Math.floor(1440 / (interval * 60)));
+}
+
+/* ── Helper: Calculate slot-based metrics for a company on a specific date ──── */
+async function calculateCompanySiteScore(companyId, targetDate) {
+  try {
+    // Fetch templates with frequency metadata
+    const [templates] = await pool.query(
+      `SELECT id, frequency, hourly_interval AS "hourlyInterval",
+              start_time AS "startTime", end_time AS "endTime"
+       FROM checklist_templates
+       WHERE company_id = ?
+         AND COALESCE(status, 'active') != 'inactive'`,
+      [companyId]
+    );
+
+    // Fetch submission counts grouped by template for target date
+    const [subCounts] = await pool.query(
+      `SELECT cs.template_id AS "templateId", COUNT(*) AS "count"
+       FROM checklist_submissions cs
+       JOIN checklist_templates ct ON ct.id = cs.template_id
+       WHERE ct.company_id = ?
+         AND cs.submitted_at::date = ?::date
+         AND COALESCE(ct.status, 'active') != 'inactive'
+         AND cs.status NOT IN ('rejected')
+         AND (
+           LOWER(COALESCE(ct.frequency, 'daily')) != 'hourly'
+           OR ct.start_time IS NULL
+           OR ct.end_time IS NULL
+           OR (
+             (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
+               >= (EXTRACT(HOUR FROM ct.start_time::time) * 60 + EXTRACT(MINUTE FROM ct.start_time::time))
+             AND (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
+               < (EXTRACT(HOUR FROM ct.end_time::time) * 60 + EXTRACT(MINUTE FROM ct.end_time::time))
+           )
+         )
+       GROUP BY cs.template_id`,
+      [companyId, targetDate]
+    );
+
+    const subMap = Object.fromEntries(subCounts.map(s => [s.templateId, Number(s.count) || 0]));
+
+    let totalExpected = 0;
+    let filledSlots = 0;
+    const breakdown = [];
+
+    for (const t of templates) {
+      const exp = expectedSlotsForDate(t);
+      if (exp <= 0) continue;
+      totalExpected += exp;
+      const actual = subMap[t.id] || 0;
+      const filled = Math.min(actual, exp);
+      filledSlots += filled;
+      breakdown.push({ templateId: t.id, expectedSlots: exp, filledSlots: filled });
+    }
+
+    const siteScorePct = totalExpected > 0 ? Math.round((filledSlots / totalExpected) * 100) : 0;
+
+    return {
+      totalExpected,
+      filledSlots,
+      pendingSlots: Math.max(0, totalExpected - filledSlots),
+      siteScorePct,
+      breakdown
+    };
+  } catch (err) {
+    console.error(`[calculateCompanySiteScore] Error for company ${companyId} on ${targetDate}:`, err.message);
+    return { totalExpected: 0, filledSlots: 0, pendingSlots: 0, siteScorePct: 0, breakdown: [] };
+  }
+}
+
+/* ── Helper: Get or create snapshot for a past date ────────────────────────── */
+async function getOrCreateSnapshot(companyId, targetDate) {
+  const today = new Date().toISOString().split('T')[0];
+  
+  // For today, always calculate live
+  if (targetDate >= today) {
+    return await calculateCompanySiteScore(companyId, targetDate);
+  }
+
+  // Check if snapshot exists
+  const [[existing]] = await pool.query(
+    `SELECT total_expected_slots AS "totalExpected",
+            filled_slots AS "filledSlots",
+            site_score_pct AS "siteScorePct",
+            template_breakdown AS "breakdown"
+     FROM daily_checklist_snapshots
+     WHERE company_id = ? AND snapshot_date = ?::date`,
+    [companyId, targetDate]
+  );
+
+  if (existing) {
+    return {
+      totalExpected: Number(existing.totalExpected),
+      filledSlots: Number(existing.filledSlots),
+      pendingSlots: Math.max(0, Number(existing.totalExpected) - Number(existing.filledSlots)),
+      siteScorePct: Number(existing.siteScorePct),
+      breakdown: existing.breakdown || [],
+      fromSnapshot: true
+    };
+  }
+
+  // Calculate and store snapshot for this past date
+  const metrics = await calculateCompanySiteScore(companyId, targetDate);
+  
+  try {
+    await pool.query(
+      `INSERT INTO daily_checklist_snapshots 
+       (company_id, snapshot_date, total_expected_slots, filled_slots, site_score_pct, template_breakdown)
+       VALUES (?, ?::date, ?, ?, ?, ?::jsonb)
+       ON CONFLICT (company_id, snapshot_date) DO NOTHING`,
+      [companyId, targetDate, metrics.totalExpected, metrics.filledSlots, metrics.siteScorePct, JSON.stringify(metrics.breakdown)]
+    );
+  } catch (snapErr) {
+    console.error(`[snapshot] Failed to store snapshot for company ${companyId} on ${targetDate}:`, snapErr.message);
+  }
+
+  return { ...metrics, fromSnapshot: false };
+}
+
+/* ── Admin Dashboard Overview ─────────────────────────────────────────────── */
+router.get("/dashboard-overview", async (req, res, next) => {
+  try {
+    const { date, companyId } = req.query;
+    const targetDate = date || new Date().toISOString().slice(0, 10);
+    const adminId = req.user.id;
+
+    let cQuery = `SELECT id, company_name AS "companyName", status FROM companies WHERE user_id = ?`;
+    const cParams = [adminId];
+    if (companyId) {
+      cQuery += ` AND id = ?`;
+      cParams.push(Number(companyId));
+    }
+    cQuery += ` ORDER BY company_name`;
+    const [comps] = await pool.query(cQuery, cParams);
+
+    if (comps.length === 0) {
+      return res.json({ companies: [], totals: {}, recentAlerts: [], recentWorkOrders: [], recentSoftRequests: [] });
+    }
+
+    const statsResults = await Promise.all(comps.map(async (co) => {
+      // Phase 1 & 2: Use slot-based calculation with snapshot support
+      const siteMetrics = await getOrCreateSnapshot(co.id, targetDate);
+
+      let row = null;
+      try {
+        const [[r]] = await pool.query(
+          `SELECT
+             (SELECT COUNT(*) FROM locations WHERE company_id = ? AND LOWER(COALESCE(status,'active')) = 'active') AS locations,
+             (SELECT COUNT(*) FROM soft_service_requests WHERE company_id = ? AND LOWER(TRIM(COALESCE(status, ''))) NOT IN ('closed','resolved','cancelled','rejected')) AS open_soft,
+             (SELECT COUNT(*) FROM assets WHERE company_id = ?) AS total_assets,
+             (SELECT COUNT(*) FROM assets WHERE company_id = ? AND status = 'Active') AS active_assets,
+             (SELECT COUNT(*) FROM company_users WHERE company_id = ? AND status = 'Active') AS active_employees,
+             (SELECT COUNT(*) FROM work_orders WHERE company_id = ? AND status = 'open') AS open_issues,
+             (SELECT COUNT(*) FROM flags WHERE company_id = ? AND status IN ('open','in_progress')) AS open_flags,
+             (SELECT COUNT(*) FROM flags WHERE company_id = ? AND severity = 'critical' AND status IN ('open','in_progress')) AS critical_flags,
+             (SELECT COUNT(*) FROM logsheet_templates WHERE company_id = ?) AS total_ls_tpls,
+             (SELECT COUNT(DISTINCT le.template_id) FROM logsheet_entries le
+              JOIN logsheet_templates lt ON lt.id = le.template_id
+              WHERE lt.company_id = ? AND le.submitted_at::date = ?::date) AS filled_ls_today`,
+          [co.id, co.id, co.id, co.id, co.id, co.id, co.id, co.id, co.id, co.id, targetDate]
+        );
+        row = r;
+      } catch (statErr) {
+        console.error(`[dashboard-overview] stats query failed for company ${co.id}:`, statErr.message);
+      }
+      const totalLsTpls = Number(row?.total_ls_tpls ?? 0);
+      const filledLsTd  = Number(row?.filled_ls_today ?? 0);
+      return {
+        id: co.id,
+        companyName: co.companyName,
+        status: co.status,
+        totalTemplates:       siteMetrics.totalExpected,
+        filledToday:          siteMetrics.filledSlots,
+        pendingChecklists:    siteMetrics.pendingSlots,
+        siteScore:            siteMetrics.siteScorePct,
+        activeLocations:      Number(row?.locations       ?? 0),
+        openSoftRequests:     Number(row?.open_soft       ?? 0),
+        totalAssets:          Number(row?.total_assets    ?? 0),
+        activeAssets:         Number(row?.active_assets   ?? 0),
+        activeEmployees:      Number(row?.active_employees ?? 0),
+        openIssues:           Number(row?.open_issues     ?? 0),
+        openFlags:            Number(row?.open_flags      ?? 0),
+        criticalFlags:        Number(row?.critical_flags  ?? 0),
+        totalLogsheetTemplates: totalLsTpls,
+        filledLogsheetsToday:   filledLsTd,
+        pendingLogsheets:       Math.max(0, totalLsTpls - filledLsTd),
+      };
+    }));
+
+    const ZERO_KEYS = ["totalTemplates","filledToday","pendingChecklists","activeLocations","openSoftRequests","totalAssets","activeAssets","openIssues","openFlags","criticalFlags","totalLogsheetTemplates","filledLogsheetsToday","pendingLogsheets"];
+    const totals = statsResults.reduce((acc, c) => {
+      ZERO_KEYS.forEach(k => { acc[k] = (acc[k] || 0) + (c[k] || 0); });
+      return acc;
+    }, Object.fromEntries(ZERO_KEYS.map(k => [k, 0])));
+    totals.siteScore = totals.totalTemplates > 0 ? Math.round((totals.filledToday / totals.totalTemplates) * 100) : 0;
+
+    const companyIds = statsResults.map(c => c.id);
+    const idPH = companyIds.map(() => "?").join(",");
+
+    let alertRows = [], woRows = [], srRows = [];
+
+    try {
+      const [rows] = await pool.query(
+        `SELECT f.id, f.title, f.severity, f.status, f.created_at AS "createdAt",
+                f.company_id AS "companyId", c.company_name AS "companyName",
+                a.asset_name AS "assetName"
+         FROM flags f
+         JOIN companies c ON c.id = f.company_id
+         LEFT JOIN assets a ON a.id = f.asset_id
+         WHERE f.company_id IN (${idPH}) AND f.status IN ('open','in_progress')
+         ORDER BY f.created_at DESC LIMIT 20`,
+        companyIds
+      );
+      alertRows = rows || [];
+    } catch (e) { console.error("[dashboard-overview] alertRows:", e.message); }
+
+    try {
+      const [rows] = await pool.query(
+        `SELECT wo.id, wo.wo_number AS "woNumber", wo.description, wo.status,
+                wo.priority, wo.created_at AS "createdAt",
+                a.asset_name AS "assetName", a.company_id AS "companyId",
+                c.company_name AS "companyName", cu.full_name AS "assignedTo"
+         FROM work_orders wo
+         JOIN assets a ON wo.asset_id = a.id
+         JOIN companies c ON c.id = a.company_id
+         LEFT JOIN company_users cu ON cu.id = wo.assigned_to
+         WHERE a.company_id IN (${idPH}) AND wo.status = 'open'
+         ORDER BY wo.created_at DESC LIMIT 20`,
+        companyIds
+      );
+      woRows = rows || [];
+    } catch (e) { console.error("[dashboard-overview] woRows:", e.message); }
+
+    try {
+      const [rows] = await pool.query(
+        `SELECT ssr.id, ssr.request_type AS "requestType", ssr.description, ssr.status,
+                ssr.created_at AS "createdAt", ssr.company_id AS "companyId",
+                c.company_name AS "companyName", cu.full_name AS "raisedBy"
+         FROM soft_service_requests ssr
+         JOIN companies c ON c.id = ssr.company_id
+         LEFT JOIN company_users cu ON cu.id = ssr.raised_by
+         WHERE ssr.company_id IN (${idPH})
+           AND LOWER(TRIM(COALESCE(ssr.status, ''))) NOT IN ('closed','resolved','cancelled','rejected')
+         ORDER BY ssr.created_at DESC LIMIT 20`,
+        companyIds
+      );
+      srRows = rows || [];
+    } catch (e) { console.error("[dashboard-overview] srRows:", e.message); }
+
+    res.json({
+      companies: statsResults,
+      totals,
+      recentAlerts: alertRows,
+      recentWorkOrders: woRows,
+      recentSoftRequests: srRows,
+      date: targetDate,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
 
 export default router;

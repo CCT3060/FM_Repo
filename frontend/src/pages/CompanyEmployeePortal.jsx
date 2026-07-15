@@ -2,6 +2,7 @@ import { getPublicAppUrl } from "../utils/runtimeConfig";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import * as XLSX from "xlsx";
 import { useNavigate, useParams } from "react-router-dom";
+import { Eye, EyeOff } from "lucide-react";
 import QRCode from "qrcode";
 import logo from "../images/image.png";
 import LogsheetModule from "../components/LogsheetModule.jsx";
@@ -835,6 +836,7 @@ function normalizePerms(p) {
 
 function EmployeeModal({ existing, token, employees = [], customRoles = [], currentUserRole = "admin", companyModules = null, onClose, onSaved }) {
   const isEdit = !!existing;
+  const maskedPassword = isEdit && (existing?.password || existing?.hasPassword) ? "********" : "";
 
   // Use the saved service_domain from the DB directly.
   // Falls back to role-capability derivation only when the field is absent.
@@ -862,7 +864,7 @@ function EmployeeModal({ existing, token, employees = [], customRoles = [], curr
     moduleAccess: ["dashboard", "checklists", "logsheets", "mytasks", "locations"],
   };
   const [form, setForm] = useState(isEdit ? {
-    ...def, ...existing, password: "",
+    ...def, ...existing, password: maskedPassword,
     username: existing.username || "",
     supervisorId: existing.supervisorId ? String(existing.supervisorId) : "",
     shift: existing.shift || "",
@@ -874,6 +876,8 @@ function EmployeeModal({ existing, token, employees = [], customRoles = [], curr
       ? existing.moduleAccess : def.moduleAccess,
   } : def);
   const [serviceDomain, setServiceDomain] = useState(deriveServiceDomain);
+  const [initialPassword, setInitialPassword] = useState(maskedPassword);
+  const [showPassword, setShowPassword] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError]   = useState(null);
 
@@ -914,7 +918,7 @@ function EmployeeModal({ existing, token, employees = [], customRoles = [], curr
         supervisorId: form.supervisorId ? Number(form.supervisorId) : null,
         shift: form.shift || null,
       };
-      if (!payload.password) delete payload.password;
+      if (!payload.password || payload.password === initialPassword) delete payload.password;
       if (!payload.username) delete payload.username;
       const saved = isEdit
         ? await updateCompanyPortalEmployee(token, existing.id, payload)
@@ -1148,7 +1152,31 @@ function EmployeeModal({ existing, token, employees = [], customRoles = [], curr
             <p style={{ fontSize: "12px", color: "#64748b", marginBottom: "12px" }}>Username &amp; password for the employee mobile app login</p>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
               <FInput label="Username" required={!isEdit} value={form.username} onChange={(e) => change("username", e.target.value)} placeholder="e.g. ahmed.hassan" autoComplete="off" />
-              <FInput label={isEdit ? "New Password (leave blank to keep)" : "Password"} type="password" required={!isEdit} value={form.password} onChange={(e) => change("password", e.target.value)} placeholder={isEdit ? "••••••" : "Set a password"} autoComplete="new-password" />
+              <div>
+                <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "5px" }}>
+                  {isEdit ? "New Password (leave blank to keep)" : "Password"}{!isEdit && <span style={{ color: "#ef4444", marginLeft: "3px" }}>*</span>}
+                </label>
+                <div style={{ position: "relative" }}>
+                  <input
+                    value={form.password}
+                    onChange={(e) => change("password", e.target.value)}
+                    type={showPassword ? "text" : "password"}
+                    placeholder={isEdit ? "••••••" : "Set a password"}
+                    autoComplete="new-password"
+                    required={!isEdit}
+                    style={{ width: "100%", boxSizing: "border-box", padding: "8px 36px 8px 11px", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "13.5px", outline: "none" }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((prev) => !prev)}
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                    title={showPassword ? "Hide password" : "Show password"}
+                    style={{ position: "absolute", right: "8px", top: "50%", transform: "translateY(-50%)", background: "transparent", border: "none", padding: "4px", cursor: "pointer", color: "#64748b", display: "flex", alignItems: "center", justifyContent: "center" }}
+                  >
+                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
+              </div>
             </div>
             {isEdit && form.username && (
               <p style={{ fontSize: "11.5px", color: "#16a34a", marginTop: "8px", display: "flex", alignItems: "center", gap: "5px" }}>
@@ -3545,11 +3573,12 @@ const PERM_MODULES = [
 ];
 
 /* ─── Role Management Modal (custom hierarchy) ───────────────────────── */
-function RolesModal({ token, initialRoles, onClose, onSaved, inline = false, enabledModules, readOnly = false }) {
+function RolesModal({ token, initialRoles, onClose, onSaved, inline = false, enabledModules, readOnly = false, allCompanies = false, companyId }) {
   const [roles, setRoles] = useState(initialRoles || []);
   const [draftLabel, setDraftLabel] = useState("");
   const [draftParent, setDraftParent] = useState("");
   const [draftColor, setDraftColor] = useState("#2563eb");
+  const [draftCompanyId, setDraftCompanyId] = useState("");
   const [draftCanRaise, setDraftCanRaise]   = useState(false);
   const [draftCanResolve, setDraftCanResolve] = useState(false);
   const [draftIsManager, setDraftIsManager]   = useState(false);
@@ -3559,6 +3588,7 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false, ena
   const [error, setError] = useState(null);
   const [rolePerms, setRolePerms] = useState({});
   const [permsSaving, setPermsSaving] = useState(false);
+  const [myCompanies, setMyCompanies] = useState([]);
   // Filter PERM_MODULES to only show modules enabled for this company
   const activePermModules = enabledModules
     ? PERM_MODULES.filter((m) => enabledModules.includes(m.moduleKey))
@@ -3567,7 +3597,15 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false, ena
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm]   = useState({});
 
+  // Fetch accessible companies for company selector
+  useEffect(() => {
+    getMyCompanies(token).then((list) => {
+      if (Array.isArray(list)) setMyCompanies(list);
+    }).catch(() => {});
+  }, [token]);
+
   // Always fetch fresh data from server on mount so roles are up-to-date
+  // Note: Backend getCompanyRoles uses JWT company_id, doesn't support multi-company aggregation
   useEffect(() => {
     getCompanyRoles(token).then((list) => {
       if (Array.isArray(list)) setRoles(list);
@@ -3575,7 +3613,7 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false, ena
     getCompanyPortalRolePerms(token).then((p) => {
       if (p && typeof p === "object") setRolePerms(p);
     }).catch(() => {});
-  }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [token, companyId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const startEdit = (r) => {
     setEditingId(r.id);
@@ -3618,6 +3656,7 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false, ena
 
   const addRole = async () => {
     if (!draftLabel.trim()) return setError("Role label required");
+    if (myCompanies.length > 1 && !draftCompanyId) return setError("Please select a company for this role");
     setSaving(true); setError(null);
     try {
       await createCompanyRole(token, {
@@ -3630,11 +3669,12 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false, ena
         isSoftManager:       draftIsManager,
         isTechnicalSupervisor: draftIsTechSupervisor,
         isTechnician:          draftIsTechnician,
+        companyId: myCompanies.length > 1 ? draftCompanyId : undefined,
       });
       const list = await getCompanyRoles(token);
       setRoles(list || []);
       onSaved(list || []);
-      setDraftLabel(""); setDraftParent(""); setDraftColor("#2563eb");
+      setDraftLabel(""); setDraftParent(""); setDraftColor("#2563eb"); setDraftCompanyId("");
       setDraftCanRaise(false); setDraftCanResolve(false); setDraftIsManager(false);
       setDraftIsTechSupervisor(false); setDraftIsTechnician(false);
     } catch (err) { setError(err.message || "Create failed"); }
@@ -3794,6 +3834,21 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false, ena
       {!readOnly && (
       <div style={{ background: "#f8fafc", borderRadius: "10px", padding: "14px 16px", border: "1px solid #e2e8f0" }}>
         <p style={{ fontSize: "12.5px", fontWeight: 700, color: "#475569", marginBottom: "10px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Add New Role</p>
+        
+        {/* Company Selector (only show for multi-company admins) */}
+        {myCompanies.length > 1 && (
+          <div style={{ marginBottom: "12px" }}>
+            <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>Company <span style={{ color: "#ef4444" }}>*</span></label>
+            <select value={draftCompanyId} onChange={(e) => setDraftCompanyId(e.target.value)}
+              style={{ width: "100%", maxWidth: "320px", boxSizing: "border-box", padding: "7px 10px", border: "1px solid #e2e8f0", borderRadius: "6px", fontSize: "13px", background: "#fff" }}>
+              <option value="">— Select company —</option>
+              {myCompanies.map((c) => (
+                <option key={c.id} value={c.id}>{c.companyName}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        
         <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr auto", gap: "10px", alignItems: "end", marginBottom: "12px" }}>
           <div>
             <label style={{ display: "block", fontSize: "11.5px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>Role Label *</label>
@@ -4354,7 +4409,7 @@ function AssetTypesPanel({ token, onLayoutSaved }) {
 }
 
 /* ─── Dashboard Notifications Quick-View ────────────────────────── */
-function DashboardNotificationsBox({ token, onViewAll, filterDate }) {
+function DashboardNotificationsBox({ token, onViewAll, onItemClick, filterDate }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -4406,7 +4461,11 @@ function DashboardNotificationsBox({ token, onViewAll, filterDate }) {
           {displayedItems.map((n) => {
             const ti = TYPE_LABELS[n.type] || { label: n.type, color: "#475569", bg: "#f1f5f9" };
             return (
-              <div key={n.id} style={{ display: "flex", alignItems: "flex-start", gap: "10px", padding: "10px 12px", borderRadius: "8px", border: `1px solid ${n.isRead ? "#f1f5f9" : "#dbeafe"}`, background: n.isRead ? "#fafafa" : "#f0f9ff" }}>
+              <div key={n.id}
+                onClick={() => onItemClick && onItemClick(n.type)}
+                style={{ display: "flex", alignItems: "flex-start", gap: "10px", padding: "10px 12px", borderRadius: "8px", border: `1px solid ${n.isRead ? "#f1f5f9" : "#dbeafe"}`, background: n.isRead ? "#fafafa" : "#f0f9ff", cursor: onItemClick ? "pointer" : "default" }}
+                onMouseEnter={(e) => { if (onItemClick) e.currentTarget.style.background = "#e8eeff"; }}
+                onMouseLeave={(e) => { if (onItemClick) e.currentTarget.style.background = n.isRead ? "#fafafa" : "#f0f9ff"; }}>
                 {!n.isRead && <span style={{ flexShrink: 0, width: "8px", height: "8px", borderRadius: "50%", background: ti.color, marginTop: "4px" }} />}
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "2px" }}>
@@ -4428,7 +4487,7 @@ function DashboardNotificationsBox({ token, onViewAll, filterDate }) {
 }
 
 /* ─── Notifications Panel ────────────────────────────────────────── */
-function NotificationsPanel({ token }) {
+function NotificationsPanel({ token, allCompanies = false, companyId }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("all"); // "all" | "unread" | "checklist_reminder"
@@ -4447,14 +4506,18 @@ function NotificationsPanel({ token }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await getNotifications(token, "limit=200");
+      let params = "limit=200";
+      if (companyId && companyId !== "all") {
+        params += `&companyId=${companyId}`;
+      }
+      const data = await getNotifications(token, params);
       setItems(Array.isArray(data) ? data : []);
     } catch {
       setItems([]);
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [token, companyId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -4688,18 +4751,29 @@ export default function CompanyEmployeePortal() {
   const params = useParams();
   const [cpToken, setCpToken] = useState(() => sessionStorage.getItem("cp_token") || "");
   const token = cpToken; // alias used throughout
-  const currentUser = useMemo(() => {
+  const [currentUser, setCurrentUser] = useState(() => {
     try { return JSON.parse(sessionStorage.getItem("cp_user") || "null"); } catch { return null; }
-  }, []);
+  });
 
   // ── Multi-company switcher ──────────────────────────────────────
   const [myCompanies, setMyCompanies] = useState([]);
+  const [selectedCompanyIds, setSelectedCompanyIds] = useState([]);
   const [switchingCompany, setSwitchingCompany] = useState(false);
 
   useEffect(() => {
     if (!cpToken || currentUser?.role !== "admin") return;
     getMyCompanies(cpToken).then(list => {
-      if (Array.isArray(list) && list.length > 1) setMyCompanies(list);
+      if (Array.isArray(list) && list.length > 1) {
+        setMyCompanies(list);
+        const explicitChoice = sessionStorage.getItem("cp_explicit_company_choice");
+        const allIds = list.map((c) => String(c.id));
+        if (explicitChoice && allIds.includes(String(explicitChoice))) {
+          setSelectedCompanyIds([String(explicitChoice)]);
+          setIsAllCompaniesDashboard(false);
+        } else {
+          setSelectedCompanyIds(allIds);
+        }
+      }
     }).catch(() => {});
   }, [cpToken, currentUser?.role]);
 
@@ -4729,10 +4803,9 @@ export default function CompanyEmployeePortal() {
           user.companyId = res.company.id;
           user.companyName = res.company.companyName;
           sessionStorage.setItem("cp_user", JSON.stringify(user));
+          setCurrentUser(user);
         }
         setCpToken(res.token);
-        // Reload the page so all data reloads with the new company context
-        window.location.reload();
       }
     } catch(e) {
       alert(e.message || "Failed to switch company");
@@ -4740,6 +4813,17 @@ export default function CompanyEmployeePortal() {
       setSwitchingCompany(false);
     }
   };
+
+  const openSingleCompanyDashboard = useCallback((companyId) => {
+    if (!companyId) return;
+    const idStr = String(companyId);
+    setSelectedCompanyIds([idStr]);
+    sessionStorage.setItem("cp_explicit_company_choice", idStr);
+    setIsAllCompaniesDashboard(false);
+    setNavState("dashboard");
+    navigate("/company/portal/dashboard", { replace: false });
+    handleSwitchCompany(Number(companyId));
+  }, [navigate, handleSwitchCompany]);
 
   // URL-driven navigation: /company/portal/dashboard — enables browser back/forward
   const [nav, setNavState] = useState(() => {
@@ -5198,29 +5282,48 @@ export default function CompanyEmployeePortal() {
     setCompaniesSiteScoreRange({ startDate: dashboardDate, endDate: dashboardDate });
     // Re-fetch checklists for the selected dashboard date
     setRecentChecklistsLoading(true);
-    getCompanyPortalRecentChecklistSubmissions(token, dashboardDate)
+    // For combined dashboard, pass companyIds to aggregate submissions from all assigned companies
+    const scopedIds = isAllCompaniesDashboard
+      ? (selectedCompanyIds.length > 0 ? selectedCompanyIds : myCompanies.map(c => String(c.id)))
+      : undefined;
+    const companyIdsParam = scopedIds && scopedIds.length > 0 ? scopedIds.join(",") : undefined;
+    getCompanyPortalRecentChecklistSubmissions(token, dashboardDate, companyIdsParam)
       .then(d => { if (Array.isArray(d)) setRecentChecklists(d); })
       .catch(() => {})
       .finally(() => setRecentChecklistsLoading(false));
-  }, [token, dashboardDate]);
+  }, [token, dashboardDate, isAllCompaniesDashboard, selectedCompanyIds, myCompanies]);
 
   // ── Fetch companies site score (multi-company) ───────────────────────────
   useEffect(() => {
-    if (!token || myCompanies.length < 2) return;
+    if (!token || myCompanies.length < 2 || !isAllCompaniesDashboard) return;
+    const scopedIds = selectedCompanyIds.length > 0
+      ? selectedCompanyIds
+      : myCompanies.map((c) => String(c.id));
+    if (scopedIds.length === 0) return;
     setCompaniesSiteScore(null);
-    getCompanyPortalCompaniesSiteScore(token, companiesSiteScoreRange)
+    getCompanyPortalCompaniesSiteScore(token, {
+      ...companiesSiteScoreRange,
+      companyIds: scopedIds.join(","),
+    })
       .then(d => { if (Array.isArray(d)) setCompaniesSiteScore(d); })
       .catch(() => setCompaniesSiteScore([]));
-  }, [token, companiesSiteScoreRange, myCompanies.length]);
+  }, [token, companiesSiteScoreRange, myCompanies.length, isAllCompaniesDashboard, selectedCompanyIds]);
 
   // ── Fetch combined dashboard data (all-companies mode) ────────────────────
   useEffect(() => {
     if (!token || !isAllCompaniesDashboard) { setModuleSiteFilter("all"); return; }
+    const scopedIds = selectedCompanyIds.length > 0
+      ? selectedCompanyIds
+      : myCompanies.map((c) => String(c.id));
+    if (scopedIds.length === 0) return;
     setCombinedDashboard(null);
-    getCompanyPortalCombinedDashboard(token, dashboardDate)
+    getCompanyPortalCombinedDashboard(token, {
+      date: dashboardDate,
+      companyIds: scopedIds.join(","),
+    })
       .then(d => { if (d) setCombinedDashboard(d); })
       .catch(() => {});
-  }, [token, isAllCompaniesDashboard, dashboardDate]);
+  }, [token, isAllCompaniesDashboard, dashboardDate, selectedCompanyIds, myCompanies]);
 
   // ── Poll for new flags / work orders / assignments every 15 s ───────────
   useEffect(() => {
@@ -6208,24 +6311,32 @@ export default function CompanyEmployeePortal() {
           <p style={{ fontSize: "13.5px", fontWeight: 700, color: "#0f172a", lineHeight: 1.3 }}>{isAllCompaniesDashboard ? "All Companies" : (currentUser.companyName || "Company")}</p>
           {myCompanies.length > 1 && (
             <SearchableSelect
-              value={isAllCompaniesDashboard ? "all" : ""}
-              onChange={(v) => {
-                if (!v) return;
-                if (v === "all") {
+              isMulti
+              value={isAllCompaniesDashboard ? selectedCompanyIds : [String(currentUser?.companyId || "")]}
+              onChange={(vals) => {
+                const nextVals = Array.isArray(vals) ? vals : (vals ? [String(vals)] : []);
+                if (nextVals.length === 0) {
+                  setSelectedCompanyIds(myCompanies.map((c) => String(c.id)));
                   sessionStorage.removeItem("cp_explicit_company_choice");
                   setIsAllCompaniesDashboard(true);
                   setNav("dashboard");
+                  return;
+                }
+
+                setSelectedCompanyIds(nextVals);
+                if (nextVals.length === 1) {
+                  openSingleCompanyDashboard(Number(nextVals[0]));
                 } else {
-                  sessionStorage.setItem("cp_explicit_company_choice", v);
-                  setIsAllCompaniesDashboard(false);
-                  handleSwitchCompany(Number(v));
+                  sessionStorage.removeItem("cp_explicit_company_choice");
+                  setIsAllCompaniesDashboard(true);
+                  setNav("dashboard");
                 }
               }}
               options={[
                 { value: "all", label: "✦ All Companies" },
                 ...myCompanies.map(c => ({ value: String(c.id), label: c.companyName })),
               ]}
-              placeholder={switchingCompany ? "Switching…" : "Switch company…"}
+              placeholder={switchingCompany ? "Switching…" : "Search companies…"}
               disabled={switchingCompany}
               style={{ marginTop: "6px" }}
             />
@@ -6309,7 +6420,7 @@ export default function CompanyEmployeePortal() {
                     const sevBg    = isChecklistReminder ? "#fefce8"
                       : isSoftReq ? "#f3e8ff"
                       : ({ critical: "#fee2e2", high: "#fff7ed", medium: "#fefce8", low: "#f0fdf4"  }[a.severity] || "#f8fafc");
-                    const navTarget = isChecklistReminder ? "checklists" : isSoftReq ? "softrequests" : "warnings";
+                    const navTarget = isChecklistReminder ? "notifications" : isSoftReq ? "notifications" : "warnings";
                     return (
                       <div key={a.id} style={{ padding: "9px 14px", borderBottom: "1px solid #f8fafc", cursor: "pointer" }}
                         onClick={() => { setBellOpen(false); setNav(navTarget); }}
@@ -6435,18 +6546,63 @@ export default function CompanyEmployeePortal() {
           const filteredRecentEntries = recentEntries.filter(filterByDashDate);
           const filteredRecentChecklists = recentChecklists.filter(filterByDashDate);
           const visibleLogsheets = logsheetShowAll ? filteredRecentEntries : filteredRecentEntries.slice(0, 5);
-          // All active checklist templates: submitted ones on dashboardDate + not-yet-submitted ones
+          // All active checklist templates: build rows with hourly slot expansion.
           const activeChklTemplates = checklists.filter(t => t.status !== 'inactive');
-          const submittedTplIds = new Set(filteredRecentChecklists.map(c => c.templateId).filter(Boolean));
-          const notSubmittedRows = activeChklTemplates
-            .filter(t => !submittedTplIds.has(t.id))
-            .map(t => ({
-              id: `ns-${t.id}`, templateId: t.id, templateName: t.templateName,
-              roomName: t.roomName || '—', buildingName: t.buildingName, floorName: t.floorName,
-              submittedBy: null, submittedAt: null, status: 'not_submitted', _notSubmitted: true
-            }));
-          const allChecklistRows = [...filteredRecentChecklists, ...notSubmittedRows];
+          // helpers
+          const _toMins = (t) => { if (!t) return 0; const [h, m = 0] = t.split(':').map(Number); return h * 60 + m; };
+          const _fmtMins = (mins) => { const h = Math.floor(mins / 60) % 24; const m = mins % 60; const ap = h >= 12 ? 'PM' : 'AM'; return `${h % 12 || 12}:${String(m).padStart(2,'0')} ${ap}`; };
+          const _usedSubIds = new Set();
+          const allChecklistRows = [];
+          for (const t of activeChklTemplates) {
+            const freq = (t.frequency || '').toLowerCase();
+            const isHourly = freq === 'hourly' && t.startTime && t.endTime;
+            if (isHourly) {
+              const startM = _toMins(t.startTime);
+              const endM   = _toMins(t.endTime);
+              const intM   = Math.max(1, Number(t.hourlyInterval) || 1) * 60;
+              // Generate one row per expected slot
+              for (let s = startM; s < endM; s += intM) {
+                const slotEnd = Math.min(s + intM, endM);
+                const match = filteredRecentChecklists.find(c =>
+                  c.templateId === t.id && !_usedSubIds.has(c.id) && c.submittedAt && (() => {
+                    const sm = new Date(c.submittedAt).getHours() * 60 + new Date(c.submittedAt).getMinutes();
+                    return sm >= s && sm < slotEnd;
+                  })()
+                );
+                if (match) _usedSubIds.add(match.id);
+                allChecklistRows.push({
+                  id: match ? match.id : `slot-${t.id}-${s}`,
+                  templateId: t.id, templateName: t.templateName,
+                  roomName: t.roomName || '—',
+                  timeSlot: `${_fmtMins(s)} – ${_fmtMins(slotEnd)}`,
+                  submittedBy: match?.submittedBy || null,
+                  submittedAt: match?.submittedAt || null,
+                  status: match ? (match.status || 'submitted') : 'not_submitted',
+                  _notSubmitted: !match, _hourlySlot: true,
+                });
+              }
+              // Out-of-window submissions still appear (labelled)
+              for (const c of filteredRecentChecklists.filter(c => c.templateId === t.id && !_usedSubIds.has(c.id))) {
+                _usedSubIds.add(c.id);
+                const sm = new Date(c.submittedAt).getHours() * 60 + new Date(c.submittedAt).getMinutes();
+                allChecklistRows.push({ ...c, roomName: t.roomName || c.roomName || '—', timeSlot: `${_fmtMins(sm)} (outside window)`, _hourlySlot: true });
+              }
+            } else {
+              // Non-hourly: show submitted rows; fall back to one not-submitted row
+              const subs = filteredRecentChecklists.filter(c => c.templateId === t.id && !_usedSubIds.has(c.id));
+              if (subs.length > 0) {
+                subs.forEach(c => { _usedSubIds.add(c.id); allChecklistRows.push(c); });
+              } else {
+                allChecklistRows.push({
+                  id: `ns-${t.id}`, templateId: t.id, templateName: t.templateName,
+                  roomName: t.roomName || '—', buildingName: t.buildingName, floorName: t.floorName,
+                  submittedBy: null, submittedAt: null, status: 'not_submitted', _notSubmitted: true
+                });
+              }
+            }
+          }
           const visibleChecklists = checklistShowAll ? allChecklistRows : allChecklistRows.slice(0, 10);
+          const hasHourlySlots = allChecklistRows.some(r => r._hourlySlot);
           const recentTable = (
             <div style={{ marginTop: "28px", background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
               <div style={{ padding: "16px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -6512,16 +6668,16 @@ export default function CompanyEmployeePortal() {
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
                     <thead>
                       <tr style={{ background: "#f8fafc" }}>
-                        {["#","Template","Room","Status","Filled By","Submitted"].map((h) => (
+                        {["Sr.No","Checklist","Room",...(hasHourlySlots ? ["Slots"] : []),"Status","Filled By","Submitted At"].map((h) => (
                           <th key={h} style={{ padding: "11px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.04em", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
                       {recentChecklistsLoading ? (
-                        <tr><td colSpan="6" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>Loading…</td></tr>
+                        <tr><td colSpan={hasHourlySlots ? 7 : 6} style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>Loading…</td></tr>
                       ) : allChecklistRows.length === 0 ? (
-                        <tr><td colSpan="6" style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>
+                        <tr><td colSpan={hasHourlySlots ? 7 : 6} style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>
                           No active checklists found.{" "}
                           <button onClick={() => setNav("checklists")} style={{ color: "#2563eb", background: "none", border: "none", cursor: "pointer", fontWeight: 600, fontSize: "14px" }}>View all →</button>
                         </td></tr>
@@ -6535,6 +6691,7 @@ export default function CompanyEmployeePortal() {
                             <td style={{ padding: "12px 16px", color: "#94a3b8", fontWeight: 600 }}>{i + 1}</td>
                             <td style={{ padding: "12px 16px", fontWeight: 600, color: isNotSub ? "#64748b" : "#0f172a" }}>{c.templateName}</td>
                             <td style={{ padding: "12px 16px", color: "#475569" }}>{c.roomName || c.locationName || c.assetName || "—"}</td>
+                            {hasHourlySlots && <td style={{ padding: "12px 16px", color: "#7c3aed", fontSize: "12px", fontWeight: 600 }}>{c.timeSlot || "—"}</td>}
                             <td style={{ padding: "12px 16px" }}><span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: sbg, color: stx, textTransform: "capitalize" }}>{statusLabel}</span></td>
                             <td style={{ padding: "12px 16px", color: "#475569", fontSize: "13px" }}>{c.submittedBy || "—"}</td>
                             <td style={{ padding: "12px 16px", color: "#94a3b8", fontSize: "12px", whiteSpace: "nowrap" }}>{c.submittedAt ? new Date(c.submittedAt).toLocaleString() : "—"}</td>
@@ -6791,7 +6948,7 @@ export default function CompanyEmployeePortal() {
                           { label: "Combined Site Score", value: totals.siteScore + "%", sub: `${totals.filledToday}/${totals.totalTemplates} templates`, color: "#16a34a", bg: "#f0fdf4" },
                           { label: "Total Active Locations", value: totals.activeLocations, sub: "Across all sites", color: "#2563eb", bg: "#eff6ff" },
                           { label: "Open HK Requests", value: totals.openSoftRequests, sub: totals.openSoftRequests > 0 ? "Needs attention" : "All clear", color: totals.openSoftRequests > 0 ? "#dc2626" : "#16a34a", bg: totals.openSoftRequests > 0 ? "#fef2f2" : "#f0fdf4" },
-                          { label: "Total Sites", value: myCompanies.length, sub: "Assigned to you", color: "#7c3aed", bg: "#f3e8ff" },
+                          { label: "Total Sites", value: perComp.length, sub: "In current selection", color: "#7c3aed", bg: "#f3e8ff" },
                         ].map(s => (
                           <div key={s.label} style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", padding: "18px 16px" }}>
                             <p style={{ fontSize: "11.5px", color: "#94a3b8", margin: "0 0 6px", fontWeight: 600 }}>{s.label}</p>
@@ -6806,7 +6963,7 @@ export default function CompanyEmployeePortal() {
                         {perComp.map(co => (
                           <div key={co.id}
                             style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", padding: "16px", cursor: "pointer" }}
-                            onClick={() => { setIsAllCompaniesDashboard(false); handleSwitchCompany(co.id); }}>
+                            onClick={() => openSingleCompanyDashboard(co.id)}>
                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "12px" }}>
                               <p style={{ fontWeight: 700, fontSize: "13px", color: "#0f172a", margin: 0 }}>{co.companyName}</p>
                               <span style={{ fontSize: "10.5px", background: "#f0fdf4", color: "#16a34a", padding: "2px 8px", borderRadius: "20px", fontWeight: 700 }}>
@@ -6924,7 +7081,7 @@ export default function CompanyEmployeePortal() {
                                 const bH = Math.max((item.value / 100) * cH, item.value > 0 ? 2 : 0);
                                 const bX = cx - bW / 2, bY = padT + cH - bH;
                                 const lY = padT + cH + 12;
-                                return (<g key={i} style={{ cursor: "pointer" }} onClick={() => { setIsAllCompaniesDashboard(false); handleSwitchCompany(item.companyId); }}>
+                                return (<g key={i} style={{ cursor: "pointer" }} onClick={() => openSingleCompanyDashboard(item.companyId)}>
                                   <rect x={bX - 4} y={padT} width={bW + 8} height={cH} fill="transparent" />
                                   <rect x={bX} y={bY} width={bW} height={bH} fill="url(#ssBarGrad2)" rx="3" />
                                   {bH > 4 && <ellipse cx={cx} cy={bY} rx={bW / 2} ry={Math.max(bW / 8, 2)} fill="#fb923c" opacity="0.85" />}
@@ -7078,22 +7235,82 @@ export default function CompanyEmployeePortal() {
 
                   {/* Recent Submissions — grouped by company, submitted + not-submitted */}
                   {(() => {
-                    const notSubmittedChecklists = cd?.notSubmittedChecklists || [];
-                    const notSubmittedLogsheets  = cd?.notSubmittedLogsheets  || [];
+                    // Expand hourly checklist templates into expected slots
+                    const _toMins = (t) => { if (!t) return 0; const [h, m = 0] = t.split(':').map(Number); return h * 60 + m; };
+                    const _fmtMins = (mins) => { const h = Math.floor(mins / 60) % 24; const m = mins % 60; const ap = h >= 12 ? 'PM' : 'AM'; return `${h % 12 || 12}:${String(m).padStart(2,'0')} ${ap}`; };
+                    const allChecklistTemplates = perComp.flatMap(co => (co.checklistTemplates || []).map(t => ({ ...t, companyId: co.id, companyName: co.companyName })));
+                    const _usedSubIds = new Set();
+                    const expandedChecklistRows = [];
+                    for (const t of allChecklistTemplates) {
+                      const freq = (t.frequency || '').toLowerCase();
+                      const isHourly = freq === 'hourly' && t.startTime && t.endTime;
+                      if (isHourly) {
+                        const startM = _toMins(t.startTime);
+                        const endM = _toMins(t.endTime);
+                        const intM = Math.max(1, Number(t.hourlyInterval) || 1) * 60;
+                        for (let s = startM; s < endM; s += intM) {
+                          const slotEnd = Math.min(s + intM, endM);
+                          const match = recentChecklists.find(c =>
+                            c.templateId === t.id && !_usedSubIds.has(c.id) && c.submittedAt && (() => {
+                              const sm = new Date(c.submittedAt).getHours() * 60 + new Date(c.submittedAt).getMinutes();
+                              return sm >= s && sm < slotEnd;
+                            })()
+                          );
+                          if (match) _usedSubIds.add(match.id);
+                          expandedChecklistRows.push({
+                            id: match ? match.id : `slot-${t.id}-${s}`,
+                            templateId: t.id, templateName: t.templateName,
+                            roomName: t.roomName || '—',
+                            timeSlot: `${_fmtMins(s)} – ${_fmtMins(slotEnd)}`,
+                            submittedBy: match?.submittedBy || null,
+                            submittedAt: match?.submittedAt || null,
+                            status: match ? (match.status || 'submitted') : 'not_submitted',
+                            companyId: t.companyId, companyName: t.companyName,
+                            _notSubmitted: !match, _hourlySlot: true,
+                          });
+                        }
+                        // Out-of-window submissions
+                        for (const c of recentChecklists.filter(c => c.templateId === t.id && !_usedSubIds.has(c.id))) {
+                          _usedSubIds.add(c.id);
+                          const sm = new Date(c.submittedAt).getHours() * 60 + new Date(c.submittedAt).getMinutes();
+                          expandedChecklistRows.push({ ...c, roomName: t.roomName || c.roomName || '—', timeSlot: `${_fmtMins(sm)} (outside window)`, _hourlySlot: true });
+                        }
+                      } else {
+                        const subs = recentChecklists.filter(c => c.templateId === t.id && !_usedSubIds.has(c.id));
+                        if (subs.length > 0) {
+                          subs.forEach(c => { _usedSubIds.add(c.id); expandedChecklistRows.push(c); });
+                        } else {
+                          expandedChecklistRows.push({
+                            id: `ns-${t.id}`,
+                            templateId: t.id, templateName: t.templateName,
+                            roomName: t.roomName || '—', status: 'not_submitted',
+                            companyId: t.companyId, companyName: t.companyName,
+                            _notSubmitted: true,
+                          });
+                        }
+                      }
+                    }
+                    const notSubmittedLogsheets = cd?.notSubmittedLogsheets || [];
+                    // Collect all company IDs from all data sources including combined dashboard companies
                     const allCompanyIds = Array.from(new Set([
-                      ...recentChecklists.map(r => r.companyId),
+                      ...expandedChecklistRows.map(r => r.companyId),
                       ...recentLogsheets.map(r => r.companyId),
-                      ...notSubmittedChecklists.map(r => r.companyId),
                       ...notSubmittedLogsheets.map(r => r.companyId),
+                      ...recentChecklists.map(r => r.companyId),
+                      ...perComp.map(co => co.id),
                     ])).filter(Boolean);
                     const companyNameMap = {};
-                    [...recentChecklists, ...recentLogsheets, ...notSubmittedChecklists, ...notSubmittedLogsheets]
+                    // Build company name map from all sources
+                    [...expandedChecklistRows, ...recentLogsheets, ...notSubmittedLogsheets, ...recentChecklists]
                       .forEach(r => { if (r.companyId && r.companyName) companyNameMap[r.companyId] = r.companyName; });
+                    // Fallback: use perComp to ensure all companies have names
+                    perComp.forEach(co => { if (co.id && co.companyName) companyNameMap[co.id] = co.companyName; });
                     const sortedCompanyIds = allCompanyIds.sort((a, b) =>
                       (companyNameMap[a] || "").localeCompare(companyNameMap[b] || "")
                     );
-                    const totalSubmitted    = recentChecklists.length + recentLogsheets.length;
-                    const totalNotSubmitted = notSubmittedChecklists.length + notSubmittedLogsheets.length;
+                    const totalSubmitted = expandedChecklistRows.filter(r => !r._notSubmitted).length + recentLogsheets.length;
+                    const totalNotSubmitted = expandedChecklistRows.filter(r => r._notSubmitted).length + notSubmittedLogsheets.length;
+                    const hasHourlySlots = expandedChecklistRows.some(r => r._hourlySlot);
                     return (
                       <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px", marginBottom: "20px" }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
@@ -7112,7 +7329,7 @@ export default function CompanyEmployeePortal() {
                               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
                                 <thead>
                                   <tr>
-                                    {["#", "Template", "Room / Location", "Filled By", "Submitted", "Status"].map((h, i) => (
+                                    {["Sr.No", "Checklist", "Room", ...(hasHourlySlots ? ["Slots"] : []), "Filled By", "Submitted At", "Status"].map((h, i) => (
                                       <th key={i} style={{ padding: "9px 12px", textAlign: "left", background: "#f8fafc", color: "#475569", fontWeight: 600, fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>{h}</th>
                                     ))}
                                   </tr>
@@ -7120,16 +7337,16 @@ export default function CompanyEmployeePortal() {
                                 <tbody>
                                   {sortedCompanyIds.flatMap((cid) => {
                                     const cName = companyNameMap[cid] || `Company ${cid}`;
-                                    const subCL  = recentChecklists.filter(r => r.companyId === cid).sort((a,b) => new Date(b.submittedAt||0)-new Date(a.submittedAt||0));
+                                    const subCL  = expandedChecklistRows.filter(r => r.companyId === cid && !r._notSubmitted).sort((a,b) => new Date(b.submittedAt||0)-new Date(a.submittedAt||0));
                                     const subLG  = combinedHasLogsheets ? recentLogsheets.filter(r => r.companyId === cid).sort((a,b) => new Date(b.submittedAt||0)-new Date(a.submittedAt||0)) : [];
-                                    const nsCL   = notSubmittedChecklists.filter(r => r.companyId === cid);
+                                    const nsCL   = expandedChecklistRows.filter(r => r.companyId === cid && r._notSubmitted);
                                     const nsLG   = combinedHasLogsheets ? notSubmittedLogsheets.filter(r => r.companyId === cid) : [];
                                     const rows = [];
                                     let rowIdx = 0;
                                     // Company heading row
                                     rows.push(
                                       <tr key={`chead-${cid}`}>
-                                        <td colSpan={6} style={{ padding: "10px 12px", background: "#f0f9ff", color: "#0369a1", fontWeight: 700, fontSize: "12px", borderTop: "2px solid #bae6fd", borderBottom: "1px solid #bae6fd" }}>
+                                        <td colSpan={hasHourlySlots ? 7 : 6} style={{ padding: "10px 12px", background: "#f0f9ff", color: "#0369a1", fontWeight: 700, fontSize: "12px", borderTop: "2px solid #bae6fd", borderBottom: "1px solid #bae6fd" }}>
                                           {cName}
                                         </td>
                                       </tr>
@@ -7144,6 +7361,7 @@ export default function CompanyEmployeePortal() {
                                           <td style={{ padding: "8px 12px", color: "#94a3b8", fontSize: "12px" }}>{rowIdx}</td>
                                           <td style={{ padding: "8px 12px", fontWeight: 600, color: "#0f172a" }}>{r.templateName}</td>
                                           <td style={{ padding: "8px 12px", color: "#64748b", fontSize: "12px" }}>{r.roomName || "—"}</td>
+                                          {hasHourlySlots && <td style={{ padding: "8px 12px", color: "#7c3aed", fontSize: "12px", fontWeight: 600 }}>{r.timeSlot || "—"}</td>}
                                           <td style={{ padding: "8px 12px", color: "#475569", fontSize: "12px" }}>{r.submittedBy || "—"}</td>
                                           <td style={{ padding: "8px 12px", color: "#64748b", fontSize: "12px", whiteSpace: "nowrap" }}>
                                             {r.submittedAt ? new Date(r.submittedAt).toLocaleString("en-US", { month: "numeric", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—"}
@@ -7169,6 +7387,7 @@ export default function CompanyEmployeePortal() {
                                             {r.templateName}
                                           </td>
                                           <td style={{ padding: "8px 12px", color: "#64748b", fontSize: "12px" }}>{r.month ? `M${r.month}/${r.year}` : "—"}</td>
+                                          {hasHourlySlots && <td style={{ padding: "8px 12px", color: "#94a3b8", fontSize: "12px" }}>—</td>}
                                           <td style={{ padding: "8px 12px", color: "#475569", fontSize: "12px" }}>{r.submittedBy || "—"}</td>
                                           <td style={{ padding: "8px 12px", color: "#64748b", fontSize: "12px", whiteSpace: "nowrap" }}>
                                             {r.submittedAt ? new Date(r.submittedAt).toLocaleString("en-US", { month: "numeric", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—"}
@@ -7185,12 +7404,13 @@ export default function CompanyEmployeePortal() {
                                     nsCL.forEach((r) => {
                                       rowIdx++;
                                       rows.push(
-                                        <tr key={`nscl-${r.templateId}`} style={{ borderBottom: "1px solid #f1f5f9", background: "#fffbf5" }}
+                                        <tr key={`nscl-${cid}-${r.id}`} style={{ borderBottom: "1px solid #f1f5f9", background: "#fffbf5" }}
                                           onMouseEnter={(e) => e.currentTarget.style.background = "#fff7ed"}
                                           onMouseLeave={(e) => e.currentTarget.style.background = "#fffbf5"}>
                                           <td style={{ padding: "8px 12px", color: "#94a3b8", fontSize: "12px" }}>{rowIdx}</td>
                                           <td style={{ padding: "8px 12px", fontWeight: 600, color: "#0f172a" }}>{r.templateName}</td>
                                           <td style={{ padding: "8px 12px", color: "#64748b", fontSize: "12px" }}>{r.roomName || "—"}</td>
+                                          {hasHourlySlots && <td style={{ padding: "8px 12px", color: "#7c3aed", fontSize: "12px", fontWeight: 600 }}>{r.timeSlot || "—"}</td>}
                                           <td style={{ padding: "8px 12px", color: "#94a3b8", fontSize: "12px" }}>—</td>
                                           <td style={{ padding: "8px 12px", color: "#94a3b8", fontSize: "12px" }}>—</td>
                                           <td style={{ padding: "8px 12px" }}>
@@ -7203,7 +7423,7 @@ export default function CompanyEmployeePortal() {
                                     nsLG.forEach((r) => {
                                       rowIdx++;
                                       rows.push(
-                                        <tr key={`nslg-${r.templateId}`} style={{ borderBottom: "1px solid #f1f5f9", background: "#fdf4ff" }}
+                                        <tr key={`nslg-${cid}-${r.templateId || r.id}`} style={{ borderBottom: "1px solid #f1f5f9", background: "#fdf4ff" }}
                                           onMouseEnter={(e) => e.currentTarget.style.background = "#fae8ff"}
                                           onMouseLeave={(e) => e.currentTarget.style.background = "#fdf4ff"}>
                                           <td style={{ padding: "8px 12px", color: "#94a3b8", fontSize: "12px" }}>{rowIdx}</td>
@@ -7212,10 +7432,11 @@ export default function CompanyEmployeePortal() {
                                             {r.templateName}
                                           </td>
                                           <td style={{ padding: "8px 12px", color: "#94a3b8", fontSize: "12px" }}>—</td>
+                                          {hasHourlySlots && <td style={{ padding: "8px 12px", color: "#94a3b8", fontSize: "12px" }}>—</td>}
                                           <td style={{ padding: "8px 12px", color: "#94a3b8", fontSize: "12px" }}>—</td>
                                           <td style={{ padding: "8px 12px", color: "#94a3b8", fontSize: "12px" }}>—</td>
                                           <td style={{ padding: "8px 12px" }}>
-                                            <span style={{ padding: "2px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: 600, background: "#fae8ff", color: "#7c3aed" }}>Not Submitted</span>
+                                            <span style={{ padding: "2px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: 600, background: "#fef2f2", color: "#dc2626" }}>Not Submitted</span>
                                           </td>
                                         </tr>
                                       );
@@ -7312,6 +7533,16 @@ export default function CompanyEmployeePortal() {
                   ...(hasLogsheets && (cs?.pendingLogsheets || 0) > 0 ? [{ label: "Pending Logsheets", value: cs.pendingLogsheets, color: "#93c5fd" }] : []),
                 ]
               : chartData;
+            // For today, use slot-based todaySiteScore values for accuracy
+            const displayFilledChecklists = isToday && todaySiteScore
+              ? (todaySiteScore.filled || 0)
+              : (cs?.filledChecklists || 0);
+            const displayPendingChecklists = isToday && todaySiteScore
+              ? Math.max(0, (todaySiteScore.total || 0) - (todaySiteScore.filled || 0))
+              : (cs?.pendingChecklists || 0);
+            const displayTotalChecklists = isToday && todaySiteScore
+              ? (todaySiteScore.total || 0)
+              : ((cs?.filledChecklists || 0) + (cs?.pendingChecklists || 0));
             const openAlertsCount = dashboardAlerts.length;
             const criticalAlertsCount = dashboardAlerts.filter((f) => f.severity === "critical").length;
             const unassignedOpenWorkOrders = dashboardWorkOrders.filter((wo) => !wo.assignedTo);
@@ -7366,8 +7597,8 @@ export default function CompanyEmployeePortal() {
                           ["Total Submissions", totalSubmissions],
                           ["Filled Logsheets", cs?.filledLogsheets ?? ""],
                           ["Pending Logsheets", cs?.pendingLogsheets ?? ""],
-                          ["Filled Checklists", cs?.filledChecklists ?? ""],
-                          ["Pending Checklists", cs?.pendingChecklists ?? ""],
+                          ["Filled Checklists", displayFilledChecklists],
+                          ["Pending Checklists", displayPendingChecklists],
                         ];
                         const ws = XLSX.utils.aoa_to_sheet(rows);
                         ws["!cols"] = [{wch:30},{wch:20}];
@@ -7451,7 +7682,7 @@ export default function CompanyEmployeePortal() {
                   </div>
                   <div style={{ background: "linear-gradient(135deg, #f0fdf4 0%, #f8fafc 100%)", border: "1px solid #bbf7d0", borderRadius: "12px", padding: "12px 14px" }}>
                     <p style={{ margin: 0, fontSize: "11px", fontWeight: 700, color: "#15803d", letterSpacing: "0.03em", textTransform: "uppercase" }}>Total Filled Checklists</p>
-                    <p style={{ margin: "6px 0 2px", fontSize: "22px", fontWeight: 800, color: "#0f172a" }}>{cs?.filledChecklists ?? 0}</p>
+                    <p style={{ margin: "6px 0 2px", fontSize: "22px", fontWeight: 800, color: "#0f172a" }}>{displayFilledChecklists}</p>
                     <p style={{ margin: 0, fontSize: "12px", color: "#64748b" }}>Filled checklists for selected date</p>
                   </div>
                   {hasLogsheets && (
@@ -7602,7 +7833,9 @@ export default function CompanyEmployeePortal() {
                           const sc = sevCols[f.severity] || { bg: "#f1f5f9", color: "#475569" };
                           const dotCfg = ({ open: { color: "#dc2626", animation: "blink-dot 1s ease-in-out infinite" }, in_progress: { color: "#f97316", animation: "pulse-dot 1.5s ease-in-out infinite" }, resolved: { color: "#16a34a", animation: "none" }, closed: { color: "#94a3b8", animation: "none" } })[f.status || "open"] || { color: "#94a3b8", animation: "none" };
                           return (
-                            <div key={f.id} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px", borderRadius: "8px", border: `1px solid ${f.status === "open" ? "#fecaca" : "#f1f5f9"}`, background: f.status === "open" ? "#fff8f8" : "#fafafa" }}>
+                            <div key={f.id} onClick={() => setNav("warnings")} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px", borderRadius: "8px", border: `1px solid ${f.status === "open" ? "#fecaca" : "#f1f5f9"}`, background: f.status === "open" ? "#fff8f8" : "#fafafa", cursor: "pointer" }}
+                              onMouseEnter={(e) => (e.currentTarget.style.background = "#fff0f0")}
+                              onMouseLeave={(e) => (e.currentTarget.style.background = f.status === "open" ? "#fff8f8" : "#fafafa")}>
                               <span title={f.status || "open"} style={{ flexShrink: 0, width: "9px", height: "9px", borderRadius: "50%", display: "inline-block", background: dotCfg.color, animation: dotCfg.animation }} />
                               <span style={{ flexShrink: 0, padding: "2px 8px", borderRadius: "20px", fontSize: "10.5px", fontWeight: 700, background: sc.bg, color: sc.color, textTransform: "capitalize" }}>
                                 {f.severity || "—"}
@@ -7766,7 +7999,8 @@ export default function CompanyEmployeePortal() {
 
                   {/* Notifications quick-view */}
                   {currentUser?.role === "admin" && (
-                  <DashboardNotificationsBox token={token} onViewAll={() => setNav("notifications")} filterDate={dashboardDate} />
+                  <DashboardNotificationsBox token={token} onViewAll={() => setNav("notifications")} filterDate={dashboardDate}
+                    onItemClick={(type) => { if (type === "flag_raised" || type === "flag_escalated") setNav("warnings"); else setNav("notifications"); }} />
                   )}
 
                   </div>{/* end right column */}
@@ -7841,7 +8075,7 @@ export default function CompanyEmployeePortal() {
 
                 {/* ── Site Score Overview ───────────────────────────────── */}
                 {(() => {
-                  const isMultiCo = myCompanies.length > 1;
+                  const isMultiCo = myCompanies.length > 1 && isAllCompaniesDashboard;
                   const chartData  = isMultiCo ? companiesSiteScore : siteScoreHistory;
                   const chartRange = isMultiCo ? companiesSiteScoreRange : siteScoreChartRange;
                   const setRange   = isMultiCo
@@ -7963,7 +8197,7 @@ export default function CompanyEmployeePortal() {
                               return (
                                 <g key={i}
                                   style={isMultiCo ? { cursor: "pointer" } : {}}
-                                  onClick={isMultiCo && item.companyId ? () => handleSwitchCompany(item.companyId) : undefined}>
+                                  onClick={isMultiCo && item.companyId ? () => openSingleCompanyDashboard(item.companyId) : undefined}>
                                   {/* Invisible hit area for click */}
                                   {isMultiCo && <rect x={bX - 4} y={padT} width={bW + 8} height={cH} fill="transparent" />}
                                   {/* Bar */}
@@ -8262,10 +8496,11 @@ export default function CompanyEmployeePortal() {
                 </button>
               ))}
             </div>
+
             {checklistSubNav === "templates" && (
               <ChecklistTemplateModule
                 token={token}
-                companies={[{ id: currentUser.companyId, companyName: currentUser.companyName }]}
+                companies={isAllCompaniesDashboard && moduleSiteFilter !== "all" ? [myCompanies.find(c => String(c.id) === moduleSiteFilter) || { id: currentUser.companyId, companyName: currentUser.companyName }] : (isAllCompaniesDashboard ? myCompanies : [{ id: currentUser.companyId, companyName: currentUser.companyName }])}
                 shifts={shifts}
                 fetchTemplates={getCompanyPortalChecklists}
                 createTemplate={createCompanyPortalChecklist}
@@ -8273,7 +8508,7 @@ export default function CompanyEmployeePortal() {
                 updateTemplate={updateCompanyPortalChecklist}
                 deleteTemplate={deleteCompanyPortalChecklist}
                 canBuild={currentUser.role === "admin" || currentUser.role === "supervisor"}
-                companyId={currentUser.companyId}
+                companyId={isAllCompaniesDashboard && moduleSiteFilter !== "all" ? moduleSiteFilter : (isAllCompaniesDashboard ? "all" : currentUser.companyId)}
                 companyPortalMode={true}
               />
             )}
@@ -8298,12 +8533,13 @@ export default function CompanyEmployeePortal() {
                 </button>
               ))}
             </div>
+
             {logsheetSubNav === "templates" && (
               <LogsheetModule
                 token={token}
                 assets={assets.length ? assets : []}
                 shifts={shifts}
-                companies={[{ id: currentUser.companyId, companyName: currentUser.companyName }]}
+                companies={isAllCompaniesDashboard && moduleSiteFilter !== "all" ? [myCompanies.find(c => String(c.id) === moduleSiteFilter) || { id: currentUser.companyId, companyName: currentUser.companyName }] : (isAllCompaniesDashboard ? myCompanies : [{ id: currentUser.companyId, companyName: currentUser.companyName }])}
                 fetchTemplates={getCompanyPortalLogsheetTemplates}
                 fetchTemplate={getCompanyPortalLogsheetTemplate}
                 fetchEntries={getCompanyPortalLogsheetEntries}
@@ -8336,7 +8572,7 @@ export default function CompanyEmployeePortal() {
 
         {/* ── Notifications ─────────────────────────────────────── */}
         {nav === "notifications" && (
-          <NotificationsPanel token={token} />
+          <NotificationsPanel token={token} allCompanies={isAllCompaniesDashboard && moduleSiteFilter === "all"} companyId={isAllCompaniesDashboard && moduleSiteFilter !== "all" ? moduleSiteFilter : undefined} />
         )}
 
         {/* ── Work Orders ───────────────────────────────────────── */}
@@ -9171,6 +9407,8 @@ export default function CompanyEmployeePortal() {
             inline={true}
             enabledModules={enabledModules}
             readOnly={isViewOnly}
+            allCompanies={isAllCompaniesDashboard && moduleSiteFilter === "all"}
+            companyId={isAllCompaniesDashboard && moduleSiteFilter !== "all" ? moduleSiteFilter : currentUser.companyId}
             onClose={() => {}}
             onSaved={(list) => {
               setCustomRoles(list);

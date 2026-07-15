@@ -1338,6 +1338,9 @@ function VariantModal({ template, token, onClose, onCreate }) {
       .catch(() => {});
   }, [token]);  // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Derive building/floor/room IDs from the selected location
+  const selectedLocation = locations.find((l) => String(l.id) === String(locationId)) || null;
+
   const handleCreate = async () => {
     setSaving(true);
     setErr(null);
@@ -1350,6 +1353,15 @@ function VariantModal({ template, token, onClose, onCreate }) {
         description: template.description || undefined,
         frequency,
         locationId: locationId ? Number(locationId) : undefined,
+        // Auto-populate building/floor/room from the selected location
+        buildingId: selectedLocation?.buildingId ? Number(selectedLocation.buildingId) : undefined,
+        floorId: selectedLocation?.floorId ? Number(selectedLocation.floorId) : undefined,
+        roomId: selectedLocation?.roomId ? Number(selectedLocation.roomId) : undefined,
+        // Copy timing settings from the source template
+        notificationTimer: template.notificationTimer || undefined,
+        startTime: template.startTime || undefined,
+        endTime: template.endTime || undefined,
+        hourlyInterval: template.hourlyInterval || undefined,
         questions: Array.isArray(template.questions) ? template.questions : [],
       };
       await onCreate(payload);
@@ -1432,7 +1444,8 @@ const TemplateList = memo(function TemplateList({ token, companies, fetchTemplat
     setLoading(true);
     setError(null);
     try {
-      const params = companyId ? `companyId=${companyId}&includeQuestions=true` : "includeQuestions=true";
+      // Backend now supports companyId="all" for multi-company aggregation
+      const params = (companyId && companyId !== "all") ? `companyId=${companyId}&includeQuestions=true` : "includeQuestions=true";
       const data = await fetchTemplates(token, params);
       setTemplates(Array.isArray(data) ? data : []);
     } catch (err) {
@@ -1553,8 +1566,8 @@ const TemplateList = memo(function TemplateList({ token, companies, fetchTemplat
       {/* Header */}
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "22px" }}>
         <div>
-          <h1 style={{ fontSize: "26px", fontWeight: 800, color: "#0f172a", marginBottom: "4px", letterSpacing: "-0.5px" }}>Checklist Templates</h1>
-          <p style={{ color: "#64748b", fontSize: "14px", margin: 0 }}>Build reusable inspection checklists for assets, departments, and users.</p>
+          <h1 style={{ fontSize: "26px", fontWeight: 800, color: "#0f172a", marginBottom: "4px", letterSpacing: "-0.5px" }}>Checklist</h1>
+          <p style={{ color: "#64748b", fontSize: "14px", margin: 0 }}>Build inspection checklists for Locations, Assets.</p>
         </div>
         <div style={{ display: "flex", gap: "8px" }}>
           {canBuild && onImport && (
@@ -1590,7 +1603,7 @@ const TemplateList = memo(function TemplateList({ token, companies, fetchTemplat
 
       {/* Table */}
       <Card>
-        <CardHeader>All Templates</CardHeader>
+        <CardHeader>All Checklists</CardHeader>
         <div style={{ padding: "10px 16px", borderBottom: "1px solid #e2e8f0", display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
           {canBuild && onDelete && selectedIds.size > 0 && (
             <SBtn onClick={handleBulkDelete} bg="#dc2626" style={{ marginRight: "4px" }}>

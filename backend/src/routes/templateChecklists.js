@@ -204,10 +204,11 @@ router.get(
       const { companyId, assetType, category, status, includeQuestions = false } = req.query;
       const params = [req.user.id];
       let where = "WHERE c.user_id = ?";
-      if (companyId) {
+      if (companyId && companyId !== "all") {
         where += " AND ct.company_id = ?";
         params.push(companyId);
       }
+      // Note: if companyId === "all", fetch templates from all companies owned by this user
       if (assetType) {
         where += " AND ct.asset_type = ?";
         params.push(assetType);
@@ -1071,6 +1072,22 @@ router.put(
 // ── Recent checklist submissions (admin dashboard) ────────────────────────────
 router.get("/submissions/recent", async (req, res, next) => {
   try {
+    const { date, companyIds: rawCompanyIds } = req.query;
+    const userId = req.user.id;
+    const targetDate = date || new Date().toISOString().slice(0, 10);
+    const params = [userId];
+    
+    // Build company filter
+    let companyWhere = "c.user_id = ?";
+    if (rawCompanyIds) {
+      const requestedIds = rawCompanyIds.split(",").map(id => Number(id.trim())).filter(id => !isNaN(id) && id > 0);
+      if (requestedIds.length > 0) {
+        companyWhere += ` AND ct.company_id IN (${requestedIds.map(() => "?").join(",")})`;
+        params.push(...requestedIds);
+      }
+    }
+    params.push(targetDate);
+    
     const [rows] = await pool.query(
       `SELECT cs.id, cs.submitted_at AS "submittedAt",
               ct.template_name AS "templateName", ct.id AS "templateId", ct.frequency,
@@ -1083,10 +1100,11 @@ router.get("/submissions/recent", async (req, res, next) => {
        LEFT JOIN assets a ON a.id = cs.asset_id
        LEFT JOIN company_users cu ON cu.id = COALESCE(cs.company_user_id, cs.submitted_by)
        LEFT JOIN companies c ON c.id = ct.company_id
-       WHERE c.user_id = ?
+       WHERE ${companyWhere}
+         AND cs.submitted_at::date = ?::date
        ORDER BY cs.submitted_at DESC NULLS LAST
-       LIMIT 50`,
-      [req.user.id]
+       LIMIT 100`,
+      params
     );
     res.json(rows);
   } catch (err) {

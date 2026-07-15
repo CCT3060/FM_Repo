@@ -387,13 +387,16 @@ router.get("/dashboard", async (req, res, next) => {
       // Open soft service requests
       pool.query(
         `SELECT COUNT(*) AS cnt FROM soft_service_requests
-         WHERE company_id = ? AND status NOT IN ('closed','resolved')`,
+         WHERE company_id = ?
+           AND LOWER(TRIM(COALESCE(status, ''))) NOT IN ('closed','resolved','cancelled','rejected')`,
         [companyId]
       ),
       // Escalated soft service requests (warnings)
       pool.query(
         `SELECT COUNT(*) AS cnt FROM soft_service_requests
-         WHERE company_id = ? AND escalation_level > 0 AND status NOT IN ('closed','resolved')`,
+         WHERE company_id = ?
+           AND escalation_level > 0
+           AND LOWER(TRIM(COALESCE(status, ''))) NOT IN ('closed','resolved','cancelled','rejected')`,
         [companyId]
       ),
       // Active locations — only count Active status
@@ -470,25 +473,24 @@ router.get("/dashboard/chart-stats", async (req, res, next) => {
       }
     }
 
-    const fromDateObj = new Date(`${dateFrom}T00:00:00`);
-    const toDateObj = new Date(`${dateTo}T00:00:00`);
-    const daySpan = Math.max(1, Math.floor((toDateObj.getTime() - fromDateObj.getTime()) / 86400000) + 1);
+    // Run all queries separately so one failure doesn't kill the rest
+    const safe = async (fn, fallback) => {
+      try { return await fn(); }
+      catch (e) { console.error("[chart-stats]", e.message); return fallback; }
+    };
 
-    // Run all 4 queries separately so one failure doesn't kill the rest
-    const safe = async (fn) => { try { return await fn(); } catch (e) { console.error("[chart-stats]", e.message); return [[{ cnt: 0 }]]; } };
-
-    const [[ltRows]]  = await safe(() => pool.query(
+    const [[ltRows]] = await safe(() => pool.query(
       `SELECT COUNT(*) AS cnt FROM logsheet_templates WHERE company_id = ?`,
       [companyId]
-    ));
-    const [[ctRows]]  = await safe(() => pool.query(
-      `SELECT COUNT(*) AS cnt
-         FROM checklist_templates
-        WHERE company_id = ?
-          AND LOWER(TRIM(COALESCE(frequency, 'daily'))) = 'daily'
-          AND COALESCE(status, 'active') != 'inactive'`,
+    ), [[{ cnt: 0 }]]);
+    const [templates] = await safe(() => pool.query(
+      `SELECT id, frequency, hourly_interval AS "hourlyInterval",
+              start_time AS "startTime", end_time AS "endTime"
+       FROM checklist_templates
+       WHERE company_id = ?
+         AND COALESCE(status, 'active') != 'inactive'`,
       [companyId]
-    ));
+    ), [[]]);
     const [[subLSRows]] = await safe(() => pool.query(
       // logsheet_entries.submitted_at is NOT NULL — safe to cast directly
       `SELECT COUNT(*) AS cnt
@@ -497,23 +499,77 @@ router.get("/dashboard/chart-stats", async (req, res, next) => {
        WHERE lt.company_id = ?
          AND le.submitted_at::date BETWEEN ? AND ?`,
       [companyId, dateFrom, dateTo]
-    ));
-    const [[subCSRows]] = await safe(() => pool.query(
-      // Count one fill per template per day for daily checklist templates (active only).
-      `SELECT COUNT(DISTINCT (cs.template_id::text || '|' || COALESCE(cs.submitted_at, cs.created_at)::date::text)) AS cnt
+    ), [[{ cnt: 0 }]]);
+    const [subCounts] = await safe(() => pool.query(
+      // Mirrors site-score-history so dashboard cards and site-score chart match for any selected date.
+      `SELECT cs.template_id AS "templateId",
+              cs.submitted_at::date::text AS "date",
+              COUNT(*) AS "count"
          FROM checklist_submissions cs
          JOIN checklist_templates ct ON ct.id = cs.template_id
         WHERE ct.company_id = ?
-          AND LOWER(TRIM(COALESCE(ct.frequency, 'daily'))) = 'daily'
           AND COALESCE(ct.status, 'active') != 'inactive'
-          AND COALESCE(cs.submitted_at, cs.created_at)::date BETWEEN ? AND ?`,
+          AND cs.submitted_at::date BETWEEN ?::date AND ?::date
+          AND cs.status NOT IN ('rejected')
+          AND (
+            LOWER(COALESCE(ct.frequency, 'daily')) != 'hourly'
+            OR ct.start_time IS NULL
+            OR ct.end_time IS NULL
+            OR (
+              (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
+                >= (EXTRACT(HOUR FROM ct.start_time::time) * 60 + EXTRACT(MINUTE FROM ct.start_time::time))
+              AND (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
+                < (EXTRACT(HOUR FROM ct.end_time::time) * 60 + EXTRACT(MINUTE FROM ct.end_time::time))
+            )
+          )
+        GROUP BY cs.template_id, cs.submitted_at::date`,
       [companyId, dateFrom, dateTo]
-    ));
+    ), [[]]);
 
-    const totalLogsheets   = Number(ltRows?.cnt   || 0);
-    const totalChecklists  = Number(ctRows?.cnt || 0) * daySpan;
-    const filledLogsheets  = Number(subLSRows?.cnt || 0);
-    const filledChecklists = Math.min(totalChecklists, Number(subCSRows?.cnt || 0));
+    function expectedSlotsForDate(t) {
+      const freq = (t.frequency || 'Daily').toLowerCase();
+      if (freq !== 'hourly') return 1;
+      const interval = Math.max(1, Number(t.hourlyInterval) || 1);
+      if (t.startTime && t.endTime) {
+        const [sh, sm = 0] = t.startTime.split(':').map(Number);
+        const [eh, em = 0] = t.endTime.split(':').map(Number);
+        const startMins = sh * 60 + (sm || 0);
+        const endMins = eh * 60 + (em || 0);
+        if (endMins <= startMins) return 1;
+        return Math.max(1, Math.floor((endMins - startMins) / (interval * 60)));
+      }
+      return Math.max(1, Math.floor(1440 / (interval * 60)));
+    }
+
+    // Generate date series in UTC to avoid timezone date-shift edge cases.
+    const dates = [];
+    const [sy, sm, sd] = dateFrom.split('-').map(Number);
+    const [ey, em, ed] = dateTo.split('-').map(Number);
+    for (let ms = Date.UTC(sy, sm - 1, sd), endMs = Date.UTC(ey, em - 1, ed); ms <= endMs; ms += 86400000) {
+      dates.push(new Date(ms).toISOString().slice(0, 10));
+    }
+
+    const countMap = {};
+    for (const row of subCounts) {
+      if (!countMap[row.date]) countMap[row.date] = {};
+      countMap[row.date][row.templateId] = Number(row.count) || 0;
+    }
+
+    let totalChecklists = 0;
+    let filledChecklists = 0;
+    for (const dateStr of dates) {
+      for (const t of templates) {
+        const exp = expectedSlotsForDate(t, dateStr);
+        if (exp <= 0) continue;
+        totalChecklists += exp;
+        const actual = (countMap[dateStr]?.[t.id]) || 0;
+        filledChecklists += Math.min(actual, exp);
+      }
+    }
+
+    const totalLogsheets = Number(ltRows?.cnt || 0);
+    const filledLogsheets = Number(subLSRows?.cnt || 0);
+    filledChecklists = Math.min(totalChecklists, filledChecklists);
 
     res.json({
       totalLogsheets,
@@ -539,28 +595,161 @@ router.get("/dashboard/site-score-history", async (req, res, next) => {
     const companyId = cid(req);
     const { startDate, endDate } = req.query;
     if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate are required" });
-    const [rows] = await pool.query(
-      `SELECT to_char(d::date, 'YYYY-MM-DD') AS date,
-         ROUND(
-           COALESCE(
-             (SELECT COUNT(DISTINCT cs.template_id)
-              FROM checklist_submissions cs
-              JOIN checklist_templates ct ON ct.id = cs.template_id
-              WHERE ct.company_id = ? AND cs.submitted_at::date = d::date
-                AND cs.status NOT IN ('rejected')), 0
-           )::numeric
-           / GREATEST(
-             (SELECT COUNT(*) FROM checklist_templates
-              WHERE company_id = ? AND COALESCE(status, 'active') != 'inactive'), 1
-           ) * 100, 1
-         ) AS "siteScore"
-       FROM generate_series(?::date, ?::date, '1 day'::interval) AS d
-       ORDER BY d`,
-      [companyId, companyId, startDate, endDate]
+
+    // Fetch all active templates with frequency settings
+    const [templates] = await pool.query(
+      `SELECT id, frequency, hourly_interval AS "hourlyInterval",
+              start_time AS "startTime", end_time AS "endTime"
+       FROM checklist_templates
+       WHERE company_id = ? AND COALESCE(status, 'active') != 'inactive'`,
+      [companyId]
     );
+
+    // Pre-compute total expected slots per day for each template.
+    // Use DB-side NOW() so currentMins is in the same timezone as the stored
+    // start_time values (set via APP_TIMEZONE in .env → db.js session TZ).
+    const [[_histNowRow]] = await pool.query(
+      `SELECT TO_CHAR(NOW()::date, 'YYYY-MM-DD') AS today,
+              EXTRACT(HOUR FROM NOW())::int AS h,
+              EXTRACT(MINUTE FROM NOW())::int AS m`
+    );
+    const today = _histNowRow.today;
+    const currentMins = Number(_histNowRow.h) * 60 + Number(_histNowRow.m);
+
+    function expectedSlotsForDate(t, dateStr) {
+      const freq = (t.frequency || 'Daily').toLowerCase();
+      if (freq !== 'hourly') return 1;
+      const interval = Math.max(1, Number(t.hourlyInterval) || 1);
+      if (t.startTime && t.endTime) {
+        const [sh, sm = 0] = t.startTime.split(':').map(Number);
+        const [eh, em = 0] = t.endTime.split(':').map(Number);
+        const startMins = sh * 60 + (sm || 0);
+        const endMins = eh * 60 + (em || 0);
+        if (endMins <= startMins) return 1;
+        // Always use the full-day slot count (not capped by current time)
+        const effectiveEnd = endMins;
+        if (effectiveEnd <= startMins) return 0;
+        return Math.max(1, Math.floor((effectiveEnd - startMins) / (interval * 60)));
+      }
+      // No time range: count all interval blocks in a full 24-hour day
+      return Math.max(1, Math.floor(1440 / (interval * 60)));
+    }
+
+    // Generate date series using Date.UTC so local server timezone never shifts
+    // a YYYY-MM-DD string to the previous day (e.g. IST midnight → UTC prev-day).
+    const dates = [];
+    const [sy, sm, sd] = startDate.split('-').map(Number);
+    const [ey, em, ed] = endDate.split('-').map(Number);
+    for (let ms = Date.UTC(sy, sm - 1, sd), endMs = Date.UTC(ey, em - 1, ed); ms <= endMs; ms += 86400000) {
+      dates.push(new Date(ms).toISOString().slice(0, 10));
+    }
+
+    // Fetch per-template, per-date submission counts in one query.
+    // For hourly templates with a time window only count submissions that fall
+    // inside [start_time, end_time) — out-of-window submissions are recorded
+    // but must not affect the historical site-score bars.
+    const [subCounts] = await pool.query(
+      `SELECT cs.template_id AS "templateId",
+              cs.submitted_at::date::text AS "date",
+              COUNT(*) AS "count"
+       FROM checklist_submissions cs
+       JOIN checklist_templates ct ON ct.id = cs.template_id
+       WHERE ct.company_id = ?
+         AND cs.submitted_at::date BETWEEN ?::date AND ?::date
+         AND cs.status NOT IN ('rejected')
+         AND (
+           LOWER(COALESCE(ct.frequency, 'daily')) != 'hourly'
+           OR ct.start_time IS NULL
+           OR ct.end_time IS NULL
+           OR (
+             (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
+               >= (EXTRACT(HOUR FROM ct.start_time::time) * 60 + EXTRACT(MINUTE FROM ct.start_time::time))
+             AND (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
+               < (EXTRACT(HOUR FROM ct.end_time::time) * 60 + EXTRACT(MINUTE FROM ct.end_time::time))
+           )
+         )
+       GROUP BY cs.template_id, cs.submitted_at::date`,
+      [companyId, startDate, endDate]
+    );
+
+    // Build a map: date → templateId → count
+    const countMap = {};
+    for (const row of subCounts) {
+      if (!countMap[row.date]) countMap[row.date] = {};
+      countMap[row.date][row.templateId] = Number(row.count) || 0;
+    }
+
+    const rows = dates.map((dateStr) => {
+      let totalSlots = 0;
+      let filledSlots = 0;
+      for (const t of templates) {
+        const exp = expectedSlotsForDate(t, dateStr);
+        if (exp <= 0) continue;
+        totalSlots += exp;
+        const actual = (countMap[dateStr]?.[t.id]) || 0;
+        filledSlots += Math.min(actual, exp);
+      }
+      const siteScore = totalSlots > 0 ? Math.round((filledSlots / totalSlots) * 1000) / 10 : 0;
+      return { date: dateStr, siteScore };
+    });
+
     res.json(rows);
   } catch (err) { next(err); }
 });
+
+const parseCompanyIdsCsv = (raw) => {
+  if (!raw || typeof raw !== "string") return [];
+  return Array.from(new Set(
+    raw
+      .split(",")
+      .map((v) => Number(v.trim()))
+      .filter((n) => Number.isFinite(n) && n > 0)
+  ));
+};
+
+const expectedSlotsForTemplate = (t) => {
+  const freq = (t.frequency || "Daily").toLowerCase();
+  if (freq !== "hourly") return 1;
+  const interval = Math.max(1, Number(t.hourlyInterval) || 1);
+  if (t.startTime && t.endTime) {
+    const [sh, sm = 0] = String(t.startTime).split(":").map(Number);
+    const [eh, em = 0] = String(t.endTime).split(":").map(Number);
+    const startMins = sh * 60 + (sm || 0);
+    const endMins = eh * 60 + (em || 0);
+    if (endMins <= startMins) return 1;
+    return Math.max(1, Math.floor((endMins - startMins) / (interval * 60)));
+  }
+  return Math.max(1, Math.floor(1440 / (interval * 60)));
+};
+
+const dateSeries = (startDate, endDate) => {
+  const out = [];
+  const [sy, sm, sd] = String(startDate).split("-").map(Number);
+  const [ey, em, ed] = String(endDate).split("-").map(Number);
+  for (let ms = Date.UTC(sy, sm - 1, sd), endMs = Date.UTC(ey, em - 1, ed); ms <= endMs; ms += 86400000) {
+    out.push(new Date(ms).toISOString().slice(0, 10));
+  }
+  return out;
+};
+
+const getAccessibleCompanies = async (userId, primaryCompanyId) => {
+  const [extras] = await pool.query(
+    `SELECT c.id, c.company_name AS "companyName", c.enabled_modules AS "enabledModules"
+     FROM user_company_assignments uca
+     JOIN companies c ON c.id = uca.company_id
+     WHERE uca.user_id = ?
+     ORDER BY c.company_name`,
+    [userId]
+  );
+  if (extras.length > 0) return extras;
+
+  const [[primary]] = await pool.query(
+    `SELECT id, company_name AS "companyName", enabled_modules AS "enabledModules"
+     FROM companies WHERE id = ?`,
+    [primaryCompanyId]
+  );
+  return primary ? [primary] : [];
+};
 
 /* ── GET /api/company-portal/dashboard/companies-site-score ───────────────────
    Returns average site score per company for the user's assigned companies
@@ -568,46 +757,102 @@ router.get("/dashboard/site-score-history", async (req, res, next) => {
 router.get("/dashboard/companies-site-score", async (req, res, next) => {
   try {
     const userId = req.companyUser.id;
-    const { startDate, endDate } = req.query;
+    const primaryCompanyId = cid(req);
+    const { startDate, endDate, companyIds: rawCompanyIds } = req.query;
     if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate are required" });
-    const [rows] = await pool.query(
-      `WITH assigned AS (
-         SELECT uca.company_id, c.company_name AS "companyName"
-         FROM user_company_assignments uca
-         JOIN companies c ON c.id = uca.company_id
-         WHERE uca.user_id = ?
-       ),
-       date_range AS (
-         SELECT generate_series(?::date, ?::date, '1 day'::interval)::date AS d
-       ),
-       total_tpls AS (
-         SELECT company_id, GREATEST(COUNT(*), 1) AS total
-         FROM checklist_templates
-         WHERE company_id IN (SELECT company_id FROM assigned)
-           AND COALESCE(status, 'active') != 'inactive'
-         GROUP BY company_id
-       ),
-       daily_fills AS (
-         SELECT ct.company_id, cs.submitted_at::date AS d,
-                COUNT(DISTINCT cs.template_id) AS filled
-         FROM checklist_submissions cs
-         JOIN checklist_templates ct ON ct.id = cs.template_id
-         WHERE ct.company_id IN (SELECT company_id FROM assigned)
-           AND cs.submitted_at::date BETWEEN ? AND ?
-           AND cs.status NOT IN ('rejected')
-         GROUP BY ct.company_id, cs.submitted_at::date
-       )
-       SELECT a.company_id AS "companyId", a."companyName",
-         ROUND(AVG(ROUND(COALESCE(df.filled, 0)::numeric
-               / COALESCE(tt.total, 1) * 100, 0)), 0) AS "avgSiteScore"
-       FROM assigned a
-       CROSS JOIN date_range dr
-       LEFT JOIN total_tpls tt ON tt.company_id = a.company_id
-       LEFT JOIN daily_fills df ON df.company_id = a.company_id AND df.d = dr.d
-       GROUP BY a.company_id, a."companyName"
-       ORDER BY a."companyName"`,
-      [userId, startDate, endDate, startDate, endDate]
+
+    const accessible = await getAccessibleCompanies(userId, primaryCompanyId);
+    if (!accessible.length) return res.json([]);
+
+    const requestedIds = parseCompanyIdsCsv(rawCompanyIds);
+    const scopedCompanies = requestedIds.length > 0
+      ? accessible.filter((c) => requestedIds.includes(Number(c.id)))
+      : accessible;
+    if (!scopedCompanies.length) return res.json([]);
+
+    const scopedIds = scopedCompanies.map((c) => Number(c.id));
+    const idPH = scopedIds.map(() => "?").join(",");
+    const dates = dateSeries(startDate, endDate);
+
+    const [templates] = await pool.query(
+      `SELECT company_id AS "companyId", id, frequency,
+              hourly_interval AS "hourlyInterval",
+              start_time AS "startTime", end_time AS "endTime"
+       FROM checklist_templates
+       WHERE company_id IN (${idPH})
+         AND COALESCE(status, 'active') != 'inactive'`,
+      scopedIds
     );
+
+    const [subCounts] = await pool.query(
+      `SELECT ct.company_id AS "companyId",
+              cs.template_id AS "templateId",
+              cs.submitted_at::date::text AS "date",
+              COUNT(*) AS "count"
+       FROM checklist_submissions cs
+       JOIN checklist_templates ct ON ct.id = cs.template_id
+       WHERE ct.company_id IN (${idPH})
+         AND cs.submitted_at::date BETWEEN ?::date AND ?::date
+         AND COALESCE(ct.status, 'active') != 'inactive'
+         AND cs.status NOT IN ('rejected')
+         AND (
+           LOWER(COALESCE(ct.frequency, 'daily')) != 'hourly'
+           OR ct.start_time IS NULL
+           OR ct.end_time IS NULL
+           OR (
+             (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
+               >= (EXTRACT(HOUR FROM ct.start_time::time) * 60 + EXTRACT(MINUTE FROM ct.start_time::time))
+             AND (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
+               < (EXTRACT(HOUR FROM ct.end_time::time) * 60 + EXTRACT(MINUTE FROM ct.end_time::time))
+           )
+         )
+       GROUP BY ct.company_id, cs.template_id, cs.submitted_at::date`,
+      [...scopedIds, startDate, endDate]
+    );
+
+    const templateMap = {};
+    for (const t of templates) {
+      const companyId = Number(t.companyId);
+      if (!templateMap[companyId]) templateMap[companyId] = [];
+      templateMap[companyId].push({
+        id: Number(t.id),
+        expectedSlots: expectedSlotsForTemplate(t),
+      });
+    }
+
+    const countMap = {};
+    for (const row of subCounts) {
+      const companyId = Number(row.companyId);
+      if (!countMap[companyId]) countMap[companyId] = {};
+      if (!countMap[companyId][row.date]) countMap[companyId][row.date] = {};
+      countMap[companyId][row.date][Number(row.templateId)] = Number(row.count) || 0;
+    }
+
+    const rows = scopedCompanies.map((company) => {
+      const companyId = Number(company.id);
+      const tpls = templateMap[companyId] || [];
+      let scoreSum = 0;
+      for (const dateStr of dates) {
+        let totalExpected = 0;
+        let filledSlots = 0;
+        for (const t of tpls) {
+          totalExpected += t.expectedSlots;
+          const actual = countMap[companyId]?.[dateStr]?.[t.id] || 0;
+          filledSlots += Math.min(actual, t.expectedSlots);
+        }
+        const dailyScore = totalExpected > 0 ? Math.round((filledSlots / totalExpected) * 1000) / 10 : 0;
+        scoreSum += dailyScore;
+      }
+
+      const avgSiteScore = dates.length > 0 ? Math.round(scoreSum / dates.length) : 0;
+      return {
+        companyId,
+        companyName: company.companyName,
+        avgSiteScore,
+      };
+    });
+
+    rows.sort((a, b) => String(a.companyName || "").localeCompare(String(b.companyName || "")));
     res.json(rows);
   } catch (err) { next(err); }
 });
@@ -1842,6 +2087,29 @@ router.delete("/rooms/:id", async (req, res, next) => {
 
 router.get("/checklists", async (req, res, next) => {
   try {
+    const qCid = req.query.companyId;
+    let companyCond, companyParams;
+    
+    // Support multi-company queries for employees assigned to multiple companies
+    if (qCid === "all") {
+      companyCond = "IN (SELECT company_id FROM user_company_assignments WHERE user_id = ?)";
+      companyParams = [req.companyUser.id];
+    } else if (qCid) {
+      // Verify user has access to the requested company
+      const [[access]] = await pool.query(
+        `SELECT 1 FROM user_company_assignments WHERE user_id = ? AND company_id = ?`,
+        [req.companyUser.id, Number(qCid)]
+      );
+      if (!access) {
+        return res.status(403).json({ message: "Access denied to this company" });
+      }
+      companyCond = "= ?";
+      companyParams = [Number(qCid)];
+    } else {
+      companyCond = "= ?";
+      companyParams = [cid(req)];
+    }
+    
     // Use COALESCE so the query works even if new columns don't exist yet
     const [rows] = await pool.query(
       `SELECT ct.id, ct.template_name AS "templateName", ct.asset_type AS "assetType",
@@ -1849,15 +2117,16 @@ router.get("/checklists", async (req, res, next) => {
               ct.category, ct.description, ct.frequency, ct.shift, ct.status,
               ct.shift_id AS "shiftId", s.name AS "shiftName",
               ct.questions, ct.created_at AS "createdAt",
+              ct.company_id AS "companyId",
               (CASE WHEN ct.questions IS NOT NULL
                  THEN jsonb_array_length(ct.questions)
                  ELSE (SELECT COUNT(*)::int FROM checklist_template_questions ctq WHERE ctq.template_id = ct.id)
                END) AS "questionCount"
        FROM checklist_templates ct
        LEFT JOIN shifts s ON s.id = ct.shift_id
-       WHERE ct.company_id = ?
+       WHERE ct.company_id ${companyCond}
        ORDER BY ct.template_name`,
-      [cid(req)]
+      companyParams
     ).catch(() => [[]]);
 
     const allRows = rows || [];
@@ -1881,8 +2150,8 @@ router.get("/checklists", async (req, res, next) => {
          LEFT JOIN buildings b ON b.id = ct.building_id
          LEFT JOIN floors f ON f.id = ct.floor_id
          LEFT JOIN rooms r ON r.id = ct.room_id
-         WHERE ct.company_id = ?`,
-        [cid(req)]
+         WHERE ct.company_id ${companyCond}`,
+        companyParams
       );
       for (const e of extras) {
         let customHours = [];
@@ -3067,9 +3336,28 @@ router.get("/logsheet-templates/entries/recent", async (req, res, next) => {
 router.get("/checklist-submissions/recent", async (req, res, next) => {
   try {
     const companyId = cid(req);
-    const { date } = req.query;
+    const { date, companyIds: rawCompanyIds } = req.query;
+    
+    // Support multi-company aggregation for employees with multiple company assignments
+    let targetCompanyIds = [companyId];
+    if (rawCompanyIds) {
+      const requestedIds = rawCompanyIds.split(",").map(id => Number(id.trim())).filter(id => !isNaN(id) && id > 0);
+      if (requestedIds.length > 0) {
+        // Verify user has access to all requested companies
+        const accessible = await getAccessibleCompanies(req.companyUser.id, companyId);
+        const accessibleIds = accessible.map(c => c.id);
+        targetCompanyIds = requestedIds.filter(id => accessibleIds.includes(id));
+        if (targetCompanyIds.length === 0) {
+          return res.json([]);
+        }
+      }
+    }
+    
+    const idPH = targetCompanyIds.map(() => "?").join(",");
     const SELECT = `SELECT cs.id, cs.submitted_at AS "submittedAt",
               ct.template_name AS "templateName", ct.id AS "templateId",
+              ct.company_id AS "companyId",
+              c.company_name AS "companyName",
               a.asset_name AS "assetName", a.id AS "assetId",
               COALESCE(loc.name, NULLIF(TRIM(CONCAT_WS(', ', a.building, a.floor, a.room)), '')) AS "locationName",
               r.room_name AS "roomName",
@@ -3078,6 +3366,7 @@ router.get("/checklist-submissions/recent", async (req, res, next) => {
               cu.full_name AS "submittedBy"
        FROM checklist_submissions cs
        LEFT JOIN checklist_templates ct ON ct.id = cs.template_id
+       LEFT JOIN companies c ON c.id = ct.company_id
        LEFT JOIN assets a ON a.id = cs.asset_id
        LEFT JOIN locations loc ON loc.id = ct.location_id
        LEFT JOIN rooms r ON r.id = ct.room_id
@@ -3086,15 +3375,15 @@ router.get("/checklist-submissions/recent", async (req, res, next) => {
     if (date) {
       // Fetch all submissions for the specific dashboard date
       [rows] = await pool.query(
-        `${SELECT} WHERE ct.company_id = ? AND cs.submitted_at::date = ?::date
+        `${SELECT} WHERE ct.company_id IN (${idPH}) AND cs.submitted_at::date = ?::date
          ORDER BY cs.submitted_at DESC NULLS LAST`,
-        [companyId, date]
+        [...targetCompanyIds, date]
       );
     } else {
       [rows] = await pool.query(
-        `${SELECT} WHERE ct.company_id = ?
+        `${SELECT} WHERE ct.company_id IN (${idPH})
          ORDER BY cs.submitted_at DESC NULLS LAST LIMIT 50`,
-        [companyId]
+        targetCompanyIds
       );
     }
     res.json(rows);
@@ -5370,17 +5659,16 @@ router.post("/switch-company", async (req, res, next) => {
 router.get("/combined-dashboard", async (req, res, next) => {
   try {
     const userId = req.companyUser.id;
-    const { date } = req.query;
+    const primaryCompanyId = cid(req);
+    const { date, companyIds: rawCompanyIds } = req.query;
     const targetDate = date || new Date().toISOString().slice(0, 10);
 
-    const [companies] = await pool.query(
-      `SELECT c.id, c.company_name AS "companyName", c.enabled_modules AS "enabledModules"
-       FROM user_company_assignments uca
-       JOIN companies c ON c.id = uca.company_id
-       WHERE uca.user_id = ?
-       ORDER BY c.company_name`,
-      [userId]
-    );
+    const accessible = await getAccessibleCompanies(userId, primaryCompanyId);
+    const requestedIds = parseCompanyIdsCsv(rawCompanyIds);
+    const companies = requestedIds.length > 0
+      ? accessible.filter((c) => requestedIds.includes(Number(c.id)))
+      : accessible;
+
     if (companies.length === 0) return res.json({ companies: [], totals: {} });
 
     const companyIds = companies.map(c => c.id);
@@ -5401,12 +5689,60 @@ router.get("/combined-dashboard", async (req, res, next) => {
     ] = await Promise.all([
       // Per-company stats
       Promise.all(companies.map(async (co) => {
+        const [templates] = await pool.query(
+          `SELECT ct.id, ct.template_name AS "templateName", ct.frequency,
+                  ct.hourly_interval AS "hourlyInterval",
+                  ct.start_time AS "startTime", ct.end_time AS "endTime",
+                  COALESCE(r.room_name, '') AS "roomName"
+           FROM checklist_templates ct
+           LEFT JOIN rooms r ON r.id = ct.room_id
+           WHERE ct.company_id = ?
+             AND COALESCE(ct.status, 'active') != 'inactive'
+             AND ct.is_active = 1`,
+          [co.id]
+        );
+
+        const [subCounts] = await pool.query(
+          `SELECT cs.template_id AS "templateId", COUNT(*) AS "count"
+           FROM checklist_submissions cs
+           JOIN checklist_templates ct ON ct.id = cs.template_id
+           WHERE ct.company_id = ?
+             AND cs.submitted_at::date = ?::date
+             AND COALESCE(ct.status, 'active') != 'inactive'
+             AND cs.status NOT IN ('rejected')
+             AND (
+               LOWER(COALESCE(ct.frequency, 'daily')) != 'hourly'
+               OR ct.start_time IS NULL
+               OR ct.end_time IS NULL
+               OR (
+                 (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
+                   >= (EXTRACT(HOUR FROM ct.start_time::time) * 60 + EXTRACT(MINUTE FROM ct.start_time::time))
+                 AND (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
+                   < (EXTRACT(HOUR FROM ct.end_time::time) * 60 + EXTRACT(MINUTE FROM ct.end_time::time))
+               )
+             )
+           GROUP BY cs.template_id`,
+          [co.id, targetDate]
+        );
+
+        const expectedByTemplate = {};
+        let totalExpected = 0;
+        for (const t of templates) {
+          const exp = expectedSlotsForTemplate(t);
+          expectedByTemplate[Number(t.id)] = exp;
+          totalExpected += exp;
+        }
+
+        let filledSlots = 0;
+        for (const sc of subCounts) {
+          const exp = expectedByTemplate[Number(sc.templateId)] ?? 1;
+          filledSlots += Math.min(Number(sc.count) || 0, exp);
+        }
+
         const [[row]] = await pool.query(
           `SELECT
-             (SELECT COUNT(*) FROM checklist_templates WHERE company_id = ? AND COALESCE(status,'active') != 'inactive') AS total_tpls,
-             (SELECT COUNT(DISTINCT cs.template_id) FROM checklist_submissions cs JOIN checklist_templates ct ON ct.id = cs.template_id WHERE ct.company_id = ? AND cs.submitted_at::date = ?::date AND cs.status NOT IN ('rejected')) AS filled_today,
              (SELECT COUNT(*) FROM locations WHERE company_id = ? AND LOWER(COALESCE(status,'active')) = 'active') AS locations,
-             (SELECT COUNT(*) FROM soft_service_requests WHERE company_id = ? AND status NOT IN ('closed','resolved')) AS open_soft,
+             (SELECT COUNT(*) FROM soft_service_requests WHERE company_id = ? AND LOWER(TRIM(COALESCE(status, ''))) NOT IN ('closed','resolved','cancelled','rejected')) AS open_soft,
              (SELECT COUNT(*) FROM assets WHERE company_id = ?) AS total_assets,
              (SELECT COUNT(*) FROM assets WHERE company_id = ? AND status = 'Active') AS active_assets,
              (SELECT COUNT(*) FROM departments WHERE company_id = ?) AS total_departments,
@@ -5415,20 +5751,19 @@ router.get("/combined-dashboard", async (req, res, next) => {
              (SELECT COUNT(*) FROM flags WHERE company_id = ? AND status IN ('open','in_progress')) AS open_flags,
              (SELECT COUNT(*) FROM flags WHERE company_id = ? AND severity = 'critical' AND status IN ('open','in_progress')) AS critical_flags,
              (SELECT COUNT(*) FROM logsheet_templates WHERE company_id = ?) AS total_logsheet_tpls,
-             (SELECT COUNT(*) FROM logsheet_entries le JOIN logsheet_templates lt ON lt.id = le.template_id WHERE lt.company_id = ? AND le.submitted_at::date = ?::date) AS filled_logsheets_today`,
-          [co.id, co.id, targetDate, co.id, co.id, co.id, co.id, co.id, co.id, co.id, co.id, co.id, co.id, co.id, targetDate]
+             (SELECT COUNT(DISTINCT le.template_id) FROM logsheet_entries le JOIN logsheet_templates lt ON lt.id = le.template_id WHERE lt.company_id = ? AND le.submitted_at::date = ?::date) AS filled_logsheets_today`,
+           [co.id, co.id, co.id, co.id, co.id, co.id, co.id, co.id, co.id, co.id, co.id, targetDate]
         );
-        const totalTpls   = Number(row?.total_tpls   ?? 0);
-        const filledToday = Number(row?.filled_today  ?? 0);
         return {
           id: co.id,
           companyName: co.companyName,
+          checklistTemplates: templates,
           enabledModules: typeof co.enabledModules === "string"
             ? JSON.parse(co.enabledModules || "null")
             : co.enabledModules,
-          totalTemplates:        totalTpls,
-          filledToday,
-          siteScore:             totalTpls > 0 ? Math.round((filledToday / totalTpls) * 100) : 0,
+          totalTemplates:        totalExpected,
+          filledToday:           filledSlots,
+          siteScore:             totalExpected > 0 ? Math.round((filledSlots / totalExpected) * 100) : 0,
           activeLocations:       Number(row?.locations      ?? 0),
           openSoftRequests:      Number(row?.open_soft      ?? 0),
           totalAssets:           Number(row?.total_assets   ?? 0),
@@ -5478,7 +5813,8 @@ router.get("/combined-dashboard", async (req, res, next) => {
          FROM soft_service_requests ssr
          JOIN companies c ON c.id = ssr.company_id
          LEFT JOIN company_users cu ON cu.id = ssr.raised_by
-         WHERE ssr.company_id IN (${idPH}) AND ssr.status NOT IN ('closed','resolved')
+         WHERE ssr.company_id IN (${idPH})
+           AND LOWER(TRIM(COALESCE(ssr.status, ''))) NOT IN ('closed','resolved','cancelled','rejected')
          ORDER BY ssr.created_at DESC LIMIT 20`,
         companyIds
       )),
@@ -5495,7 +5831,7 @@ router.get("/combined-dashboard", async (req, res, next) => {
       )),
       // Recent checklist submissions for the target date
       safe(() => pool.query(
-        `SELECT cs.id, cs.submitted_at AS "submittedAt", cs.status,
+        `SELECT cs.id, cs.template_id AS "templateId", cs.submitted_at AS "submittedAt", cs.status,
                 ct.template_name AS "templateName", ct.company_id AS "companyId",
                 c.company_name AS "companyName",
                 cu.full_name AS "submittedBy",

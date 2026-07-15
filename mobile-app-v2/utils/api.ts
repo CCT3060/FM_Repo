@@ -420,6 +420,7 @@ export async function submitChecklistAuth(payload: {
   latitude?: number | null;
   longitude?: number | null;
   locationAddress?: string | null;
+  overallRemark?: string;
 }): Promise<unknown> {
   return apiPost<unknown>('/api/template-assignments/submit-checklist', payload);
 }
