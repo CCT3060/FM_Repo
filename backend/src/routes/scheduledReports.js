@@ -80,92 +80,76 @@ function buildTransporter() {
 }
 
 /* â”€â”€ Helper: compute next send date â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* -- Helper: compute next send date (all times treated as IST, UTC+5:30) --- */
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000; // 19800000 ms
+
 function computeNextSend(frequency, sendTime, scheduledDay, scheduleConfig = {}) {
   const cfg = typeof scheduleConfig === "string" ? (JSON.parse(scheduleConfig || "{}") || {}) : (scheduleConfig || {});
   const [hours, minutes] = sendTime.split(":").map(Number);
-  const now = new Date();
-
+  const targetMins = hours * 60 + minutes;
+  const utcNow  = Date.now();
+  const istNow  = new Date(utcNow + IST_OFFSET_MS);
+  const istY    = istNow.getUTCFullYear();
+  const istMon  = istNow.getUTCMonth();
+  const istD    = istNow.getUTCDate();
+  const istDow  = istNow.getUTCDay();
+  const istCurMins = istNow.getUTCHours() * 60 + istNow.getUTCMinutes();
+  const makeUTC = (y, mo, d, h, m) => new Date(Date.UTC(y, mo, d, h, m, 0, 0) - IST_OFFSET_MS);
+  const addDays = (y, mo, d, n) => { const dt = new Date(Date.UTC(y, mo, d + n)); return { y: dt.getUTCFullYear(), mo: dt.getUTCMonth(), d: dt.getUTCDate() }; };
   switch (frequency) {
     case "daily": {
-      const next = new Date(now);
-      next.setHours(hours, minutes, 0, 0);
-      if (next <= now) next.setDate(next.getDate() + 1);
-      return next;
+      const todayTarget = makeUTC(istY, istMon, istD, hours, minutes);
+      if (todayTarget > new Date(utcNow)) return todayTarget;
+      const { y, mo, d } = addDays(istY, istMon, istD, 1);
+      return makeUTC(y, mo, d, hours, minutes);
     }
     case "weekly": {
       const weeklyDays = cfg.weeklyDays;
       if (weeklyDays && weeklyDays.length > 0) {
         const sortedDays = [...weeklyDays].map(Number).sort((a, b) => a - b);
-        const todayDay = now.getDay();
-        const todayMins = now.getHours() * 60 + now.getMinutes();
-        const targetMins = hours * 60 + minutes;
         let bestDiff = null;
-        for (const d of sortedDays) {
-          const dayDiff = (d - todayDay + 7) % 7;
-          // Skip if today and target time already passed
-          if (dayDiff === 0 && targetMins <= todayMins) continue;
+        for (const wd of sortedDays) {
+          const dayDiff = (wd - istDow + 7) % 7;
+          if (dayDiff === 0 && targetMins <= istCurMins) continue;
           if (bestDiff === null || dayDiff < bestDiff) bestDiff = dayDiff;
         }
-        // No future slot this week â€” go to first selected day next week
-        if (bestDiff === null) {
-          const firstDay = sortedDays[0];
-          bestDiff = (firstDay - todayDay + 7) % 7 || 7;
-        }
-        const next = new Date(now);
-        next.setDate(now.getDate() + bestDiff);
-        next.setHours(hours, minutes, 0, 0);
-        return next;
+        if (bestDiff === null) { const firstDay = sortedDays[0]; bestDiff = (firstDay - istDow + 7) % 7 || 7; }
+        const { y, mo, d } = addDays(istY, istMon, istD, bestDiff);
+        return makeUTC(y, mo, d, hours, minutes);
       } else {
-        // Legacy: single day
         const targetDay = scheduledDay != null ? Number(scheduledDay) : 1;
-        const diff = (targetDay - now.getDay() + 7) % 7 || 7;
-        const next = new Date(now);
-        next.setDate(now.getDate() + diff);
-        next.setHours(hours, minutes, 0, 0);
-        return next;
+        const diff = (targetDay - istDow + 7) % 7 || 7;
+        const { y, mo, d } = addDays(istY, istMon, istD, diff);
+        return makeUTC(y, mo, d, hours, minutes);
       }
     }
     case "monthly": {
       const wantDay = Number(scheduledDay || 1);
-      // Clamp to last day of target month to handle 29/30/31
-      const clampDay = (year, month, d) => {
-        const lastDay = new Date(year, month + 1, 0).getDate();
-        return Math.min(d, lastDay);
-      };
-      const next = new Date(now);
-      next.setDate(clampDay(next.getFullYear(), next.getMonth(), wantDay));
-      next.setHours(hours, minutes, 0, 0);
-      if (next <= now) {
-        next.setMonth(next.getMonth() + 1);
-        next.setDate(clampDay(next.getFullYear(), next.getMonth(), wantDay));
-        next.setHours(hours, minutes, 0, 0);
-      }
-      return next;
+      const clampDay = (y, mo, day) => { const last = new Date(Date.UTC(y, mo + 1, 0)).getUTCDate(); return Math.min(day, last); };
+      let clamped   = clampDay(istY, istMon, wantDay);
+      let candidate = makeUTC(istY, istMon, clamped, hours, minutes);
+      if (candidate > new Date(utcNow)) return candidate;
+      const nm = new Date(Date.UTC(istY, istMon + 1, 1));
+      const ny = nm.getUTCFullYear(), nmo = nm.getUTCMonth();
+      clamped = clampDay(ny, nmo, wantDay);
+      return makeUTC(ny, nmo, clamped, hours, minutes);
     }
     case "quarterly": {
       const intervalMonths = cfg.quarterlyMonths ? Number(cfg.quarterlyMonths) : 3;
-      const day = scheduledDay || cfg.monthlyDay || 1;
-      const next = new Date(now);
-      next.setMonth(next.getMonth() + intervalMonths);
-      next.setDate(day);
-      next.setHours(hours, minutes, 0, 0);
-      return next;
+      const day = Number(scheduledDay || cfg.monthlyDay || 1);
+      const nm  = new Date(Date.UTC(istY, istMon + intervalMonths, 1));
+      return makeUTC(nm.getUTCFullYear(), nm.getUTCMonth(), day, hours, minutes);
     }
     case "yearly": {
-      const month = cfg.yearlyMonth ? Number(cfg.yearlyMonth) - 1 : now.getMonth();
-      const day   = cfg.yearlyDay  ? Number(cfg.yearlyDay)  : (scheduledDay || 1);
-      const next  = new Date(now);
-      next.setMonth(month, day);
-      next.setHours(hours, minutes, 0, 0);
-      if (next <= now) next.setFullYear(next.getFullYear() + 1, month, day);
-      next.setHours(hours, minutes, 0, 0);
-      return next;
+      const month = cfg.yearlyMonth ? Number(cfg.yearlyMonth) - 1 : istMon;
+      const day   = cfg.yearlyDay  ? Number(cfg.yearlyDay)  : Number(scheduledDay || 1);
+      let candidate = makeUTC(istY, month, day, hours, minutes);
+      if (candidate <= new Date(utcNow)) { candidate = makeUTC(istY + 1, month, day, hours, minutes); }
+      return candidate;
     }
     default: {
-      const next = new Date(now);
-      next.setDate(next.getDate() + 1);
-      next.setHours(hours, minutes, 0, 0);
-      return next;
+      const { y, mo, d } = addDays(istY, istMon, istD, 1);
+      return makeUTC(y, mo, d, hours, minutes);
     }
   }
 }
