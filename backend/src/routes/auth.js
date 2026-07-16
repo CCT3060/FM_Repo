@@ -2,6 +2,7 @@ import { Router } from "express";
 import { body } from "express-validator";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import { createHash, timingSafeEqual } from "crypto";
 import pool from "../db.js";
 import { validate } from "../validators.js";
 
@@ -58,5 +59,37 @@ router.post(
     }
   }
 );
+
+/* ── POST /root-login — validate root credentials from env, return JWT ────── */
+router.post("/root-login", async (req, res) => {
+  try {
+    const { username, password } = req.body || {};
+    if (!username || !password) {
+      return res.status(400).json({ message: "Username and password are required" });
+    }
+
+    const expectedUser = process.env.ROOT_USERNAME;
+    const expectedPass = process.env.ROOT_PASSWORD;
+
+    if (!expectedUser || !expectedPass) {
+      return res.status(503).json({ message: "Root credentials not configured on server" });
+    }
+
+    // Use SHA-256 hashes of equal length so timingSafeEqual never throws on
+    // mismatched buffer sizes (avoids leaking length information via error).
+    const hash = (s) => createHash("sha256").update(String(s)).digest();
+    const userOk = timingSafeEqual(hash(username), hash(expectedUser));
+    const passOk = timingSafeEqual(hash(password), hash(expectedPass));
+
+    if (!userOk || !passOk) {
+      return res.status(401).json({ message: "Invalid username or password" });
+    }
+
+    const token = jwt.sign({ role: "root" }, process.env.JWT_SECRET, { expiresIn: "8h" });
+    return res.json({ token });
+  } catch (err) {
+    return res.status(500).json({ message: "Server error" });
+  }
+});
 
 export default router;

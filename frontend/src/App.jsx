@@ -14,13 +14,10 @@ import "./styles.css";
 import {
   getClients, createClient, updateClient, deleteClient,
   getUsers, createUser, updateUser, deleteUser,
+  rootLogin,
 } from "./api";
 
 const ROOT_AUTH_KEY = "root_portal_auth";
-const ROOT_CREDENTIALS = {
-  username: "rootadmin",
-  password: "Root@12345",
-};
 
 const normalizeClient = (client = {}) => {
   const fallbackName = (client.clientName || client.client_name || client.company || client.company_name || "").trim();
@@ -44,17 +41,24 @@ const normalizeUser = (user = {}) => ({
 const RootLogin = ({ onLogin }) => {
   const [form, setForm] = useState({ username: "", password: "" });
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    if (
-      form.username.trim() === ROOT_CREDENTIALS.username &&
-      form.password === ROOT_CREDENTIALS.password
-    ) {
-      onLogin();
-      return;
+    setError("");
+    setLoading(true);
+    try {
+      const data = await rootLogin({ username: form.username.trim(), password: form.password });
+      if (data?.token) {
+        onLogin(data.token);
+      } else {
+        setError("Invalid username or password");
+      }
+    } catch (err) {
+      setError(err?.message || "Invalid username or password");
+    } finally {
+      setLoading(false);
     }
-    setError("Invalid username or password");
   };
 
   return (
@@ -84,7 +88,9 @@ const RootLogin = ({ onLogin }) => {
             placeholder="Enter password"
           />
         </div>
-        <button type="submit" className="btn-submit" style={{ width: "100%" }}>Login</button>
+        <button type="submit" className="btn-submit" style={{ width: "100%" }} disabled={loading}>
+          {loading ? "Verifying…" : "Login"}
+        </button>
       </form>
     </div>
   );
@@ -243,13 +249,15 @@ const AdminShell = ({ onSignOut }) => {
 function App() {
   const [isRootAuthed, setIsRootAuthed] = useState(() => localStorage.getItem(ROOT_AUTH_KEY) === "1");
 
-  const handleRootLogin = () => {
+  const handleRootLogin = (token) => {
     localStorage.setItem(ROOT_AUTH_KEY, "1");
+    localStorage.setItem(ROOT_AUTH_KEY + "_token", token);
     setIsRootAuthed(true);
   };
 
   const handleRootSignOut = () => {
     localStorage.removeItem(ROOT_AUTH_KEY);
+    localStorage.removeItem(ROOT_AUTH_KEY + "_token");
     setIsRootAuthed(false);
   };
 

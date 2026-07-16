@@ -471,8 +471,50 @@ async function generatePDF(companyId) {
   const pendingSlots  = Math.max(0, totalExpected - filledSlots);
   const siteScorePct  = totalExpected > 0 ? Math.round(filledSlots / totalExpected * 1000) / 10 : 0;
 
-  // Bar chart — today only with correct slot-based score already computed
-  const siteScoreRows = [{ date: todayDbStr, score: siteScorePct }];
+  // Bar chart — last 7 days (today + 6 previous days) using same slot logic as site-score-history endpoint
+  const _sevenDaysAgo = (() => {
+    const d = new Date(todayDbStr + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() - 6);
+    return d.toISOString().slice(0, 10);
+  })();
+  const [hist7Counts] = await pool.query(
+    `SELECT cs.template_id AS "templateId",
+            cs.submitted_at::date::text AS "date",
+            COUNT(*) AS "count"
+     FROM checklist_submissions cs
+     JOIN checklist_templates ct ON ct.id = cs.template_id
+     WHERE ct.company_id = ?
+       AND cs.submitted_at::date BETWEEN ?::date AND ?::date
+       AND cs.status NOT IN ('rejected')
+       AND (
+         LOWER(COALESCE(ct.frequency, 'daily')) != 'hourly'
+         OR ct.start_time IS NULL OR ct.end_time IS NULL
+         OR (
+           (EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at))
+             >= (EXTRACT(HOUR FROM ct.start_time::time)*60+EXTRACT(MINUTE FROM ct.start_time::time))
+           AND (EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at))
+             < (EXTRACT(HOUR FROM ct.end_time::time)*60+EXTRACT(MINUTE FROM ct.end_time::time))
+         )
+       )
+     GROUP BY cs.template_id, cs.submitted_at::date`,
+    [companyId, _sevenDaysAgo, todayDbStr]
+  );
+  const _hist7Map = {};
+  for (const r of hist7Counts) {
+    if (!_hist7Map[r.date]) _hist7Map[r.date] = {};
+    _hist7Map[r.date][r.templateId] = Number(r.count) || 0;
+  }
+  const siteScoreRows = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(todayDbStr + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() - i);
+    const dateStr = d.toISOString().slice(0, 10);
+    let dayFilled = 0, dayTotal = 0;
+    for (const t of templates) {
+      const exp = tplExpected[t.id] ?? 1;
+      dayTotal += exp;
+      dayFilled += Math.min((_hist7Map[dateStr]?.[t.id]) || 0, exp);
+    }
+    siteScoreRows.push({ date: dateStr, score: dayTotal > 0 ? Math.round(dayFilled / dayTotal * 1000) / 10 : 0 });
+  }
 
   // Helper: format minutes → 'H:MM AM/PM'
   const fmtTime = (mins) => {
@@ -772,7 +814,7 @@ async function generatePDF(companyId) {
       if (y + sectionH > H - 40) { doc.addPage(); y = 32; }
       doc.roundedRect(M, y, IW, sectionH, 6).fillAndStroke("#fff", "#e2e8f0");
       doc.fillColor(DARK).fontSize(11).font("Helvetica-Bold").text("Site Score Overview", M + 12, y + 10);
-      doc.fillColor(LGRAY).fontSize(8).font("Helvetica").text("Today (" + todayDbStr + ") \u2014 Slot-based completion rate", M + 12, y + 24);
+      doc.fillColor(LGRAY).fontSize(8).font("Helvetica").text("Last 7 days (" + _sevenDaysAgo + " to " + todayDbStr + ") \u2014 Slot-based completion rate", M + 12, y + 24);
       const barAreaX = M + chartPad + 28;
       const barAreaW = IW - chartPad * 2 - 28;
       const barAreaY = y + 38;

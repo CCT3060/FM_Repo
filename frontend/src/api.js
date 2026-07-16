@@ -44,6 +44,7 @@ export const deleteUser = (id) => request("DELETE", `/api/users/${id}`);
 
 // ── Auth / Company Portal ─────────────────────────────────────────────────────
 export const login = (data) => request("POST", "/api/auth/login", data);
+export const rootLogin = (data) => request("POST", "/api/auth/root-login", data);
 
 export const getCompanies = (token) => request("GET", "/api/companies", undefined, { authToken: token });
 export const createCompany = (token, data) => request("POST", "/api/companies", data, { authToken: token });

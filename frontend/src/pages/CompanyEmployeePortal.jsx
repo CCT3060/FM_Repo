@@ -4955,13 +4955,15 @@ export default function CompanyEmployeePortal() {
   // Site Score chart states
   const [siteScoreHistory, setSiteScoreHistory] = useState(null);
   const [siteScoreChartRange, setSiteScoreChartRange] = useState(() => {
-    const today = new Date().toISOString().slice(0, 10);
-    return { startDate: today, endDate: today };
+    const end = new Date(); const endDate = end.toISOString().slice(0, 10);
+    const start = new Date(end); start.setDate(start.getDate() - 6);
+    return { startDate: start.toISOString().slice(0, 10), endDate };
   });
   const [companiesSiteScore, setCompaniesSiteScore] = useState(null);
   const [companiesSiteScoreRange, setCompaniesSiteScoreRange] = useState(() => {
-    const today = new Date().toISOString().slice(0, 10);
-    return { startDate: today, endDate: today };
+    const end = new Date(); const endDate = end.toISOString().slice(0, 10);
+    const start = new Date(end); start.setDate(start.getDate() - 6);
+    return { startDate: start.toISOString().slice(0, 10), endDate };
   });
   // Global dashboard date filter — all cards show data for this date (default: today)
   const [dashboardDate, setDashboardDate] = useState(() => new Date().toISOString().slice(0, 10));
@@ -5278,8 +5280,10 @@ export default function CompanyEmployeePortal() {
   // ── Sync site score chart range with dashboard date picker ────────────────
   useEffect(() => {
     if (!token) return;
-    setSiteScoreChartRange({ startDate: dashboardDate, endDate: dashboardDate });
-    setCompaniesSiteScoreRange({ startDate: dashboardDate, endDate: dashboardDate });
+    const _chartEnd = dashboardDate;
+    const _chartStart = (() => { const d = new Date(_chartEnd + 'T00:00:00'); d.setDate(d.getDate() - 6); return d.toISOString().slice(0, 10); })();
+    setSiteScoreChartRange({ startDate: _chartStart, endDate: _chartEnd });
+    setCompaniesSiteScoreRange({ startDate: _chartStart, endDate: _chartEnd });
     // Re-fetch checklists for the selected dashboard date
     setRecentChecklistsLoading(true);
     // For combined dashboard, pass companyIds to aggregate submissions from all assigned companies
@@ -5432,11 +5436,11 @@ export default function CompanyEmployeePortal() {
       }
     }).catch(() => {});
 
-    const id = setInterval(poll, 15000);
+    const id = setInterval(poll, 60000);
     return () => clearInterval(id);
   }, [token, currentUser?.role, pushToast, playAlertSound, ringBell]);
 
-  // ── Poll for new checklist/logsheet assignments every 15 s (all roles) ──
+  // ── Poll for new checklist/logsheet assignments every 60 s (all roles) ──
   useEffect(() => {
     if (!token) return;
     const pollAssignments = async () => {
@@ -5459,7 +5463,7 @@ export default function CompanyEmployeePortal() {
       setMyAssignments(data ?? []);
     }).catch(() => {});
 
-    const id = setInterval(pollAssignments, 15000);
+    const id = setInterval(pollAssignments, 60000);
     return () => clearInterval(id);
   }, [token, pushToast, playAlertSound]);
 
@@ -6735,7 +6739,7 @@ export default function CompanyEmployeePortal() {
               <div>
                 <div style={{ marginBottom: "24px" }}>
                   <h1 style={{ fontSize: "26px", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px", marginBottom: "4px" }}>
-                    Welcome back, {(currentUser.fullName || "").split(" ")[0]} 👋
+                    Welcome, {(currentUser.fullName || "").split(" ")[0]} 👋
                   </h1>
                   <p style={{ color: "#64748b", fontSize: "14px" }}>{currentUser.companyName} — Supervisor Portal &nbsp;·&nbsp; {new Date().toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}</p>
                 </div>
@@ -6835,7 +6839,7 @@ export default function CompanyEmployeePortal() {
               <div>
                 <div style={{ marginBottom: "24px" }}>
                   <h1 style={{ fontSize: "26px", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px", marginBottom: "4px" }}>
-                    Welcome back, {(currentUser.fullName || "").split(" ")[0]} 👋
+                    Welcome, {(currentUser.fullName || "").split(" ")[0]} 👋
                   </h1>
                   <p style={{ color: "#64748b", fontSize: "14px" }}>{currentUser.companyName} — {new Date().toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}</p>
                 </div>
@@ -7556,7 +7560,7 @@ export default function CompanyEmployeePortal() {
                 <div style={{ marginBottom: "24px", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "16px", flexWrap: "wrap" }}>
                   <div>
                     <h1 style={{ fontSize: "26px", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px", marginBottom: "4px" }}>
-                      Welcome back, {(currentUser.fullName || "").split(" ")[0]} 👋
+                      Welcome, {(currentUser.fullName || "").split(" ")[0]} 👋
                     </h1>
                     <p style={{ color: "#64748b", fontSize: "14px" }}>{currentUser.companyName} — {new Date(dashboardDate + "T00:00:00").toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}</p>
                   </div>
