@@ -705,7 +705,7 @@ async function generatePDF(companyId) {
        .text(dateShort + ", " + timeStr, M, 10)
        .text("FM App", W - M - 40, 10, { width: 40, align: "right" });
     doc.fillColor("#fff").fontSize(18).font("Helvetica-Bold")
-       .text("Welcome back, " + companyName, M, 22);
+       .text("Welcome " + companyName, M, 22);
     let y = 68;
 
     // Company + date line
