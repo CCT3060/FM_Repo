@@ -479,20 +479,42 @@ router.get("/dashboard/chart-stats", async (req, res, next) => {
       catch (e) { console.error("[chart-stats]", e.message); return fallback; }
     };
 
+    // Generate date series in UTC to avoid timezone date-shift edge cases.
+    const dates = [];
+    const [sy, sm, sd] = dateFrom.split('-').map(Number);
+    const [ey, em, ed] = dateTo.split('-').map(Number);
+    for (let ms = Date.UTC(sy, sm - 1, sd), endMs = Date.UTC(ey, em - 1, ed); ms <= endMs; ms += 86400000) {
+      dates.push(new Date(ms).toISOString().slice(0, 10));
+    }
+
+    // Fetch frozen snapshots for past dates in the range.
+    // Snapshotted dates use stored totals so newly-added checklists never
+    // retroactively change historical counts.
+    const [snapRows] = await safe(() => pool.query(
+      `SELECT snapshot_date::text AS date,
+              total_expected_slots AS "totalExpected",
+              filled_slots         AS "filledSlots"
+       FROM daily_checklist_snapshots
+       WHERE company_id = ?
+         AND snapshot_date BETWEEN ?::date AND ?::date`,
+      [companyId, dateFrom, dateTo]
+    ), [[]]);
+    const snapshotMap = {};
+    for (const snap of snapRows) {
+      snapshotMap[snap.date] = {
+        totalExpected: Number(snap.totalExpected),
+        filledSlots:   Number(snap.filledSlots),
+      };
+    }
+
+    // Dates without a frozen snapshot (today or pre-snapshot legacy dates).
+    const liveDates = dates.filter(d => !snapshotMap[d]);
+
     const [[ltRows]] = await safe(() => pool.query(
       `SELECT COUNT(*) AS cnt FROM logsheet_templates WHERE company_id = ?`,
       [companyId]
     ), [[{ cnt: 0 }]]);
-    const [templates] = await safe(() => pool.query(
-      `SELECT id, frequency, hourly_interval AS "hourlyInterval",
-              start_time AS "startTime", end_time AS "endTime"
-       FROM checklist_templates
-       WHERE company_id = ?
-         AND COALESCE(status, 'active') != 'inactive'`,
-      [companyId]
-    ), [[]]);
     const [[subLSRows]] = await safe(() => pool.query(
-      // logsheet_entries.submitted_at is NOT NULL — safe to cast directly
       `SELECT COUNT(*) AS cnt
        FROM logsheet_entries le
        JOIN logsheet_templates lt ON lt.id = le.template_id
@@ -500,31 +522,57 @@ router.get("/dashboard/chart-stats", async (req, res, next) => {
          AND le.submitted_at::date BETWEEN ? AND ?`,
       [companyId, dateFrom, dateTo]
     ), [[{ cnt: 0 }]]);
-    const [subCounts] = await safe(() => pool.query(
-      // Mirrors site-score-history so dashboard cards and site-score chart match for any selected date.
-      `SELECT cs.template_id AS "templateId",
-              cs.submitted_at::date::text AS "date",
-              COUNT(*) AS "count"
-         FROM checklist_submissions cs
-         JOIN checklist_templates ct ON ct.id = cs.template_id
-        WHERE ct.company_id = ?
-          AND COALESCE(ct.status, 'active') != 'inactive'
-          AND cs.submitted_at::date BETWEEN ?::date AND ?::date
-          AND cs.status NOT IN ('rejected')
-          AND (
-            LOWER(COALESCE(ct.frequency, 'daily')) != 'hourly'
-            OR ct.start_time IS NULL
-            OR ct.end_time IS NULL
-            OR (
-              (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
-                >= (EXTRACT(HOUR FROM ct.start_time::time) * 60 + EXTRACT(MINUTE FROM ct.start_time::time))
-              AND (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
-                < (EXTRACT(HOUR FROM ct.end_time::time) * 60 + EXTRACT(MINUTE FROM ct.end_time::time))
+
+    let liveTemplates = [];
+    let countMap = {};
+
+    if (liveDates.length > 0) {
+      const liveStart = liveDates[0];
+      const liveEnd   = liveDates[liveDates.length - 1];
+
+      // Fetch active templates including created_at so we can filter per-date:
+      // a template created after a given live date is excluded from that date's totals.
+      const [tmplRows] = await safe(() => pool.query(
+        `SELECT id, frequency, hourly_interval AS "hourlyInterval",
+                start_time AS "startTime", end_time AS "endTime",
+                created_at::date::text AS "createdDate"
+         FROM checklist_templates
+         WHERE company_id = ?
+           AND COALESCE(status, 'active') != 'inactive'`,
+        [companyId]
+      ), [[]]);
+      liveTemplates = tmplRows;
+
+      const [subCounts] = await safe(() => pool.query(
+        `SELECT cs.template_id AS "templateId",
+                cs.submitted_at::date::text AS "date",
+                COUNT(*) AS "count"
+           FROM checklist_submissions cs
+           JOIN checklist_templates ct ON ct.id = cs.template_id
+          WHERE ct.company_id = ?
+            AND COALESCE(ct.status, 'active') != 'inactive'
+            AND cs.submitted_at::date BETWEEN ?::date AND ?::date
+            AND cs.status NOT IN ('rejected')
+            AND (
+              LOWER(COALESCE(ct.frequency, 'daily')) != 'hourly'
+              OR ct.start_time IS NULL
+              OR ct.end_time IS NULL
+              OR (
+                (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
+                  >= (EXTRACT(HOUR FROM ct.start_time::time) * 60 + EXTRACT(MINUTE FROM ct.start_time::time))
+                AND (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
+                  < (EXTRACT(HOUR FROM ct.end_time::time) * 60 + EXTRACT(MINUTE FROM ct.end_time::time))
+              )
             )
-          )
-        GROUP BY cs.template_id, cs.submitted_at::date`,
-      [companyId, dateFrom, dateTo]
-    ), [[]]);
+          GROUP BY cs.template_id, cs.submitted_at::date`,
+        [companyId, liveStart, liveEnd]
+      ), [[]]);
+
+      for (const row of subCounts) {
+        if (!countMap[row.date]) countMap[row.date] = {};
+        countMap[row.date][row.templateId] = Number(row.count) || 0;
+      }
+    }
 
     function expectedSlotsForDate(t) {
       const freq = (t.frequency || 'Daily').toLowerCase();
@@ -541,25 +589,20 @@ router.get("/dashboard/chart-stats", async (req, res, next) => {
       return Math.max(1, Math.floor(1440 / (interval * 60)));
     }
 
-    // Generate date series in UTC to avoid timezone date-shift edge cases.
-    const dates = [];
-    const [sy, sm, sd] = dateFrom.split('-').map(Number);
-    const [ey, em, ed] = dateTo.split('-').map(Number);
-    for (let ms = Date.UTC(sy, sm - 1, sd), endMs = Date.UTC(ey, em - 1, ed); ms <= endMs; ms += 86400000) {
-      dates.push(new Date(ms).toISOString().slice(0, 10));
-    }
-
-    const countMap = {};
-    for (const row of subCounts) {
-      if (!countMap[row.date]) countMap[row.date] = {};
-      countMap[row.date][row.templateId] = Number(row.count) || 0;
-    }
-
     let totalChecklists = 0;
     let filledChecklists = 0;
+
     for (const dateStr of dates) {
-      for (const t of templates) {
-        const exp = expectedSlotsForDate(t, dateStr);
+      // Use frozen snapshot for past dates that have one.
+      if (snapshotMap[dateStr]) {
+        totalChecklists  += snapshotMap[dateStr].totalExpected;
+        filledChecklists += snapshotMap[dateStr].filledSlots;
+        continue;
+      }
+      // Live calculation: only include templates that existed on this date.
+      for (const t of liveTemplates) {
+        if (t.createdDate && t.createdDate > dateStr) continue;
+        const exp = expectedSlotsForDate(t);
         if (exp <= 0) continue;
         totalChecklists += exp;
         const actual = (countMap[dateStr]?.[t.id]) || 0;
@@ -589,51 +632,14 @@ router.get("/dashboard/chart-stats", async (req, res, next) => {
 
 /* ── GET /api/company-portal/dashboard/site-score-history ─────────────────────
    Returns daily site score (% of active templates submitted) for the
-   company's date range. Used for the Site Score Overview bar chart.           */
+   company's date range. Used for the Site Score Overview bar chart.
+   Past dates are served from frozen daily_checklist_snapshots so that
+   newly-added checklists never retroactively change historical scores.        */
 router.get("/dashboard/site-score-history", async (req, res, next) => {
   try {
     const companyId = cid(req);
     const { startDate, endDate } = req.query;
     if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate are required" });
-
-    // Fetch all active templates with frequency settings
-    const [templates] = await pool.query(
-      `SELECT id, frequency, hourly_interval AS "hourlyInterval",
-              start_time AS "startTime", end_time AS "endTime"
-       FROM checklist_templates
-       WHERE company_id = ? AND COALESCE(status, 'active') != 'inactive'`,
-      [companyId]
-    );
-
-    // Pre-compute total expected slots per day for each template.
-    // Use DB-side NOW() so currentMins is in the same timezone as the stored
-    // start_time values (set via APP_TIMEZONE in .env → db.js session TZ).
-    const [[_histNowRow]] = await pool.query(
-      `SELECT TO_CHAR(NOW()::date, 'YYYY-MM-DD') AS today,
-              EXTRACT(HOUR FROM NOW())::int AS h,
-              EXTRACT(MINUTE FROM NOW())::int AS m`
-    );
-    const today = _histNowRow.today;
-    const currentMins = Number(_histNowRow.h) * 60 + Number(_histNowRow.m);
-
-    function expectedSlotsForDate(t, dateStr) {
-      const freq = (t.frequency || 'Daily').toLowerCase();
-      if (freq !== 'hourly') return 1;
-      const interval = Math.max(1, Number(t.hourlyInterval) || 1);
-      if (t.startTime && t.endTime) {
-        const [sh, sm = 0] = t.startTime.split(':').map(Number);
-        const [eh, em = 0] = t.endTime.split(':').map(Number);
-        const startMins = sh * 60 + (sm || 0);
-        const endMins = eh * 60 + (em || 0);
-        if (endMins <= startMins) return 1;
-        // Always use the full-day slot count (not capped by current time)
-        const effectiveEnd = endMins;
-        if (effectiveEnd <= startMins) return 0;
-        return Math.max(1, Math.floor((effectiveEnd - startMins) / (interval * 60)));
-      }
-      // No time range: count all interval blocks in a full 24-hour day
-      return Math.max(1, Math.floor(1440 / (interval * 60)));
-    }
 
     // Generate date series using Date.UTC so local server timezone never shifts
     // a YYYY-MM-DD string to the previous day (e.g. IST midnight → UTC prev-day).
@@ -644,46 +650,102 @@ router.get("/dashboard/site-score-history", async (req, res, next) => {
       dates.push(new Date(ms).toISOString().slice(0, 10));
     }
 
-    // Fetch per-template, per-date submission counts in one query.
-    // For hourly templates with a time window only count submissions that fall
-    // inside [start_time, end_time) — out-of-window submissions are recorded
-    // but must not affect the historical site-score bars.
-    const [subCounts] = await pool.query(
-      `SELECT cs.template_id AS "templateId",
-              cs.submitted_at::date::text AS "date",
-              COUNT(*) AS "count"
-       FROM checklist_submissions cs
-       JOIN checklist_templates ct ON ct.id = cs.template_id
-       WHERE ct.company_id = ?
-         AND cs.submitted_at::date BETWEEN ?::date AND ?::date
-         AND cs.status NOT IN ('rejected')
-         AND (
-           LOWER(COALESCE(ct.frequency, 'daily')) != 'hourly'
-           OR ct.start_time IS NULL
-           OR ct.end_time IS NULL
-           OR (
-             (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
-               >= (EXTRACT(HOUR FROM ct.start_time::time) * 60 + EXTRACT(MINUTE FROM ct.start_time::time))
-             AND (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
-               < (EXTRACT(HOUR FROM ct.end_time::time) * 60 + EXTRACT(MINUTE FROM ct.end_time::time))
-           )
-         )
-       GROUP BY cs.template_id, cs.submitted_at::date`,
+    // Fetch frozen snapshots for past dates in the range.
+    // The cron creates one snapshot per company per date at 00:05 IST the
+    // following day, and ON CONFLICT DO NOTHING ensures they are immutable.
+    const [snapshots] = await pool.query(
+      `SELECT snapshot_date::text AS date, site_score_pct AS "siteScore"
+       FROM daily_checklist_snapshots
+       WHERE company_id = ?
+         AND snapshot_date BETWEEN ?::date AND ?::date`,
       [companyId, startDate, endDate]
     );
+    const snapshotMap = {};
+    for (const snap of snapshots) {
+      snapshotMap[snap.date] = Number(snap.siteScore);
+    }
 
-    // Build a map: date → templateId → count
-    const countMap = {};
-    for (const row of subCounts) {
-      if (!countMap[row.date]) countMap[row.date] = {};
-      countMap[row.date][row.templateId] = Number(row.count) || 0;
+    // Dates that have no frozen snapshot (today, or pre-snapshot legacy dates)
+    // still need a live calculation using current active templates.
+    const liveDates = dates.filter(d => snapshotMap[d] === undefined);
+
+    let templates = [];
+    let countMap = {};
+
+    if (liveDates.length > 0) {
+      const liveStart = liveDates[0];
+      const liveEnd = liveDates[liveDates.length - 1];
+
+      const [tmplRows] = await pool.query(
+        `SELECT id, frequency, hourly_interval AS "hourlyInterval",
+                start_time AS "startTime", end_time AS "endTime",
+                created_at::date::text AS "createdDate"
+         FROM checklist_templates
+         WHERE company_id = ? AND COALESCE(status, 'active') != 'inactive'`,
+        [companyId]
+      );
+      templates = tmplRows;
+
+      // Fetch per-template, per-date submission counts for live dates.
+      // For hourly templates with a time window only count submissions that
+      // fall inside [start_time, end_time).
+      const [subCounts] = await pool.query(
+        `SELECT cs.template_id AS "templateId",
+                cs.submitted_at::date::text AS "date",
+                COUNT(*) AS "count"
+         FROM checklist_submissions cs
+         JOIN checklist_templates ct ON ct.id = cs.template_id
+         WHERE ct.company_id = ?
+           AND cs.submitted_at::date BETWEEN ?::date AND ?::date
+           AND cs.status NOT IN ('rejected')
+           AND (
+             LOWER(COALESCE(ct.frequency, 'daily')) != 'hourly'
+             OR ct.start_time IS NULL
+             OR ct.end_time IS NULL
+             OR (
+               (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
+                 >= (EXTRACT(HOUR FROM ct.start_time::time) * 60 + EXTRACT(MINUTE FROM ct.start_time::time))
+               AND (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
+                 < (EXTRACT(HOUR FROM ct.end_time::time) * 60 + EXTRACT(MINUTE FROM ct.end_time::time))
+             )
+           )
+         GROUP BY cs.template_id, cs.submitted_at::date`,
+        [companyId, liveStart, liveEnd]
+      );
+
+      for (const row of subCounts) {
+        if (!countMap[row.date]) countMap[row.date] = {};
+        countMap[row.date][row.templateId] = Number(row.count) || 0;
+      }
+    }
+
+    function expectedSlotsForDateLive(t) {
+      const freq = (t.frequency || 'Daily').toLowerCase();
+      if (freq !== 'hourly') return 1;
+      const interval = Math.max(1, Number(t.hourlyInterval) || 1);
+      if (t.startTime && t.endTime) {
+        const [sh, sm = 0] = t.startTime.split(':').map(Number);
+        const [eh, em = 0] = t.endTime.split(':').map(Number);
+        const startMins = sh * 60 + (sm || 0);
+        const endMins = eh * 60 + (em || 0);
+        if (endMins <= startMins) return 0;
+        return Math.max(1, Math.floor((endMins - startMins) / (interval * 60)));
+      }
+      return Math.max(1, Math.floor(1440 / (interval * 60)));
     }
 
     const rows = dates.map((dateStr) => {
+      // Use the frozen snapshot for any past date that has one.
+      if (snapshotMap[dateStr] !== undefined) {
+        return { date: dateStr, siteScore: snapshotMap[dateStr] };
+      }
+      // Live calculation for today or pre-snapshot legacy dates.
       let totalSlots = 0;
       let filledSlots = 0;
       for (const t of templates) {
-        const exp = expectedSlotsForDate(t, dateStr);
+        // Exclude templates that didn't exist yet on this date.
+        if (t.createdDate && t.createdDate > dateStr) continue;
+        const exp = expectedSlotsForDateLive(t);
         if (exp <= 0) continue;
         totalSlots += exp;
         const actual = (countMap[dateStr]?.[t.id]) || 0;
@@ -753,7 +815,9 @@ const getAccessibleCompanies = async (userId, primaryCompanyId) => {
 
 /* ── GET /api/company-portal/dashboard/companies-site-score ───────────────────
    Returns average site score per company for the user's assigned companies
-   over a date range. Used for multi-company Site Score comparison chart.      */
+   over a date range. Used for multi-company Site Score comparison chart.
+   Past dates are served from frozen daily_checklist_snapshots so that
+   newly-added checklists never retroactively change historical scores.        */
 router.get("/dashboard/companies-site-score", async (req, res, next) => {
   try {
     const userId = req.companyUser.id;
@@ -771,61 +835,89 @@ router.get("/dashboard/companies-site-score", async (req, res, next) => {
     if (!scopedCompanies.length) return res.json([]);
 
     const scopedIds = scopedCompanies.map((c) => Number(c.id));
-    const idPH = scopedIds.map(() => "?").join(",");
     const dates = dateSeries(startDate, endDate);
 
-    const [templates] = await pool.query(
-      `SELECT company_id AS "companyId", id, frequency,
-              hourly_interval AS "hourlyInterval",
-              start_time AS "startTime", end_time AS "endTime"
-       FROM checklist_templates
+    // Fetch frozen snapshots for all companies in the date range.
+    const idPH = scopedIds.map(() => "?").join(",");
+    const [snapshots] = await pool.query(
+      `SELECT company_id AS "companyId", snapshot_date::text AS date, site_score_pct AS "siteScore"
+       FROM daily_checklist_snapshots
        WHERE company_id IN (${idPH})
-         AND COALESCE(status, 'active') != 'inactive'`,
-      scopedIds
-    );
-
-    const [subCounts] = await pool.query(
-      `SELECT ct.company_id AS "companyId",
-              cs.template_id AS "templateId",
-              cs.submitted_at::date::text AS "date",
-              COUNT(*) AS "count"
-       FROM checklist_submissions cs
-       JOIN checklist_templates ct ON ct.id = cs.template_id
-       WHERE ct.company_id IN (${idPH})
-         AND cs.submitted_at::date BETWEEN ?::date AND ?::date
-         AND COALESCE(ct.status, 'active') != 'inactive'
-         AND cs.status NOT IN ('rejected')
-         AND (
-           LOWER(COALESCE(ct.frequency, 'daily')) != 'hourly'
-           OR ct.start_time IS NULL
-           OR ct.end_time IS NULL
-           OR (
-             (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
-               >= (EXTRACT(HOUR FROM ct.start_time::time) * 60 + EXTRACT(MINUTE FROM ct.start_time::time))
-             AND (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
-               < (EXTRACT(HOUR FROM ct.end_time::time) * 60 + EXTRACT(MINUTE FROM ct.end_time::time))
-           )
-         )
-       GROUP BY ct.company_id, cs.template_id, cs.submitted_at::date`,
+         AND snapshot_date BETWEEN ?::date AND ?::date`,
       [...scopedIds, startDate, endDate]
     );
-
-    const templateMap = {};
-    for (const t of templates) {
-      const companyId = Number(t.companyId);
-      if (!templateMap[companyId]) templateMap[companyId] = [];
-      templateMap[companyId].push({
-        id: Number(t.id),
-        expectedSlots: expectedSlotsForTemplate(t),
-      });
+    const snapshotMap = {};
+    for (const snap of snapshots) {
+      const cId = Number(snap.companyId);
+      if (!snapshotMap[cId]) snapshotMap[cId] = {};
+      snapshotMap[cId][snap.date] = Number(snap.siteScore);
     }
 
-    const countMap = {};
-    for (const row of subCounts) {
-      const companyId = Number(row.companyId);
-      if (!countMap[companyId]) countMap[companyId] = {};
-      if (!countMap[companyId][row.date]) countMap[companyId][row.date] = {};
-      countMap[companyId][row.date][Number(row.templateId)] = Number(row.count) || 0;
+    // Only query live templates + submissions for companies that have at least
+    // one date in the range without a frozen snapshot (today or legacy dates).
+    const liveCompanyIds = scopedIds.filter(cId =>
+      dates.some(d => snapshotMap[cId]?.[d] === undefined)
+    );
+
+    let templateMap = {};
+    let countMap = {};
+
+    if (liveCompanyIds.length > 0) {
+      const livePH = liveCompanyIds.map(() => "?").join(",");
+
+      const [templates] = await pool.query(
+        `SELECT company_id AS "companyId", id, frequency,
+                hourly_interval AS "hourlyInterval",
+                start_time AS "startTime", end_time AS "endTime",
+                created_at::date::text AS "createdDate"
+         FROM checklist_templates
+         WHERE company_id IN (${livePH})
+           AND COALESCE(status, 'active') != 'inactive'`,
+        liveCompanyIds
+      );
+
+      const [subCounts] = await pool.query(
+        `SELECT ct.company_id AS "companyId",
+                cs.template_id AS "templateId",
+                cs.submitted_at::date::text AS "date",
+                COUNT(*) AS "count"
+         FROM checklist_submissions cs
+         JOIN checklist_templates ct ON ct.id = cs.template_id
+         WHERE ct.company_id IN (${livePH})
+           AND cs.submitted_at::date BETWEEN ?::date AND ?::date
+           AND COALESCE(ct.status, 'active') != 'inactive'
+           AND cs.status NOT IN ('rejected')
+           AND (
+             LOWER(COALESCE(ct.frequency, 'daily')) != 'hourly'
+             OR ct.start_time IS NULL
+             OR ct.end_time IS NULL
+             OR (
+               (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
+                 >= (EXTRACT(HOUR FROM ct.start_time::time) * 60 + EXTRACT(MINUTE FROM ct.start_time::time))
+               AND (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
+                 < (EXTRACT(HOUR FROM ct.end_time::time) * 60 + EXTRACT(MINUTE FROM ct.end_time::time))
+             )
+           )
+         GROUP BY ct.company_id, cs.template_id, cs.submitted_at::date`,
+        [...liveCompanyIds, startDate, endDate]
+      );
+
+      for (const t of templates) {
+        const cId = Number(t.companyId);
+        if (!templateMap[cId]) templateMap[cId] = [];
+        templateMap[cId].push({
+          id: Number(t.id),
+          expectedSlots: expectedSlotsForTemplate(t),
+          createdDate: t.createdDate || null,
+        });
+      }
+
+      for (const row of subCounts) {
+        const cId = Number(row.companyId);
+        if (!countMap[cId]) countMap[cId] = {};
+        if (!countMap[cId][row.date]) countMap[cId][row.date] = {};
+        countMap[cId][row.date][Number(row.templateId)] = Number(row.count) || 0;
+      }
     }
 
     const rows = scopedCompanies.map((company) => {
@@ -833,9 +925,17 @@ router.get("/dashboard/companies-site-score", async (req, res, next) => {
       const tpls = templateMap[companyId] || [];
       let scoreSum = 0;
       for (const dateStr of dates) {
+        // Use the frozen snapshot for any past date that has one.
+        if (snapshotMap[companyId]?.[dateStr] !== undefined) {
+          scoreSum += snapshotMap[companyId][dateStr];
+          continue;
+        }
+        // Live calculation for today or pre-snapshot legacy dates.
         let totalExpected = 0;
         let filledSlots = 0;
         for (const t of tpls) {
+          // Exclude templates that didn't exist yet on this date.
+          if (t.createdDate && t.createdDate > dateStr) continue;
           totalExpected += t.expectedSlots;
           const actual = countMap[companyId]?.[dateStr]?.[t.id] || 0;
           filledSlots += Math.min(actual, t.expectedSlots);
@@ -845,11 +945,7 @@ router.get("/dashboard/companies-site-score", async (req, res, next) => {
       }
 
       const avgSiteScore = dates.length > 0 ? Math.round(scoreSum / dates.length) : 0;
-      return {
-        companyId,
-        companyName: company.companyName,
-        avgSiteScore,
-      };
+      return { companyId, companyName: company.companyName, avgSiteScore };
     });
 
     rows.sort((a, b) => String(a.companyName || "").localeCompare(String(b.companyName || "")));
