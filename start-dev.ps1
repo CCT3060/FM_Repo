@@ -1,25 +1,23 @@
-# =============================================================================
-# FM App — Local Development Starter
+﻿# =============================================================================
+# FM App - Local Development Starter
 # Run from FM_Repo root:  .\start-dev.ps1
 # Optionally pass PEM key: .\start-dev.ps1 -PemFile "C:\path\to\key.pem"
 #
 # What this does:
-#   1. Opens SSH tunnel  localhost:5432  →  EC2 PostgreSQL (3.110.166.39:5432)
-#      and auto-reconnects if it drops
+#   1. Opens SSH tunnel  localhost:5433  ->  EC2 PostgreSQL (3.110.166.39:5432)
+#      Uses port 5433 so it never conflicts with a local PostgreSQL on 5432.
+#      Auto-reconnects if the tunnel drops.
 #   2. Starts backend    on  localhost:4000
 #   3. Starts frontend   on  localhost:5173
-#
-# Mobile app (Expo Go):
-#   cd mobile-app-v2 && npx expo start --go --lan
 # =============================================================================
 param(
     [string]$PemFile = ""
 )
 
-$EC2_IP    = "3.110.166.39"
-$EC2_USER  = "ec2-user"
+$EC2_IP   = "3.110.166.39"
+$EC2_USER = "ec2-user"
 
-# --- Locate PEM file ---------------------------------------------------------
+# -- Locate PEM file ----------------------------------------------------------
 $candidatePaths = @(
     $PemFile,
     "$env:USERPROFILE\.ssh\Key.pem",
@@ -30,30 +28,29 @@ $candidatePaths = @(
 )
 $PEM_FILE = $candidatePaths | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
 
-# ── Validate PEM file ─────────────────────────────────────────────────────────
 if (-not $PEM_FILE) {
     Write-Host ""
     Write-Host "ERROR: EC2 SSH key (.pem) not found." -ForegroundColor Red
-    Write-Host "  Option 1 — Copy your .pem key to: $env:USERPROFILE\.ssh\Key.pem" -ForegroundColor Cyan
-    Write-Host "  Option 2 — .\start-dev.ps1 -PemFile `"C:\path\to\key.pem`"" -ForegroundColor Cyan
+    Write-Host "  Option 1 - Copy your .pem key to: $env:USERPROFILE\.ssh\Key.pem" -ForegroundColor Cyan
+    Write-Host "  Option 2 - .\start-dev.ps1 -PemFile 'C:\path\to\key.pem'" -ForegroundColor Cyan
     Write-Host ""
     exit 1
 }
 
 Write-Host ""
 Write-Host "===================================================" -ForegroundColor Cyan
-Write-Host "  FM App — Local Dev Environment" -ForegroundColor Cyan
+Write-Host "  FM App - Local Dev Environment" -ForegroundColor Cyan
 Write-Host "===================================================" -ForegroundColor Cyan
 Write-Host ""
 
-# ── 1. SSH Tunnel (auto-reconnect loop) ───────────────────────────────────────
-Write-Host "[1/3] Opening SSH tunnel  localhost:5432 → EC2 PostgreSQL..." -ForegroundColor Yellow
+# -- 1. SSH Tunnel on port 5433 (avoids conflict with local PostgreSQL) --------
+Write-Host "[1/3] Opening SSH tunnel  localhost:5433 -> EC2 PostgreSQL..." -ForegroundColor Yellow
 
 $tunnelJob = Start-Job -ScriptBlock {
     param($pem, $user, $ip)
     while ($true) {
         & ssh -i $pem `
-            -L 5432:localhost:5432 `
+            -L 5433:localhost:5432 `
             -o StrictHostKeyChecking=no `
             -o ServerAliveInterval=20 `
             -o ServerAliveCountMax=3 `
@@ -61,22 +58,20 @@ $tunnelJob = Start-Job -ScriptBlock {
             -o ExitOnForwardFailure=yes `
             -N `
             "$user@$ip"
-        # Tunnel dropped — wait 2s then reconnect automatically
         Start-Sleep -Seconds 2
     }
 } -ArgumentList $PEM_FILE, $EC2_USER, $EC2_IP
 
-# Give the tunnel a moment to establish
 Start-Sleep -Seconds 4
 
 if ($tunnelJob.State -eq "Failed") {
-    Write-Error "SSH tunnel failed to start. Check your PEM file and EC2 IP."
+    Write-Host "ERROR: SSH tunnel failed to start. Check your PEM file and EC2 IP." -ForegroundColor Red
     exit 1
 }
 
-Write-Host "    Tunnel running (Job ID: $($tunnelJob.Id))" -ForegroundColor Green
+Write-Host "    Tunnel running on localhost:5433 (Job ID: $($tunnelJob.Id))" -ForegroundColor Green
 
-# ── 2. Backend ────────────────────────────────────────────────────────────────
+# -- 2. Backend ----------------------------------------------------------------
 Write-Host "[2/3] Starting backend on http://localhost:4000 ..." -ForegroundColor Yellow
 
 $backendJob = Start-Job -ScriptBlock {
@@ -87,7 +82,7 @@ $backendJob = Start-Job -ScriptBlock {
 
 Write-Host "    Backend starting..." -ForegroundColor Green
 
-# ── 3. Frontend ───────────────────────────────────────────────────────────────
+# -- 3. Frontend ---------------------------------------------------------------
 Write-Host "[3/3] Starting frontend on http://localhost:5173 ..." -ForegroundColor Yellow
 
 $frontendJob = Start-Job -ScriptBlock {
@@ -101,29 +96,28 @@ Write-Host ""
 Write-Host "===================================================" -ForegroundColor Cyan
 Write-Host "  All services started!" -ForegroundColor Green
 Write-Host ""
-Write-Host "  Backend   →  http://localhost:4000" -ForegroundColor White
-Write-Host "  Frontend  →  http://localhost:5173" -ForegroundColor White
-Write-Host "  Database  →  EC2 PostgreSQL (via SSH tunnel)" -ForegroundColor White
-Write-Host ""
-Write-Host "  Mobile app: cd mobile-app-v2 && npx expo start --go --lan" -ForegroundColor White
+Write-Host "  Backend   ->  http://localhost:4000" -ForegroundColor White
+Write-Host "  Frontend  ->  http://localhost:5173" -ForegroundColor White
+Write-Host "  Database  ->  EC2 PostgreSQL via SSH tunnel :5433" -ForegroundColor White
 Write-Host ""
 Write-Host "  Press Ctrl+C to stop all services." -ForegroundColor DarkGray
 Write-Host "===================================================" -ForegroundColor Cyan
 Write-Host ""
 
-# ── Keep alive — stream logs from all jobs until Ctrl+C ──────────────────────
 try {
     while ($true) {
         foreach ($job in @($backendJob, $frontendJob)) {
-            $output = Receive-Job -Job $job -ErrorAction SilentlyContinue
-            if ($output) { Write-Host $output }
+            $out = Receive-Job -Job $job -ErrorAction SilentlyContinue
+            if ($out) { Write-Host $out }
         }
         Start-Sleep -Milliseconds 500
     }
-} finally {
+}
+finally {
     Write-Host ""
     Write-Host "Stopping all services..." -ForegroundColor Yellow
-    Stop-Job    -Job $tunnelJob, $backendJob, $frontendJob -ErrorAction SilentlyContinue
-    Remove-Job  -Job $tunnelJob, $backendJob, $frontendJob -ErrorAction SilentlyContinue
+    $allJobs = @($tunnelJob, $backendJob, $frontendJob) | Where-Object { $_ -ne $null }
+    Stop-Job   -Job $allJobs -ErrorAction SilentlyContinue
+    Remove-Job -Job $allJobs -ErrorAction SilentlyContinue
     Write-Host "Done." -ForegroundColor Green
 }

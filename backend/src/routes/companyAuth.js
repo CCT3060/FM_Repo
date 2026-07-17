@@ -31,24 +31,49 @@ router.post(
   async (req, res, next) => {
     try {
       const { email, password } = req.body;
-      const [rows] = await pool.query(
-        `SELECT cu.id,
-                cu.full_name    AS "fullName",
-                cu.email,
-                cu.status,
-                cu.role,
-                cu.company_id   AS "companyId",
-                cu.password_hash AS "passwordHash",
-                cu.permissions,
-                cu.module_access AS "moduleAccess",
-                c.company_name  AS "companyName",
-                c.enabled_modules AS "companyEnabledModules"
-         FROM company_users cu
-         JOIN companies c ON c.id = cu.company_id
-         WHERE cu.email = ?
-         LIMIT 1`,
-        [email]
-      );
+
+      // Try the full query first (includes optional columns that may not exist
+      // on older local databases). Fall back to the base query if a column is
+      // missing so local dev environments don't require manual schema migrations.
+      let rows;
+      try {
+        [rows] = await pool.query(
+          `SELECT cu.id,
+                  cu.full_name      AS "fullName",
+                  cu.email,
+                  cu.status,
+                  cu.role,
+                  cu.company_id     AS "companyId",
+                  cu.password_hash  AS "passwordHash",
+                  cu.permissions,
+                  cu.module_access  AS "moduleAccess",
+                  c.company_name    AS "companyName",
+                  c.enabled_modules AS "companyEnabledModules"
+           FROM company_users cu
+           JOIN companies c ON c.id = cu.company_id
+           WHERE cu.email = ?
+           LIMIT 1`,
+          [email]
+        );
+      } catch (_colErr) {
+        // One or more optional columns don't exist yet on this database.
+        // Fall back to the columns that are guaranteed to exist.
+        [rows] = await pool.query(
+          `SELECT cu.id,
+                  cu.full_name     AS "fullName",
+                  cu.email,
+                  cu.status,
+                  cu.role,
+                  cu.company_id    AS "companyId",
+                  cu.password_hash AS "passwordHash",
+                  c.company_name   AS "companyName"
+           FROM company_users cu
+           JOIN companies c ON c.id = cu.company_id
+           WHERE cu.email = ?
+           LIMIT 1`,
+          [email]
+        );
+      }
 
       if (!rows.length) return res.status(401).json({ message: "Invalid credentials" });
       const user = rows[0];

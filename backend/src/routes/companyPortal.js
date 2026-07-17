@@ -1546,6 +1546,7 @@ router.post("/locations/bulk-import", uploadLocImport.single("file"), async (req
 
     if (!data.length) return res.status(400).json({ message: "File is empty" });
 
+    const APP_URL = process.env.APP_URL || "https://fm.catalystservices.eco";
     const created = [];
     const errors = [];
     for (let i = 0; i < data.length; i++) {
@@ -1559,18 +1560,57 @@ router.post("/locations/bulk-import", uploadLocImport.single("file"), async (req
       const room     = (row["Room"]     != null ? String(row["Room"])     : row["room"]     != null ? String(row["room"])     : "").trim() || null;
       const status   = (row["Status"]   || row["status"]   || "Active").toString().trim();
       try {
+        // Sync hierarchy tables first so we can look up the FK IDs.
+        let buildingId = null, floorId = null, roomId = null;
+        if (building && floor) {
+          try {
+            await syncHierarchyEntry(companyId, building, floor, room);
+            const [[bldgRow]] = await pool.query(
+              `SELECT id FROM buildings WHERE company_id = ? AND name = ? LIMIT 1`,
+              [companyId, building.trim()]
+            );
+            buildingId = bldgRow?.id ?? null;
+            if (buildingId) {
+              const [[flRow]] = await pool.query(
+                `SELECT id FROM floors WHERE company_id = ? AND building_id = ? AND floor_number = ? LIMIT 1`,
+                [companyId, buildingId, floor.trim()]
+              );
+              floorId = flRow?.id ?? null;
+            }
+            if (floorId && room?.trim()) {
+              const [[rmRow]] = await pool.query(
+                `SELECT id FROM rooms WHERE company_id = ? AND floor_id = ? AND room_name = ? LIMIT 1`,
+                [companyId, floorId, room.trim()]
+              );
+              roomId = rmRow?.id ?? null;
+            }
+          } catch { /* hierarchy resolution is non-critical */ }
+        }
+
         const [rows] = await pool.query(
-          `INSERT INTO locations (company_id, name, campus, building, floor, room, status, created_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-           RETURNING id, name, campus, building, floor, room, qr_code AS "qrCode", status, created_at AS "createdAt"`,
-          [companyId, name, campus, building, floor, room, status, userId]
+          `INSERT INTO locations (company_id, name, campus, building, floor, room, status, created_by, building_id, floor_id, room_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           RETURNING id, name, campus, building, floor, room, qr_code AS "qrCode", status, created_at AS "createdAt",
+                     building_id AS "buildingId", floor_id AS "floorId", room_id AS "roomId"`,
+          [companyId, name, campus, building, floor, room, status, userId, buildingId, floorId, roomId]
         );
         if (rows[0]) {
-          created.push(rows[0]);
-          // Sync hierarchy tables so Rooms modal stays in sync
-          if (building && floor) {
-            try { await syncHierarchyEntry(companyId, building, floor, room); } catch { /* non-critical */ }
+          const newLoc = rows[0];
+          // Set qr_code immediately — same logic as single POST /locations
+          const qrValue = `${APP_URL}/location/${newLoc.id}`;
+          await pool.query("UPDATE locations SET qr_code = ? WHERE id = ?", [qrValue, newLoc.id]).catch(() => {});
+          newLoc.qrCode = qrValue;
+          // Back-link hierarchy rows to this location
+          if (roomId) {
+            await pool.query("UPDATE rooms SET location_id = ? WHERE id = ? AND company_id = ?", [newLoc.id, roomId, companyId]).catch(() => {});
           }
+          if (floorId) {
+            await pool.query("UPDATE floors SET location_id = ? WHERE id = ? AND company_id = ?", [newLoc.id, floorId, companyId]).catch(() => {});
+          }
+          if (buildingId) {
+            await pool.query("UPDATE buildings SET location_id = ? WHERE id = ? AND company_id = ?", [newLoc.id, buildingId, companyId]).catch(() => {});
+          }
+          created.push(newLoc);
         }
       } catch (e) {
         errors.push(`Row ${i + 2}: ${e.message}`);

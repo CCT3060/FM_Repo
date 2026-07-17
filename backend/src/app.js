@@ -52,6 +52,19 @@ import scheduledReportsRouter from "./routes/scheduledReports.js";
   } catch (e) {
     console.warn("[startup] notification_time migration warning:", e.message);
   }
+  // Ensure company_users has permission/module columns used by the login endpoint.
+  try {
+    await pool.query(`ALTER TABLE company_users ADD COLUMN IF NOT EXISTS permissions JSONB DEFAULT '{}'::jsonb`);
+    await pool.query(`ALTER TABLE company_users ADD COLUMN IF NOT EXISTS module_access JSONB DEFAULT '[]'::jsonb`);
+  } catch (e) {
+    console.warn("[startup] permissions/module_access migration warning:", e.message);
+  }
+  // Ensure companies has enabled_modules column used by the login endpoint.
+  try {
+    await pool.query(`ALTER TABLE companies ADD COLUMN IF NOT EXISTS enabled_modules JSONB DEFAULT NULL`);
+  } catch (e) {
+    console.warn("[startup] enabled_modules migration warning:", e.message);
+  }
 })();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
