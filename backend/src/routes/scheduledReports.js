@@ -13,6 +13,7 @@ import cron from "node-cron";
 import PDFDocument from "pdfkit";
 import ExcelJS from "exceljs";
 import pool from "../db.js";
+import { computeSiteScore, computeSiteScoreRange } from "../utils/siteScore.js";
 import { requireCompanyAuth } from "../middleware/companyAuth.js";
 
 const router = express.Router();
@@ -404,117 +405,30 @@ async function generatePDF(companyId) {
     [companyId, companyId]
   );
 
-  // Slot-based site score — mirrors /site-score endpoint logic
-  const [[nowRow]] = await pool.query(
-    `SELECT EXTRACT(HOUR FROM NOW())::int AS h, EXTRACT(MINUTE FROM NOW())::int AS m,
-            to_char(NOW(), 'YYYY-MM-DD') AS today`
-  );
-  const nowMins    = Number(nowRow.h) * 60 + Number(nowRow.m);
-  const todayDbStr = nowRow.today; // IST date string e.g. '2026-07-03'
+  // Use PREVIOUS day as the report date (yesterday's data is fully finalized)
+  // Night-shift submissions (e.g. 10 PM–6 AM) spanning midnight are attributed to the shift-start date
+  const [[nowRow]] = await pool.query(`SELECT to_char(NOW() - INTERVAL '1 day', 'YYYY-MM-DD') AS today`);
+  const todayDbStr = nowRow.today;
 
-  const [templates] = await pool.query(
-    `SELECT id, frequency, hourly_interval AS "hourlyInterval",
-            start_time AS "startTime", end_time AS "endTime"
-     FROM checklist_templates WHERE company_id = ? AND is_active = 1`,
-    [companyId]
-  );
+  // Slot-based site score — uses shared computeSiteScore utility (same as dashboard)
+  const scoreData = await computeSiteScore(companyId, todayDbStr);
+  const totalExpected = scoreData.totalExpected;
+  const filledSlots   = scoreData.filledSlots;
+  const pendingSlots  = scoreData.pendingSlots;
+  const siteScorePct  = scoreData.siteScorePct;
 
-  let totalExpected = 0;
-  const tplExpected = {};
-  for (const t of templates) {
-    const freq = (t.frequency || 'Daily').toLowerCase();
-    let exp = 1;
-    if (freq === 'hourly') {
-      const interval = Math.max(1, Number(t.hourlyInterval) || 1);
-      if (t.startTime && t.endTime) {
-        const [sh, sm = 0] = t.startTime.split(':').map(Number);
-        const [eh, em = 0] = t.endTime.split(':').map(Number);
-        const startMins = sh * 60 + sm;
-        const endMins = eh * 60 + em;
-        // Full-day slot count — not capped by current time
-        if (endMins > startMins) {
-          exp = Math.max(1, Math.floor((endMins - startMins) / (interval * 60)));
-        }
-      } else {
-        exp = Math.max(1, Math.floor(1440 / (interval * 60)));
-      }
-    }
-    tplExpected[t.id] = exp;
-    totalExpected += exp;
-  }
-
-  const [subCounts] = await pool.query(
-    `SELECT cs.template_id AS "templateId", COUNT(*) AS "count"
-     FROM checklist_submissions cs
-     JOIN checklist_templates ct ON cs.template_id = ct.id
-     WHERE ct.company_id = ? AND cs.submitted_at::date = CURRENT_DATE
-       AND ct.is_active = 1 AND cs.status NOT IN ('rejected')
-       AND (
-         LOWER(COALESCE(ct.frequency, 'daily')) != 'hourly'
-         OR ct.start_time IS NULL OR ct.end_time IS NULL
-         OR (
-           (EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at))
-             >= (EXTRACT(HOUR FROM ct.start_time::time)*60+EXTRACT(MINUTE FROM ct.start_time::time))
-           AND (EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at))
-             < (EXTRACT(HOUR FROM ct.end_time::time)*60+EXTRACT(MINUTE FROM ct.end_time::time))
-         )
-       )
-     GROUP BY cs.template_id`,
-    [companyId]
-  );
-
-  let filledSlots = 0;
-  for (const row of subCounts) {
-    const exp = tplExpected[row.templateId] ?? 1;
-    filledSlots += Math.min(Number(row.count) || 0, exp);
-  }
-  const pendingSlots  = Math.max(0, totalExpected - filledSlots);
-  const siteScorePct  = totalExpected > 0 ? Math.round(filledSlots / totalExpected * 1000) / 10 : 0;
-
-  // Bar chart — last 7 days (today + 6 previous days) using same slot logic as site-score-history endpoint
+  // Site Score history — last 7 days using computeSiteScoreRange
   const _sevenDaysAgo = (() => {
     const d = new Date(todayDbStr + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() - 6);
     return d.toISOString().slice(0, 10);
   })();
-  const [hist7Counts] = await pool.query(
-    `SELECT cs.template_id AS "templateId",
-            cs.submitted_at::date::text AS "date",
-            COUNT(*) AS "count"
-     FROM checklist_submissions cs
-     JOIN checklist_templates ct ON ct.id = cs.template_id
-     WHERE ct.company_id = ?
-       AND cs.submitted_at::date BETWEEN ?::date AND ?::date
-       AND cs.status NOT IN ('rejected')
-       AND (
-         LOWER(COALESCE(ct.frequency, 'daily')) != 'hourly'
-         OR ct.start_time IS NULL OR ct.end_time IS NULL
-         OR (
-           (EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at))
-             >= (EXTRACT(HOUR FROM ct.start_time::time)*60+EXTRACT(MINUTE FROM ct.start_time::time))
-           AND (EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at))
-             < (EXTRACT(HOUR FROM ct.end_time::time)*60+EXTRACT(MINUTE FROM ct.end_time::time))
-         )
-       )
-     GROUP BY cs.template_id, cs.submitted_at::date`,
-    [companyId, _sevenDaysAgo, todayDbStr]
-  );
-  const _hist7Map = {};
-  for (const r of hist7Counts) {
-    if (!_hist7Map[r.date]) _hist7Map[r.date] = {};
-    _hist7Map[r.date][r.templateId] = Number(r.count) || 0;
-  }
-  const siteScoreRows = [];
+  const _histDates = [];
   for (let i = 6; i >= 0; i--) {
     const d = new Date(todayDbStr + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() - i);
-    const dateStr = d.toISOString().slice(0, 10);
-    let dayFilled = 0, dayTotal = 0;
-    for (const t of templates) {
-      const exp = tplExpected[t.id] ?? 1;
-      dayTotal += exp;
-      dayFilled += Math.min((_hist7Map[dateStr]?.[t.id]) || 0, exp);
-    }
-    siteScoreRows.push({ date: dateStr, score: dayTotal > 0 ? Math.round(dayFilled / dayTotal * 1000) / 10 : 0 });
+    _histDates.push(d.toISOString().slice(0, 10));
   }
+  const _histScores = await (async () => { try { return await computeSiteScoreRange(companyId, _histDates); } catch { return []; } })();
+  const siteScoreRows = _histScores.map(r => ({ date: r.date, score: r.siteScore ?? r.pct ?? 0 }));
 
   // Helper: format minutes → 'H:MM AM/PM'
   const fmtTime = (mins) => {
@@ -523,118 +437,191 @@ async function generatePDF(companyId) {
     const h12 = h24 % 12 || 12;
     return h12 + ':' + String(m).padStart(2, '0') + ' ' + (h24 < 12 ? 'AM' : 'PM');
   };
+  const toMins = (t) => { if (!t) return 0; const [h, m = 0] = String(t).split(':').map(Number); return h * 60 + (m || 0); };
 
-  // Fetch today's submissions with DB-side IST minutes for slot matching
+  // Fetch today's submissions — scoped by location_id for correct room matching
   const [todaySubmissions] = await pool.query(
     `SELECT cs.id, cs.template_id, ct.template_name,
+       cs.location_id,
        cs.status, cs.submitted_at,
        cu.full_name AS submitted_by,
        EXTRACT(HOUR FROM cs.submitted_at)::int * 60 + EXTRACT(MINUTE FROM cs.submitted_at)::int AS sub_mins,
-       to_char(cs.submitted_at, 'HH12:MI AM') AS submitted_time
+       to_char(cs.submitted_at, 'DD/MM/YY HH12:MI AM') AS submitted_time
      FROM checklist_submissions cs
      JOIN checklist_templates ct ON ct.id = cs.template_id
      LEFT JOIN company_users cu ON cu.id = COALESCE(cs.company_user_id, cs.submitted_by)
-     WHERE ct.company_id = ? AND cs.submitted_at::date = CURRENT_DATE
+     WHERE ct.company_id = ? AND cs.submitted_at::date = ?::date
+       AND COALESCE(cs.is_soft_raise, FALSE) = FALSE
      ORDER BY cs.submitted_at ASC`,
+    [companyId, todayDbStr]
+  );
+
+  // Group submissions by location_id+template_id (new model) and template_id-only (old model fallback)
+  const subsByLocTpl = {}; // key: `${locationId}_${templateId}`
+  const subsByTplOnly = {}; // key: templateId (for old-model fallback)
+  for (const s of todaySubmissions) {
+    const lk = `${s.location_id || 'null'}_${s.template_id}`;
+    if (!subsByLocTpl[lk]) subsByLocTpl[lk] = [];
+    subsByLocTpl[lk].push(s);
+    if (!subsByTplOnly[s.template_id]) subsByTplOnly[s.template_id] = [];
+    subsByTplOnly[s.template_id].push(s);
+  }
+
+  // Fetch active locations with checklist + scheduling (new Phase 2+ model)
+  const [locationsWithChecklist] = await pool.query(
+    `SELECT l.id, l.name, l.room, l.building, l.floor,
+            l.checklist_id, ct.template_name,
+            l.frequency, l.hourly_interval AS "hourlyInterval",
+            COALESCE(l.shift_ids, '[]'::jsonb) AS "shiftIds"
+     FROM locations l
+     JOIN checklist_templates ct ON ct.id = l.checklist_id
+     WHERE l.company_id = ? AND LOWER(COALESCE(l.status,'active')) = 'active'
+       AND l.checklist_id IS NOT NULL
+       AND COALESCE(ct.status,'active') != 'inactive'
+     ORDER BY l.name`,
     [companyId]
   );
 
-  // Fetch active templates with slot config (for slot expansion)
-  const [tplWithConfig] = await pool.query(
+  // Fetch shifts for slot expansion
+  const [activeShifts] = await pool.query(
+    `SELECT id, name, start_time AS "startTime", end_time AS "endTime"
+     FROM shifts WHERE company_id = ? AND status = 'active'`,
+    [companyId]
+  );
+  const shiftById = Object.fromEntries((activeShifts || []).map(s => [Number(s.id), s]));
+
+  // Build slot-expanded rows using location model (mirrors dashboard Recent Submissions)
+  const _usedSubIds = new Set();
+  const locationCoveredTplIds = new Set(locationsWithChecklist.map(l => String(l.checklist_id)).filter(Boolean));
+  const allChecklistRows = [];
+
+  for (const loc of locationsWithChecklist) {
+    const locFreq = (loc.frequency || '').toLowerCase();
+    const shiftIdsRaw = Array.isArray(loc.shiftIds) ? loc.shiftIds
+      : (typeof loc.shiftIds === 'string' ? JSON.parse(loc.shiftIds || '[]') : []);
+    const shiftIds = shiftIdsRaw.map(Number).filter(Boolean);
+    const locInterval = Math.max(1, Number(loc.hourlyInterval) || 1);
+    const locSubs = (subsByLocTpl[`${loc.id}_${loc.checklist_id}`] || []).sort((a, b) => a.sub_mins - b.sub_mins);
+    const roomLabel = loc.name || loc.room || '—';
+
+    // Sort shifts chronologically
+    const sortedShiftIds = [...shiftIds].sort((a, b) =>
+      toMins(shiftById[a]?.startTime) - toMins(shiftById[b]?.startTime));
+    const windows = sortedShiftIds.map(sid => {
+      const sh = shiftById[sid];
+      return sh ? { start: toMins(sh.startTime), end: toMins(sh.endTime) } : null;
+    }).filter(Boolean);
+
+    if (locFreq === 'hourly' && windows.length > 0) {
+      for (const win of windows) {
+        for (let s = win.start; s < win.end; s += locInterval * 60) {
+          const slotEnd = Math.min(s + locInterval * 60, win.end);
+          const slotLabel = fmtTime(s) + ' – ' + fmtTime(slotEnd);
+          const matchSub = locSubs.find(sub => {
+            if (_usedSubIds.has(sub.id)) return false;
+            const sm = Number(sub.sub_mins);
+            return sm >= s && sm < slotEnd;
+          });
+          if (matchSub) _usedSubIds.add(matchSub.id);
+          allChecklistRows.push({
+            template_name: loc.template_name,
+            room_name: roomLabel,
+            slot: slotLabel,
+            status: matchSub ? (matchSub.status || 'submitted') : 'not_submitted',
+            submitted_by: matchSub?.submitted_by || null,
+            submitted_time: matchSub?.submitted_time || null,
+          });
+        }
+      }
+      // Extra subs genuinely outside all windows
+      for (const sub of locSubs) {
+        if (_usedSubIds.has(sub.id)) continue;
+        _usedSubIds.add(sub.id);
+        const inAnyWin = windows.some(w => Number(sub.sub_mins) >= w.start && Number(sub.sub_mins) < w.end);
+        if (inAnyWin) continue;
+        allChecklistRows.push({
+          template_name: loc.template_name,
+          room_name: roomLabel,
+          slot: fmtTime(Number(sub.sub_mins)) + ' (outside window)',
+          status: sub.status || 'submitted',
+          submitted_by: sub.submitted_by, submitted_time: sub.submitted_time,
+        });
+      }
+    } else if (locFreq !== 'hourly' && windows.length > 0) {
+      for (const win of windows) {
+        const slotLabel = fmtTime(win.start) + ' – ' + fmtTime(win.end);
+        const matchSub = locSubs.find(sub => {
+          if (_usedSubIds.has(sub.id)) return false;
+          const sm = Number(sub.sub_mins);
+          return sm >= win.start && sm < win.end;
+        });
+        if (matchSub) _usedSubIds.add(matchSub.id);
+        allChecklistRows.push({
+          template_name: loc.template_name,
+          room_name: roomLabel,
+          slot: slotLabel,
+          status: matchSub ? (matchSub.status || 'submitted') : 'not_submitted',
+          submitted_by: matchSub?.submitted_by || null, submitted_time: matchSub?.submitted_time || null,
+        });
+      }
+    } else {
+      if (locSubs.length > 0) {
+        for (const sub of locSubs) {
+          _usedSubIds.add(sub.id);
+          allChecklistRows.push({
+            template_name: loc.template_name, room_name: roomLabel, slot: null,
+            status: sub.status || 'submitted',
+            submitted_by: sub.submitted_by, submitted_time: sub.submitted_time,
+          });
+        }
+      } else {
+        allChecklistRows.push({
+          template_name: loc.template_name, room_name: roomLabel, slot: null,
+          status: 'not_submitted', submitted_by: null, submitted_time: null,
+        });
+      }
+    }
+  }
+
+  // Old-model standalone templates (not covered by location model)
+  const [oldModelTpls] = await pool.query(
     `SELECT ct.id, ct.template_name, COALESCE(r.room_name, '—') AS room_name,
             ct.frequency, ct.hourly_interval AS "hourlyInterval",
             ct.start_time AS "startTime", ct.end_time AS "endTime"
      FROM checklist_templates ct
      LEFT JOIN rooms r ON r.id = ct.room_id
-     WHERE ct.company_id = ? AND COALESCE(ct.status, 'active') != 'inactive'
+     WHERE ct.company_id = ? AND COALESCE(ct.status,'active') != 'inactive'
+       AND (ct.location_id IS NULL OR ct.location_id = 0)
+       AND ct.id NOT IN (
+         SELECT DISTINCT checklist_id FROM locations
+         WHERE company_id = ? AND checklist_id IS NOT NULL
+       )
      ORDER BY ct.template_name`,
-    [companyId]
+    [companyId, companyId]
   );
-
-  // Group submissions by template_id for fast lookup
-  const subsByTpl = {};
-  for (const s of todaySubmissions) {
-    if (!subsByTpl[s.template_id]) subsByTpl[s.template_id] = [];
-    subsByTpl[s.template_id].push(s);
-  }
-
-  // Build slot-expanded rows — mirrors dashboard Recent Submissions view
-  const allChecklistRows = [];
-  for (const tpl of tplWithConfig) {
+  for (const tpl of (oldModelTpls || [])) {
     const freq = (tpl.frequency || 'daily').toLowerCase();
-    const subs = subsByTpl[tpl.id] || [];
-
+    const subs = (subsByTplOnly[tpl.id] || []).filter(s => !_usedSubIds.has(s.id));
     if (freq === 'hourly' && tpl.startTime && tpl.endTime) {
       const interval  = Math.max(1, Number(tpl.hourlyInterval) || 1);
-      const [sh, sm = 0] = tpl.startTime.split(':').map(Number);
-      const [eh, em = 0] = tpl.endTime.split(':').map(Number);
-      const startMins = sh * 60 + sm;
-      const endMins   = eh * 60 + em;
-      const usedSubIds = new Set();
-
-      // Generate each slot and match to submissions
-      for (let slotStart = startMins; slotStart < endMins; slotStart += interval * 60) {
-        const slotEnd   = slotStart + interval * 60;
-        const slotLabel = fmtTime(slotStart) + ' – ' + fmtTime(slotEnd);
-
-        const matchSub = subs.find(s => {
-          if (usedSubIds.has(s.id)) return false;
-          const sm2 = Number(s.sub_mins);
-          return sm2 >= slotStart && sm2 < slotEnd;
+      const startMins = toMins(tpl.startTime), endMins = toMins(tpl.endTime);
+      const usedOld = new Set();
+      for (let sl = startMins; sl < endMins; sl += interval * 60) {
+        const slotEnd = sl + interval * 60;
+        const slotLabel = fmtTime(sl) + ' – ' + fmtTime(slotEnd);
+        const matchSub = subs.find(s => { if (usedOld.has(s.id)) return false; const sm = Number(s.sub_mins); return sm >= sl && sm < slotEnd; });
+        if (matchSub) usedOld.add(matchSub.id);
+        allChecklistRows.push({
+          template_name: tpl.template_name, room_name: tpl.room_name, slot: slotLabel,
+          status: matchSub ? (matchSub.status || 'submitted') : 'not_submitted',
+          submitted_by: matchSub?.submitted_by || null, submitted_time: matchSub?.submitted_time || null,
         });
-
-        if (matchSub) {
-          usedSubIds.add(matchSub.id);
-          allChecklistRows.push({
-            id: matchSub.id, template_id: tpl.id,
-            template_name: tpl.template_name, room_name: slotLabel,
-            status: matchSub.status || 'submitted',
-            submitted_by: matchSub.submitted_by,
-            submitted_at: matchSub.submitted_at,
-            submitted_time: matchSub.submitted_time,
-          });
-        } else {
-          allChecklistRows.push({
-            id: null, template_id: tpl.id,
-            template_name: tpl.template_name, room_name: slotLabel,
-            status: 'not_submitted', submitted_by: null, submitted_at: null, submitted_time: null,
-          });
-        }
-      }
-
-      // Add outside-window submissions
-      for (const s of subs) {
-        if (!usedSubIds.has(s.id)) {
-          allChecklistRows.push({
-            id: s.id, template_id: tpl.id,
-            template_name: tpl.template_name,
-            room_name: fmtTime(Number(s.sub_mins)) + ' (outside window)',
-            status: s.status || 'submitted',
-            submitted_by: s.submitted_by,
-            submitted_at: s.submitted_at,
-            submitted_time: s.submitted_time,
-          });
-        }
       }
     } else {
-      // Daily / no slot config
       if (subs.length > 0) {
-        for (const s of subs) {
-          allChecklistRows.push({
-            id: s.id, template_id: tpl.id,
-            template_name: tpl.template_name, room_name: tpl.room_name,
-            status: s.status || 'submitted',
-            submitted_by: s.submitted_by,
-            submitted_at: s.submitted_at,
-            submitted_time: s.submitted_time,
-          });
-        }
+        for (const s of subs) { _usedSubIds.add(s.id); allChecklistRows.push({ template_name: tpl.template_name, room_name: tpl.room_name, slot: null, status: s.status || 'submitted', submitted_by: s.submitted_by, submitted_time: s.submitted_time }); }
       } else {
-        allChecklistRows.push({
-          id: null, template_id: tpl.id,
-          template_name: tpl.template_name, room_name: tpl.room_name,
-          status: 'not_submitted', submitted_by: null, submitted_at: null, submitted_time: null,
-        });
+        allChecklistRows.push({ template_name: tpl.template_name, room_name: tpl.room_name, slot: null, status: 'not_submitted', submitted_by: null, submitted_time: null });
       }
     }
   }
@@ -648,13 +635,101 @@ async function generatePDF(companyId) {
     [companyId]
   );
   const [notifications] = await pool.query(
-    `SELECT title, message, created_at, type FROM notifications WHERE company_id = ? AND created_at::date = CURRENT_DATE ORDER BY created_at DESC LIMIT 6`,
-    [companyId]
+    `SELECT title, message, created_at, type FROM notifications WHERE company_id = ? AND created_at::date = ?::date ORDER BY created_at DESC LIMIT 6`,
+    [companyId, todayDbStr]
   ).catch(() => [[]]);
 
   const activeLocations = Number(dashRow?.active_locations ?? 0);
   const openSoft        = Number(dashRow?.open_soft ?? 0);
   const companyName     = co?.company_name ?? "Company";
+
+  // ── Shift Wise Site Score (same logic as /dashboard/shift-site-score endpoint) ──
+  let shiftScoreData = [];
+  try {
+    const [pdfShifts] = await pool.query(
+      `SELECT id, name, start_time AS "startTime", end_time AS "endTime"
+       FROM shifts WHERE company_id = ? AND status = 'active' ORDER BY start_time`,
+      [companyId]
+    );
+    if (pdfShifts && pdfShifts.length > 0) {
+      const [pdfLocPairs] = await pool.query(`
+        SELECT l.id AS "locationId", ct.id AS "templateId",
+               COALESCE(l.frequency, ct.frequency, 'Daily') AS frequency,
+               COALESCE(l.hourly_interval, ct.hourly_interval, 1) AS "hourlyInterval",
+               COALESCE(l.shift_ids, '[]'::jsonb) AS "shiftIds"
+        FROM locations l
+        JOIN checklist_templates ct ON ct.id = l.checklist_id
+        WHERE l.company_id = ? AND LOWER(COALESCE(l.status,'active')) = 'active'
+          AND COALESCE(ct.status,'active') != 'inactive'`, [companyId]);
+      const _ssToMins = (t) => { const [h, m = 0] = String(t || '00:00').split(':').map(Number); return h * 60 + m; };
+      const expForShift = (pair, shift) => {
+        const sIds = Array.isArray(pair.shiftIds) ? pair.shiftIds.map(Number)
+          : JSON.parse(typeof pair.shiftIds === 'string' ? pair.shiftIds : '[]').map(Number);
+        if (!sIds.includes(Number(shift.id))) return 0;
+        const freq = (pair.frequency || 'Daily').toLowerCase();
+        if (freq !== 'hourly') return 1;
+        const interval = Math.max(0.25, Number(pair.hourlyInterval) || 1);
+        const sS = _ssToMins(shift.startTime), sE = _ssToMins(shift.endTime);
+        return Math.max(1, Math.floor((sE <= sS ? (1440 - sS) + sE : sE - sS) / (interval * 60)));
+      };
+      const [pdfSubs] = await pool.query(`
+        SELECT cs.location_id AS "locationId", cs.template_id AS "templateId",
+               s.id AS "shiftId", COUNT(*) AS count
+        FROM checklist_submissions cs
+        JOIN checklist_templates ct ON ct.id = cs.template_id
+        JOIN locations l ON l.id = cs.location_id
+        JOIN shifts s ON s.company_id = ct.company_id AND s.status = 'active'
+          AND s.id::bigint = ANY(ARRAY(SELECT jsonb_array_elements_text(l.shift_ids))::bigint[])
+          AND (
+            (s.end_time::time > s.start_time::time
+              AND (EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at))
+                  >= (EXTRACT(HOUR FROM s.start_time::time)*60+EXTRACT(MINUTE FROM s.start_time::time))
+              AND (EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at))
+                  <  (EXTRACT(HOUR FROM s.end_time::time)*60+EXTRACT(MINUTE FROM s.end_time::time)))
+            OR
+            (s.end_time::time <= s.start_time::time
+              AND ((EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at))
+                    >= (EXTRACT(HOUR FROM s.start_time::time)*60+EXTRACT(MINUTE FROM s.start_time::time))
+                OR  (EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at))
+                    <  (EXTRACT(HOUR FROM s.end_time::time)*60+EXTRACT(MINUTE FROM s.end_time::time))))
+          )
+        WHERE ct.company_id = ?
+          AND (
+            cs.submitted_at::date = ?::date
+            OR (
+              cs.submitted_at::date = (?::date + INTERVAL '1 day')::date
+              AND s.end_time::time <= s.start_time::time
+              AND (EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at))
+                  < (EXTRACT(HOUR FROM s.end_time::time)*60+EXTRACT(MINUTE FROM s.end_time::time))
+            )
+          )
+          AND cs.location_id IS NOT NULL AND cs.status NOT IN ('rejected')
+          AND COALESCE(cs.is_soft_raise, FALSE) = FALSE
+          AND COALESCE(ct.status,'active') != 'inactive'
+        GROUP BY cs.location_id, cs.template_id, s.id`,
+        [companyId, todayDbStr, todayDbStr]
+      );
+      const pdfSubMap = {};
+      for (const s of pdfSubs) {
+        if (!pdfSubMap[s.shiftId]) pdfSubMap[s.shiftId] = {};
+        pdfSubMap[s.shiftId][`${s.locationId}_${s.templateId}`] = Number(s.count) || 0;
+      }
+      shiftScoreData = pdfShifts.map(shift => {
+        let total = 0, filled = 0;
+        for (const pair of pdfLocPairs) {
+          const exp = expForShift(pair, shift);
+          if (exp <= 0) continue;
+          total += exp;
+          filled += Math.min((pdfSubMap[shift.id] || {})[`${pair.locationId}_${pair.templateId}`] || 0, exp);
+        }
+        return { shiftName: shift.name, startTime: shift.startTime, endTime: shift.endTime,
+          total, filled, pending: Math.max(0, total - filled),
+          pct: total > 0 ? Math.round((filled / total) * 100) : 0 };
+      });
+    }
+  } catch (shiftErr) {
+    console.warn('[PDF] Shift score error:', shiftErr.message);
+  }
 
   const drawDonut = (doc, cx, cy, outerR, innerR, pct, fillColor, bgColor) => {
     doc.circle(cx, cy, outerR).fill(bgColor);
@@ -694,10 +769,12 @@ async function generatePDF(companyId) {
     const LBG   = "#F8FAFC";
     const M     = 28;
     const IW    = W - M * 2;
-    const nowDate   = new Date();
+    const nowDate    = new Date();
+    // reportDate is yesterday — the finalized reporting date for this PDF
+    const reportDate = new Date(todayDbStr + 'T00:00:00Z');
     const timeStr   = nowDate.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-    const dateShort = nowDate.toLocaleDateString("en-GB");
-    const dateLong  = nowDate.toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
+    const dateShort = reportDate.toLocaleDateString("en-GB");
+    const dateLong  = reportDate.toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
 
     // Blue header
     doc.rect(0, 0, W, 56).fill(BLUE);
@@ -786,38 +863,48 @@ async function generatePDF(companyId) {
     }
     y += hkH + 10;
 
-    // Notifications
-    if (Array.isArray(notifications) && notifications.length > 0) {
-      const notifH = Math.min(notifications.length, 5) * 30 + 32;
-      if (y + notifH > H - 40) { doc.addPage(); y = 32; }
-      doc.roundedRect(M, y, IW, notifH, 6).fillAndStroke("#fff", "#e2e8f0");
-      doc.fillColor(DARK).fontSize(11).font("Helvetica-Bold").text("Notifications", M + 12, y + 10);
-      doc.fillColor(LGRAY).fontSize(8).font("Helvetica").text("Latest alerts & reminders", W - M - 140, y + 12, { width: 140, align: "right" });
-      let ny = y + 32;
-      for (const n of notifications.slice(0, 5)) {
-        const dotCol = n.type === "checklist_reminder" ? "#d97706" : BLUE;
-        doc.circle(M + 15, ny + 5, 3).fill(dotCol);
-        doc.fillColor(dotCol).fontSize(7).font("Helvetica-Bold").text(n.type === "checklist_reminder" ? "Checklist" : "Alert", M + 22, ny, { width: 50 });
-        doc.fillColor(DARK).fontSize(8).font("Helvetica-Bold").text(n.title ?? "-", M + 75, ny, { width: IW - 120, ellipsis: true });
-        doc.fillColor(LGRAY).fontSize(7).text(n.created_at ? new Date(n.created_at).toLocaleDateString("en-GB") : "", W - M - 44, ny, { width: 44, align: "right" });
-        doc.fillColor(LGRAY).fontSize(7.5).font("Helvetica").text(n.message ?? "", M + 22, ny + 13, { width: IW - 52, ellipsis: true });
-        ny += 30;
+    /* Notifications section intentionally omitted from PDF report */
+
+    // ── Shift Wise Site Score section ────────────────────────────────────────
+    if (Array.isArray(shiftScoreData) && shiftScoreData.length > 0) {
+      const shiftColW = Math.floor((IW - (shiftScoreData.length - 1) * 8) / shiftScoreData.length);
+      const shiftSectH = 110;
+      if (y + shiftSectH + 22 > H - 40) { doc.addPage(); y = 32; }
+      doc.fillColor(DARK).fontSize(12).font("Helvetica-Bold").text("Shift Wise Site Score", M, y);
+      y += 16;
+      const reportDateLabel = (() => { try { const d = new Date(todayDbStr + 'T00:00:00Z'); return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }); } catch { return todayDbStr; } })();
+      doc.fillColor(LGRAY).fontSize(8).font("Helvetica").text("Data for " + reportDateLabel, M, y);
+      y += 10;
+      const fmtShiftT = (t) => { if (!t) return '—'; const [h, m = '00'] = t.split(':'); const hh = parseInt(h); const ap = hh >= 12 ? 'PM' : 'AM'; return `${hh % 12 || 12}:${String(m).padStart(2, '0')} ${ap}`; };
+      for (let i = 0; i < shiftScoreData.length; i++) {
+        const sh = shiftScoreData[i];
+        const sx = M + i * (shiftColW + 8);
+        const pctColor = sh.pct >= 75 ? "#16a34a" : sh.pct >= 40 ? "#d97706" : "#dc2626";
+        doc.roundedRect(sx, y, shiftColW, shiftSectH, 6).fillAndStroke("#fafafa", "#e2e8f0");
+        doc.fillColor(DARK).fontSize(9).font("Helvetica-Bold").text(sh.shiftName, sx + 6, y + 8, { width: shiftColW - 12, align: "center", ellipsis: true });
+        doc.fillColor(LGRAY).fontSize(7).font("Helvetica").text(fmtShiftT(sh.startTime) + " – " + fmtShiftT(sh.endTime), sx + 6, y + 21, { width: shiftColW - 12, align: "center" });
+        doc.fillColor(pctColor).fontSize(22).font("Helvetica-Bold").text(sh.pct + "%", sx + 6, y + 34, { width: shiftColW - 12, align: "center" });
+        doc.roundedRect(sx + 6, y + 62, shiftColW - 12, 40, 4).fill("#f1f5f9");
+        doc.fillColor("#475569").fontSize(7).font("Helvetica");
+        doc.text("Total: " + sh.total,    sx + 10, y + 66, { width: shiftColW - 20 });
+        doc.fillColor("#16a34a").text("Filled: " + sh.filled,   sx + 10, y + 77, { width: shiftColW - 20 });
+        doc.fillColor("#dc2626").text("Pending: " + sh.pending, sx + 10, y + 88, { width: shiftColW - 20 });
       }
-      y += notifH + 10;
+      y += shiftSectH + 14;
     }
 
-    // ── Site Score Overview (last 7 days bar chart) ──────────────────────────
+    // ── Site Performance Trend (last 7 days bar chart) ──────────────────────────
     if (Array.isArray(siteScoreRows) && siteScoreRows.length > 0) {
       const chartH = 90;
       const chartPad = 12;
       const sectionH = chartH + 46;
       if (y + sectionH > H - 40) { doc.addPage(); y = 32; }
       doc.roundedRect(M, y, IW, sectionH, 6).fillAndStroke("#fff", "#e2e8f0");
-      doc.fillColor(DARK).fontSize(11).font("Helvetica-Bold").text("Site Score Overview", M + 12, y + 10);
-      doc.fillColor(LGRAY).fontSize(8).font("Helvetica").text("Last 7 days (" + _sevenDaysAgo + " to " + todayDbStr + ") \u2014 Slot-based completion rate", M + 12, y + 24);
+      doc.fillColor(DARK).fontSize(11).font("Helvetica-Bold").text("Site Performance Trend", M + 12, y + 8);
+      doc.fillColor(LGRAY).fontSize(8).font("Helvetica").text("Last 7 days (" + _sevenDaysAgo + " to " + todayDbStr + ") \u2014 Slot-based completion rate", M + 12, y + 21);
       const barAreaX = M + chartPad + 28;
       const barAreaW = IW - chartPad * 2 - 28;
-      const barAreaY = y + 38;
+      const barAreaY = y + 40;
       const barAreaH = chartH - 12;
       const ORANGE    = "#f97316";
       const BAR_DARK  = "#ea580c";
@@ -852,48 +939,7 @@ async function generatePDF(companyId) {
       y += sectionH + 10;
     }
 
-    // Recent Submissions table — matches dashboard: today's submissions + not-yet-submitted templates
-    if (allChecklistRows.length > 0) {
-      if (y + 80 > H - 40) { doc.addPage(); y = 32; }
-      doc.fillColor(BLUE).fontSize(12).font("Helvetica-Bold").text("Recent Submissions", M, y);
-      doc.fillColor(LGRAY).fontSize(8).font("Helvetica").text(dateShort, M + doc.widthOfString("Recent Submissions") + 8, y + 2);
-      y += 18;
-      const cols = [
-        { x: M + 2,   w: 18,  t: "#" },
-        { x: M + 24,  w: 145, t: "Template" },
-        { x: M + 173, w: 100, t: "Slot / Room" },
-        { x: M + 277, w: 60,  t: "Status" },
-        { x: M + 341, w: 100, t: "Filled By" },
-        { x: M + 445, w: 80,  t: "Time" },
-      ];
-      doc.rect(M, y, IW, 18).fill("#EFF6FF");
-      doc.fillColor(BLUE).font("Helvetica-Bold").fontSize(7.5);
-      for (const col of cols) doc.text(col.t, col.x, y + 5, { width: col.w });
-      y += 20;
-      const statusColor = (st) => {
-        if (!st || st === "not_submitted" || st === "rejected" || st === "overdue") return "#dc2626";
-        if (st === "submitted" || st === "approved") return GREEN;
-        if (st === "pending") return "#d97706";
-        return GRAY;
-      };
-      const statusLabel = (st) => {
-        if (st === "not_submitted") return "Not Submitted";
-        return st ? st.charAt(0).toUpperCase() + st.slice(1) : "—";
-      };
-      for (let i = 0; i < allChecklistRows.length; i++) {
-        if (y > H - 50) { doc.addPage(); y = 32; }
-        const s = allChecklistRows[i];
-        doc.rect(M, y, IW, 16).fill(i % 2 === 0 ? LBG : "#fff");
-        doc.fillColor(DARK).font("Helvetica").fontSize(7.5);
-        doc.text(String(i + 1), cols[0].x, y + 3, { width: cols[0].w });
-        doc.text(s.template_name ?? "-", cols[1].x, y + 3, { width: cols[1].w, ellipsis: true });
-        doc.text(s.room_name ?? "—", cols[2].x, y + 3, { width: cols[2].w, ellipsis: true });
-        doc.fillColor(statusColor(s.status)).text(statusLabel(s.status), cols[3].x, y + 3, { width: cols[3].w, ellipsis: true });
-        doc.fillColor(s.submitted_by ? DARK : LGRAY).text(s.submitted_by ?? "—", cols[4].x, y + 3, { width: cols[4].w, ellipsis: true });
-        doc.fillColor(DARK).text(s.submitted_time ?? "—", cols[5].x, y + 3, { width: cols[5].w });
-        y += 17;
-      }
-    }
+    /* Recent Submissions section omitted from PDF report */
 
     // Page footers
     const range = doc.bufferedPageRange();
@@ -940,8 +986,10 @@ async function sendScheduledReport(config) {
   const ec = cfg.emailConfig || {};
 
   const companyName = co?.company_name ?? "Catalyst FM";
-  const dateLong = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
-  const defaultSubject = `Daily Site Report - ${companyName} - ${new Date().toLocaleDateString("en-GB")}`;
+  // Report covers the previous day's finalized data
+  const reportDateStr = new Date(Date.now() - 86400000).toLocaleDateString("en-GB");
+  const dateLong = new Date(Date.now() - 86400000).toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
+  const defaultSubject = `Daily Site Report - ${companyName} - ${reportDateStr}`;
   const emailSubject = ec.subject || defaultSubject;
   const emailBody   = ec.body   || "Please find the attachment of daily site report.";
 
@@ -1021,8 +1069,9 @@ cron.schedule("* * * * *", async () => {
   }
 });
 
-/* ── Cron: daily at 00:05 IST, snapshot yesterday's site scores ───────────── */
-cron.schedule("5 0 * * *", async () => {
+/* ── Cron: daily at 08:05 IST, snapshot yesterday's site scores ───────────── */
+/* Runs at 08:05 (after overnight shifts end) to capture all night-shift submissions */
+cron.schedule("5 8 * * *", async () => {
   try {
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
@@ -1039,93 +1088,26 @@ cron.schedule("5 0 * * *", async () => {
 
     for (const co of companies) {
       try {
-        // Check if snapshot already exists
         const [[existing]] = await pool.query(
           `SELECT id FROM daily_checklist_snapshots WHERE company_id = ? AND snapshot_date = ?::date`,
           [co.id, yesterdayStr]
         );
+        if (existing) { skipCount++; continue; }
 
-        if (existing) {
-          skipCount++;
-          continue;
-        }
+        // Phase 4: use location-based scoring via shared utility
+        const metrics = await computeSiteScore(co.id, yesterdayStr);
 
-        // Fetch templates with frequency metadata
-        const [templates] = await pool.query(
-          `SELECT id, frequency, hourly_interval AS "hourlyInterval",
-                  start_time AS "startTime", end_time AS "endTime"
-           FROM checklist_templates
-           WHERE company_id = ?
-             AND COALESCE(status, 'active') != 'inactive'`,
-          [co.id]
-        );
-
-        // Fetch submission counts for yesterday
-        const [subCounts] = await pool.query(
-          `SELECT cs.template_id AS "templateId", COUNT(*) AS "count"
-           FROM checklist_submissions cs
-           JOIN checklist_templates ct ON ct.id = cs.template_id
-           WHERE ct.company_id = ?
-             AND cs.submitted_at::date = ?::date
-             AND COALESCE(ct.status, 'active') != 'inactive'
-             AND cs.status NOT IN ('rejected')
-             AND (
-               LOWER(COALESCE(ct.frequency, 'daily')) != 'hourly'
-               OR ct.start_time IS NULL
-               OR ct.end_time IS NULL
-               OR (
-                 (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
-                   >= (EXTRACT(HOUR FROM ct.start_time::time) * 60 + EXTRACT(MINUTE FROM ct.start_time::time))
-                 AND (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
-                   < (EXTRACT(HOUR FROM ct.end_time::time) * 60 + EXTRACT(MINUTE FROM ct.end_time::time))
-               )
-             )
-           GROUP BY cs.template_id`,
-          [co.id, yesterdayStr]
-        );
-
-        const subMap = Object.fromEntries(subCounts.map(s => [s.templateId, Number(s.count) || 0]));
-
-        let totalExpected = 0;
-        let filledSlots = 0;
-        const breakdown = [];
-
-        for (const t of templates) {
-          const freq = (t.frequency || 'Daily').toLowerCase();
-          let exp = 1;
-          if (freq === 'hourly') {
-            const interval = Math.max(1, Number(t.hourlyInterval) || 1);
-            if (t.startTime && t.endTime) {
-              const [sh, sm = 0] = t.startTime.split(':').map(Number);
-              const [eh, em = 0] = t.endTime.split(':').map(Number);
-              const startMins = sh * 60 + (sm || 0);
-              const endMins = eh * 60 + (em || 0);
-              if (endMins > startMins) {
-                exp = Math.max(1, Math.floor((endMins - startMins) / (interval * 60)));
-              }
-            } else {
-              exp = Math.max(1, Math.floor(1440 / (interval * 60)));
-            }
-          }
-          if (exp <= 0) continue;
-          totalExpected += exp;
-          const actual = subMap[t.id] || 0;
-          const filled = Math.min(actual, exp);
-          filledSlots += filled;
-          breakdown.push({ templateId: t.id, expectedSlots: exp, filledSlots: filled });
-        }
-
-        const siteScorePct = totalExpected > 0 ? Math.round((filledSlots / totalExpected) * 100) : 0;
-
-        // Insert snapshot
         await pool.query(
-          `INSERT INTO daily_checklist_snapshots 
+          `INSERT INTO daily_checklist_snapshots
            (company_id, snapshot_date, total_expected_slots, filled_slots, site_score_pct, template_breakdown)
            VALUES (?, ?::date, ?, ?, ?, ?::jsonb)
-           ON CONFLICT (company_id, snapshot_date) DO NOTHING`,
-          [co.id, yesterdayStr, totalExpected, filledSlots, siteScorePct, JSON.stringify(breakdown)]
+           ON CONFLICT (company_id, snapshot_date) DO UPDATE
+             SET total_expected_slots = EXCLUDED.total_expected_slots,
+                 filled_slots = EXCLUDED.filled_slots,
+                 site_score_pct = EXCLUDED.site_score_pct,
+                 template_breakdown = EXCLUDED.template_breakdown`,
+          [co.id, yesterdayStr, metrics.totalExpected, metrics.filledSlots, metrics.siteScorePct, JSON.stringify(metrics.breakdown)]
         );
-
         successCount++;
       } catch (coErr) {
         errorCount++;

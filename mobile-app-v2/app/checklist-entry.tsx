@@ -556,11 +556,14 @@ export default function ChecklistEntryScreen() {
 
       if (isSoftRaise) {
         // Submit checklist AND raise a soft service request in one step
+        // softRaise: '1' tells the backend to bypass shift enforcement and mark as soft raise
         const submission = await submitChecklistAuth({
           templateId: tid, assetId: aid, answers: answerArray,
           latitude: loc?.latitude ?? null, longitude: loc?.longitude ?? null,
           locationAddress: loc?.address ?? null,
           overallRemark: overallRemark.trim() || undefined,
+          locationId: locationId && Number(locationId) > 0 ? Number(locationId) : null,
+          softRaise: '1',
         });
         const submissionId = (submission as any)?.submissionId ?? (submission as any)?.id ?? undefined;
         await raiseSoftRequest({
@@ -588,13 +591,23 @@ export default function ChecklistEntryScreen() {
           latitude: loc?.latitude ?? null, longitude: loc?.longitude ?? null,
           locationAddress: loc?.address ?? null,
           overallRemark: overallRemark.trim() || undefined,
+          locationId: locationId && Number(locationId) > 0 ? Number(locationId) : null,
         });
         Alert.alert('Submitted!', 'Your response has been recorded.', [
           { text: 'Done', onPress: () => router.back() },
         ]);
       }
     } catch (err: any) {
-      Alert.alert('Submission Failed', err.message ?? 'Please try again.');
+      let errMsg: string = err.message ?? 'Please try again.';
+      try {
+        const parsed = JSON.parse(errMsg);
+        if (parsed.shiftLocked) {
+          errMsg = 'You cannot fill this checklist because this shift is not assigned to you.';
+        } else if (parsed.message) {
+          errMsg = parsed.message;
+        }
+      } catch { /* not JSON, use message as-is */ }
+      Alert.alert('Submission Failed', errMsg);
     } finally {
       setSubmitting(false);
     }

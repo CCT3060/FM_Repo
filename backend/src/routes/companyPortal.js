@@ -6,6 +6,7 @@ import fs from "fs";
 import multer from "multer";
 import * as XLSX from "xlsx";
 import pool from "../db.js";
+import { computeSiteScore, computeSiteScoreRange } from "../utils/siteScore.js";
 import { requireCompanyAuth } from "../middleware/companyAuth.js";
 import { evaluateRule, createFlag, detectChecklistFlags } from "../utils/flagsHelper.js";
 import { dispatchFlagNotifications } from "../utils/notificationsHelper.js";
@@ -113,6 +114,62 @@ const safeParse = (v) => {
 
 // Ensure questions column exists (safe to run on every start)
 pool.query("ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS questions JSONB NULL").catch(() => {});
+// Ensure checklist_id columns exist on locations and rooms (location→checklist assignment feature)
+pool.query("ALTER TABLE locations ADD COLUMN IF NOT EXISTS checklist_id BIGINT NULL REFERENCES checklist_templates(id) ON DELETE SET NULL").catch(() => {});
+pool.query("ALTER TABLE rooms ADD COLUMN IF NOT EXISTS checklist_id BIGINT NULL REFERENCES checklist_templates(id) ON DELETE SET NULL").catch(() => {});
+// ── Issue 4: rooms table name column ─────────────────────────────────────────
+pool.query("ALTER TABLE rooms ADD COLUMN IF NOT EXISTS name VARCHAR(160) NULL").catch(() => {});
+pool.query("UPDATE rooms SET name = room_name WHERE name IS NULL AND room_name IS NOT NULL").catch(() => {});
+// ── Phase 2: Location/Room scheduling fields ─────────────────────────────────
+pool.query("ALTER TABLE locations ADD COLUMN IF NOT EXISTS frequency VARCHAR(30) NULL").catch(() => {});
+pool.query("ALTER TABLE locations ADD COLUMN IF NOT EXISTS hourly_interval SMALLINT NULL DEFAULT 1").catch(() => {});
+pool.query("ALTER TABLE rooms ADD COLUMN IF NOT EXISTS hourly_interval SMALLINT NULL DEFAULT 1").catch(() => {});
+// ── Issue 1: Allow decimal hourly_interval (e.g. 1.5 = 1h30m) ───────────────
+pool.query("ALTER TABLE locations ALTER COLUMN hourly_interval TYPE NUMERIC(6,2) USING hourly_interval::numeric").catch(() => {});
+pool.query("ALTER TABLE rooms ALTER COLUMN hourly_interval TYPE NUMERIC(6,2) USING hourly_interval::numeric").catch(() => {});
+pool.query("ALTER TABLE checklist_templates ALTER COLUMN hourly_interval TYPE NUMERIC(6,2) USING hourly_interval::numeric").catch(() => {});
+pool.query("ALTER TABLE locations ADD COLUMN IF NOT EXISTS start_time VARCHAR(8) NULL").catch(() => {});
+pool.query("ALTER TABLE locations ADD COLUMN IF NOT EXISTS end_time VARCHAR(8) NULL").catch(() => {});
+pool.query("ALTER TABLE locations ADD COLUMN IF NOT EXISTS notification_timer INTEGER NULL").catch(() => {});
+pool.query("ALTER TABLE locations ADD COLUMN IF NOT EXISTS notification_time VARCHAR(8) NULL").catch(() => {});
+pool.query("ALTER TABLE locations ADD COLUMN IF NOT EXISTS week_days JSONB NULL").catch(() => {});
+pool.query("ALTER TABLE locations ADD COLUMN IF NOT EXISTS active_months JSONB NULL").catch(() => {});
+pool.query("ALTER TABLE locations ADD COLUMN IF NOT EXISTS shift_ids JSONB NULL DEFAULT '[]'::jsonb").catch(() => {});
+pool.query("ALTER TABLE locations ADD COLUMN IF NOT EXISTS custom_hours JSONB NULL").catch(() => {});
+pool.query("ALTER TABLE locations ADD COLUMN IF NOT EXISTS monthly_day SMALLINT NULL").catch(() => {});
+pool.query("ALTER TABLE rooms ADD COLUMN IF NOT EXISTS frequency VARCHAR(30) NULL").catch(() => {});
+pool.query("ALTER TABLE rooms ADD COLUMN IF NOT EXISTS hourly_interval SMALLINT NULL DEFAULT 1").catch(() => {});
+pool.query("ALTER TABLE rooms ADD COLUMN IF NOT EXISTS start_time VARCHAR(8) NULL").catch(() => {});
+pool.query("ALTER TABLE rooms ADD COLUMN IF NOT EXISTS end_time VARCHAR(8) NULL").catch(() => {});
+pool.query("ALTER TABLE rooms ADD COLUMN IF NOT EXISTS notification_timer INTEGER NULL").catch(() => {});
+pool.query("ALTER TABLE rooms ADD COLUMN IF NOT EXISTS notification_time VARCHAR(8) NULL").catch(() => {});
+pool.query("ALTER TABLE rooms ADD COLUMN IF NOT EXISTS week_days JSONB NULL").catch(() => {});
+pool.query("ALTER TABLE rooms ADD COLUMN IF NOT EXISTS active_months JSONB NULL").catch(() => {});
+pool.query("ALTER TABLE rooms ADD COLUMN IF NOT EXISTS shift_ids JSONB NULL DEFAULT '[]'::jsonb").catch(() => {});
+pool.query("ALTER TABLE rooms ADD COLUMN IF NOT EXISTS custom_hours JSONB NULL").catch(() => {});
+pool.query("ALTER TABLE rooms ADD COLUMN IF NOT EXISTS monthly_day SMALLINT NULL").catch(() => {});
+// Backfill A+B: copy frequency/shift data from checklist_templates → locations where checklist_id is set
+(async () => {
+  try {
+    await pool.query(`
+      UPDATE locations l
+      SET frequency          = ct.frequency,
+          hourly_interval    = ct.hourly_interval,
+          start_time         = ct.start_time,
+          end_time           = ct.end_time,
+          notification_timer = ct.notification_timer,
+          notification_time  = ct.notification_time,
+          week_days          = ct.week_days,
+          active_months      = ct.active_months,
+          shift_ids          = CASE WHEN ct.shift_id IS NOT NULL
+                               THEN json_build_array(ct.shift_id)::jsonb
+                               ELSE '[]'::jsonb END
+      FROM checklist_templates ct
+      WHERE l.checklist_id = ct.id
+        AND l.frequency IS NULL
+    `);
+  } catch { /* non-critical */ }
+})();
 // Ensure has_remark column exists (template-level remark field toggle)
 pool.query("ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS has_remark BOOLEAN NOT NULL DEFAULT FALSE").catch(() => {});
 // Ensure overall_remark column exists on checklist_submissions
@@ -449,348 +506,231 @@ router.get("/dashboard/chart-stats", async (req, res, next) => {
 
     let dateFrom, dateTo;
     if (startDate && endDate) {
-      dateFrom = startDate;
-      dateTo   = endDate;
+      dateFrom = startDate; dateTo = endDate;
+    } else if (period === "day") {
+      dateFrom = dateTo = today;
+    } else if (period === "week") {
+      const d = new Date(now); d.setDate(now.getDate() - now.getDay());
+      dateFrom = d.toISOString().split("T")[0];
+      const e = new Date(d); e.setDate(d.getDate() + 6);
+      dateTo = e.toISOString().split("T")[0];
+    } else if (period === "month") {
+      const y = now.getFullYear(), m = now.getMonth() + 1;
+      dateFrom = `${y}-${String(m).padStart(2,"0")}-01`;
+      dateTo = `${y}-${String(m).padStart(2,"0")}-${String(new Date(y, m, 0).getDate()).padStart(2,"0")}`;
     } else {
-      if (period === "day") {
-        dateFrom = today;
-        dateTo   = today;
-      } else if (period === "week") {
-        const d = new Date(now);
-        d.setDate(now.getDate() - now.getDay());
-        dateFrom = d.toISOString().split("T")[0];
-        const e = new Date(d); e.setDate(d.getDate() + 6);
-        dateTo = e.toISOString().split("T")[0];
-      } else if (period === "month") {
-        const y = now.getFullYear(), m = now.getMonth() + 1;
-        dateFrom = `${y}-${String(m).padStart(2,"0")}-01`;
-        const last = new Date(y, m, 0).getDate();
-        dateTo = `${y}-${String(m).padStart(2,"0")}-${String(last).padStart(2,"0")}`;
-      } else {
-        // year
-        dateFrom = `${now.getFullYear()}-01-01`;
-        dateTo   = `${now.getFullYear()}-12-31`;
-      }
+      dateFrom = `${now.getFullYear()}-01-01`; dateTo = `${now.getFullYear()}-12-31`;
     }
 
-    // Run all queries separately so one failure doesn't kill the rest
-    const safe = async (fn, fallback) => {
-      try { return await fn(); }
-      catch (e) { console.error("[chart-stats]", e.message); return fallback; }
-    };
+    const safe = async (fn, fallback) => { try { return await fn(); } catch (e) { console.error("[chart-stats]", e.message); return fallback; } };
 
-    // Generate date series in UTC to avoid timezone date-shift edge cases.
     const dates = [];
     const [sy, sm, sd] = dateFrom.split('-').map(Number);
     const [ey, em, ed] = dateTo.split('-').map(Number);
-    for (let ms = Date.UTC(sy, sm - 1, sd), endMs = Date.UTC(ey, em - 1, ed); ms <= endMs; ms += 86400000) {
+    for (let ms = Date.UTC(sy, sm-1, sd), endMs = Date.UTC(ey, em-1, ed); ms <= endMs; ms += 86400000)
       dates.push(new Date(ms).toISOString().slice(0, 10));
-    }
 
-    // Fetch frozen snapshots for past dates in the range.
-    // Snapshotted dates use stored totals so newly-added checklists never
-    // retroactively change historical counts.
+    // Fetch frozen snapshots (immutable past scores)
     const [snapRows] = await safe(() => pool.query(
-      `SELECT snapshot_date::text AS date,
-              total_expected_slots AS "totalExpected",
-              filled_slots         AS "filledSlots"
-       FROM daily_checklist_snapshots
-       WHERE company_id = ?
-         AND snapshot_date BETWEEN ?::date AND ?::date`,
+      `SELECT snapshot_date::text AS date, total_expected_slots AS "totalExpected", filled_slots AS "filledSlots"
+       FROM daily_checklist_snapshots WHERE company_id = ? AND snapshot_date BETWEEN ?::date AND ?::date`,
       [companyId, dateFrom, dateTo]
     ), [[]]);
     const snapshotMap = {};
-    for (const snap of snapRows) {
-      snapshotMap[snap.date] = {
-        totalExpected: Number(snap.totalExpected),
-        filledSlots:   Number(snap.filledSlots),
-      };
-    }
+    for (const s of snapRows) snapshotMap[s.date] = { totalExpected: Number(s.totalExpected), filledSlots: Number(s.filledSlots) };
 
-    // Dates without a frozen snapshot (today or pre-snapshot legacy dates).
     const liveDates = dates.filter(d => !snapshotMap[d]);
 
-    const [[ltRows]] = await safe(() => pool.query(
-      `SELECT COUNT(*) AS cnt FROM logsheet_templates WHERE company_id = ?`,
-      [companyId]
-    ), [[{ cnt: 0 }]]);
+    const [[ltRows]] = await safe(() => pool.query(`SELECT COUNT(*) AS cnt FROM logsheet_templates WHERE company_id = ?`, [companyId]), [[{ cnt: 0 }]]);
     const [[subLSRows]] = await safe(() => pool.query(
-      `SELECT COUNT(*) AS cnt
-       FROM logsheet_entries le
-       JOIN logsheet_templates lt ON lt.id = le.template_id
-       WHERE lt.company_id = ?
-         AND le.submitted_at::date BETWEEN ? AND ?`,
+      `SELECT COUNT(*) AS cnt FROM logsheet_entries le JOIN logsheet_templates lt ON lt.id = le.template_id WHERE lt.company_id = ? AND le.submitted_at::date BETWEEN ? AND ?`,
       [companyId, dateFrom, dateTo]
     ), [[{ cnt: 0 }]]);
 
-    let liveTemplates = [];
-    let countMap = {};
+    // Always use location-based scoring (computeSiteScoreRange) for ALL dates — no frozen snapshots for checklist count
+    // This ensures past date data reflects current location/shift configuration correctly
+    const liveScores = dates.length > 0 ? await computeSiteScoreRange(companyId, dates) : [];
+    const liveScoreMap = {};
+    for (const s of liveScores) liveScoreMap[s.date] = s;
 
-    if (liveDates.length > 0) {
-      const liveStart = liveDates[0];
-      const liveEnd   = liveDates[liveDates.length - 1];
-
-      // Fetch active templates including created_at so we can filter per-date:
-      // a template created after a given live date is excluded from that date's totals.
-      const [tmplRows] = await safe(() => pool.query(
-        `SELECT id, frequency, hourly_interval AS "hourlyInterval",
-                start_time AS "startTime", end_time AS "endTime",
-                created_at::date::text AS "createdDate"
-         FROM checklist_templates
-         WHERE company_id = ?
-           AND COALESCE(status, 'active') != 'inactive'`,
-        [companyId]
-      ), [[]]);
-      liveTemplates = tmplRows;
-
-      const [subCounts] = await safe(() => pool.query(
-        `SELECT cs.template_id AS "templateId",
-                cs.submitted_at::date::text AS "date",
-                COUNT(*) AS "count"
-           FROM checklist_submissions cs
-           JOIN checklist_templates ct ON ct.id = cs.template_id
-          WHERE ct.company_id = ?
-            AND COALESCE(ct.status, 'active') != 'inactive'
-            AND cs.submitted_at::date BETWEEN ?::date AND ?::date
-            AND cs.status NOT IN ('rejected')
-            AND (
-              LOWER(COALESCE(ct.frequency, 'daily')) != 'hourly'
-              OR ct.start_time IS NULL
-              OR ct.end_time IS NULL
-              OR (
-                (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
-                  >= (EXTRACT(HOUR FROM ct.start_time::time) * 60 + EXTRACT(MINUTE FROM ct.start_time::time))
-                AND (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
-                  < (EXTRACT(HOUR FROM ct.end_time::time) * 60 + EXTRACT(MINUTE FROM ct.end_time::time))
-              )
-            )
-          GROUP BY cs.template_id, cs.submitted_at::date`,
-        [companyId, liveStart, liveEnd]
-      ), [[]]);
-
-      for (const row of subCounts) {
-        if (!countMap[row.date]) countMap[row.date] = {};
-        countMap[row.date][row.templateId] = Number(row.count) || 0;
-      }
-    }
-
-    function expectedSlotsForDate(t) {
-      const freq = (t.frequency || 'Daily').toLowerCase();
-      if (freq !== 'hourly') return 1;
-      const interval = Math.max(1, Number(t.hourlyInterval) || 1);
-      if (t.startTime && t.endTime) {
-        const [sh, sm = 0] = t.startTime.split(':').map(Number);
-        const [eh, em = 0] = t.endTime.split(':').map(Number);
-        const startMins = sh * 60 + (sm || 0);
-        const endMins = eh * 60 + (em || 0);
-        if (endMins <= startMins) return 1;
-        return Math.max(1, Math.floor((endMins - startMins) / (interval * 60)));
-      }
-      return Math.max(1, Math.floor(1440 / (interval * 60)));
-    }
-
-    let totalChecklists = 0;
-    let filledChecklists = 0;
-
+    let totalChecklists = 0, filledChecklists = 0;
     for (const dateStr of dates) {
-      // Use frozen snapshot for past dates that have one.
-      if (snapshotMap[dateStr]) {
-        totalChecklists  += snapshotMap[dateStr].totalExpected;
-        filledChecklists += snapshotMap[dateStr].filledSlots;
-        continue;
-      }
-      // Live calculation: only include templates that existed on this date.
-      for (const t of liveTemplates) {
-        if (t.createdDate && t.createdDate > dateStr) continue;
-        const exp = expectedSlotsForDate(t);
-        if (exp <= 0) continue;
-        totalChecklists += exp;
-        const actual = (countMap[dateStr]?.[t.id]) || 0;
-        filledChecklists += Math.min(actual, exp);
+      if (liveScoreMap[dateStr]) {
+        totalChecklists  += liveScoreMap[dateStr].totalSlots;
+        filledChecklists += liveScoreMap[dateStr].filledSlots;
       }
     }
 
     const totalLogsheets = Number(ltRows?.cnt || 0);
     const filledLogsheets = Number(subLSRows?.cnt || 0);
-    filledChecklists = Math.min(totalChecklists, filledChecklists);
-
     res.json({
-      totalLogsheets,
-      totalChecklists,
-      filledLogsheets,
-      filledChecklists,
-      pendingLogsheets:  Math.max(0, totalLogsheets  - filledLogsheets),
+      totalLogsheets, totalChecklists: Math.max(0, totalChecklists),
+      filledLogsheets, filledChecklists: Math.min(totalChecklists, filledChecklists),
+      pendingLogsheets: Math.max(0, totalLogsheets - filledLogsheets),
       pendingChecklists: Math.max(0, totalChecklists - filledChecklists),
-      period,
-      dateFrom,
-      dateTo,
+      period, dateFrom, dateTo,
     });
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
+});
+
+/* ── GET /api/company-portal/dashboard/shift-site-score ──────────────────────
+   Returns per-shift site score breakdown for a given date. Used by the
+   Shift Wise Site Score card in the company dashboard. */
+router.get("/dashboard/shift-site-score", async (req, res, next) => {
+  try {
+    const companyId = cid(req);
+    const targetDate = req.query.date || new Date().toISOString().slice(0, 10);
+
+    // Active shifts for this company
+    const [shifts] = await pool.query(
+      `SELECT id, name, start_time AS "startTime", end_time AS "endTime"
+       FROM shifts WHERE company_id = ? AND status = 'active' ORDER BY start_time`,
+      [companyId]
+    );
+    if (!shifts || shifts.length === 0) return res.json([]);
+
+    // Active location-pairs: locations with an assigned checklist
+    const [locPairs] = await pool.query(`
+      SELECT l.id AS "locationId", ct.id AS "templateId",
+             COALESCE(l.frequency, ct.frequency, 'Daily') AS frequency,
+             COALESCE(l.hourly_interval, ct.hourly_interval, 1) AS "hourlyInterval",
+             COALESCE(l.shift_ids, '[]'::jsonb) AS "shiftIds"
+      FROM locations l
+      JOIN checklist_templates ct ON ct.id = l.checklist_id
+      WHERE l.company_id = ? AND LOWER(COALESCE(l.status,'active')) = 'active'
+        AND COALESCE(ct.status,'active') != 'inactive'`, [companyId]);
+
+    // Helper: expected slots this pair contributes to a given shift
+    const _toMins = (t) => { const [h, m = 0] = String(t || '00:00').split(':').map(Number); return h * 60 + m; };
+    const expectedForShift = (pair, shift) => {
+      const sIds = Array.isArray(pair.shiftIds) ? pair.shiftIds.map(Number)
+        : JSON.parse(typeof pair.shiftIds === 'string' ? pair.shiftIds : '[]').map(Number);
+      if (!sIds.includes(Number(shift.id))) return 0;
+      const freq = (pair.frequency || 'Daily').toLowerCase();
+      if (freq !== 'hourly') return 1;
+      const interval = Math.max(0.25, Number(pair.hourlyInterval) || 1);
+      const sStart = _toMins(shift.startTime), sEnd = _toMins(shift.endTime);
+      const totalMins = sEnd <= sStart ? (1440 - sStart) + sEnd : sEnd - sStart;
+      return Math.max(1, Math.floor(totalMins / (interval * 60)));
+    };
+
+    // Filled submissions scoped per shift (using overnight-aware time check)
+    // New submissions with shift_id set are matched directly; legacy use time-window
+    const [subs] = await pool.query(`
+      SELECT cs.location_id AS "locationId", cs.template_id AS "templateId",
+             s.id AS "shiftId", COUNT(*) AS count
+      FROM checklist_submissions cs
+      JOIN checklist_templates ct ON ct.id = cs.template_id
+      JOIN locations l ON l.id = cs.location_id
+      JOIN shifts s ON s.company_id = ct.company_id AND s.status = 'active'
+        AND s.id::bigint = ANY(ARRAY(SELECT jsonb_array_elements_text(l.shift_ids))::bigint[])
+        AND (
+          -- New: explicit shift_id on submission — match directly
+          (cs.shift_id IS NOT NULL AND cs.shift_id = s.id)
+          OR
+          -- Legacy: no shift_id — use time-window to attribute submission
+          (cs.shift_id IS NULL AND (
+            (s.end_time::time > s.start_time::time
+              AND (EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at))
+                  >= (EXTRACT(HOUR FROM s.start_time::time)*60+EXTRACT(MINUTE FROM s.start_time::time))
+              AND (EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at))
+                  <  (EXTRACT(HOUR FROM s.end_time::time)*60+EXTRACT(MINUTE FROM s.end_time::time)))
+            OR
+            (s.end_time::time <= s.start_time::time
+              AND ((EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at))
+                    >= (EXTRACT(HOUR FROM s.start_time::time)*60+EXTRACT(MINUTE FROM s.start_time::time))
+                OR  (EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at))
+                    <  (EXTRACT(HOUR FROM s.end_time::time)*60+EXTRACT(MINUTE FROM s.end_time::time))))
+          ))
+        )
+      WHERE ct.company_id = ?
+        AND (
+          cs.submitted_at::date = ?::date
+          OR (
+            -- Overnight attribution: only for overnight shifts (end ≤ start), regardless of shift_id
+            cs.submitted_at::date = (?::date + INTERVAL '1 day')::date
+            AND s.end_time::time <= s.start_time::time
+            AND (EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at))
+                < (EXTRACT(HOUR FROM s.end_time::time)*60+EXTRACT(MINUTE FROM s.end_time::time))
+          )
+        )
+        AND cs.location_id IS NOT NULL AND cs.status NOT IN ('rejected')
+        AND COALESCE(cs.is_soft_raise, FALSE) = FALSE
+        AND COALESCE(ct.status,'active') != 'inactive'
+      GROUP BY cs.location_id, cs.template_id, s.id`,
+      [companyId, targetDate, targetDate]
+    );
+
+    // Build subMap: shiftId → { locId_tplId → count }
+    const subMap = {};
+    for (const s of subs) {
+      if (!subMap[s.shiftId]) subMap[s.shiftId] = {};
+      subMap[s.shiftId][`${s.locationId}_${s.templateId}`] = Number(s.count) || 0;
+    }
+
+    const result = shifts.map(shift => {
+      let total = 0, filled = 0;
+      for (const pair of locPairs) {
+        const exp = expectedForShift(pair, shift);
+        if (exp <= 0) continue;
+        total += exp;
+        const actual = (subMap[shift.id] || {})[`${pair.locationId}_${pair.templateId}`] || 0;
+        filled += Math.min(actual, exp);
+      }
+      return {
+        shiftId: shift.id,
+        shiftName: shift.name,
+        startTime: shift.startTime,
+        endTime: shift.endTime,
+        total,
+        filled,
+        pending: Math.max(0, total - filled),
+        pct: total > 0 ? Math.round((filled / total) * 100) : 0,
+      };
+    });
+
+    res.json(result);
+  } catch (err) { next(err); }
 });
 
 /* ── GET /api/company-portal/dashboard/site-score-history ─────────────────────
-   Returns daily site score (% of active templates submitted) for the
-   company's date range. Used for the Site Score Overview bar chart.
-   Past dates are served from frozen daily_checklist_snapshots so that
-   newly-added checklists never retroactively change historical scores.        */
+   Phase 4: uses location-based scoring for live dates; frozen snapshots for past. */
 router.get("/dashboard/site-score-history", async (req, res, next) => {
   try {
     const companyId = cid(req);
     const { startDate, endDate } = req.query;
     if (!startDate || !endDate) return res.status(400).json({ message: "startDate and endDate are required" });
 
-    // Generate date series using Date.UTC so local server timezone never shifts
-    // a YYYY-MM-DD string to the previous day (e.g. IST midnight → UTC prev-day).
     const dates = [];
     const [sy, sm, sd] = startDate.split('-').map(Number);
     const [ey, em, ed] = endDate.split('-').map(Number);
-    for (let ms = Date.UTC(sy, sm - 1, sd), endMs = Date.UTC(ey, em - 1, ed); ms <= endMs; ms += 86400000) {
+    for (let ms = Date.UTC(sy, sm-1, sd), endMs = Date.UTC(ey, em-1, ed); ms <= endMs; ms += 86400000)
       dates.push(new Date(ms).toISOString().slice(0, 10));
-    }
 
-    // Fetch frozen snapshots for past dates in the range.
-    // The cron creates one snapshot per company per date at 00:05 IST the
-    // following day, and ON CONFLICT DO NOTHING ensures they are immutable.
-    const [snapshots] = await pool.query(
-      `SELECT snapshot_date::text AS date, site_score_pct AS "siteScore"
-       FROM daily_checklist_snapshots
-       WHERE company_id = ?
-         AND snapshot_date BETWEEN ?::date AND ?::date`,
-      [companyId, startDate, endDate]
-    );
-    const snapshotMap = {};
-    for (const snap of snapshots) {
-      snapshotMap[snap.date] = Number(snap.siteScore);
-    }
+    // Always use computeSiteScoreRange — bypasses stale frozen snapshots
+    // (snapshots may have been saved with old calculation; live scoring is always accurate)
+    const liveScores = dates.length > 0 ? await computeSiteScoreRange(companyId, dates) : [];
+    const liveMap = {};
+    for (const s of liveScores) liveMap[s.date] = s.siteScore;
 
-    // Dates that have no frozen snapshot (today, or pre-snapshot legacy dates)
-    // still need a live calculation using current active templates.
-    const liveDates = dates.filter(d => snapshotMap[d] === undefined);
-
-    let templates = [];
-    let countMap = {};
-
-    if (liveDates.length > 0) {
-      const liveStart = liveDates[0];
-      const liveEnd = liveDates[liveDates.length - 1];
-
-      const [tmplRows] = await pool.query(
-        `SELECT id, frequency, hourly_interval AS "hourlyInterval",
-                start_time AS "startTime", end_time AS "endTime",
-                created_at::date::text AS "createdDate"
-         FROM checklist_templates
-         WHERE company_id = ? AND COALESCE(status, 'active') != 'inactive'`,
-        [companyId]
-      );
-      templates = tmplRows;
-
-      // Fetch per-template, per-date submission counts for live dates.
-      // For hourly templates with a time window only count submissions that
-      // fall inside [start_time, end_time).
-      const [subCounts] = await pool.query(
-        `SELECT cs.template_id AS "templateId",
-                cs.submitted_at::date::text AS "date",
-                COUNT(*) AS "count"
-         FROM checklist_submissions cs
-         JOIN checklist_templates ct ON ct.id = cs.template_id
-         WHERE ct.company_id = ?
-           AND cs.submitted_at::date BETWEEN ?::date AND ?::date
-           AND cs.status NOT IN ('rejected')
-           AND (
-             LOWER(COALESCE(ct.frequency, 'daily')) != 'hourly'
-             OR ct.start_time IS NULL
-             OR ct.end_time IS NULL
-             OR (
-               (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
-                 >= (EXTRACT(HOUR FROM ct.start_time::time) * 60 + EXTRACT(MINUTE FROM ct.start_time::time))
-               AND (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
-                 < (EXTRACT(HOUR FROM ct.end_time::time) * 60 + EXTRACT(MINUTE FROM ct.end_time::time))
-             )
-           )
-         GROUP BY cs.template_id, cs.submitted_at::date`,
-        [companyId, liveStart, liveEnd]
-      );
-
-      for (const row of subCounts) {
-        if (!countMap[row.date]) countMap[row.date] = {};
-        countMap[row.date][row.templateId] = Number(row.count) || 0;
-      }
-    }
-
-    function expectedSlotsForDateLive(t) {
-      const freq = (t.frequency || 'Daily').toLowerCase();
-      if (freq !== 'hourly') return 1;
-      const interval = Math.max(1, Number(t.hourlyInterval) || 1);
-      if (t.startTime && t.endTime) {
-        const [sh, sm = 0] = t.startTime.split(':').map(Number);
-        const [eh, em = 0] = t.endTime.split(':').map(Number);
-        const startMins = sh * 60 + (sm || 0);
-        const endMins = eh * 60 + (em || 0);
-        if (endMins <= startMins) return 0;
-        return Math.max(1, Math.floor((endMins - startMins) / (interval * 60)));
-      }
-      return Math.max(1, Math.floor(1440 / (interval * 60)));
-    }
-
-    const rows = dates.map((dateStr) => {
-      // Use the frozen snapshot for any past date that has one.
-      if (snapshotMap[dateStr] !== undefined) {
-        return { date: dateStr, siteScore: snapshotMap[dateStr] };
-      }
-      // Live calculation for today or pre-snapshot legacy dates.
-      let totalSlots = 0;
-      let filledSlots = 0;
-      for (const t of templates) {
-        // Exclude templates that didn't exist yet on this date.
-        if (t.createdDate && t.createdDate > dateStr) continue;
-        const exp = expectedSlotsForDateLive(t);
-        if (exp <= 0) continue;
-        totalSlots += exp;
-        const actual = (countMap[dateStr]?.[t.id]) || 0;
-        filledSlots += Math.min(actual, exp);
-      }
-      const siteScore = totalSlots > 0 ? Math.round((filledSlots / totalSlots) * 1000) / 10 : 0;
-      return { date: dateStr, siteScore };
-    });
-
-    res.json(rows);
+    res.json(dates.map(d => ({
+      date: d,
+      siteScore: liveMap[d] ?? 0,
+    })));
   } catch (err) { next(err); }
 });
 
 const parseCompanyIdsCsv = (raw) => {
   if (!raw || typeof raw !== "string") return [];
-  return Array.from(new Set(
-    raw
-      .split(",")
-      .map((v) => Number(v.trim()))
-      .filter((n) => Number.isFinite(n) && n > 0)
-  ));
-};
-
-const expectedSlotsForTemplate = (t) => {
-  const freq = (t.frequency || "Daily").toLowerCase();
-  if (freq !== "hourly") return 1;
-  const interval = Math.max(1, Number(t.hourlyInterval) || 1);
-  if (t.startTime && t.endTime) {
-    const [sh, sm = 0] = String(t.startTime).split(":").map(Number);
-    const [eh, em = 0] = String(t.endTime).split(":").map(Number);
-    const startMins = sh * 60 + (sm || 0);
-    const endMins = eh * 60 + (em || 0);
-    if (endMins <= startMins) return 1;
-    return Math.max(1, Math.floor((endMins - startMins) / (interval * 60)));
-  }
-  return Math.max(1, Math.floor(1440 / (interval * 60)));
+  return Array.from(new Set(raw.split(",").map(v => Number(v.trim())).filter(n => Number.isFinite(n) && n > 0)));
 };
 
 const dateSeries = (startDate, endDate) => {
   const out = [];
   const [sy, sm, sd] = String(startDate).split("-").map(Number);
   const [ey, em, ed] = String(endDate).split("-").map(Number);
-  for (let ms = Date.UTC(sy, sm - 1, sd), endMs = Date.UTC(ey, em - 1, ed); ms <= endMs; ms += 86400000) {
+  for (let ms = Date.UTC(sy, sm-1, sd), endMs = Date.UTC(ey, em-1, ed); ms <= endMs; ms += 86400000)
     out.push(new Date(ms).toISOString().slice(0, 10));
-  }
   return out;
 };
 
@@ -799,25 +739,16 @@ const getAccessibleCompanies = async (userId, primaryCompanyId) => {
     `SELECT c.id, c.company_name AS "companyName", c.enabled_modules AS "enabledModules"
      FROM user_company_assignments uca
      JOIN companies c ON c.id = uca.company_id
-     WHERE uca.user_id = ?
-     ORDER BY c.company_name`,
+     WHERE uca.user_id = ? ORDER BY c.company_name`,
     [userId]
   );
   if (extras.length > 0) return extras;
-
-  const [[primary]] = await pool.query(
-    `SELECT id, company_name AS "companyName", enabled_modules AS "enabledModules"
-     FROM companies WHERE id = ?`,
-    [primaryCompanyId]
-  );
+  const [[primary]] = await pool.query(`SELECT id, company_name AS "companyName", enabled_modules AS "enabledModules" FROM companies WHERE id = ?`, [primaryCompanyId]);
   return primary ? [primary] : [];
 };
 
 /* ── GET /api/company-portal/dashboard/companies-site-score ───────────────────
-   Returns average site score per company for the user's assigned companies
-   over a date range. Used for multi-company Site Score comparison chart.
-   Past dates are served from frozen daily_checklist_snapshots so that
-   newly-added checklists never retroactively change historical scores.        */
+   Phase 4: location-based scoring for live dates; frozen snapshots for past.  */
 router.get("/dashboard/companies-site-score", async (req, res, next) => {
   try {
     const userId = req.companyUser.id;
@@ -829,123 +760,48 @@ router.get("/dashboard/companies-site-score", async (req, res, next) => {
     if (!accessible.length) return res.json([]);
 
     const requestedIds = parseCompanyIdsCsv(rawCompanyIds);
-    const scopedCompanies = requestedIds.length > 0
-      ? accessible.filter((c) => requestedIds.includes(Number(c.id)))
-      : accessible;
+    const scopedCompanies = requestedIds.length > 0 ? accessible.filter(c => requestedIds.includes(Number(c.id))) : accessible;
     if (!scopedCompanies.length) return res.json([]);
 
-    const scopedIds = scopedCompanies.map((c) => Number(c.id));
+    const scopedIds = scopedCompanies.map(c => Number(c.id));
     const dates = dateSeries(startDate, endDate);
 
-    // Fetch frozen snapshots for all companies in the date range.
     const idPH = scopedIds.map(() => "?").join(",");
     const [snapshots] = await pool.query(
       `SELECT company_id AS "companyId", snapshot_date::text AS date, site_score_pct AS "siteScore"
        FROM daily_checklist_snapshots
-       WHERE company_id IN (${idPH})
-         AND snapshot_date BETWEEN ?::date AND ?::date`,
+       WHERE company_id IN (${idPH}) AND snapshot_date BETWEEN ?::date AND ?::date`,
       [...scopedIds, startDate, endDate]
     );
     const snapshotMap = {};
-    for (const snap of snapshots) {
-      const cId = Number(snap.companyId);
+    for (const s of snapshots) {
+      const cId = Number(s.companyId);
       if (!snapshotMap[cId]) snapshotMap[cId] = {};
-      snapshotMap[cId][snap.date] = Number(snap.siteScore);
+      snapshotMap[cId][s.date] = Number(s.siteScore);
     }
 
-    // Only query live templates + submissions for companies that have at least
-    // one date in the range without a frozen snapshot (today or legacy dates).
-    const liveCompanyIds = scopedIds.filter(cId =>
-      dates.some(d => snapshotMap[cId]?.[d] === undefined)
-    );
+    // For companies that have live dates, use location-based scoring
+    const liveCompanyIds = scopedIds.filter(cId => dates.some(d => snapshotMap[cId]?.[d] === undefined));
+    const liveScoresByCompany = {};
+    await Promise.all(liveCompanyIds.map(async cId => {
+      const liveDates = dates.filter(d => snapshotMap[cId]?.[d] === undefined);
+      const scores = liveDates.length > 0 ? await computeSiteScoreRange(cId, liveDates) : [];
+      liveScoresByCompany[cId] = {};
+      for (const s of scores) liveScoresByCompany[cId][s.date] = s.siteScore;
+    }));
 
-    let templateMap = {};
-    let countMap = {};
-
-    if (liveCompanyIds.length > 0) {
-      const livePH = liveCompanyIds.map(() => "?").join(",");
-
-      const [templates] = await pool.query(
-        `SELECT company_id AS "companyId", id, frequency,
-                hourly_interval AS "hourlyInterval",
-                start_time AS "startTime", end_time AS "endTime",
-                created_at::date::text AS "createdDate"
-         FROM checklist_templates
-         WHERE company_id IN (${livePH})
-           AND COALESCE(status, 'active') != 'inactive'`,
-        liveCompanyIds
-      );
-
-      const [subCounts] = await pool.query(
-        `SELECT ct.company_id AS "companyId",
-                cs.template_id AS "templateId",
-                cs.submitted_at::date::text AS "date",
-                COUNT(*) AS "count"
-         FROM checklist_submissions cs
-         JOIN checklist_templates ct ON ct.id = cs.template_id
-         WHERE ct.company_id IN (${livePH})
-           AND cs.submitted_at::date BETWEEN ?::date AND ?::date
-           AND COALESCE(ct.status, 'active') != 'inactive'
-           AND cs.status NOT IN ('rejected')
-           AND (
-             LOWER(COALESCE(ct.frequency, 'daily')) != 'hourly'
-             OR ct.start_time IS NULL
-             OR ct.end_time IS NULL
-             OR (
-               (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
-                 >= (EXTRACT(HOUR FROM ct.start_time::time) * 60 + EXTRACT(MINUTE FROM ct.start_time::time))
-               AND (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
-                 < (EXTRACT(HOUR FROM ct.end_time::time) * 60 + EXTRACT(MINUTE FROM ct.end_time::time))
-             )
-           )
-         GROUP BY ct.company_id, cs.template_id, cs.submitted_at::date`,
-        [...liveCompanyIds, startDate, endDate]
-      );
-
-      for (const t of templates) {
-        const cId = Number(t.companyId);
-        if (!templateMap[cId]) templateMap[cId] = [];
-        templateMap[cId].push({
-          id: Number(t.id),
-          expectedSlots: expectedSlotsForTemplate(t),
-          createdDate: t.createdDate || null,
-        });
-      }
-
-      for (const row of subCounts) {
-        const cId = Number(row.companyId);
-        if (!countMap[cId]) countMap[cId] = {};
-        if (!countMap[cId][row.date]) countMap[cId][row.date] = {};
-        countMap[cId][row.date][Number(row.templateId)] = Number(row.count) || 0;
-      }
-    }
-
-    const rows = scopedCompanies.map((company) => {
-      const companyId = Number(company.id);
-      const tpls = templateMap[companyId] || [];
+    const rows = scopedCompanies.map(company => {
+      const cId = Number(company.id);
       let scoreSum = 0;
-      for (const dateStr of dates) {
-        // Use the frozen snapshot for any past date that has one.
-        if (snapshotMap[companyId]?.[dateStr] !== undefined) {
-          scoreSum += snapshotMap[companyId][dateStr];
-          continue;
-        }
-        // Live calculation for today or pre-snapshot legacy dates.
-        let totalExpected = 0;
-        let filledSlots = 0;
-        for (const t of tpls) {
-          // Exclude templates that didn't exist yet on this date.
-          if (t.createdDate && t.createdDate > dateStr) continue;
-          totalExpected += t.expectedSlots;
-          const actual = countMap[companyId]?.[dateStr]?.[t.id] || 0;
-          filledSlots += Math.min(actual, t.expectedSlots);
-        }
-        const dailyScore = totalExpected > 0 ? Math.round((filledSlots / totalExpected) * 1000) / 10 : 0;
-        scoreSum += dailyScore;
+      for (const d of dates) {
+        if (snapshotMap[cId]?.[d] !== undefined) scoreSum += snapshotMap[cId][d];
+        else scoreSum += (liveScoresByCompany[cId]?.[d] ?? 0);
       }
-
-      const avgSiteScore = dates.length > 0 ? Math.round(scoreSum / dates.length) : 0;
-      return { companyId, companyName: company.companyName, avgSiteScore };
+      return {
+        companyId: cId,
+        companyName: company.companyName,
+        avgSiteScore: dates.length > 0 ? Math.round(scoreSum / dates.length) : 0,
+      };
     });
 
     rows.sort((a, b) => String(a.companyName || "").localeCompare(String(b.companyName || "")));
@@ -1357,13 +1213,22 @@ router.get("/locations", async (req, res, next) => {
       `SELECT l.id, l.name, l.campus, l.building, l.floor, l.room,
               l.qr_code AS "qrCode", l.status, l.created_at AS "createdAt",
               l.building_id AS "buildingId", l.floor_id AS "floorId", l.room_id AS "roomId",
-              l.company_id AS "companyId", c.company_name AS "companyName"
+              l.company_id AS "companyId", c.company_name AS "companyName",
+              l.checklist_id AS "checklistId", ct.template_name AS "checklistName",
+              l.frequency, l.hourly_interval AS "hourlyInterval",
+              l.start_time AS "startTime", l.end_time AS "endTime",
+              l.notification_timer AS "notificationTimer", l.notification_time AS "notificationTime",
+              l.week_days AS "weekDays", l.active_months AS "activeMonths",
+              COALESCE(l.shift_ids, '[]'::jsonb) AS "shiftIds",
+              l.custom_hours AS "customHours", l.monthly_day AS "monthlyDay"
        FROM locations l
        JOIN companies c ON c.id = l.company_id
+       LEFT JOIN checklist_templates ct ON ct.id = l.checklist_id
        WHERE l.company_id ${companyCond}
        ORDER BY c.company_name ASC, l.name ASC`,
       [companyParam]
     );
+    res.setHeader("Cache-Control", "no-store");
     res.json(rows);
   } catch (err) { next(err); }
 });
@@ -1625,13 +1490,22 @@ router.post("/locations", async (req, res, next) => {
     const companyId = cid(req);
     const userId = req.companyUser.id;
     const { name, campus, building, floor, room, status = "Active",
-            buildingId: reqBuildingId, floorId: reqFloorId, roomId: reqRoomId } = req.body;
+            buildingId: reqBuildingId, floorId: reqFloorId, roomId: reqRoomId, checklistId,
+            frequency, hourlyInterval, startTime, endTime, notificationTimer, notificationTime,
+            weekDays, activeMonths, shiftIds, customHours, monthlyDay } = req.body;
     if (!name?.trim()) return res.status(400).json({ message: "Location name is required" });
 
     // Use directly supplied IDs first, then fall back to lookup from text columns
     let buildingId = reqBuildingId ? Number(reqBuildingId) : null;
     let floorId    = reqFloorId    ? Number(reqFloorId)    : null;
     let roomId     = reqRoomId     ? Number(reqRoomId)     : null;
+    const chkId    = checklistId   ? Number(checklistId)   : null;
+    const freqVal  = frequency     || null;
+    const hiVal    = hourlyInterval ? Number(hourlyInterval) : null;
+    const ntVal    = notificationTimer ? Number(notificationTimer) : null;
+    const shiftIdsJson = JSON.stringify(Array.isArray(shiftIds) ? shiftIds.map(Number).filter(Boolean) : []);
+    const customHoursJson = customHours != null ? JSON.stringify(Array.isArray(customHours) ? customHours.map(Number) : []) : null;
+    const mdVal = monthlyDay ? Number(monthlyDay) : null;
 
     // Lookup any missing IDs from the hierarchy tables using text column values
     if (building?.trim() && floor?.trim() && (!buildingId || !floorId)) {
@@ -1661,11 +1535,21 @@ router.post("/locations", async (req, res, next) => {
     }
 
     const [rows] = await pool.query(
-      `INSERT INTO locations (company_id, name, campus, building, floor, room, status, created_by, building_id, floor_id, room_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO locations (company_id, name, campus, building, floor, room, status, created_by, building_id, floor_id, room_id, checklist_id,
+                              frequency, hourly_interval, start_time, end_time, notification_timer, notification_time, week_days, active_months, shift_ids, custom_hours, monthly_day)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?::jsonb, ?)
        RETURNING id, name, campus, building, floor, room, qr_code AS "qrCode", status, created_at AS "createdAt",
-                 building_id AS "buildingId", floor_id AS "floorId", room_id AS "roomId"`,
-      [companyId, name.trim(), campus || null, building || null, floor || null, room || null, status, userId, buildingId, floorId, roomId]
+                 building_id AS "buildingId", floor_id AS "floorId", room_id AS "roomId", checklist_id AS "checklistId",
+                 frequency, hourly_interval AS "hourlyInterval", start_time AS "startTime", end_time AS "endTime",
+                 notification_timer AS "notificationTimer", notification_time AS "notificationTime",
+                 week_days AS "weekDays", active_months AS "activeMonths",
+                 COALESCE(shift_ids, '[]'::jsonb) AS "shiftIds",
+                 custom_hours AS "customHours", monthly_day AS "monthlyDay"`,
+      [companyId, name.trim(), campus || null, building || null, floor || null, room || null, status, userId,
+       buildingId, floorId, roomId, chkId,
+       freqVal, hiVal, startTime || null, endTime || null, ntVal, notificationTime || null,
+       weekDays ? JSON.stringify(weekDays) : null, activeMonths ? JSON.stringify(activeMonths) : null,
+       shiftIdsJson, customHoursJson, mdVal]
     );
 
     const newLoc = rows[0];
@@ -1713,8 +1597,17 @@ router.put("/locations/:id", async (req, res, next) => {
   try {
     const companyId = cid(req);
     const { id } = req.params;
-    const { name, campus, building, floor, room, status } = req.body;
+    const { name, campus, building, floor, room, status, checklistId,
+            frequency, hourlyInterval, startTime, endTime, notificationTimer, notificationTime,
+            weekDays, activeMonths, shiftIds, customHours, monthlyDay } = req.body;
     if (!name?.trim()) return res.status(400).json({ message: "Location name is required" });
+    const chkId  = checklistId       ? Number(checklistId)       : null;
+    const freqVal = frequency         || null;
+    const hiVal   = hourlyInterval    ? Number(hourlyInterval)    : null;
+    const ntVal   = notificationTimer ? Number(notificationTimer) : null;
+    const shiftIdsJson = JSON.stringify(Array.isArray(shiftIds) ? shiftIds.map(Number).filter(Boolean) : []);
+    const customHoursJson = customHours != null ? JSON.stringify(Array.isArray(customHours) ? customHours.map(Number) : []) : null;
+    const mdVal = monthlyDay ? Number(monthlyDay) : null;
 
     // Fetch old values so we can sync rooms table if name/room changed
     const [[oldLoc]] = await pool.query(
@@ -1723,10 +1616,24 @@ router.put("/locations/:id", async (req, res, next) => {
     );
 
     const [rows] = await pool.query(
-      `UPDATE locations SET name = ?, campus = ?, building = ?, floor = ?, room = ?, status = ?
+      `UPDATE locations SET name = ?, campus = ?, building = ?, floor = ?, room = ?, status = ?, checklist_id = ?,
+                            frequency = ?, hourly_interval = ?, start_time = ?, end_time = ?,
+                            notification_timer = ?, notification_time = ?,
+                            week_days = ?::jsonb, active_months = ?::jsonb, shift_ids = ?::jsonb,
+                            custom_hours = ?::jsonb, monthly_day = ?
        WHERE id = ? AND company_id = ?
-       RETURNING id, name, campus, building, floor, room, qr_code AS "qrCode", status, created_at AS "createdAt"`,
-      [name.trim(), campus || null, building || null, floor || null, room || null, status || "Active", id, companyId]
+       RETURNING id, name, campus, building, floor, room, qr_code AS "qrCode", status, created_at AS "createdAt",
+                 checklist_id AS "checklistId", building_id AS "buildingId", floor_id AS "floorId", room_id AS "roomId",
+                 company_id AS "companyId",
+                 frequency, hourly_interval AS "hourlyInterval", start_time AS "startTime", end_time AS "endTime",
+                 notification_timer AS "notificationTimer", notification_time AS "notificationTime",
+                 week_days AS "weekDays", active_months AS "activeMonths",
+                 COALESCE(shift_ids, '[]'::jsonb) AS "shiftIds",
+                 custom_hours AS "customHours", monthly_day AS "monthlyDay"`,
+      [name.trim(), campus || null, building || null, floor || null, room || null, status || "Active", chkId,
+       freqVal, hiVal, startTime || null, endTime || null, ntVal, notificationTime || null,
+       weekDays ? JSON.stringify(weekDays) : null, activeMonths ? JSON.stringify(activeMonths) : null,
+       shiftIdsJson, customHoursJson, mdVal, id, companyId]
     );
     if (!rows.length) return res.status(404).json({ message: "Location not found" });
 
@@ -2098,6 +2005,24 @@ router.delete("/floors/:id", async (req, res, next) => {
 });
 
 // ─── Rooms ───────────────────────────────────────────────────────────────────
+// Bulk-assign a checklist to multiple locations (must be before /rooms generic route)
+router.post("/locations/bulk-assign-checklist", async (req, res, next) => {
+  try {
+    const { locationIds, checklistId } = req.body;
+    if (!Array.isArray(locationIds) || locationIds.length === 0) {
+      return res.status(400).json({ message: "locationIds array is required" });
+    }
+    const companyId = cid(req);
+    const chkId = checklistId ? Number(checklistId) : null;
+    const placeholders = locationIds.map(() => "?").join(", ");
+    await pool.query(
+      `UPDATE locations SET checklist_id = ? WHERE company_id = ? AND id IN (${placeholders})`,
+      [chkId, companyId, ...locationIds.map(Number)]
+    );
+    res.json({ success: true, updated: locationIds.length });
+  } catch (err) { next(err); }
+});
+
 router.get("/rooms", async (req, res, next) => {
   try {
     const { buildingId, floorId } = req.query;
@@ -2108,7 +2033,14 @@ router.get("/rooms", async (req, res, next) => {
     const [rows] = await pool.query(
       `SELECT r.id, r.building_id AS "buildingId", b.name AS "buildingName",
               r.floor_id AS "floorId", f.floor_number AS "floorNumber",
-              r.room_name AS "roomName", r.created_at AS "createdAt"
+              r.room_name AS "roomName", r.created_at AS "createdAt",
+              r.checklist_id AS "checklistId",
+              r.frequency, r.hourly_interval AS "hourlyInterval",
+              r.start_time AS "startTime", r.end_time AS "endTime",
+              r.notification_timer AS "notificationTimer", r.notification_time AS "notificationTime",
+              r.week_days AS "weekDays", r.active_months AS "activeMonths",
+              COALESCE(r.shift_ids, '[]'::jsonb) AS "shiftIds",
+              r.custom_hours AS "customHours", r.monthly_day AS "monthlyDay"
        FROM rooms r
        JOIN buildings b ON b.id = r.building_id
        JOIN floors   f ON f.id = r.floor_id
@@ -2116,20 +2048,40 @@ router.get("/rooms", async (req, res, next) => {
        ORDER BY b.name ASC, f.floor_number ASC, r.room_name ASC`,
       params
     );
+    res.setHeader("Cache-Control", "no-store");
     res.json(rows);
   } catch (err) { next(err); }
 });
 
 router.post("/rooms", async (req, res, next) => {
   try {
-    const { buildingId, floorId, roomName } = req.body;
+    const { buildingId, floorId, roomName, checklistId,
+            frequency, hourlyInterval, startTime, endTime, notificationTimer, notificationTime,
+            weekDays, activeMonths, shiftIds, customHours, monthlyDay } = req.body;
     if (!buildingId) return res.status(400).json({ message: "buildingId is required" });
     if (!floorId)    return res.status(400).json({ message: "floorId is required" });
     if (!roomName?.trim()) return res.status(400).json({ message: "Room name is required" });
+    const chkId = checklistId ? Number(checklistId) : null;
+    const freqVal = frequency || null;
+    const hiVal   = hourlyInterval ? Number(hourlyInterval) : null;
+    const ntVal   = notificationTimer ? Number(notificationTimer) : null;
+    const shiftIdsJson = JSON.stringify(Array.isArray(shiftIds) ? shiftIds.map(Number).filter(Boolean) : []);
+    const customHoursJson = customHours != null ? JSON.stringify(Array.isArray(customHours) ? customHours.map(Number) : []) : null;
+    const mdVal = monthlyDay ? Number(monthlyDay) : null;
     const [rows] = await pool.query(
-      `INSERT INTO rooms (company_id, building_id, floor_id, room_name, name, created_by) VALUES (?, ?, ?, ?, ?, ?)
-       RETURNING id, building_id AS "buildingId", floor_id AS "floorId", room_name AS "roomName", name, created_at AS "createdAt", created_by AS "createdBy"`,
-      [cid(req), buildingId, floorId, roomName.trim(), roomName.trim(), req.companyUser.id]
+      `INSERT INTO rooms (company_id, building_id, floor_id, room_name, name, created_by, checklist_id,
+                          frequency, hourly_interval, start_time, end_time, notification_timer, notification_time,
+                          week_days, active_months, shift_ids, custom_hours, monthly_day)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?::jsonb, ?)
+       RETURNING id, building_id AS "buildingId", floor_id AS "floorId", room_name AS "roomName", name,
+                 created_at AS "createdAt", created_by AS "createdBy", checklist_id AS "checklistId",
+                 frequency, hourly_interval AS "hourlyInterval", start_time AS "startTime", end_time AS "endTime",
+                 notification_timer AS "notificationTimer", COALESCE(shift_ids, '[]'::jsonb) AS "shiftIds",
+                 custom_hours AS "customHours", monthly_day AS "monthlyDay"`,
+      [cid(req), buildingId, floorId, roomName.trim(), roomName.trim(), req.companyUser.id, chkId,
+       freqVal, hiVal, startTime || null, endTime || null, ntVal, notificationTime || null,
+       weekDays ? JSON.stringify(weekDays) : null, activeMonths ? JSON.stringify(activeMonths) : null,
+       shiftIdsJson, customHoursJson, mdVal]
     );
     res.status(201).json(rows[0]);
   } catch (err) { next(err); }
@@ -2137,8 +2089,21 @@ router.post("/rooms", async (req, res, next) => {
 
 router.put("/rooms/:id", async (req, res, next) => {
   try {
-    const { buildingId, floorId, roomName } = req.body;
+    const { buildingId, floorId, roomName, checklistId,
+            frequency, hourlyInterval, startTime, endTime, notificationTimer, notificationTime,
+            weekDays, activeMonths, shiftIds, customHours, monthlyDay } = req.body;
     if (!roomName?.trim()) return res.status(400).json({ message: "Room name is required" });
+    const chkId = checklistId !== undefined ? (checklistId ? Number(checklistId) : null) : undefined;
+    const freqVal = frequency !== undefined ? (frequency || null) : undefined;
+    const hiVal   = hourlyInterval !== undefined ? (hourlyInterval ? Number(hourlyInterval) : null) : undefined;
+    const ntVal   = notificationTimer !== undefined ? (notificationTimer ? Number(notificationTimer) : null) : undefined;
+    const shiftIdsJson = shiftIds !== undefined
+      ? JSON.stringify(Array.isArray(shiftIds) ? shiftIds.map(Number).filter(Boolean) : [])
+      : undefined;
+    const customHoursJson = customHours !== undefined
+      ? JSON.stringify(Array.isArray(customHours) ? customHours.map(Number) : [])
+      : undefined;
+    const mdVal = monthlyDay !== undefined ? (monthlyDay ? Number(monthlyDay) : null) : undefined;
 
     // Fetch old room name before updating so we can sync locations
     const [[oldRoom]] = await pool.query(
@@ -2148,13 +2113,39 @@ router.put("/rooms/:id", async (req, res, next) => {
 
     const [rows] = await pool.query(
       `UPDATE rooms SET
-         building_id = COALESCE(?, building_id),
-         floor_id    = COALESCE(?, floor_id),
-         room_name   = ?,
-         name        = ?
+         building_id       = COALESCE(?, building_id),
+         floor_id          = COALESCE(?, floor_id),
+         room_name         = ?,
+         name              = ?,
+         checklist_id      = ${chkId !== undefined ? "?" : "checklist_id"},
+         frequency         = ${freqVal !== undefined ? "?" : "frequency"},
+         hourly_interval   = ${hiVal !== undefined ? "?" : "hourly_interval"},
+         start_time        = ${startTime !== undefined ? "?" : "start_time"},
+         end_time          = ${endTime !== undefined ? "?" : "end_time"},
+         notification_timer = ${ntVal !== undefined ? "?" : "notification_timer"},
+         shift_ids         = ${shiftIdsJson !== undefined ? "?::jsonb" : "COALESCE(shift_ids,'[]'::jsonb)"},
+         custom_hours      = ${customHoursJson !== undefined ? "?::jsonb" : "custom_hours"},
+         monthly_day       = ${mdVal !== undefined ? "?" : "monthly_day"}
        WHERE id = ? AND company_id = ?
-       RETURNING id, building_id AS "buildingId", floor_id AS "floorId", room_name AS "roomName", name, created_at AS "createdAt"`,
-      [buildingId || null, floorId || null, roomName.trim(), roomName.trim(), req.params.id, cid(req)]
+       RETURNING id, building_id AS "buildingId", floor_id AS "floorId", room_name AS "roomName", name,
+                 created_at AS "createdAt", checklist_id AS "checklistId",
+                 frequency, hourly_interval AS "hourlyInterval", start_time AS "startTime", end_time AS "endTime",
+                 notification_timer AS "notificationTimer",
+                 COALESCE(shift_ids, '[]'::jsonb) AS "shiftIds",
+                 custom_hours AS "customHours", monthly_day AS "monthlyDay"`,
+      [
+        buildingId || null, floorId || null, roomName.trim(), roomName.trim(),
+        ...(chkId !== undefined      ? [chkId]                    : []),
+        ...(freqVal !== undefined     ? [freqVal]                  : []),
+        ...(hiVal !== undefined       ? [hiVal]                    : []),
+        ...(startTime !== undefined   ? [startTime || null]        : []),
+        ...(endTime !== undefined     ? [endTime || null]          : []),
+        ...(ntVal !== undefined       ? [ntVal]                    : []),
+        ...(shiftIdsJson !== undefined ? [shiftIdsJson]            : []),
+        ...(customHoursJson !== undefined ? [customHoursJson]      : []),
+        ...(mdVal !== undefined       ? [mdVal]                    : []),
+        req.params.id, cid(req),
+      ]
     );
     if (!rows.length) return res.status(404).json({ message: "Room not found" });
 
@@ -3382,6 +3373,83 @@ router.delete("/employees/:id", async (req, res, next) => {
   }
 });
 
+/* ── GET /employees/:id/shifts — return shift IDs assigned to an employee ───── */
+router.get("/employees/:id/shifts", async (req, res, next) => {
+  try {
+    const companyId = cid(req);
+    const { id } = req.params;
+    const [[check]] = await pool.query(
+      "SELECT id FROM company_users WHERE id = ? AND company_id = ?",
+      [id, companyId]
+    );
+    if (!check) return res.status(404).json({ message: "Employee not found" });
+    const [rows] = await pool.query(
+      `SELECT shift_id AS "shiftId" FROM employee_shifts WHERE company_user_id = ? AND company_id = ?`,
+      [id, companyId]
+    );
+    res.json(rows.map((r) => Number(r.shiftId)));
+  } catch (err) { next(err); }
+});
+
+/* ── PUT /employees/:id/shifts — sync full shift list for an employee ─────────
+   Body: { shiftIds: number[] }
+   Replaces all existing assignments for this employee in one atomic diff.     */
+router.put("/employees/:id/shifts", async (req, res, next) => {
+  try {
+    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    const companyId = cid(req);
+    const { id } = req.params;
+    const { shiftIds = [] } = req.body;
+    const safeIds = shiftIds.map(Number).filter((n) => Number.isFinite(n) && n > 0);
+
+    const [[check]] = await pool.query(
+      "SELECT id FROM company_users WHERE id = ? AND company_id = ?",
+      [id, companyId]
+    );
+    if (!check) return res.status(404).json({ message: "Employee not found" });
+
+    // Validate all requested shifts belong to the company
+    if (safeIds.length > 0) {
+      const ph = safeIds.map(() => "?").join(",");
+      const [validShifts] = await pool.query(
+        `SELECT id FROM shifts WHERE id IN (${ph}) AND company_id = ?`,
+        [...safeIds, companyId]
+      );
+      if (validShifts.length !== safeIds.length) {
+        return res.status(400).json({ message: "One or more shifts not found" });
+      }
+    }
+
+    // Get current assignments
+    const [current] = await pool.query(
+      `SELECT shift_id AS "shiftId" FROM employee_shifts WHERE company_user_id = ? AND company_id = ?`,
+      [id, companyId]
+    );
+    const currentIds = new Set(current.map((r) => Number(r.shiftId)));
+    const newIds = new Set(safeIds);
+
+    const toAdd    = [...newIds].filter((sid) => !currentIds.has(sid));
+    const toRemove = [...currentIds].filter((sid) => !newIds.has(sid));
+
+    for (const sid of toAdd) {
+      await pool.query(
+        `INSERT INTO employee_shifts (company_id, company_user_id, shift_id)
+         VALUES (?, ?, ?) ON CONFLICT (company_user_id, shift_id) DO NOTHING`,
+        [companyId, id, sid]
+      );
+    }
+    if (toRemove.length > 0) {
+      const ph = toRemove.map(() => "?").join(",");
+      await pool.query(
+        `DELETE FROM employee_shifts WHERE company_user_id = ? AND company_id = ? AND shift_id IN (${ph})`,
+        [id, companyId, ...toRemove]
+      );
+    }
+
+    res.json({ added: toAdd.length, removed: toRemove.length });
+  } catch (err) { next(err); }
+});
+
 /* ── Bulk import employees ──────────────────────────────────────────────────── */
 router.post("/employees/bulk", async (req, res, next) => {
   try {
@@ -3492,6 +3560,7 @@ router.get("/checklist-submissions/recent", async (req, res, next) => {
     const idPH = targetCompanyIds.map(() => "?").join(",");
     const SELECT = `SELECT cs.id, cs.submitted_at AS "submittedAt",
               ct.template_name AS "templateName", ct.id AS "templateId",
+              cs.location_id AS "locationId",
               ct.company_id AS "companyId",
               c.company_name AS "companyName",
               a.asset_name AS "assetName", a.id AS "assetId",
@@ -3504,7 +3573,7 @@ router.get("/checklist-submissions/recent", async (req, res, next) => {
        LEFT JOIN checklist_templates ct ON ct.id = cs.template_id
        LEFT JOIN companies c ON c.id = ct.company_id
        LEFT JOIN assets a ON a.id = cs.asset_id
-       LEFT JOIN locations loc ON loc.id = ct.location_id
+       LEFT JOIN locations loc ON loc.id = COALESCE(cs.location_id, ct.location_id)
        LEFT JOIN rooms r ON r.id = ct.room_id
        LEFT JOIN company_users cu ON cu.id = COALESCE(cs.company_user_id, cs.submitted_by)`;
     let rows;
@@ -3512,16 +3581,19 @@ router.get("/checklist-submissions/recent", async (req, res, next) => {
       // Fetch all submissions for the specific dashboard date
       [rows] = await pool.query(
         `${SELECT} WHERE ct.company_id IN (${idPH}) AND cs.submitted_at::date = ?::date
+         AND COALESCE(cs.is_soft_raise, FALSE) = FALSE
          ORDER BY cs.submitted_at DESC NULLS LAST`,
         [...targetCompanyIds, date]
       );
     } else {
       [rows] = await pool.query(
         `${SELECT} WHERE ct.company_id IN (${idPH})
+         AND COALESCE(cs.is_soft_raise, FALSE) = FALSE
          ORDER BY cs.submitted_at DESC NULLS LAST LIMIT 50`,
         targetCompanyIds
       );
     }
+    res.setHeader("Cache-Control", "no-store");
     res.json(rows);
   } catch (err) {
     next(err);

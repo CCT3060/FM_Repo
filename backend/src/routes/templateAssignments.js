@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { body, param, query } from "express-validator";
 import pool from "../db.js";
+import { computeSiteScore } from "../utils/siteScore.js";
 import { validate } from "../validators.js";
 import { requireCompanyAuth } from "../middleware/companyAuth.js";
 import {
@@ -74,10 +75,45 @@ const normalizeInputType = (value) => {
     `ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS room_id BIGINT DEFAULT NULL`,
     // Overall remark on checklist submissions
     `ALTER TABLE checklist_submissions ADD COLUMN IF NOT EXISTS overall_remark TEXT DEFAULT NULL`,
+    // Phase 3 — composite key: location_id on checklist_submissions
+    `ALTER TABLE checklist_submissions ADD COLUMN IF NOT EXISTS location_id BIGINT REFERENCES locations(id) ON DELETE SET NULL`,
+    `ALTER TABLE checklist_submissions ADD COLUMN IF NOT EXISTS is_soft_raise BOOLEAN DEFAULT FALSE`,
+    `ALTER TABLE checklist_submissions ADD COLUMN IF NOT EXISTS shift_id BIGINT NULL REFERENCES shifts(id) ON DELETE SET NULL`,
   ];
   for (const sql of migrations) {
     try { await pool.query(sql); } catch (_) { /* ignore if already exists */ }
   }
+  // Phase 3 backfill C: populate location_id on existing submissions via checklist_templates.location_id
+  try {
+    await pool.query(`
+      UPDATE checklist_submissions cs
+      SET location_id = ct.location_id
+      FROM checklist_templates ct
+      WHERE cs.template_id = ct.id
+        AND cs.location_id IS NULL
+        AND ct.location_id IS NOT NULL
+    `);
+  } catch (_) { /* non-critical */ }
+  // Phase 3 backfill D: populate location_id via locations.checklist_id link (new mechanism)
+  // Prefer active locations; when multiple match, pick the most recently created one
+  try {
+    await pool.query(`
+      UPDATE checklist_submissions cs
+      SET location_id = sub.loc_id
+      FROM (
+        SELECT cs2.id AS sub_id,
+               (SELECT l.id FROM locations l
+                WHERE l.checklist_id = ct2.id
+                  AND l.company_id = ct2.company_id
+                  AND LOWER(COALESCE(l.status,'active')) = 'active'
+                ORDER BY l.created_at DESC LIMIT 1) AS loc_id
+        FROM checklist_submissions cs2
+        JOIN checklist_templates ct2 ON ct2.id = cs2.template_id
+        WHERE cs2.location_id IS NULL
+      ) sub
+      WHERE cs.id = sub.sub_id AND sub.loc_id IS NOT NULL
+    `);
+  } catch (_) { /* non-critical */ }
 })();
 
 /* ── Helper: is this shift's time window currently active? ──────────────────
@@ -657,15 +693,38 @@ router.post(
   ]),
   async (req, res, next) => {
     try {
-      const { templateId, assetId, answers, latitude, longitude, locationAddress, overallRemark } = req.body;
-      // Capture device IP from request headers (proxied through nginx); strip IPv4-mapped IPv6 prefix
+      const { templateId, assetId, answers, latitude, longitude, locationAddress, overallRemark, locationId } = req.body;
       const rawIp1 = (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').split(',')[0].trim();
       const deviceIp = rawIp1.replace(/^::ffff:/i, '') || null;
+      let locId = locationId ? Number(locationId) : null;
+
+      // Auto-detect location_id from locations.checklist_id when not provided (old mobile builds)
+      // This ensures cs.location_id is always populated so Building/Floor/Room resolve in reports
+      if (!locId) {
+        const [[autoLoc]] = await pool.query(
+          `SELECT id FROM locations WHERE checklist_id = ? AND company_id = ? AND LOWER(COALESCE(status,'active')) = 'active' LIMIT 1`,
+          [templateId, cid(req)]
+        ).catch(() => [[null]]);
+        if (autoLoc?.id) locId = Number(autoLoc.id);
+      }
+
+      // ── Fetch location scheduling if locationId provided ────────────────
+      let locSchedule = null;
+      if (locId) {
+        const [[locRow]] = await pool.query(
+          `SELECT frequency, hourly_interval AS "hourlyInterval", start_time AS "startTime",
+                  COALESCE(shift_ids, '[]'::jsonb) AS "shiftIds"
+           FROM locations WHERE id = ? AND company_id = ?`,
+          [locId, cid(req)]
+        ).catch(() => [[null]]);
+        if (locRow) locSchedule = locRow;
+      }
 
       // Supervisors, admins, and users with any soft-service capability can fill
       // any company checklist directly; regular employees need an explicit assignment.
       const roleKey = req.companyUser.role;
-      const isPrivileged = roleKey === 'supervisor' || roleKey === 'admin' ||
+      const isAdmin = roleKey === 'admin';
+      const isPrivileged = isAdmin || roleKey === 'supervisor' ||
         await hasSoftCapability(cid(req), roleKey);
 
       if (!isPrivileged) {
@@ -687,36 +746,66 @@ router.post(
         if (!tmpl) return res.status(404).json({ message: "Checklist template not found" });
       }
 
-      // ── Shift Enforcement ────────────────────────────────────────────────
-      // Tech users (non-admin, non-supervisor, no soft cap) can only submit
-      // during their active shift window.
-      if (!isPrivileged) {
-        const [[shiftInfo]] = await pool.query(
-          `SELECT s.id, s.name AS "shiftName", s.start_time AS "startTime",
-                  s.end_time AS "endTime", s.status AS "shiftStatus",
-                  es.id AS "employeeShiftId"
-           FROM checklist_templates ct
-           JOIN shifts s ON s.id = ct.shift_id
-           LEFT JOIN employee_shifts es
-             ON es.shift_id = s.id AND es.company_user_id = ?
-           WHERE ct.id = ? AND ct.company_id = ?`,
-          [req.companyUser.id, templateId, cid(req)]
-        ).catch(() => [[null]]);
-
-        if (shiftInfo) {
-          if (!shiftInfo.employeeShiftId) {
+      // ── Shift Enforcement (applies to all roles except admin; soft-raise issues bypass this) ──
+      // assignedShiftId is captured here and stored on the submission row for per-shift scoping
+      let assignedShiftId = null;
+      if (roleKey !== 'admin' && !req.body.softRaise) {
+        // Phase 3: if the location has shift_ids set, enforce those; else fall back to ct.shift_id
+        const locShiftIds = Array.isArray(locSchedule?.shiftIds) ? locSchedule.shiftIds.map(Number).filter(Boolean) : [];
+        if (locShiftIds.length > 0) {
+          // Location-level shift enforcement
+          const shiftPlaceholders = locShiftIds.map(() => "?").join(",");
+          const [locShifts] = await pool.query(
+            `SELECT s.id, s.name AS "shiftName", s.start_time AS "startTime",
+                    s.end_time AS "endTime", s.status AS "shiftStatus",
+                    es.id AS "employeeShiftId"
+             FROM shifts s
+             LEFT JOIN employee_shifts es ON es.shift_id = s.id AND es.company_user_id = ?
+             WHERE s.id IN (${shiftPlaceholders}) AND s.company_id = ?`,
+            [req.companyUser.id, ...locShiftIds, cid(req)]
+          ).catch(() => [[]]);
+          const assignedShift = locShifts.find(s => s.employeeShiftId);
+          if (assignedShift) assignedShiftId = assignedShift.id || null;
+          if (!assignedShift) {
+            const shiftNames = locShifts.map(s => s.shiftName).join(", ");
             return res.status(403).json({
-              message: `You are not assigned to the "${shiftInfo.shiftName}" shift.`,
-              shiftLocked: true,
-              shiftName: shiftInfo.shiftName,
+              message: `You are not assigned to any required shift for this location (${shiftNames}).`,
+              shiftLocked: true, shiftName: shiftNames,
             });
           }
-          if (shiftInfo.shiftStatus !== 'active' || !isShiftActive(shiftInfo.startTime, shiftInfo.endTime)) {
+          if (assignedShift.shiftStatus !== 'active' || !isShiftActive(assignedShift.startTime, assignedShift.endTime)) {
             return res.status(403).json({
-              message: `The "${shiftInfo.shiftName}" shift is not currently active (${shiftInfo.startTime}–${shiftInfo.endTime}).`,
-              shiftLocked: true,
-              shiftName: shiftInfo.shiftName,
+              message: `Your shift "${assignedShift.shiftName}" is not currently active (${assignedShift.startTime}–${assignedShift.endTime}).`,
+              shiftLocked: true, shiftName: assignedShift.shiftName,
             });
+          }
+        } else {
+          // Legacy: checklist-level shift enforcement
+          const [[shiftInfo]] = await pool.query(
+            `SELECT s.id, s.name AS "shiftName", s.start_time AS "startTime",
+                    s.end_time AS "endTime", s.status AS "shiftStatus",
+                    es.id AS "employeeShiftId"
+             FROM checklist_templates ct
+             JOIN shifts s ON s.id = ct.shift_id
+             LEFT JOIN employee_shifts es
+               ON es.shift_id = s.id AND es.company_user_id = ?
+             WHERE ct.id = ? AND ct.company_id = ?`,
+            [req.companyUser.id, templateId, cid(req)]
+          ).catch(() => [[null]]);
+          if (shiftInfo) {
+            if (!shiftInfo.employeeShiftId) {
+              return res.status(403).json({
+                message: `You are not assigned to the "${shiftInfo.shiftName}" shift.`,
+                shiftLocked: true, shiftName: shiftInfo.shiftName,
+              });
+            }
+            if (shiftInfo.shiftStatus !== 'active' || !isShiftActive(shiftInfo.startTime, shiftInfo.endTime)) {
+              return res.status(403).json({
+                message: `The "${shiftInfo.shiftName}" shift is not currently active (${shiftInfo.startTime}–${shiftInfo.endTime}).`,
+                shiftLocked: true, shiftName: shiftInfo.shiftName,
+              });
+            }
+            assignedShiftId = shiftInfo.id || null;
           }
         }
       }
@@ -747,17 +836,28 @@ router.post(
       // Use linked asset if none supplied
       const effectiveAssetId = assetId || tmplWithQ?.assetId || null;
 
-      // ── Upsert logic: prevent duplicate within the same time slot ──────────
-      // For Hourly templates: only upsert if a submission already exists within
-      // the same hourly slot (based on hourly_interval + start_time).
-      // For Daily/Weekly/Monthly/Custom: upsert once per day.
-      const _freq = (tmplWithQ?.frequency || 'Daily').toLowerCase();
-      const _interval = Number(tmplWithQ?.hourlyInterval) || 1;
+      // ── Upsert logic: composite key = (location_id + template_id + user + shift-window slot) ──
+      // Phase 4 + Task 2: frequency/interval/startMins come from:
+      //   1) location's assigned shift (first active shift) if shiftIds is set
+      //   2) location's own scheduling fields (legacy)
+      //   3) checklist template fields (fallback)
+      const _freq = (locSchedule?.frequency || tmplWithQ?.frequency || 'Daily').toLowerCase();
+      const _interval = Number(locSchedule?.hourlyInterval || tmplWithQ?.hourlyInterval) || 1;
 
-      // Parse start_time string ('HH:MM' or 'HH:MM:SS') into minutes-since-midnight.
-      // This is pure arithmetic on a text value — no timezone involved.
-      const _startMins = (() => {
-        const t = tmplWithQ?.startTime;
+      // Derive startMins from shift if available, else from locSchedule or template
+      const _startMins = await (async () => {
+        const locShiftIds = Array.isArray(locSchedule?.shiftIds) ? locSchedule.shiftIds.map(Number).filter(Boolean) : [];
+        if (locShiftIds.length > 0) {
+          const [[shift]] = await pool.query(
+            `SELECT start_time AS "startTime" FROM shifts WHERE id = ANY(?) AND status = 'active' ORDER BY start_time LIMIT 1`,
+            [locShiftIds]
+          ).catch(() => [[null]]);
+          if (shift?.startTime) {
+            const [sh, sm = 0] = shift.startTime.split(':').map(Number);
+            return (sh || 0) * 60 + (sm || 0);
+          }
+        }
+        const t = locSchedule?.startTime || tmplWithQ?.startTime;
         if (!t) return 0;
         const [sh, sm = 0] = t.split(':').map(Number);
         return ((sh || 0) * 60) + (sm || 0);
@@ -765,12 +865,10 @@ router.post(
 
       let [[existingChecklistSub]] = await (() => {
         if (_freq === 'hourly') {
-          // Pure SQL slot detection — both submitted_at and NOW() are evaluated in the
-          // PostgreSQL session timezone (set via APP_TIMEZONE in .env / db.js) so the
-          // comparison is internally consistent regardless of server TZ.
           return pool.query(
             `SELECT id FROM checklist_submissions
              WHERE template_id = ? AND company_user_id = ?
+               AND COALESCE(location_id::text, 'null') = COALESCE(?::text, 'null')
                AND submitted_at::date = CURRENT_DATE
                AND FLOOR(GREATEST(0::numeric,
                      (EXTRACT(HOUR FROM submitted_at)*60+EXTRACT(MINUTE FROM submitted_at)) - ?
@@ -779,15 +877,16 @@ router.post(
                      (EXTRACT(HOUR FROM NOW())*60+EXTRACT(MINUTE FROM NOW())) - ?
                    ) / (? * 60.0))
              LIMIT 1`,
-            [templateId, req.companyUser.id, _startMins, _interval, _startMins, _interval]
+            [templateId, req.companyUser.id, locId, _startMins, _interval, _startMins, _interval]
           ).catch(() => [[null]]);
         } else {
-          // Daily/Weekly/Monthly: one submission per calendar day
           return pool.query(
             `SELECT id FROM checklist_submissions
-             WHERE template_id = ? AND company_user_id = ? AND submitted_at::date = CURRENT_DATE
+             WHERE template_id = ? AND company_user_id = ?
+               AND COALESCE(location_id::text, 'null') = COALESCE(?::text, 'null')
+               AND submitted_at::date = CURRENT_DATE
              LIMIT 1`,
-            [templateId, req.companyUser.id]
+            [templateId, req.companyUser.id, locId]
           ).catch(() => [[null]]);
         }
       })();
@@ -798,24 +897,26 @@ router.post(
         submissionId = existingChecklistSub.id;
         await pool.query(
           `UPDATE checklist_submissions SET asset_id = ?, status = 'submitted', completion_pct = 100, submitted_at = NOW(),
-           latitude = ?, longitude = ?, device_ip = ?, location_address = ?, overall_remark = ? WHERE id = ?`,
-          [effectiveAssetId, latitude ?? null, longitude ?? null, deviceIp, locationAddress ?? null, overallRemark ?? null, submissionId]
+           latitude = ?, longitude = ?, device_ip = ?, location_address = ?, overall_remark = ?,
+           location_id = COALESCE(location_id, ?) WHERE id = ?`,
+          [effectiveAssetId, latitude ?? null, longitude ?? null, deviceIp, locationAddress ?? null, overallRemark ?? null, locId, submissionId]
         );
         await pool.query(`DELETE FROM checklist_submission_answers WHERE submission_id = ?`, [submissionId]);
       } else {
+        const isSoftRaiseSubmission = req.body.softRaise === '1' || req.body.softRaise === true;
         const [csResult] = await pool.query(
           `INSERT INTO checklist_submissions
-           (template_id, asset_id, submitted_by, company_user_id, status, completion_pct, submitted_at, latitude, longitude, device_ip, location_address, overall_remark)
-           VALUES (?, ?, NULL, ?, 'submitted', 100, NOW(), ?, ?, ?, ?, ?)
+           (template_id, asset_id, submitted_by, company_user_id, status, completion_pct, submitted_at, latitude, longitude, device_ip, location_address, overall_remark, location_id, is_soft_raise, shift_id)
+           VALUES (?, ?, NULL, ?, 'submitted', 100, NOW(), ?, ?, ?, ?, ?, ?, ?, ?)
            RETURNING id`,
-          [templateId, effectiveAssetId, req.companyUser.id, latitude ?? null, longitude ?? null, deviceIp, locationAddress ?? null, overallRemark ?? null]
+          [templateId, effectiveAssetId, req.companyUser.id, latitude ?? null, longitude ?? null, deviceIp, locationAddress ?? null, overallRemark ?? null, locId, isSoftRaiseSubmission, assignedShiftId]
         ).catch(() =>
           pool.query(
             `INSERT INTO checklist_submissions
-             (template_id, asset_id, submitted_by, status, completion_pct, submitted_at, latitude, longitude, device_ip, location_address, overall_remark)
-             VALUES (?, ?, NULL, 'submitted', 100, NOW(), ?, ?, ?, ?, ?)
+             (template_id, asset_id, submitted_by, status, completion_pct, submitted_at, latitude, longitude, device_ip, location_address, overall_remark, location_id, is_soft_raise, shift_id)
+             VALUES (?, ?, NULL, 'submitted', 100, NOW(), ?, ?, ?, ?, ?, ?, ?, ?)
              RETURNING id`,
-            [templateId, effectiveAssetId, latitude ?? null, longitude ?? null, deviceIp, locationAddress ?? null, overallRemark ?? null]
+            [templateId, effectiveAssetId, latitude ?? null, longitude ?? null, deviceIp, locationAddress ?? null, overallRemark ?? null, locId, isSoftRaiseSubmission, assignedShiftId]
           )
         );
         submissionId = csResult.insertId || csResult[0]?.id;
@@ -1245,11 +1346,81 @@ router.get("/location-templates/:locationId", async (req, res, next) => {
     const companyId = cid(req);
     const userId = req.companyUser.id;
 
-    // Get checklists assigned to this location that are active and belong to the company.
-    // Matches by:
-    //   1) ct.location_id = the scanned location id (direct link), OR
-    //   2) ct.building_id / floor_id / room_id match the location's building/floor/room text
-    //      via the hierarchy tables — used when checklist was created with hierarchy dropdowns
+    // Phase 3: Fetch location FIRST (including scheduling data for composite-key checks)
+    const [[loc]] = await pool.query(
+      `SELECT id, name, campus, building, floor, room,
+              frequency AS "locFreq",
+              hourly_interval AS "locInterval",
+              start_time AS "locStartTime",
+              COALESCE(shift_ids, '[]'::jsonb) AS "locShiftIds"
+       FROM locations WHERE id = ? AND company_id = ?`,
+      [locationId, companyId]
+    );
+    if (!loc) return res.status(404).json({ message: "Location not found" });
+
+    // Pre-compute effective scheduling params (location overrides checklist)
+    // Task 2: if location has shift_ids, derive startMins from the first assigned active shift
+    const locFreq = loc.locFreq || null;
+    const locInterval = loc.locInterval ? Number(loc.locInterval) : null;
+
+    // Derive start time: prefer location's first assigned shift, else location's own start_time
+    const locShiftIdsRaw = loc.locShiftIds ? (typeof loc.locShiftIds === 'string' ? JSON.parse(loc.locShiftIds) : loc.locShiftIds) : [];
+    const locShiftIds = Array.isArray(locShiftIdsRaw) ? locShiftIdsRaw.map(Number).filter(Boolean) : [];
+    let locStartMins = null;
+    if (locShiftIds.length > 0) {
+      const [[firstShift]] = await pool.query(
+        `SELECT start_time AS "startTime" FROM shifts WHERE id = ANY(?) AND status = 'active' ORDER BY start_time LIMIT 1`,
+        [locShiftIds]
+      ).catch(() => [[null]]);
+      if (firstShift?.startTime) {
+        const [sh, sm = 0] = firstShift.startTime.split(':').map(Number);
+        locStartMins = (sh || 0) * 60 + (sm || 0);
+      }
+    }
+    // Fall back to location's own start_time
+    if (locStartMins === null) {
+      const t = loc.locStartTime;
+      if (t) { const [sh, sm = 0] = t.split(':').map(Number); locStartMins = (sh||0)*60+(sm||0); }
+    }
+
+    // ── Issue 4: Shift authorization check (non-admin employees only) ──────────
+    // If the location requires specific shifts, verify the employee has at least one assigned.
+    // Also capture the employee's specific assigned shift for per-shift slot scoping below.
+    let employeeShiftId = null;
+    let effectiveLocStartMins = locStartMins; // default: first-shift anchor (location-wide)
+    if (locShiftIds.length > 0 && req.companyUser.role !== 'admin') {
+      const shiftPH = locShiftIds.map(() => '?').join(',');
+      const [empShifts] = await pool.query(
+        `SELECT s.id, s.name AS "shiftName", s.start_time AS "startTime"
+         FROM shifts s
+         JOIN employee_shifts es ON es.shift_id = s.id
+         WHERE s.id IN (${shiftPH}) AND es.company_user_id = ? AND s.status = 'active'
+         ORDER BY s.start_time LIMIT 1`,
+        [...locShiftIds, userId]
+      ).catch(() => [[]]);
+      if (empShifts.length === 0) {
+        const [allShiftNames] = await pool.query(
+          `SELECT name FROM shifts WHERE id IN (${shiftPH}) AND status = 'active'`,
+          locShiftIds
+        ).catch(() => [[]]);
+        const shiftList = allShiftNames.map(s => s.name).join(', ') || 'the required shift(s)';
+        return res.json({
+          location: { id: loc.id, name: loc.name, campus: loc.campus, building: loc.building, floor: loc.floor, room: loc.room },
+          templates: [],
+          recentSubmission: null,
+          assignedSoftRequests: [],
+          shiftLocked: true,
+          shiftMessage: `You are not assigned to ${shiftList} required for this location. Please contact your administrator.`,
+        });
+      }
+      // Capture employee's shift for per-shift slot anchor and completedToday scoping
+      if (empShifts[0]?.startTime) {
+        employeeShiftId = empShifts[0].id;
+        const [ssh, ssm = 0] = empShifts[0].startTime.split(':').map(Number);
+        effectiveLocStartMins = (ssh || 0) * 60 + (ssm || 0);
+      }
+    }
+
     const [templates] = await pool.query(
       `SELECT
          ct.id,
@@ -1259,7 +1430,6 @@ router.get("/location-templates/:locationId", async (req, res, next) => {
          ct.service_type AS "serviceType",
          ct.frequency,
          ct.location_id AS "locationId",
-         -- Check if user has an assignment for this template
          EXISTS(
            SELECT 1 FROM template_user_assignments tua
            WHERE tua.template_id = ct.id
@@ -1267,115 +1437,108 @@ router.get("/location-templates/:locationId", async (req, res, next) => {
              AND tua.assigned_to = ?
              AND tua.company_id = ?
          ) AS "isAssigned",
-         -- Check if completed today
+         -- Phase 3: completedToday scoped by location_id + uses COALESCE(location.freq, ct.freq)
+         -- Shift-scoped: only counts submissions from the employee's own assigned shift (shift_id match)
          EXISTS(
            SELECT 1 FROM checklist_submissions cs
            WHERE cs.template_id = ct.id
              AND cs.company_user_id = ?
+             AND (cs.location_id = ? OR cs.location_id IS NULL)
+             AND (cs.shift_id IS NULL OR cs.shift_id = ?)
              AND (
-               (LOWER(ct.frequency) = 'hourly' AND cs.submitted_at::date = CURRENT_DATE AND
+               (LOWER(COALESCE(?, ct.frequency)) = 'hourly' AND cs.submitted_at::date = CURRENT_DATE AND
                  FLOOR(GREATEST(0::numeric,
                    (EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at))
-                   - COALESCE(EXTRACT(HOUR FROM ct.start_time::time)*60+EXTRACT(MINUTE FROM ct.start_time::time),0)
-                 )/(COALESCE(ct.hourly_interval,1)*60.0)) =
+                   - COALESCE(?, EXTRACT(HOUR FROM ct.start_time::time)*60+EXTRACT(MINUTE FROM ct.start_time::time), 0)
+                 )/(COALESCE(?, ct.hourly_interval, 1)*60.0)) =
                  FLOOR(GREATEST(0::numeric,
                    (EXTRACT(HOUR FROM NOW())*60+EXTRACT(MINUTE FROM NOW()))
-                   - COALESCE(EXTRACT(HOUR FROM ct.start_time::time)*60+EXTRACT(MINUTE FROM ct.start_time::time),0)
-                 )/(COALESCE(ct.hourly_interval,1)*60.0))
+                   - COALESCE(?, EXTRACT(HOUR FROM ct.start_time::time)*60+EXTRACT(MINUTE FROM ct.start_time::time), 0)
+                 )/(COALESCE(?, ct.hourly_interval, 1)*60.0))
                )
-               OR (ct.frequency = 'Weekly'  AND cs.submitted_at >= date_trunc('week', NOW()))
-               OR (ct.frequency = 'Monthly' AND cs.submitted_at >= date_trunc('month', NOW()))
-               OR (ct.frequency NOT IN ('Hourly','Weekly','Monthly') AND cs.submitted_at >= CURRENT_DATE)
+               OR (LOWER(COALESCE(?, ct.frequency)) = 'weekly'  AND cs.submitted_at >= date_trunc('week', NOW()))
+               OR (LOWER(COALESCE(?, ct.frequency)) = 'monthly' AND cs.submitted_at >= date_trunc('month', NOW()))
+               OR (LOWER(COALESCE(?, ct.frequency)) NOT IN ('hourly','weekly','monthly') AND cs.submitted_at >= CURRENT_DATE)
              )
          ) AS "completedToday",
-         -- Check if completed today by ANY user in the company (for catalyst supervisor lock)
+         -- Phase 3: completedTodayByAnyone scoped by location_id
+         -- Shift-scoped: only counts submissions from the same shift as the employee
          EXISTS(
            SELECT 1 FROM checklist_submissions cs2
            WHERE cs2.template_id = ct.id
+             AND (cs2.location_id = ? OR cs2.location_id IS NULL)
+             AND (cs2.shift_id IS NULL OR cs2.shift_id = ?)
              AND (
-               (LOWER(ct.frequency) = 'hourly' AND cs2.submitted_at::date = CURRENT_DATE AND
+               (LOWER(COALESCE(?, ct.frequency)) = 'hourly' AND cs2.submitted_at::date = CURRENT_DATE AND
                  FLOOR(GREATEST(0::numeric,
                    (EXTRACT(HOUR FROM cs2.submitted_at)*60+EXTRACT(MINUTE FROM cs2.submitted_at))
-                   - COALESCE(EXTRACT(HOUR FROM ct.start_time::time)*60+EXTRACT(MINUTE FROM ct.start_time::time),0)
-                 )/(COALESCE(ct.hourly_interval,1)*60.0)) =
+                   - COALESCE(?, EXTRACT(HOUR FROM ct.start_time::time)*60+EXTRACT(MINUTE FROM ct.start_time::time), 0)
+                 )/(COALESCE(?, ct.hourly_interval, 1)*60.0)) =
                  FLOOR(GREATEST(0::numeric,
                    (EXTRACT(HOUR FROM NOW())*60+EXTRACT(MINUTE FROM NOW()))
-                   - COALESCE(EXTRACT(HOUR FROM ct.start_time::time)*60+EXTRACT(MINUTE FROM ct.start_time::time),0)
-                 )/(COALESCE(ct.hourly_interval,1)*60.0))
+                   - COALESCE(?, EXTRACT(HOUR FROM ct.start_time::time)*60+EXTRACT(MINUTE FROM ct.start_time::time), 0)
+                 )/(COALESCE(?, ct.hourly_interval, 1)*60.0))
                )
-               OR (ct.frequency = 'Weekly'  AND cs2.submitted_at >= date_trunc('week', NOW()))
-               OR (ct.frequency = 'Monthly' AND cs2.submitted_at >= date_trunc('month', NOW()))
-               OR (ct.frequency NOT IN ('Hourly','Weekly','Monthly') AND cs2.submitted_at >= CURRENT_DATE)
+               OR (LOWER(COALESCE(?, ct.frequency)) = 'weekly'  AND cs2.submitted_at >= date_trunc('week', NOW()))
+               OR (LOWER(COALESCE(?, ct.frequency)) = 'monthly' AND cs2.submitted_at >= date_trunc('month', NOW()))
+               OR (LOWER(COALESCE(?, ct.frequency)) NOT IN ('hourly','weekly','monthly') AND cs2.submitted_at >= CURRENT_DATE)
              )
          ) AS "completedTodayByAnyone"
        FROM checklist_templates ct
        WHERE ct.company_id = ?
          AND ct.is_active = 1
          AND (
-           -- Direct location_id link (legacy / hard-service templates)
            ct.location_id = ?
            OR
-           -- Hierarchy match: building_id + floor_id + room_id match location's text values
            (
-             ct.building_id IS NOT NULL
-             AND ct.floor_id   IS NOT NULL
-             AND ct.room_id    IS NOT NULL
-             AND ct.building_id IN (
-               SELECT b.id FROM buildings b
-               JOIN locations l ON l.id = ?
-               WHERE b.company_id = ct.company_id AND b.name = TRIM(l.building)
-             )
-             AND ct.floor_id IN (
-               SELECT f.id FROM floors f
-               JOIN locations l ON l.id = ?
-               WHERE f.company_id = ct.company_id AND f.floor_number = TRIM(l.floor)
-             )
-             AND ct.room_id IN (
-               SELECT r.id FROM rooms r
-               JOIN locations l ON l.id = ?
-               WHERE r.company_id = ct.company_id AND r.room_name = TRIM(l.room)
-             )
+             ct.building_id IS NOT NULL AND ct.floor_id IS NOT NULL AND ct.room_id IS NOT NULL
+             AND ct.building_id IN (SELECT b.id FROM buildings b JOIN locations l ON l.id = ? WHERE b.company_id = ct.company_id AND b.name = TRIM(l.building))
+             AND ct.floor_id   IN (SELECT f.id FROM floors f   JOIN locations l ON l.id = ? WHERE f.company_id = ct.company_id AND f.floor_number = TRIM(l.floor))
+             AND ct.room_id    IN (SELECT r.id FROM rooms r    JOIN locations l ON l.id = ? WHERE r.company_id = ct.company_id AND r.room_name = TRIM(l.room))
            )
+           OR ct.id = (SELECT checklist_id FROM locations WHERE id = ? AND company_id = ?)
          )
        ORDER BY ct.template_name`,
-      [userId, companyId, userId, companyId, locationId, locationId, locationId, locationId]
+      [
+        // isAssigned
+        userId, companyId,
+        // completedToday (shift-scoped: +employeeShiftId, anchor = effectiveLocStartMins)
+        userId, locationId, employeeShiftId,
+        locFreq, effectiveLocStartMins, locInterval, effectiveLocStartMins, locInterval,
+        locFreq, locFreq, locFreq,
+        // completedTodayByAnyone (shift-scoped: +employeeShiftId, anchor = effectiveLocStartMins)
+        locationId, employeeShiftId,
+        locFreq, effectiveLocStartMins, locInterval, effectiveLocStartMins, locInterval,
+        locFreq, locFreq, locFreq,
+        // main WHERE
+        companyId, locationId, locationId, locationId, locationId, locationId, companyId,
+      ]
     );
-
-    // Verify the location belongs to this company
-    const [[loc]] = await pool.query(
-      `SELECT id, name, campus, building, floor, room FROM locations WHERE id = ? AND company_id = ?`,
-      [locationId, companyId]
-    );
-    if (!loc) return res.status(404).json({ message: "Location not found" });
 
     // Get the most recent submission for any template at this location
+    // Phase 3: also check cs.location_id directly + locations.checklist_id link
     const [[recentSubmission]] = await pool.query(
       `SELECT cs.id, cs.submitted_at AS "submittedAt", cs.status,
               ct.template_name AS "templateName",
               cu.full_name AS "submittedByName",
-              (
-                SELECT COUNT(*) FROM checklist_submission_answers csa
-                WHERE csa.submission_id = cs.id
-              ) AS "totalAnswers",
-              (
-                SELECT COUNT(*) FROM checklist_submission_answers csa
-                WHERE csa.submission_id = cs.id
-                  AND csa.answer_json IS NOT NULL
-                  AND csa.answer_json->>'value' != ''
-              ) AS "answeredCount"
+              (SELECT COUNT(*) FROM checklist_submission_answers csa WHERE csa.submission_id = cs.id) AS "totalAnswers",
+              (SELECT COUNT(*) FROM checklist_submission_answers csa WHERE csa.submission_id = cs.id
+                AND csa.answer_json IS NOT NULL AND csa.answer_json->>'value' != '') AS "answeredCount"
        FROM checklist_submissions cs
        JOIN checklist_templates ct ON ct.id = cs.template_id
        LEFT JOIN company_users cu ON cu.id = cs.company_user_id
        WHERE ct.company_id = ?
          AND (
-           ct.location_id = ?
+           cs.location_id = ?
+           OR ct.location_id = ?
+           OR ct.id = (SELECT checklist_id FROM locations WHERE id = ? AND company_id = ?)
            OR (ct.building_id IN (SELECT b.id FROM buildings b JOIN locations l ON l.id = ? WHERE b.company_id = ct.company_id AND b.name = TRIM(l.building))
                AND ct.floor_id IN (SELECT f.id FROM floors f JOIN locations l ON l.id = ? WHERE f.company_id = ct.company_id AND f.floor_number = TRIM(l.floor))
                AND ct.room_id  IN (SELECT r.id FROM rooms  r JOIN locations l ON l.id = ? WHERE r.company_id = ct.company_id AND r.room_name = TRIM(l.room)))
          )
        ORDER BY cs.submitted_at DESC NULLS LAST
        LIMIT 1`,
-      [companyId, locationId, locationId, locationId, locationId]
+      [companyId, locationId, locationId, locationId, companyId, locationId, locationId, locationId]
     );
 
     // Get open soft requests assigned to this user at this location
@@ -1407,60 +1570,57 @@ router.get("/check-location-filled", async (req, res, next) => {
     const { templateId, locationId } = req.query;
     if (!templateId || !locationId) return res.status(400).json({ message: "Missing templateId or locationId" });
     const companyId = cid(req);
+    const tId = Number(templateId);
+    const lId = Number(locationId);
 
-    // Verify template belongs to this company and is linked to this location (direct or hierarchy)
+    // Phase 3: verify template is linked to this location (all 3 mechanisms)
     const [[tmpl]] = await pool.query(
-      `SELECT id, frequency FROM checklist_templates
-       WHERE id = ? AND company_id = ?
+      `SELECT ct.id, ct.frequency,
+              l.frequency AS "locFreq", l.hourly_interval AS "locInterval", l.start_time AS "locStartTime"
+       FROM checklist_templates ct
+       JOIN locations l ON l.id = ?
+       WHERE ct.id = ? AND ct.company_id = ?
          AND (
-           location_id = ?
-           OR (building_id IN (SELECT b.id FROM buildings b JOIN locations l ON l.id = ? WHERE b.company_id = company_id AND b.name = TRIM(l.building))
-               AND floor_id IN (SELECT f.id FROM floors f JOIN locations l ON l.id = ? WHERE f.company_id = company_id AND f.floor_number = TRIM(l.floor))
-               AND room_id  IN (SELECT r.id FROM rooms  r JOIN locations l ON l.id = ? WHERE r.company_id = company_id AND r.room_name = TRIM(l.room)))
+           ct.location_id = ?
+           OR (ct.building_id IN (SELECT b.id FROM buildings b WHERE b.company_id = ct.company_id AND b.name = TRIM(l.building))
+               AND ct.floor_id IN (SELECT f.id FROM floors f WHERE f.company_id = ct.company_id AND f.floor_number = TRIM(l.floor))
+               AND ct.room_id  IN (SELECT r.id FROM rooms  r WHERE r.company_id = ct.company_id AND r.room_name = TRIM(l.room)))
+           OR ct.id = (SELECT checklist_id FROM locations WHERE id = ? AND company_id = ?)
          )`,
-      [Number(templateId), companyId, Number(locationId), Number(locationId), Number(locationId), Number(locationId)]
+      [lId, tId, companyId, lId, lId, companyId]
     );
     if (!tmpl) return res.json({ filled: false });
 
-    const freq = tmpl.frequency;
+    // Use location.frequency when set (Phase 3 composite key)
+    const effFreq = tmpl.locFreq || tmpl.frequency;
+    const effInterval = tmpl.locInterval || 1;
+    const effStartMins = (() => {
+      const t = tmpl.locStartTime;
+      if (!t) return 0;
+      const [sh, sm = 0] = t.split(':').map(Number);
+      return (sh || 0) * 60 + (sm || 0);
+    })();
+
     const [rows] = await pool.query(
-      `SELECT cs.id AS "submissionId",
-              cs.submitted_at AS "submittedAt",
-              cu.full_name AS "submittedByName"
+      `SELECT cs.id AS "submissionId", cs.submitted_at AS "submittedAt", cu.full_name AS "submittedByName"
        FROM checklist_submissions cs
-       JOIN checklist_templates ct ON ct.id = cs.template_id
        LEFT JOIN company_users cu ON cu.id = cs.company_user_id
        WHERE cs.template_id = ?
-         AND ct.company_id = ?
-         AND ct.location_id = ?
+         AND (cs.location_id = ? OR cs.location_id IS NULL)
          AND (
-           (? = 'Hourly' AND cs.submitted_at::date = CURRENT_DATE AND
-             FLOOR(GREATEST(0::numeric,
-               (EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at))
-               - COALESCE(EXTRACT(HOUR FROM ct.start_time::time)*60+EXTRACT(MINUTE FROM ct.start_time::time),0)
-             )/(COALESCE(ct.hourly_interval,1)*60.0)) =
-             FLOOR(GREATEST(0::numeric,
-               (EXTRACT(HOUR FROM NOW())*60+EXTRACT(MINUTE FROM NOW()))
-               - COALESCE(EXTRACT(HOUR FROM ct.start_time::time)*60+EXTRACT(MINUTE FROM ct.start_time::time),0)
-             )/(COALESCE(ct.hourly_interval,1)*60.0))
-           )
-           OR (? = 'Weekly'  AND cs.submitted_at >= date_trunc('week', NOW()))
-           OR (? = 'Monthly' AND cs.submitted_at >= date_trunc('month', NOW()))
-           OR (? NOT IN ('Hourly','Weekly','Monthly') AND cs.submitted_at >= CURRENT_DATE)
+           (LOWER(?) = 'hourly' AND cs.submitted_at::date = CURRENT_DATE AND
+             FLOOR(GREATEST(0::numeric, (EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at)) - ?) / (? * 60.0)) =
+             FLOOR(GREATEST(0::numeric, (EXTRACT(HOUR FROM NOW())*60+EXTRACT(MINUTE FROM NOW())) - ?) / (? * 60.0)))
+           OR (LOWER(?) = 'weekly'  AND cs.submitted_at >= date_trunc('week', NOW()))
+           OR (LOWER(?) = 'monthly' AND cs.submitted_at >= date_trunc('month', NOW()))
+           OR (LOWER(?) NOT IN ('hourly','weekly','monthly') AND cs.submitted_at >= CURRENT_DATE)
          )
-       ORDER BY cs.submitted_at DESC
-       LIMIT 1`,
-      [Number(templateId), companyId, Number(locationId), freq, freq, freq, freq]
+       ORDER BY cs.submitted_at DESC LIMIT 1`,
+      [tId, lId, effFreq, effStartMins, effInterval, effStartMins, effInterval, effFreq, effFreq, effFreq]
     );
-    if (!rows || rows.length === 0) {
-      return res.json({ filled: false });
-    }
-    res.json({
-      filled: true,
-      submissionId: rows[0].submissionId,
-      submittedAt: rows[0].submittedAt,
-      submittedByName: rows[0].submittedByName || null,
-    });
+
+    if (!rows || rows.length === 0) return res.json({ filled: false });
+    res.json({ filled: true, submissionId: rows[0].submissionId, submittedAt: rows[0].submittedAt, submittedByName: rows[0].submittedByName || null });
   } catch (err) { next(err); }
 });
 
@@ -1757,16 +1917,16 @@ router.get("/submissions/checklists", async (req, res, next) => {
     if (templateId) { conditions.push("cs.template_id = ?"); params.push(Number(templateId)); }
     if (assetId)    { conditions.push("cs.asset_id = ?");    params.push(Number(assetId)); }
     if (building)   {
-      conditions.push("(b.name ILIKE ? OR loc.building ILIKE ? OR loc.campus ILIKE ?)");
-      params.push(`%${building}%`, `%${building}%`, `%${building}%`);
+      conditions.push("(b.name ILIKE ? OR loc_cs.building ILIKE ? OR loc_ct.building ILIKE ? OR loc_cs.campus ILIKE ?)");
+      params.push(`%${building}%`, `%${building}%`, `%${building}%`, `%${building}%`);
     }
     if (floor) {
-      conditions.push("(f.floor_number ILIKE ? OR loc.floor ILIKE ?)");
-      params.push(`%${floor}%`, `%${floor}%`);
+      conditions.push("(f.floor_number ILIKE ? OR loc_cs.floor ILIKE ? OR loc_ct.floor ILIKE ?)");
+      params.push(`%${floor}%`, `%${floor}%`, `%${floor}%`);
     }
     if (room) {
-      conditions.push("(r.room_name ILIKE ? OR loc.room ILIKE ? OR loc.name ILIKE ?)");
-      params.push(`%${room}%`, `%${room}%`, `%${room}%`);
+      conditions.push("(r.room_name ILIKE ? OR loc_cs.room ILIKE ? OR loc_cs.name ILIKE ? OR loc_ct.room ILIKE ? OR loc_ct.name ILIKE ?)");
+      params.push(`%${room}%`, `%${room}%`, `%${room}%`, `%${room}%`, `%${room}%`);
     }
     if (submittedBy) {
       conditions.push("cu.full_name ILIKE ?");
@@ -1788,14 +1948,14 @@ router.get("/submissions/checklists", async (req, res, next) => {
          cs.asset_id             AS "assetId",
          a.asset_name            AS "assetName",
          co.company_name         AS "companyName",
-         ct.location_id          AS "locationId",
-         loc.name                AS "locationName",
+         COALESCE(cs.location_id, ct.location_id) AS "locationId",
+         COALESCE(loc_cs.name, loc_ct.name, loc_eff.name) AS "locationName",
          ct.building_id          AS "buildingId",
-         COALESCE(b.name, loc.building, loc.campus) AS "buildingName",
+         COALESCE(b.name, loc_cs.building, loc_cs.campus, loc_ct.building, loc_eff.building) AS "buildingName",
          ct.floor_id             AS "floorId",
-         COALESCE(f.floor_number, loc.floor)        AS "floorName",
+         COALESCE(f.floor_number, loc_cs.floor, loc_ct.floor, loc_eff.floor) AS "floorName",
          ct.room_id              AS "roomId",
-         COALESCE(r.room_name, loc.room, loc.name, a.asset_name) AS "roomName",
+         COALESCE(r.room_name, loc_cs.room, loc_cs.name, loc_ct.room, loc_ct.name, loc_eff.room, loc_eff.name, a.asset_name) AS "roomName",
          cs.overall_remark       AS "overallRemark",
          cs.status,
          cs.submitted_at         AS "submittedAt",
@@ -1807,13 +1967,26 @@ router.get("/submissions/checklists", async (req, res, next) => {
        LEFT JOIN buildings b ON b.id = ct.building_id
        LEFT JOIN floors f ON f.id = ct.floor_id
        LEFT JOIN rooms r ON r.id = ct.room_id
-       LEFT JOIN locations loc ON loc.id = ct.location_id
+       LEFT JOIN locations loc_cs ON loc_cs.id = cs.location_id
+       LEFT JOIN locations loc_ct ON loc_ct.id = ct.location_id
+       LEFT JOIN LATERAL (
+         SELECT l.building, l.floor, l.room, l.campus, l.name
+         FROM locations l
+         WHERE l.company_id = ct.company_id
+           AND (
+             l.id = cs.location_id
+             OR (cs.location_id IS NULL AND l.checklist_id = ct.id)
+           )
+         ORDER BY (CASE WHEN l.id = cs.location_id THEN 0 ELSE 1 END) ASC
+         LIMIT 1
+       ) loc_eff ON true
        LEFT JOIN company_users cu ON cs.company_user_id = cu.id
        WHERE ${conditions.join(" AND ")}
        ORDER BY cs.submitted_at DESC NULLS LAST
        LIMIT 1000`,
       params
     );
+    res.setHeader("Cache-Control", "no-store");
     res.json(submissions);
   } catch (err) { next(err); }
 });
@@ -2326,164 +2499,51 @@ router.get(
 router.get("/site-score", async (req, res, next) => {
   try {
     const companyId = cid(req);
+    const today = new Date().toISOString().slice(0, 10);
 
-    // Site score is company-wide — always show all templates regardless of the
-    // individual user's service_domain assignment so no one sees all-zero stats.
-    const softFilter = '';
-    const isSoftUser = true; // kept for compatibility, always include open requests
+    // Phase 4 + Task 2: location-based, shift-window-scoped site score
+    const metrics = await computeSiteScore(companyId, today);
 
-    // Fetch all active templates with frequency settings
-    const [templates] = await pool.query(
-      `SELECT id, frequency, hourly_interval AS "hourlyInterval",
-              start_time AS "startTime", end_time AS "endTime"
-       FROM checklist_templates ct
-       WHERE ct.company_id = ? AND ct.is_active = 1 ${softFilter}`,
-      [companyId]
-    );
-
-    // Calculate expected submission slots per template for today (elapsed slots only).
-    // Use DB-side NOW() so currentMins is in the same timezone as start_time values
-    // (PostgreSQL session timezone is set by APP_TIMEZONE in db.js).
-    const [[_siteScoreNowRow]] = await pool.query(
-      `SELECT EXTRACT(HOUR FROM NOW())::int AS h, EXTRACT(MINUTE FROM NOW())::int AS m`
-    );
-    const currentMins = Number(_siteScoreNowRow.h) * 60 + Number(_siteScoreNowRow.m);
-    const templateExpected = {};
-    let totalExpected = 0;
-
-    for (const t of templates) {
-      const freq = (t.frequency || 'Daily').toLowerCase();
-      let expected = 1;
-      if (freq === 'hourly') {
-        const interval = Math.max(1, Number(t.hourlyInterval) || 1);
-        if (t.startTime && t.endTime) {
-          const [sh, sm = 0] = t.startTime.split(':').map(Number);
-          const [eh, em = 0] = t.endTime.split(':').map(Number);
-          const startMins = sh * 60 + sm;
-          const endMins = eh * 60 + em;
-          // Count ALL slots for the full day (not capped by current time).
-          // Future slots that haven't started yet still count as pending.
-          if (endMins > startMins) {
-            expected = Math.max(1, Math.floor((endMins - startMins) / (interval * 60)));
-          }
-        } else {
-          // No time range: count all interval blocks in a full 24-hour day
-          expected = Math.max(1, Math.floor(1440 / (interval * 60)));
-        }
-      }
-      templateExpected[t.id] = expected;
-      totalExpected += expected;
-    }
-
-    // Count actual submissions per template today, capped at expected slots.
-    // For hourly templates with a defined time window, only count submissions
-    // that fall within [start_time, end_time) — out-of-window submissions are
-    // stored in the DB but must not inflate the site score.
-    const [submissionCounts] = await pool.query(
-      `SELECT cs.template_id AS "templateId", COUNT(*) AS "count"
-       FROM checklist_submissions cs
-       JOIN checklist_templates ct ON cs.template_id = ct.id
-       WHERE ct.company_id = ? AND cs.submitted_at::date = CURRENT_DATE
-         AND ct.is_active = 1 ${softFilter}
-         AND (
-           LOWER(COALESCE(ct.frequency, 'daily')) != 'hourly'
-           OR ct.start_time IS NULL
-           OR ct.end_time IS NULL
-           OR (
-             (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
-               >= (EXTRACT(HOUR FROM ct.start_time::time) * 60 + EXTRACT(MINUTE FROM ct.start_time::time))
-             AND (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
-               < (EXTRACT(HOUR FROM ct.end_time::time) * 60 + EXTRACT(MINUTE FROM ct.end_time::time))
-           )
-         )
-       GROUP BY cs.template_id`,
-      [companyId]
-    );
-
-    let filledN = 0;
-    let totalFilledN = 0; // raw actual submissions (uncapped)
-    for (const row of submissionCounts) {
-      const expected = templateExpected[row.templateId] ?? 1;
-      const actual = Number(row.count) || 0;
-      totalFilledN += actual;
-      filledN += Math.min(actual, expected);
-    }
-
-    const totalN = totalExpected;
-    const percentage = totalN > 0 ? Math.round((filledN / totalN) * 1000) / 10 : 0;
-
-    // Open soft-service requests — always compute so any role with soft access sees the count
+    // Open/closed/total soft-service requests (unchanged)
     const [[{ openRequests }]] = await pool.query(
-      `SELECT COUNT(*) AS "openRequests"
-       FROM soft_service_requests
-       WHERE company_id = ? AND status = 'open'`,
+      `SELECT COUNT(*) AS "openRequests" FROM soft_service_requests WHERE company_id = ? AND status = 'open'`,
       [companyId]
     );
-    const openN = Number(openRequests) || 0;
-
-    // Closed soft-service requests
     const [[{ closedRequests }]] = await pool.query(
-      `SELECT COUNT(*) AS "closedRequests"
-       FROM soft_service_requests
-       WHERE company_id = ? AND status = 'resolved'`,
+      `SELECT COUNT(*) AS "closedRequests" FROM soft_service_requests WHERE company_id = ? AND status = 'resolved'`,
       [companyId]
     );
-    const closedN = Number(closedRequests) || 0;
-
-    // Total soft-service requests
     const [[{ totalRequests }]] = await pool.query(
-      `SELECT COUNT(*) AS "totalRequests"
-       FROM soft_service_requests
-       WHERE company_id = ?`,
+      `SELECT COUNT(*) AS "totalRequests" FROM soft_service_requests WHERE company_id = ?`,
       [companyId]
     );
-    const totalRequestsN = Number(totalRequests) || 0;
-
-    // Total checklist templates (active, filtered)
     const [[{ totalChecklistTemplates }]] = await pool.query(
-      `SELECT COUNT(*) AS "totalChecklistTemplates"
-       FROM checklist_templates ct
-       WHERE ct.company_id = ? AND ct.is_active = 1 ${softFilter}`,
+      `SELECT COUNT(*) AS "totalChecklistTemplates" FROM checklist_templates WHERE company_id = ? AND is_active = 1`,
       [companyId]
     );
-
-    // Total logsheet templates
     const [[{ totalLogsheetTemplates }]] = await pool.query(
-      `SELECT COUNT(*) AS "totalLogsheetTemplates"
-       FROM logsheet_templates
-       WHERE company_id = ?`,
+      `SELECT COUNT(*) AS "totalLogsheetTemplates" FROM logsheet_templates WHERE company_id = ?`,
       [companyId]
     );
-
-    // Total submissions today (checklists + logsheets combined)
     const [[{ totalSubmissionsToday }]] = await pool.query(
       `SELECT (
-         (SELECT COUNT(*) FROM checklist_submissions cs
-          JOIN checklist_templates ct ON cs.template_id = ct.id
-          WHERE ct.company_id = ? AND cs.submitted_at >= CURRENT_DATE ${softFilter})
-         +
-         (SELECT COUNT(*) FROM logsheet_entries le
-          JOIN logsheet_templates lt ON le.template_id = lt.id
-          WHERE lt.company_id = ? AND le.submitted_at >= CURRENT_DATE)
+         (SELECT COUNT(*) FROM checklist_submissions cs JOIN checklist_templates ct ON cs.template_id = ct.id WHERE ct.company_id = ? AND cs.submitted_at >= CURRENT_DATE)
+         + (SELECT COUNT(*) FROM logsheet_entries le JOIN logsheet_templates lt ON le.template_id = lt.id WHERE lt.company_id = ? AND le.submitted_at >= CURRENT_DATE)
        ) AS "totalSubmissionsToday"`,
       [companyId, companyId]
     );
 
-    const checklistTemplatesN     = Number(totalChecklistTemplates) || 0;
-    const logsheetTemplatesN      = Number(totalLogsheetTemplates)  || 0;
-    const totalSubmissionsTodayN  = Number(totalSubmissionsToday)   || 0;
-
     res.json({
-      total:                   totalN,
-      filled:                  filledN,
-      totalFilled:             totalFilledN,
-      percentage,
-      openRequests:            openN,
-      closedRequests:          closedN,
-      totalRequests:           totalRequestsN,
-      totalChecklistTemplates: checklistTemplatesN,
-      totalLogsheetTemplates:  logsheetTemplatesN,
-      totalSubmissionsToday:   totalSubmissionsTodayN,
+      total:                   metrics.totalExpected,
+      filled:                  metrics.filledSlots,
+      totalFilled:             metrics.filledSlots,
+      percentage:              metrics.siteScorePct,
+      openRequests:            Number(openRequests) || 0,
+      closedRequests:          Number(closedRequests) || 0,
+      totalRequests:           Number(totalRequests) || 0,
+      totalChecklistTemplates: Number(totalChecklistTemplates) || 0,
+      totalLogsheetTemplates:  Number(totalLogsheetTemplates) || 0,
+      totalSubmissionsToday:   Number(totalSubmissionsToday) || 0,
     });
   } catch (err) { next(err); }
 });

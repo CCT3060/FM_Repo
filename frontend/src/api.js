@@ -132,6 +132,7 @@ export const getCompanyPortalChartStats = (token, params = {}) => {
   return request("GET", `/api/company-portal/dashboard/chart-stats${q ? "?" + q : ""}`, null, { authToken: token });
 };
 export const getCompanyPortalSiteScore = (token) => request("GET", "/api/template-assignments/site-score", undefined, { authToken: token });
+export const getShiftSiteScore = (token, date) => request("GET", `/api/company-portal/dashboard/shift-site-score${date ? `?date=${date}` : ""}`, null, { authToken: token });
 export const getCompanyPortalSiteScoreHistory = (token, params = {}) => {
   const q = new URLSearchParams(params).toString();
   return request("GET", `/api/company-portal/dashboard/site-score-history${q ? "?" + q : ""}`, null, { authToken: token });
@@ -337,7 +338,8 @@ export const deleteOjtQuestion     = (token, qid)       => request("DELETE",`${c
 export const getOjtTrainingUsers   = (token, id)        => request("GET",   `${cp}/ojt/trainings/${id}/users`,                 undefined, { authToken: token });
 export const grantOjtCertificate   = (token, pid)       => request("POST",  `${cp}/ojt/progress/${pid}/certificate`,           undefined, { authToken: token });
 export const assignOjtTraining     = (token, id, data)  => request("POST",  `${cp}/ojt/trainings/${id}/assign`,                data,      { authToken: token });
-export const trainerOjtSignOff     = (token, pid, data) => request("POST",  `${cp}/ojt/progress/${pid}/trainer-signoff`,       data,      { authToken: token });
+export const trainerOjtSignOff         = (token, pid, data) => request("POST",  `${cp}/ojt/progress/${pid}/trainer-signoff`,         data,      { authToken: token });
+export const bulkAssignChecklistToLocations = (token, data) => request("PATCH", `${cp}/locations/bulk-assign-checklist`,               data,      { authToken: token });
 export const uploadOjtFile = async (token, file) => {
   const fd = new FormData();
   fd.append("file", file);

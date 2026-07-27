@@ -7,6 +7,7 @@ import fs from "fs";
 import pool from "../db.js";
 import { validate } from "../validators.js";
 import { requireAuth } from "../middleware/auth.js";
+import { computeSiteScore } from "../utils/siteScore.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -429,97 +430,11 @@ router.post(
   }
 );
 
-/* ── Helper: Calculate expected slots for a template on a given date ────────── */
-function expectedSlotsForDate(template) {
-  const freq = (template.frequency || 'Daily').toLowerCase();
-  if (freq !== 'hourly') return 1;
-  const interval = Math.max(1, Number(template.hourlyInterval) || 1);
-  if (template.startTime && template.endTime) {
-    const [sh, sm = 0] = template.startTime.split(':').map(Number);
-    const [eh, em = 0] = template.endTime.split(':').map(Number);
-    const startMins = sh * 60 + (sm || 0);
-    const endMins = eh * 60 + (em || 0);
-    if (endMins <= startMins) return 1;
-    return Math.max(1, Math.floor((endMins - startMins) / (interval * 60)));
-  }
-  return Math.max(1, Math.floor(1440 / (interval * 60)));
-}
-
-/* ── Helper: Calculate slot-based metrics for a company on a specific date ──── */
-async function calculateCompanySiteScore(companyId, targetDate) {
-  try {
-    // Fetch templates with frequency metadata
-    const [templates] = await pool.query(
-      `SELECT id, frequency, hourly_interval AS "hourlyInterval",
-              start_time AS "startTime", end_time AS "endTime"
-       FROM checklist_templates
-       WHERE company_id = ?
-         AND COALESCE(status, 'active') != 'inactive'`,
-      [companyId]
-    );
-
-    // Fetch submission counts grouped by template for target date
-    const [subCounts] = await pool.query(
-      `SELECT cs.template_id AS "templateId", COUNT(*) AS "count"
-       FROM checklist_submissions cs
-       JOIN checklist_templates ct ON ct.id = cs.template_id
-       WHERE ct.company_id = ?
-         AND cs.submitted_at::date = ?::date
-         AND COALESCE(ct.status, 'active') != 'inactive'
-         AND cs.status NOT IN ('rejected')
-         AND (
-           LOWER(COALESCE(ct.frequency, 'daily')) != 'hourly'
-           OR ct.start_time IS NULL
-           OR ct.end_time IS NULL
-           OR (
-             (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
-               >= (EXTRACT(HOUR FROM ct.start_time::time) * 60 + EXTRACT(MINUTE FROM ct.start_time::time))
-             AND (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
-               < (EXTRACT(HOUR FROM ct.end_time::time) * 60 + EXTRACT(MINUTE FROM ct.end_time::time))
-           )
-         )
-       GROUP BY cs.template_id`,
-      [companyId, targetDate]
-    );
-
-    const subMap = Object.fromEntries(subCounts.map(s => [s.templateId, Number(s.count) || 0]));
-
-    let totalExpected = 0;
-    let filledSlots = 0;
-    const breakdown = [];
-
-    for (const t of templates) {
-      const exp = expectedSlotsForDate(t);
-      if (exp <= 0) continue;
-      totalExpected += exp;
-      const actual = subMap[t.id] || 0;
-      const filled = Math.min(actual, exp);
-      filledSlots += filled;
-      breakdown.push({ templateId: t.id, expectedSlots: exp, filledSlots: filled });
-    }
-
-    const siteScorePct = totalExpected > 0 ? Math.round((filledSlots / totalExpected) * 100) : 0;
-
-    return {
-      totalExpected,
-      filledSlots,
-      pendingSlots: Math.max(0, totalExpected - filledSlots),
-      siteScorePct,
-      breakdown
-    };
-  } catch (err) {
-    console.error(`[calculateCompanySiteScore] Error for company ${companyId} on ${targetDate}:`, err.message);
-    return { totalExpected: 0, filledSlots: 0, pendingSlots: 0, siteScorePct: 0, breakdown: [] };
-  }
-}
-
-/* ── Helper: Get or create snapshot for a past date ────────────────────────── */
+/* ── Helper: Get or create snapshot for a past date (Phase 4: location-based) ─ */
 async function getOrCreateSnapshot(companyId, targetDate) {
   const today = new Date().toISOString().split('T')[0];
-  
-  // For today, always calculate live
   if (targetDate >= today) {
-    return await calculateCompanySiteScore(companyId, targetDate);
+    return await computeSiteScore(companyId, targetDate);
   }
 
   // Check if snapshot exists

@@ -49,7 +49,11 @@ export default function LocationScanScreen() {
   const loadTemplates = useCallback(() => {
     if (!locationId) { setError('No location ID provided'); setLoading(false); return; }
     fetchLocationTemplates(Number(locationId))
-      .then(({ location: loc, templates: tmpl, recentSubmission: recent, assignedSoftRequests: asr }) => {
+      .then(({ location: loc, templates: tmpl, recentSubmission: recent, assignedSoftRequests: asr, shiftLocked, shiftMessage }: any) => {
+        if (shiftLocked) {
+          setError(shiftMessage || 'You are not assigned to the required shift for this location. Please contact your administrator.');
+          return;
+        }
         setLocation(loc);
         setTemplates(tmpl ?? []);
         setRecentSubmission(recent ?? null);
@@ -121,9 +125,13 @@ export default function LocationScanScreen() {
         </View>
       ) : error ? (
         <View style={styles.center}>
-          <MaterialCommunityIcons name="map-marker-off-outline" size={64} color={theme.textMuted} />
-          <Text style={[styles.errorTitle, { color: theme.textPrimary }]}>Location Not Found</Text>
-          <Text style={[styles.errorSub, { color: theme.textSecondary }]}>{error}</Text>
+          <MaterialCommunityIcons
+            name={error.includes('shift') || error.includes('assigned') ? "lock-outline" : "map-marker-off-outline"}
+            size={64} color={theme.textMuted} />
+          <Text style={[styles.errorTitle, { color: theme.textPrimary }]}>
+            {error.includes('shift') || error.includes('assigned') ? 'Shift Not Assigned' : 'Location Not Found'}
+          </Text>
+          <Text style={[styles.errorSub, { color: theme.textSecondary, textAlign: 'center', paddingHorizontal: 20 }]}>{error}</Text>
           <TouchableOpacity style={[styles.btn, { backgroundColor: theme.primary }]} onPress={() => router.back()}>
             <Text style={styles.btnText}>Go Back</Text>
           </TouchableOpacity>

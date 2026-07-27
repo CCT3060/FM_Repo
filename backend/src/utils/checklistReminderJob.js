@@ -30,9 +30,24 @@ async function ensureReminderLogTable() {
         template_id   BIGINT NOT NULL,
         window_start  TIMESTAMPTZ NOT NULL,
         sent_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        UNIQUE (template_id, window_start)
+        location_id   BIGINT NULL,
+        UNIQUE (template_id, window_start, location_id)
       )
     `);
+    // Add location_id column if this table already exists without it
+    await pool.query(`ALTER TABLE checklist_reminder_log ADD COLUMN IF NOT EXISTS location_id BIGINT NULL`).catch(() => {});
+    // Recreate unique constraint to include location_id if needed
+    await pool.query(`
+      DO $$ BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'checklist_reminder_log_template_id_window_start_location_id_key'
+        ) THEN
+          ALTER TABLE checklist_reminder_log DROP CONSTRAINT IF EXISTS checklist_reminder_log_template_id_window_start_key;
+          ALTER TABLE checklist_reminder_log ADD CONSTRAINT checklist_reminder_log_template_id_window_start_location_id_key
+            UNIQUE (template_id, window_start, location_id);
+        END IF;
+      END $$
+    `).catch(() => {});
   } catch (err) {
     console.warn("[ChecklistReminder] Could not create reminder log table:", err.message);
   }
@@ -103,8 +118,240 @@ async function runChecklistReminderJob() {
         console.error(`[ChecklistReminder] Error processing template ${tpl.id}:`, err.message);
       }
     }
+
+    // ── 3. Phase 4: Location-based reminders (new model) ─────────────────────
+    // Reads notification_timer from locations.notification_timer, shift windows from shifts table
+    const [locationReminders] = await pool.query(
+      `SELECT l.id AS "locationId", l.company_id AS "companyId", l.name AS "locationName",
+              l.frequency, l.hourly_interval AS "hourlyInterval",
+              l.notification_timer AS "notificationTimer",
+              l.checklist_id AS "templateId",
+              ct.template_name AS "templateName",
+              COALESCE(l.shift_ids, '[]'::jsonb) AS "shiftIdsRaw"
+       FROM locations l
+       JOIN checklist_templates ct ON ct.id = l.checklist_id
+       WHERE l.notification_timer IS NOT NULL AND l.notification_timer > 0
+         AND l.checklist_id IS NOT NULL
+         AND LOWER(COALESCE(l.status, 'active')) = 'active'
+         AND COALESCE(ct.status, 'active') != 'inactive'`
+    ).catch(() => [[]]);
+
+    for (const locTpl of (locationReminders || [])) {
+      try {
+        await processLocationReminder(locTpl, now);
+      } catch (err) {
+        console.error(`[ChecklistReminder] Error processing location ${locTpl.locationId}:`, err.message);
+      }
+    }
   } catch (err) {
     console.error("[ChecklistReminder] Job error:", err.message);
+  }
+}
+
+// ── Location-based reminder (new Phase 2+ model) ─────────────────────────────
+// Uses location.frequency + location.shift_ids (→ shifts.start_time/end_time)
+// to generate slot windows, then fires reminder X min before slot deadline.
+async function processLocationReminder(locTpl, now) {
+  const { locationId, companyId, locationName, frequency, hourlyInterval, notificationTimer, templateId, templateName, shiftIdsRaw } = locTpl;
+
+  if (!frequency) return;
+  const freq = frequency.toLowerCase();
+  if (!['hourly', 'daily', 'weekly', 'monthly', 'quarterly', 'custom'].includes(freq)) return;
+
+  const reminderMinutes = Number(notificationTimer);
+  if (!reminderMinutes || reminderMinutes <= 0) return;
+
+  // Get assigned shift(s) time windows
+  const shiftIds = Array.isArray(shiftIdsRaw) ? shiftIdsRaw.map(Number).filter(Boolean)
+    : (typeof shiftIdsRaw === 'string' ? JSON.parse(shiftIdsRaw || '[]').map(Number).filter(Boolean) : []);
+
+  let timeWindows = []; // [{ startMins, endMins, label }]
+
+  if (shiftIds.length > 0) {
+    const ph = shiftIds.map(() => '?').join(',');
+    const [shifts] = await pool.query(
+      `SELECT id, name, start_time AS "startTime", end_time AS "endTime"
+       FROM shifts WHERE id IN (${ph}) AND status = 'active'`,
+      shiftIds
+    ).catch(() => [[]]);
+
+    for (const s of (shifts || [])) {
+      const [ssh, ssm = 0] = s.startTime.split(':').map(Number);
+      const [seh, sem = 0] = s.endTime.split(':').map(Number);
+      timeWindows.push({
+        startMins: ssh * 60 + ssm,
+        endMins: seh * 60 + sem,
+        label: `${s.startTime}–${s.endTime} (${s.name})`,
+      });
+    }
+  } else {
+    // No shifts: full-day window (0:00 – 23:59)
+    timeWindows = [{ startMins: 0, endMins: 1440, label: 'all day' }];
+  }
+
+  const todayMidnight = new Date(now);
+  todayMidnight.setHours(0, 0, 0, 0);
+  const nowMins = now.getHours() * 60 + now.getMinutes();
+
+  if (freq === 'hourly') {
+    const interval = Math.max(1, Number(hourlyInterval) || 1);
+
+    for (const win of timeWindows) {
+      // Generate each slot within this shift window
+      for (let slotStart = win.startMins; slotStart < win.endMins; slotStart += interval * 60) {
+        const slotEnd = Math.min(slotStart + interval * 60, win.endMins);
+
+        // Phase 1: X min before slot END (pre-deadline reminder)
+        const minsUntilEnd = slotEnd - nowMins;
+        if (minsUntilEnd > 0 && minsUntilEnd <= reminderMinutes) {
+          const slotStartDate = new Date(todayMidnight.getTime() + slotStart * 60 * 1000);
+          const slotEndDate = new Date(todayMidnight.getTime() + slotEnd * 60 * 1000);
+          const slotLabel = `${_fmtMins(slotStart)} – ${_fmtMins(slotEnd)}`;
+          const pushBody = `"${templateName}" at ${locationName} is due in ${Math.ceil(minsUntilEnd)} min (${slotLabel}). Fill it now!`;
+          const inAppMessage = `Checklist "${templateName}" at ${locationName} not submitted for slot ${slotLabel}.`;
+          await sendLocationReminderIfNeeded({ locationId, templateId, companyId, templateName, locationName,
+            windowStart: slotStartDate, windowEnd: slotEndDate, windowLabel: slotLabel, pushBody, inAppMessage });
+        }
+
+        // Phase 2: just-ended slot admin notification
+        const minsAfterEnd = nowMins - slotEnd;
+        if (minsAfterEnd >= 0 && minsAfterEnd <= (RUN_INTERVAL_MS / 60000) + 1) {
+          const slotStartDate = new Date(todayMidnight.getTime() + slotStart * 60 * 1000);
+          const slotEndDate = new Date(todayMidnight.getTime() + slotEnd * 60 * 1000);
+          const slotLabel = `${_fmtMins(slotStart)} – ${_fmtMins(slotEnd)}`;
+          await sendLocationPostSlotNotif({ locationId, templateId, companyId, templateName, locationName,
+            windowStart: slotStartDate, windowEnd: slotEndDate, windowLabel: slotLabel });
+        }
+      }
+    }
+  } else {
+    // Daily/Weekly/Monthly/Quarterly/Custom: one slot per shift window per day
+    for (const win of timeWindows) {
+      const slotStartDate = new Date(todayMidnight.getTime() + win.startMins * 60 * 1000);
+      const slotEndDate = new Date(todayMidnight.getTime() + win.endMins * 60 * 1000);
+      const slotLabel = shiftIds.length > 0 ? win.label : 'today';
+
+      // Fire reminder X min before shift window END
+      const minsUntilEnd = win.endMins - nowMins;
+      if (minsUntilEnd > 0 && minsUntilEnd <= reminderMinutes) {
+        const pushBody = `"${templateName}" at ${locationName} is due before ${_fmtMins(win.endMins)}. Fill it now!`;
+        const inAppMessage = `Checklist "${templateName}" at ${locationName} not submitted for ${slotLabel}.`;
+        await sendLocationReminderIfNeeded({ locationId, templateId, companyId, templateName, locationName,
+          windowStart: slotStartDate, windowEnd: slotEndDate, windowLabel: slotLabel, pushBody, inAppMessage });
+      }
+
+      // Post-slot admin notification
+      const minsAfterEnd = nowMins - win.endMins;
+      if (minsAfterEnd >= 0 && minsAfterEnd <= (RUN_INTERVAL_MS / 60000) + 1) {
+        await sendLocationPostSlotNotif({ locationId, templateId, companyId, templateName, locationName,
+          windowStart: slotStartDate, windowEnd: slotEndDate, windowLabel: slotLabel });
+      }
+    }
+  }
+}
+
+function _fmtMins(mins) {
+  const h = Math.floor(mins / 60) % 24;
+  const m = mins % 60;
+  const ap = h >= 12 ? 'PM' : 'AM';
+  return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${ap}`;
+}
+
+async function sendLocationReminderIfNeeded({ locationId, templateId, companyId, templateName, locationName,
+  windowStart, windowEnd, windowLabel, pushBody, inAppMessage }) {
+  // Dedup: (template_id, window_start, location_id)
+  const [[alreadySent]] = await pool.query(
+    `SELECT id FROM checklist_reminder_log WHERE template_id = ? AND window_start = ? AND location_id IS NOT DISTINCT FROM ?`,
+    [templateId, windowStart.toISOString(), locationId]
+  ).catch(() => [[]]);
+  if (alreadySent) return;
+
+  // Check if submission exists for this location+template in this window
+  const [[submission]] = await pool.query(
+    `SELECT id FROM checklist_submissions
+     WHERE template_id = ? AND location_id = ? AND submitted_at >= ? AND submitted_at < ? LIMIT 1`,
+    [templateId, locationId, windowStart.toISOString(), windowEnd.toISOString()]
+  ).catch(() => [[]]);
+  if (submission) return;
+
+  // Mark as notified
+  await pool.query(
+    `INSERT INTO checklist_reminder_log (template_id, window_start, location_id)
+     VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
+    [templateId, windowStart.toISOString(), locationId]
+  ).catch(() => {});
+
+  // Get employees assigned to this template (or all employees for this company with access)
+  const [assignedUsers] = await pool.query(
+    `SELECT cu.id, cu.full_name AS "fullName", cu.fcm_token AS "fcmToken"
+     FROM template_user_assignments tua
+     JOIN company_users cu ON cu.id = tua.assigned_to
+     WHERE tua.template_id = ? AND tua.template_type = 'checklist' AND cu.status = 'Active'`,
+    [templateId]
+  ).catch(() => [[]]);
+
+  // Also notify admins and supervisors
+  const [managers] = await pool.query(
+    `SELECT id, fcm_token AS "fcmToken"
+     FROM company_users WHERE company_id = ? AND role IN ('admin', 'supervisor') AND status = 'Active'`,
+    [companyId]
+  ).catch(() => [[]]);
+
+  const pushTitle = `Checklist Reminder 🔔`;
+  const inAppTitle = "Checklist Reminder";
+
+  for (const user of [...(assignedUsers || []), ...(managers || [])]) {
+    if (user.fcmToken) {
+      await sendFCMPush(user.fcmToken, pushTitle, pushBody, {
+        type: 'checklist_reminder', templateId: String(templateId), locationId: String(locationId),
+      }).catch(() => {});
+    }
+    await createNotification({
+      companyId, recipientId: user.id, flagId: null,
+      type: 'checklist_reminder', title: inAppTitle, message: inAppMessage,
+    }).catch(() => {});
+  }
+
+  if ((assignedUsers || []).length > 0 || (managers || []).length > 0) {
+    console.log(`[ChecklistReminder] Location reminder sent — location ${locationId} ("${locationName}"), template ${templateId} — ${windowLabel}`);
+  }
+}
+
+async function sendLocationPostSlotNotif({ locationId, templateId, companyId, templateName, locationName,
+  windowStart, windowEnd, windowLabel }) {
+  // Use windowEnd as dedup key for post-slot
+  const [[alreadySent]] = await pool.query(
+    `SELECT id FROM checklist_reminder_log WHERE template_id = ? AND window_start = ? AND location_id IS NOT DISTINCT FROM ?`,
+    [templateId, windowEnd.toISOString(), locationId]
+  ).catch(() => [[]]);
+  if (alreadySent) return;
+
+  const [[submission]] = await pool.query(
+    `SELECT id FROM checklist_submissions
+     WHERE template_id = ? AND location_id = ? AND submitted_at >= ? AND submitted_at < ? LIMIT 1`,
+    [templateId, locationId, windowStart.toISOString(), windowEnd.toISOString()]
+  ).catch(() => [[]]);
+  if (submission) return;
+
+  await pool.query(
+    `INSERT INTO checklist_reminder_log (template_id, window_start, location_id)
+     VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
+    [templateId, windowEnd.toISOString(), locationId]
+  ).catch(() => {});
+
+  const inAppTitle = "Checklist Not Submitted";
+  const inAppMessage = `"${templateName}" at ${locationName} was not submitted for ${windowLabel}.`;
+
+  const [admins] = await pool.query(
+    `SELECT id FROM company_users WHERE company_id = ? AND role = 'admin' AND status = 'Active'`,
+    [companyId]
+  ).catch(() => [[]]);
+
+  for (const admin of (admins || [])) {
+    await createNotification({
+      companyId, recipientId: admin.id, flagId: null,
+      type: 'checklist_reminder', title: inAppTitle, message: inAppMessage,
+    }).catch(() => {});
   }
 }
 

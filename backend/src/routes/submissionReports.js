@@ -203,9 +203,9 @@ router.get(
       if (dateTo)   { conditions.push("cs.submitted_at <= ?");  params.push(dateTo + " 23:59:59"); }
       if (templateId && !isNaN(Number(templateId))) { conditions.push("cs.template_id = ?");  params.push(Number(templateId)); }
       if (assetId    && !isNaN(Number(assetId)))    { conditions.push("cs.asset_id = ?");     params.push(Number(assetId)); }
-      if (building)    { conditions.push("(a.building ILIKE ? OR b.name ILIKE ?)");     params.push(building, building); }
-      if (floor)       { conditions.push("(a.floor ILIKE ? OR f.floor_number ILIKE ?)"); params.push(floor, floor); }
-      if (room)        { conditions.push("(a.room ILIKE ? OR r.room_name ILIKE ?)");     params.push(room, room); }
+      if (building)    { conditions.push("(COALESCE(b.name, loc_cs.building, loc_cs.campus, loc_ct.building, loc_eff.building, a.building) ILIKE ?)"); params.push(`%${building}%`); }
+      if (floor)       { conditions.push("(COALESCE(f.floor_number, loc_cs.floor, loc_ct.floor, loc_eff.floor, a.floor) ILIKE ?)");                    params.push(`%${floor}%`); }
+      if (room)        { conditions.push("(COALESCE(r.room_name, loc_cs.room, loc_cs.name, loc_ct.room, loc_ct.name, loc_eff.room, a.room) ILIKE ?)"); params.push(`%${room}%`); }
       if (status)      { conditions.push("LOWER(cs.status) = LOWER(?)");  params.push(status); }
       if (submittedBy) { conditions.push("cu.full_name ILIKE ?");          params.push(`%${submittedBy}%`); }
       if (search) {
@@ -221,15 +221,33 @@ router.get(
            ct.service_type         AS "serviceType",
            cs.asset_id             AS "assetId",
            a.asset_name            AS "assetName",
-           COALESCE(b.name, a.building) AS "buildingName",
-           COALESCE(f.floor_number, a.floor) AS "floorName",
-           COALESCE(r.room_name, a.room) AS "roomName",
+           COALESCE(
+             b.name,
+             loc_cs.building, loc_cs.campus,
+             loc_ct.building, loc_ct.campus,
+             loc_eff.building,
+             a.building
+           ) AS "buildingName",
+           COALESCE(
+             f.floor_number,
+             loc_cs.floor,
+             loc_ct.floor,
+             loc_eff.floor,
+             a.floor
+           ) AS "floorName",
+           COALESCE(
+             r.room_name,
+             loc_cs.room, loc_cs.name,
+             loc_ct.room, loc_ct.name,
+             loc_eff.room, loc_eff.name,
+             a.room, a.asset_name
+           ) AS "roomName",
            a.building              AS "assetBuilding",
            a.floor                 AS "assetFloor",
            a.room                  AS "assetRoom",
            d.name                  AS "assetDepartment",
-           ct.location_id          AS "locationId",
-           loc.name                AS "locationName",
+           COALESCE(cs.location_id, ct.location_id) AS "locationId",
+           COALESCE(loc_cs.name, loc_ct.name, loc_eff.name) AS "locationName",
            co.company_name         AS "companyName",
            cs.status,
            cs.submitted_at         AS "submittedAt",
@@ -242,16 +260,30 @@ router.get(
          JOIN companies co           ON co.id = ct.company_id
          LEFT JOIN assets a          ON a.id = cs.asset_id
          LEFT JOIN departments d     ON d.id = a.department_id
-         LEFT JOIN locations loc     ON loc.id = ct.location_id
+         LEFT JOIN locations loc_cs  ON loc_cs.id = cs.location_id
+         LEFT JOIN locations loc_ct  ON loc_ct.id = ct.location_id
+         LEFT JOIN LATERAL (
+           SELECT l.building, l.floor, l.room, l.campus, l.name
+           FROM locations l
+           WHERE l.company_id = ct.company_id
+             AND (
+               l.id = cs.location_id
+               OR (cs.location_id IS NULL AND l.checklist_id = ct.id)
+             )
+           ORDER BY (CASE WHEN l.id = cs.location_id THEN 0 ELSE 1 END) ASC
+           LIMIT 1
+         ) loc_eff ON true
          LEFT JOIN buildings b       ON b.id = ct.building_id
          LEFT JOIN floors f          ON f.id = ct.floor_id
          LEFT JOIN rooms r           ON r.id = ct.room_id
          LEFT JOIN company_users cu  ON cu.id = cs.company_user_id
          WHERE ${conditions.join(" AND ")}
+           AND COALESCE(cs.is_soft_raise, FALSE) = FALSE
          ORDER BY cs.submitted_at DESC NULLS LAST
          LIMIT 1000`,
         params
       );
+      res.setHeader("Cache-Control", "no-store");
       res.json(rows);
     } catch (err) { next(err); }
   }

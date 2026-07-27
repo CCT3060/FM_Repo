@@ -421,6 +421,8 @@ export async function submitChecklistAuth(payload: {
   longitude?: number | null;
   locationAddress?: string | null;
   overallRemark?: string;
+  locationId?: number | null;
+  softRaise?: string;
 }): Promise<unknown> {
   return apiPost<unknown>('/api/template-assignments/submit-checklist', payload);
 }

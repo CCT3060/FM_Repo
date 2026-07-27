@@ -498,18 +498,6 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
         roomId: source.roomId ? String(source.roomId) : "",
         category: source.category || "",
         description: source.description || "",
-        // When cloning, clear frequency so user picks a new one
-        frequency: isClone ? "" : (source.frequency || "Daily"),
-        customHours: isClone ? [] : (Array.isArray(source.customHours) ? source.customHours : []),
-        weekDays: isClone ? [] : (Array.isArray(source.weekDays) ? source.weekDays : []),
-        hourlyInterval: source.hourlyInterval ?? 1,
-        notificationTimer: source.notificationTimer || "",
-        notificationTime: source.notificationTime || "",
-        monthlyDay: source.monthlyDay || "",
-        activeMonths: Array.isArray(source.activeMonths) ? source.activeMonths : [],
-        startTime: source.startTime || "",
-        endTime: source.endTime || "",
-        shiftId: source.shiftId ? String(source.shiftId) : "",
         status: source.status || "active",
         hasRemark: source.hasRemark != null ? !!source.hasRemark : true,
       };
@@ -526,25 +514,9 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
       roomId: "",
       category: "",
       description: "",
-      frequency: "Daily",
-      customHours: [],
-      weekDays: [],
-      hourlyInterval: 1,
-      notificationTimer: "",
-      notificationTime: "",
-      monthlyDay: "",
-      activeMonths: [],
-      startTime: "",
-      endTime: "",
-      shiftId: "",
       status: "active",
       hasRemark: true,
     };
-  });
-
-  const [calViewDate, setCalViewDate] = useState(() => {
-    const now = new Date();
-    return { year: now.getFullYear(), month: now.getMonth() }; // month 0-indexed
   });
 
   const [questions, setQuestions] = useState(() => {
@@ -572,9 +544,6 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
   const [error, setError] = useState(null);
   const [assets, setAssets] = useState(assetsProp);
   const [locations, setLocations] = useState([]);
-  const [buildings, setBuildings] = useState([]);
-  const [bldgFloors, setBldgFloors] = useState([]);   // all floors
-  const [bldgRooms, setBldgRooms] = useState([]);     // all rooms
   // Track latest assets without triggering the reset effect on load
   const assetsRef = useRef(assetsProp);
   // Track previous company/type so reset only fires on explicit user changes
@@ -600,21 +569,6 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
       .catch(() => {});
     return () => { cancelled = true; };
   }, [token, form.companyId]);  // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Fetch locations and building hierarchy when service type is soft_service
-  useEffect(() => {
-    if (!token || !companyPortalMode || form.serviceType !== "soft_service") return;
-    fetch(`${API_BASE}/api/company-portal/locations`, { headers: { Authorization: `Bearer ${token}` } })
-      .then((r) => r.ok ? r.json() : [])
-      .then((data) => setLocations(Array.isArray(data) ? data : []))
-      .catch(() => {});
-    fetch(`${API_BASE}/api/company-portal/buildings`, { headers: { Authorization: `Bearer ${token}` } })
-      .then((r) => r.ok ? r.json() : []).then((d) => setBuildings(Array.isArray(d) ? d : [])).catch(() => {});
-    fetch(`${API_BASE}/api/company-portal/floors`, { headers: { Authorization: `Bearer ${token}` } })
-      .then((r) => r.ok ? r.json() : []).then((d) => setBldgFloors(Array.isArray(d) ? d : [])).catch(() => {});
-    fetch(`${API_BASE}/api/company-portal/rooms`, { headers: { Authorization: `Bearer ${token}` } })
-      .then((r) => r.ok ? r.json() : []).then((d) => setBldgRooms(Array.isArray(d) ? d : [])).catch(() => {});
-  }, [token, companyPortalMode, form.serviceType]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keep assetsRef in sync so the reset effect always reads the latest list
   useEffect(() => { assetsRef.current = assets; }, [assets]);  // eslint-disable-line react-hooks/exhaustive-deps
@@ -653,7 +607,7 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
   const handleSave = async () => {
     setError(null);
     if (!isEdit && !form.companyId) return setError("Select a company");
-    if (!form.templateName.trim()) return setError("Template name is required");
+    if (!form.templateName.trim()) return setError("Checklist name is required");
     for (const [i, q] of questions.entries()) {
       if (!q.questionText.trim() && !q.questionImageUrl) return setError(`Question ${i + 1}: provide either question text or a photo`);
     }
@@ -669,17 +623,6 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
       roomId: form.serviceType === "soft_service" && form.roomId ? Number(form.roomId) : undefined,
       category: form.category.trim() || undefined,
       description: form.description.trim() || undefined,
-      frequency: form.frequency || "Custom",
-      customHours: (form.frequency === "" || form.frequency === "Custom") ? (form.customHours || []) : undefined,
-      weekDays: form.frequency === "Weekly" ? (form.weekDays || []) : undefined,
-      hourlyInterval: form.frequency === "Hourly" ? (form.hourlyInterval || 1) : undefined,
-      notificationTimer: form.frequency === "Hourly" && form.notificationTimer ? Number(form.notificationTimer) : (form.frequency === "Custom" || form.frequency === "") && form.notificationTimer ? Number(form.notificationTimer) : undefined,
-      notificationTime: ["Weekly", "Monthly"].includes(form.frequency) && form.notificationTime ? form.notificationTime : undefined,
-      monthlyDay: form.frequency === "Monthly" && form.monthlyDay ? Number(form.monthlyDay) : undefined,
-      activeMonths: form.frequency === "Monthly" && form.activeMonths?.length ? form.activeMonths : undefined,
-      startTime: (["Hourly","Weekly","Monthly"].includes(form.frequency) && form.startTime) ? form.startTime : undefined,
-      endTime: (["Hourly","Weekly","Monthly"].includes(form.frequency) && form.endTime) ? form.endTime : undefined,
-      shiftId: form.shiftId ? Number(form.shiftId) : undefined,
       status: form.status,
       hasRemark: !!form.hasRemark,
       questions: questions.map((q, idx) => ({
@@ -737,7 +680,7 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
         </button>
         <div>
           <h1 style={{ fontSize: "22px", fontWeight: 800, color: "#0f172a", marginBottom: "2px" }}>
-            {isEdit ? "Edit Checklist Template" : isClone ? `New Frequency Variant — ${cloneFrom.templateName}` : "Create Checklist Template"}
+            {isEdit ? "Edit Checklist" : isClone ? `New Frequency Variant — ${cloneFrom.templateName}` : "Create Checklist"}
           </h1>
           <p style={{ color: "#64748b", fontSize: "13px", margin: 0 }}>Define questions for a reusable checklist — assign to assets, departments, or users.</p>
         </div>
@@ -747,7 +690,7 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
 
       {/* Basic Info */}
       <Card style={{ marginBottom: "16px" }}>
-        <CardHeader>Template Details</CardHeader>
+        <CardHeader>Checklist Details</CardHeader>
         <div style={{ padding: "20px", display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px 20px" }}>
           {!isEdit && (
             <div>
@@ -758,7 +701,7 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
             </div>
           )}
           <div style={{ gridColumn: isEdit ? "1 / span 2" : "span 2" }}>
-            <Label required>Template Name</Label>
+            <Label required>Checklist Name</Label>
             <Inp value={form.templateName} onChange={(e) => setForm((p) => ({ ...p, templateName: e.target.value }))} placeholder='e.g. "Daily Safety Check", "AMC Inspection Form"' />
           </div>
           <div>
@@ -776,51 +719,7 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
               placeholder="Search service type…"
             />
           </div>
-          {form.serviceType === "soft_service" ? (
-            <>
-              {/* ── Cascading Building → Floor → Room dropdowns (each a grid cell) ── */}
-              <div>
-                <Label>Building</Label>
-                <SearchableSelect
-                  value={String(form.buildingId ?? "")}
-                  onChange={(v) => setForm((p) => ({ ...p, buildingId: v, floorId: "", roomId: "" }))}
-                  options={[
-                    { value: "", label: "— Select building —" },
-                    ...buildings.map((b) => ({ value: String(b.id), label: b.name }))
-                  ]}
-                  placeholder="Search building…"
-                />
-                {buildings.length === 0 && <p style={{ fontSize: "11px", color: "#94a3b8", marginTop: "4px" }}>No buildings — add in Locations → Buildings.</p>}
-              </div>
-              <div>
-                <Label>Floor</Label>
-                <SearchableSelect
-                  value={String(form.floorId ?? "")}
-                  onChange={(v) => setForm((p) => ({ ...p, floorId: v, roomId: "" }))}
-                  options={[
-                    { value: "", label: "— Select floor —" },
-                    ...bldgFloors.filter((f) => !form.buildingId || String(f.buildingId) === String(form.buildingId))
-                      .map((f) => ({ value: String(f.id), label: `Floor ${f.floorNumber}` }))
-                  ]}
-                  placeholder="Search floor…"
-                />
-              </div>
-              <div>
-                <Label>Room</Label>
-                <SearchableSelect
-                  value={String(form.roomId ?? "")}
-                  onChange={(v) => setForm((p) => ({ ...p, roomId: v }))}
-                  options={[
-                    { value: "", label: "— Select room —" },
-                    ...bldgRooms.filter((r) => !form.floorId || String(r.floorId) === String(form.floorId))
-                      .map((r) => ({ value: String(r.id), label: r.roomName }))
-                  ]}
-                  placeholder="Search room…"
-                />
-                {bldgRooms.length === 0 && form.floorId && <p style={{ fontSize: "11px", color: "#94a3b8", marginTop: "4px" }}>No rooms — add in Locations → Rooms.</p>}
-              </div>
-            </>
-          ) : (
+          {form.serviceType !== "soft_service" && (
             <div>
               <Label>Asset</Label>
               <SearchableSelect
@@ -845,342 +744,12 @@ function TemplateBuilder({ token, companies, assets: assetsProp = [], shifts = [
             <Inp value={form.category} onChange={(e) => setForm((p) => ({ ...p, category: e.target.value }))} placeholder="e.g. Safety, Preventive, AMC" />
           </div>
           <div>
-            <Label>Frequency</Label>
-            <Sel value={FREQUENCIES.includes(form.frequency) ? form.frequency : "Custom"} onChange={(e) => setForm((p) => ({ ...p, frequency: e.target.value === "Custom" ? "" : e.target.value }))}>
-              {FREQUENCIES.map((f) => <option key={f} value={f}>{f}</option>)}
-            </Sel>
-            {(!FREQUENCIES.includes(form.frequency) || form.frequency === "") && (
-              <Inp
-                style={{ marginTop: "6px" }}
-                value={FREQUENCIES.includes(form.frequency) ? "" : form.frequency}
-                onChange={(e) => setForm((p) => ({ ...p, frequency: e.target.value }))}
-                placeholder="e.g. Quarterly, Half Yearly, Yearly…"
-              />
-            )}
-          </div>
-          {shifts.length > 0 && (
-            <div>
-              <Label>Shift (optional)</Label>
-              <Sel value={form.shiftId} onChange={(e) => setForm((p) => ({ ...p, shiftId: e.target.value }))}>
-                <option value="">— Any shift —</option>
-                {shifts.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </Sel>
-            </div>
-          )}
-          <div>
             <Label>Status</Label>
             <Sel value={form.status} onChange={(e) => setForm((p) => ({ ...p, status: e.target.value }))}>
               <option value="active">Active</option>
               <option value="inactive">Inactive</option>
             </Sel>
           </div>
-          {(form.frequency === "" || form.frequency === "Custom") && (
-            <div style={{ gridColumn: "span 3" }}>
-              <Label>Schedule Hours <span style={{ color: "#94a3b8", fontWeight: 400 }}>(select hours when this checklist should trigger)</span></Label>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "8px" }}>
-                {Array.from({ length: 24 }, (_, h) => {
-                  const label = `${String(h).padStart(2, "0")}:00`;
-                  const selected = (form.customHours || []).includes(h);
-                  return (
-                    <button
-                      key={h}
-                      type="button"
-                      onClick={() => setForm((p) => ({
-                        ...p,
-                        customHours: selected
-                          ? (p.customHours || []).filter((x) => x !== h)
-                          : [...(p.customHours || []), h].sort((a, b) => a - b),
-                      }))}
-                      style={{
-                        padding: "6px 10px",
-                        borderRadius: "6px",
-                        border: selected ? "1.5px solid #2563eb" : "1px solid #cbd5e1",
-                        background: selected ? "#eff6ff" : "#f8fafc",
-                        color: selected ? "#1e40af" : "#64748b",
-                        fontWeight: selected ? 700 : 400,
-                        fontSize: "12px",
-                        cursor: "pointer",
-                        minWidth: "52px",
-                        transition: "all 0.1s",
-                      }}
-                    >
-                      {label}
-                    </button>
-                  );
-                })}
-              </div>
-              {(form.customHours || []).length > 0 ? (
-                <p style={{ fontSize: "12px", color: "#2563eb", marginTop: "8px", fontWeight: 600 }}>
-                  Triggers at: {(form.customHours || []).map((h) => `${String(h).padStart(2, "0")}:00`).join(", ")}
-                </p>
-              ) : (
-                <p style={{ fontSize: "12px", color: "#94a3b8", marginTop: "8px" }}>No hours selected — checklist can be filled any time.</p>
-              )}
-              {/* Notification reminder for Custom */}
-              {(form.customHours || []).length > 0 && (
-                <div style={{ marginTop: "14px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: "10px", padding: "14px 16px" }}>
-                  <Label>Friendly Reminder Timer <span style={{ color: "#94a3b8", fontWeight: 400 }}>(minutes before each scheduled hour — sends push notification if not filled)</span></Label>
-                  <div style={{ display: "flex", alignItems: "center", gap: "12px", marginTop: "8px" }}>
-                    <Inp
-                      type="number" min="1" max="59"
-                      value={form.notificationTimer || ""}
-                      onChange={(e) => {
-                        const v = e.target.value === "" ? "" : Math.min(59, Math.max(1, parseInt(e.target.value) || 1));
-                        setForm((p) => ({ ...p, notificationTimer: v }));
-                      }}
-                      style={{ width: "110px" }}
-                      placeholder="e.g. 30"
-                    />
-                    <span style={{ fontSize: "14px", color: "#92400e", fontWeight: 500 }}>minutes</span>
-                  </div>
-                  {form.notificationTimer ? (
-                    <p style={{ fontSize: "12px", color: "#92400e", marginTop: "6px", fontWeight: 600 }}>
-                      🔔 Reminder sent {form.notificationTimer} min before each scheduled hour
-                    </p>
-                  ) : (
-                    <p style={{ fontSize: "12px", color: "#94a3b8", marginTop: "6px" }}>Leave empty to disable reminder notifications</p>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-          {/* Hourly — interval picker + start/end time */}
-          {form.frequency === "Hourly" && (
-            <div style={{ gridColumn: "span 3" }}>
-              <Label>Repeat after <span style={{ color: "#94a3b8", fontWeight: 400 }}>(enter number of hours, 1–23)</span></Label>
-              <div style={{ display: "flex", alignItems: "center", gap: "12px", marginTop: "8px" }}>
-                <Inp
-                  type="number"
-                  min="1"
-                  max="23"
-                  value={form.hourlyInterval || 1}
-                  onChange={(e) => {
-                    const v = Math.min(23, Math.max(1, parseInt(e.target.value) || 1));
-                    setForm((p) => ({ ...p, hourlyInterval: v }));
-                  }}
-                  style={{ width: "110px" }}
-                  placeholder="e.g. 2"
-                />
-                <span style={{ fontSize: "14px", color: "#64748b", fontWeight: 500 }}>hour(s)</span>
-              </div>
-              <p style={{ fontSize: "12px", color: "#2563eb", marginTop: "8px", fontWeight: 600 }}>
-                Checklist repeats every {form.hourlyInterval || 1} hour{(form.hourlyInterval || 1) > 1 ? "s" : ""} within 24 hours
-              </p>
-              {/* Notification reminder timer */}
-              <div style={{ marginTop: "14px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: "10px", padding: "14px 16px" }}>
-                <Label>Friendly Reminder Timer <span style={{ color: "#94a3b8", fontWeight: 400 }}>(minutes before deadline — sends push notification if checklist not filled)</span></Label>
-                <div style={{ display: "flex", alignItems: "center", gap: "12px", marginTop: "8px" }}>
-                  <Inp
-                    type="number"
-                    min="1"
-                    max={((form.hourlyInterval || 1) * 60) - 1}
-                    value={form.notificationTimer || ""}
-                    onChange={(e) => {
-                      const max = ((form.hourlyInterval || 1) * 60) - 1;
-                      const v = e.target.value === "" ? "" : Math.min(max, Math.max(1, parseInt(e.target.value) || 1));
-                      setForm((p) => ({ ...p, notificationTimer: v }));
-                    }}
-                    style={{ width: "110px" }}
-                    placeholder="e.g. 40"
-                  />
-                  <span style={{ fontSize: "14px", color: "#92400e", fontWeight: 500 }}>minutes</span>
-                </div>
-                {form.notificationTimer ? (
-                  <p style={{ fontSize: "12px", color: "#92400e", marginTop: "6px", fontWeight: 600 }}>
-                    🔔 Reminder sent {form.notificationTimer} min before deadline if checklist is not filled
-                  </p>
-                ) : (
-                  <p style={{ fontSize: "12px", color: "#94a3b8", marginTop: "6px" }}>Leave empty to disable reminder notifications</p>
-                )}
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginTop: "12px" }}>
-                <div>
-                  <Label>Start Time <span style={{ color: "#94a3b8", fontWeight: 400 }}>(optional)</span></Label>
-                  <Inp type="time" value={form.startTime} onChange={(e) => setForm((p) => ({ ...p, startTime: e.target.value }))} />
-                </div>
-                <div>
-                  <Label>End Time <span style={{ color: "#94a3b8", fontWeight: 400 }}>(optional)</span></Label>
-                  <Inp type="time" value={form.endTime} onChange={(e) => setForm((p) => ({ ...p, endTime: e.target.value }))} />
-                </div>
-              </div>
-              {form.startTime && form.endTime && <p style={{ fontSize: "12px", color: "#2563eb", marginTop: "6px", fontWeight: 600 }}>Active window: {form.startTime} – {form.endTime}</p>}
-            </div>
-          )}
-          {/* Weekly — day selector + start/end time */}
-          {form.frequency === "Weekly" && (
-            <div style={{ gridColumn: "span 3" }}>
-              <Label>Select days of the week</Label>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginTop: "8px" }}>
-                {["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map((day) => {
-                  const sel = (form.weekDays || []).includes(day);
-                  return (
-                    <button key={day} type="button"
-                      onClick={() => setForm((p) => ({ ...p, weekDays: sel ? (p.weekDays||[]).filter(d => d !== day) : [...(p.weekDays||[]), day] }))}
-                      style={{ padding: "8px 16px", borderRadius: "8px", fontSize: "13px", fontWeight: sel ? 700 : 400, cursor: "pointer", border: sel ? "2px solid #2563eb" : "1px solid #cbd5e1", background: sel ? "#eff6ff" : "#f8fafc", color: sel ? "#1e40af" : "#64748b", transition: "all 0.1s" }}>
-                      {day}
-                    </button>
-                  );
-                })}
-              </div>
-              {(form.weekDays || []).length > 0 ? (
-                <p style={{ fontSize: "12px", color: "#2563eb", marginTop: "8px", fontWeight: 600 }}>
-                  Active on: {(form.weekDays || []).join(", ")}
-                </p>
-              ) : (
-                <p style={{ fontSize: "12px", color: "#94a3b8", marginTop: "8px" }}>No days selected — active every day.</p>
-              )}
-              {/* Notification reminder for Weekly */}
-              <div style={{ marginTop: "14px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: "10px", padding: "14px 16px" }}>
-                <Label>Friendly Reminder <span style={{ color: "#94a3b8", fontWeight: 400 }}>(time to send notification on selected days — if checklist not filled)</span></Label>
-                <div style={{ display: "flex", alignItems: "center", gap: "12px", marginTop: "8px" }}>
-                  <Inp type="time" value={form.notificationTime || ""} onChange={(e) => setForm((p) => ({ ...p, notificationTime: e.target.value }))} style={{ width: "150px" }} />
-                </div>
-                {form.notificationTime ? (
-                  <p style={{ fontSize: "12px", color: "#92400e", marginTop: "6px", fontWeight: 600 }}>
-                    🔔 Reminder sent at {form.notificationTime} on selected days if checklist is not filled
-                  </p>
-                ) : (
-                  <p style={{ fontSize: "12px", color: "#94a3b8", marginTop: "6px" }}>Leave empty to disable reminder notifications</p>
-                )}
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginTop: "12px" }}>
-                <div>
-                  <Label>Start Time <span style={{ color: "#94a3b8", fontWeight: 400 }}>(optional)</span></Label>
-                  <Inp type="time" value={form.startTime} onChange={(e) => setForm((p) => ({ ...p, startTime: e.target.value }))} />
-                </div>
-                <div>
-                  <Label>End Time <span style={{ color: "#94a3b8", fontWeight: 400 }}>(optional)</span></Label>
-                  <Inp type="time" value={form.endTime} onChange={(e) => setForm((p) => ({ ...p, endTime: e.target.value }))} />
-                </div>
-              </div>
-              {form.startTime && form.endTime && <p style={{ fontSize: "12px", color: "#2563eb", marginTop: "6px", fontWeight: 600 }}>Active window: {form.startTime} – {form.endTime}</p>}
-            </div>
-          )}
-          {/* Monthly — calendar picker + month multi-select + reminder */}
-          {form.frequency === "Monthly" && (() => {
-            const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-            const MONTH_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-            const DAY_HEADERS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
-            const { year, month } = calViewDate; // month 0-indexed
-            const firstDow = new Date(year, month, 1).getDay();
-            const daysInMonth = new Date(year, month + 1, 0).getDate();
-            const cells = [];
-            for (let i = 0; i < firstDow; i++) cells.push(null);
-            for (let d = 1; d <= daysInMonth; d++) cells.push(d);
-            while (cells.length % 7 !== 0) cells.push(null);
-            const selectedDay = form.monthlyDay ? Number(form.monthlyDay) : null;
-            const activeMonths = Array.isArray(form.activeMonths) ? form.activeMonths : [];
-
-            const prevMonth = () => setCalViewDate(({ year: y, month: m }) => m === 0 ? { year: y - 1, month: 11 } : { year: y, month: m - 1 });
-            const nextMonth = () => setCalViewDate(({ year: y, month: m }) => m === 11 ? { year: y + 1, month: 0 } : { year: y, month: m + 1 });
-
-            const toggleMonth = (num) => setForm((p) => {
-              const cur = Array.isArray(p.activeMonths) ? p.activeMonths : [];
-              return { ...p, activeMonths: cur.includes(num) ? cur.filter((x) => x !== num) : [...cur, num].sort((a, b) => a - b) };
-            });
-
-            return (
-              <div style={{ gridColumn: "span 3" }}>
-                {/* Month multi-select chips */}
-                <Label>Active Months <span style={{ color: "#94a3b8", fontWeight: 400 }}>(select which months this checklist runs — leave all unselected for every month)</span></Label>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "8px" }}>
-                  {MONTH_SHORT.map((m, i) => {
-                    const num = i + 1;
-                    const on = activeMonths.includes(num);
-                    return (
-                      <button key={m} type="button" onClick={() => toggleMonth(num)}
-                        style={{ padding: "5px 14px", borderRadius: "20px", fontSize: "13px", fontWeight: on ? 700 : 400, cursor: "pointer",
-                          border: on ? "2px solid #7c3aed" : "1px solid #cbd5e1",
-                          background: on ? "#f5f3ff" : "#f8fafc", color: on ? "#7c3aed" : "#64748b", transition: "all 0.15s" }}>
-                        {m}
-                      </button>
-                    );
-                  })}
-                </div>
-                {activeMonths.length > 0 && (
-                  <p style={{ fontSize: "12px", color: "#7c3aed", marginTop: "5px", fontWeight: 600 }}>
-                    Runs in: {activeMonths.map((n) => MONTH_SHORT[n - 1]).join(", ")}
-                  </p>
-                )}
-
-                {/* Calendar day picker */}
-                <div style={{ marginTop: "14px" }}>
-                  <Label>Day of Month <span style={{ color: "#94a3b8", fontWeight: 400 }}>(29/30/31 may not exist in all months)</span></Label>
-                  <div style={{ marginTop: "10px", display: "inline-block", border: "1px solid #e2e8f0", borderRadius: "12px", overflow: "hidden", boxShadow: "0 2px 8px rgba(0,0,0,0.06)", background: "#fff", minWidth: "280px" }}>
-                    {/* Calendar header */}
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", background: "#2563eb", color: "#fff" }}>
-                      <button type="button" onClick={prevMonth}
-                        style={{ background: "rgba(255,255,255,0.2)", border: "none", borderRadius: "6px", color: "#fff", cursor: "pointer", fontSize: "16px", width: "30px", height: "30px", display: "flex", alignItems: "center", justifyContent: "center" }}>‹</button>
-                      <span style={{ fontWeight: 700, fontSize: "15px" }}>{MONTH_NAMES[month]} {year}</span>
-                      <button type="button" onClick={nextMonth}
-                        style={{ background: "rgba(255,255,255,0.2)", border: "none", borderRadius: "6px", color: "#fff", cursor: "pointer", fontSize: "16px", width: "30px", height: "30px", display: "flex", alignItems: "center", justifyContent: "center" }}>›</button>
-                    </div>
-                    {/* Day-of-week headers */}
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", background: "#f1f5f9" }}>
-                      {DAY_HEADERS.map((h) => (
-                        <div key={h} style={{ textAlign: "center", fontSize: "11px", fontWeight: 700, color: "#64748b", padding: "6px 0" }}>{h}</div>
-                      ))}
-                    </div>
-                    {/* Day cells */}
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", padding: "6px" }}>
-                      {cells.map((d, idx) => {
-                        const isSel = d !== null && d === selectedDay;
-                        return (
-                          <button key={idx} type="button"
-                            onClick={() => d !== null && setForm((p) => ({ ...p, monthlyDay: p.monthlyDay === d ? "" : d }))}
-                            style={{ width: "36px", height: "36px", margin: "2px auto", display: "flex", alignItems: "center", justifyContent: "center",
-                              borderRadius: "50%", border: "none", fontSize: "13px", fontWeight: isSel ? 700 : 400,
-                              background: isSel ? "#2563eb" : "transparent", color: isSel ? "#fff" : d ? "#1e293b" : "transparent",
-                              cursor: d ? "pointer" : "default", transition: "all 0.1s",
-                              ...(d && !isSel ? { ":hover": { background: "#eff6ff" } } : {}) }}>
-                            {d || ""}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    {/* Selected info */}
-                    <div style={{ textAlign: "center", padding: "8px 12px 12px", borderTop: "1px solid #f1f5f9" }}>
-                      {selectedDay ? (
-                        <span style={{ fontSize: "12px", color: "#2563eb", fontWeight: 600 }}>
-                          ✓ Day {selectedDay} selected{activeMonths.length ? ` · ${activeMonths.map((n) => MONTH_SHORT[n - 1]).join(", ")}` : " · every month"}
-                        </span>
-                      ) : (
-                        <span style={{ fontSize: "12px", color: "#94a3b8" }}>Click a date to select</span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Friendly Reminder */}
-                <div style={{ marginTop: "14px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: "10px", padding: "14px 16px" }}>
-                  <Label>Friendly Reminder <span style={{ color: "#94a3b8", fontWeight: 400 }}>(time on the scheduled day to send notification — if checklist not filled)</span></Label>
-                  <div style={{ display: "flex", alignItems: "center", gap: "12px", marginTop: "8px" }}>
-                    <Inp type="time" value={form.notificationTime || ""} onChange={(e) => setForm((p) => ({ ...p, notificationTime: e.target.value }))} style={{ width: "150px" }} />
-                  </div>
-                  {form.notificationTime && selectedDay ? (
-                    <p style={{ fontSize: "12px", color: "#92400e", marginTop: "6px", fontWeight: 600 }}>
-                      🔔 Reminder at {form.notificationTime} on day {selectedDay}{activeMonths.length ? ` of ${activeMonths.map((n) => MONTH_SHORT[n - 1]).join(", ")}` : " of every month"} — if checklist not filled
-                    </p>
-                  ) : (
-                    <p style={{ fontSize: "12px", color: "#94a3b8", marginTop: "6px" }}>Select a day and time to enable reminder notifications</p>
-                  )}
-                </div>
-
-                {/* Start/End Time */}
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginTop: "12px" }}>
-                  <div>
-                    <Label>Start Time <span style={{ color: "#94a3b8", fontWeight: 400 }}>(optional)</span></Label>
-                    <Inp type="time" value={form.startTime} onChange={(e) => setForm((p) => ({ ...p, startTime: e.target.value }))} />
-                  </div>
-                  <div>
-                    <Label>End Time <span style={{ color: "#94a3b8", fontWeight: 400 }}>(optional)</span></Label>
-                    <Inp type="time" value={form.endTime} onChange={(e) => setForm((p) => ({ ...p, endTime: e.target.value }))} />
-                  </div>
-                </div>
-                {form.startTime && form.endTime && <p style={{ fontSize: "12px", color: "#2563eb", marginTop: "6px", fontWeight: 600 }}>Active window: {form.startTime} – {form.endTime}</p>}
-              </div>
-            );
-          })()}
           <div style={{ gridColumn: "span 3" }}>
             <Label>Description</Label>
             <Inp value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} placeholder="Purpose / scope of this checklist" />
@@ -1324,7 +893,6 @@ function AssignModal({ token, companyId, template, templateType, onClose, compan
    Variant Modal  (clone template with new frequency + location)
 ───────────────────────────────────────────────────────────────── */
 function VariantModal({ template, token, onClose, onCreate }) {
-  const [frequency, setFrequency] = useState("Daily");
   const [locationId, setLocationId] = useState("");
   const [locations, setLocations] = useState([]);
   const [saving, setSaving] = useState(false);
@@ -1338,7 +906,6 @@ function VariantModal({ template, token, onClose, onCreate }) {
       .catch(() => {});
   }, [token]);  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Derive building/floor/room IDs from the selected location
   const selectedLocation = locations.find((l) => String(l.id) === String(locationId)) || null;
 
   const handleCreate = async () => {
@@ -1351,17 +918,10 @@ function VariantModal({ template, token, onClose, onCreate }) {
         serviceType: template.serviceType || template.assetType || undefined,
         category: template.category || undefined,
         description: template.description || undefined,
-        frequency,
         locationId: locationId ? Number(locationId) : undefined,
-        // Auto-populate building/floor/room from the selected location
         buildingId: selectedLocation?.buildingId ? Number(selectedLocation.buildingId) : undefined,
         floorId: selectedLocation?.floorId ? Number(selectedLocation.floorId) : undefined,
         roomId: selectedLocation?.roomId ? Number(selectedLocation.roomId) : undefined,
-        // Copy timing settings from the source template
-        notificationTimer: template.notificationTimer || undefined,
-        startTime: template.startTime || undefined,
-        endTime: template.endTime || undefined,
-        hourlyInterval: template.hourlyInterval || undefined,
         questions: Array.isArray(template.questions) ? template.questions : [],
       };
       await onCreate(payload);
@@ -1385,16 +945,9 @@ function VariantModal({ template, token, onClose, onCreate }) {
           </button>
         </div>
         <p style={{ color: "#64748b", fontSize: "13px", margin: "0 0 22px" }}>
-          Clone <strong>"{template.templateName}"</strong> with a different frequency and/or location.
+          Clone <strong>"{template.templateName}"</strong> for a different location.
           {questionCount > 0 && <span style={{ color: "#16a34a", fontWeight: 600 }}> All {questionCount} question{questionCount !== 1 ? "s" : ""} will be copied.</span>}
         </p>
-
-        <div style={{ marginBottom: "16px" }}>
-          <Label required>Frequency</Label>
-          <Sel value={frequency} onChange={(e) => setFrequency(e.target.value)}>
-            {["Hourly", "Daily", "Weekly", "Monthly", "Custom"].map((f) => <option key={f} value={f}>{f}</option>)}
-          </Sel>
-        </div>
 
         <div style={{ marginBottom: "22px" }}>
           <Label>Location <span style={{ fontWeight: 400, color: "#94a3b8", fontSize: "11px" }}>(optional)</span></Label>
@@ -1434,11 +987,8 @@ const TemplateList = memo(function TemplateList({ token, companies, fetchTemplat
   const [viewTemplate, setViewTemplate] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
   const [assignTarget, setAssignTarget] = useState(null);
-  const [filterFrequency, setFilterFrequency] = useState("");
   const [filterAsset, setFilterAsset] = useState("");
-  const [filterBuilding, setFilterBuilding] = useState("");
-  const [filterFloor, setFilterFloor] = useState("");
-  const [filterRoom, setFilterRoom] = useState("");
+
 
   const loadTemplates = useCallback(async () => {
     setLoading(true);
@@ -1460,16 +1010,11 @@ const TemplateList = memo(function TemplateList({ token, companies, fetchTemplat
   const filtered = useMemo(() =>
     templates.filter((t) => {
       if (filterType && (t.serviceType || t.assetType) !== filterType) return false;
-      if (filterFrequency && (t.frequency || "").toLowerCase() !== filterFrequency.toLowerCase()) return false;
       if (filterAsset && String(t.assetId) !== String(filterAsset)) return false;
-      // Soft service location filters
-      if (filterBuilding && String(t.buildingId) !== String(filterBuilding)) return false;
-      if (filterFloor && String(t.floorId) !== String(filterFloor)) return false;
-      if (filterRoom && String(t.roomId) !== String(filterRoom)) return false;
       if (search && !t.templateName?.toLowerCase().includes(search.toLowerCase())) return false;
       return true;
     }),
-    [templates, search, filterType, filterFrequency, filterAsset, filterBuilding, filterFloor, filterRoom]
+    [templates, search, filterType, filterAsset]
   );
 
   // Derive unique values for filter dropdowns
@@ -1480,24 +1025,7 @@ const TemplateList = memo(function TemplateList({ token, companies, fetchTemplat
     templates.forEach(t => { if (t.assetId && t.assetName && !seen.has(t.assetId)) seen.set(t.assetId, t.assetName); });
     return [...seen.entries()].map(([id, name]) => ({ id, name }));
   }, [templates]);
-  // Derive unique buildings, floors (filtered by building), rooms (filtered by floor)
-  const uniqueBuildings = useMemo(() => {
-    const seen = new Map();
-    templates.forEach(t => { if (t.buildingId && t.buildingName && !seen.has(t.buildingId)) seen.set(t.buildingId, t.buildingName); });
-    return [...seen.entries()].map(([id, name]) => ({ id, name }));
-  }, [templates]);
-  const uniqueFloors = useMemo(() => {
-    const seen = new Map();
-    templates.filter(t => !filterBuilding || String(t.buildingId) === String(filterBuilding))
-      .forEach(t => { if (t.floorId && t.floorName && !seen.has(t.floorId)) seen.set(t.floorId, t.floorName); });
-    return [...seen.entries()].map(([id, name]) => ({ id, name }));
-  }, [templates, filterBuilding]);
-  const uniqueRooms = useMemo(() => {
-    const seen = new Map();
-    templates.filter(t => (!filterBuilding || String(t.buildingId) === String(filterBuilding)) && (!filterFloor || String(t.floorId) === String(filterFloor)))
-      .forEach(t => { if (t.roomId && t.roomName && !seen.has(t.roomId)) seen.set(t.roomId, t.roomName); });
-    return [...seen.entries()].map(([id, name]) => ({ id, name }));
-  }, [templates, filterBuilding, filterFloor]);
+
 
   const allSelected = filtered.length > 0 && filtered.every((t) => selectedIds.has(t.id));
 
@@ -1579,7 +1107,7 @@ const TemplateList = memo(function TemplateList({ token, companies, fetchTemplat
           {canBuild && onBuild && (
             <SBtn onClick={onBuild}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              New Template
+              New Checklist
             </SBtn>
           )}
         </div>
@@ -1611,39 +1139,13 @@ const TemplateList = memo(function TemplateList({ token, companies, fetchTemplat
               Delete Selected ({selectedIds.size})
             </SBtn>
           )}
-          <Sel value={filterType} onChange={(e) => { setFilterType(e.target.value); setFilterBuilding(""); setFilterFloor(""); setFilterRoom(""); setFilterAsset(""); }} style={{ width: "150px" }}>
+          <Sel value={filterType} onChange={(e) => { setFilterType(e.target.value); setFilterAsset(""); }} style={{ width: "150px" }}>
             <option value="">All Service Types</option>
             {uniqueServiceTypes.map((v) => <option key={v} value={v}>{v}</option>)}
           </Sel>
-          {/* If soft_service selected, show building/floor/room cascading; otherwise show asset */}
-          {filterType === "soft_service" ? (
-            <>
-              <Sel value={filterBuilding} onChange={(e) => { setFilterBuilding(e.target.value); setFilterFloor(""); setFilterRoom(""); }} style={{ width: "140px" }}>
-                <option value="">All Buildings</option>
-                {uniqueBuildings.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-              </Sel>
-              {filterBuilding && (
-                <Sel value={filterFloor} onChange={(e) => { setFilterFloor(e.target.value); setFilterRoom(""); }} style={{ width: "130px" }}>
-                  <option value="">All Floors</option>
-                  {uniqueFloors.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
-                </Sel>
-              )}
-              {filterFloor && (
-                <Sel value={filterRoom} onChange={(e) => setFilterRoom(e.target.value)} style={{ width: "130px" }}>
-                  <option value="">All Rooms</option>
-                  {uniqueRooms.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-                </Sel>
-              )}
-            </>
-          ) : (
-            <Sel value={filterAsset} onChange={(e) => setFilterAsset(e.target.value)} style={{ width: "150px" }}>
-              <option value="">All Assets</option>
-              {uniqueAssets.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-            </Sel>
-          )}
-          <Sel value={filterFrequency} onChange={(e) => setFilterFrequency(e.target.value)} style={{ width: "130px" }}>
-            <option value="">All Frequencies</option>
-            {uniqueFrequencies.map((f) => <option key={f} value={f}>{f}</option>)}
+          <Sel value={filterAsset} onChange={(e) => setFilterAsset(e.target.value)} style={{ width: "150px" }}>
+            <option value="">All Assets</option>
+            {uniqueAssets.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </Sel>
           <Inp value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name…" style={{ width: "180px" }} />
           <SBtn onClick={loadTemplates} outline color="#64748b" bg="#fff" style={{ marginLeft: "auto" }}>Refresh</SBtn>
@@ -1657,7 +1159,7 @@ const TemplateList = memo(function TemplateList({ token, companies, fetchTemplat
                     <input type="checkbox" checked={allSelected} onChange={handleSelectAll} style={{ cursor: "pointer", width: "15px", height: "15px" }} title={allSelected ? "Deselect all" : "Select all"} />
                   </th>
                 )}
-                {["#", "Template Name", "Service Type", "Category", "Frequency", "Questions", "Status", "Actions"].map((h) => (
+                {["Sr.No", "Checklist Name", "Service Type", "Category", "Questions", "Status", "Actions"].map((h) => (
                   <th key={h} style={{ padding: "12px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.05em", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>{h}</th>
                 ))}
               </tr>
@@ -1692,7 +1194,6 @@ const TemplateList = memo(function TemplateList({ token, companies, fetchTemplat
                       <Badge bg="#eff6ff" col="#2563eb">{t.serviceType || t.assetType}</Badge>
                     </td>
                     <td style={{ padding: "13px 16px", color: "#64748b", fontSize: "13px" }}>{t.category || "—"}</td>
-                    <td style={{ padding: "13px 16px", color: "#64748b", fontSize: "13px" }}>{t.frequency || "—"}</td>
                     <td style={{ padding: "13px 16px", color: "#475569" }}>{qCount}</td>
                     <td style={{ padding: "13px 16px" }}>
                       <Badge

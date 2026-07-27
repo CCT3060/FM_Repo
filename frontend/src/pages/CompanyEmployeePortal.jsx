@@ -1,4 +1,4 @@
-import { getPublicAppUrl } from "../utils/runtimeConfig";
+﻿import { getPublicAppUrl } from "../utils/runtimeConfig";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import * as XLSX from "xlsx";
 import { useNavigate, useParams } from "react-router-dom";
@@ -94,6 +94,7 @@ import {
   deleteAllNotifications,
   getMyCompanies,
   switchPortalCompany,
+  getShiftSiteScore,
 } from "../api.js";
 
 /* ─── Role definitions ────────────────────────────────────────────── */
@@ -282,7 +283,7 @@ function ScheduleMailModal({ companyUser }) {
       if (frequency === "yearly") { scheduleConfig.yearlyMonth = Number(yearlyMonth); scheduleConfig.yearlyDay = Number(yearlyDay); }
 
       const companyName = companyUser?.companyName || "";
-      const dateStr = new Date().toLocaleDateString("en-GB");
+      const dateStr = new Date(Date.now() - 86400000).toLocaleDateString("en-GB");
       const defaultSubject = `Daily Site Report - ${companyName} - ${dateStr}`;
 
       const payload = {
@@ -640,10 +641,10 @@ function ScheduleMailModal({ companyUser }) {
               type="text"
               value={form.subject}
               onChange={(e) => setForm((x) => ({ ...x, subject: e.target.value }))}
-              placeholder={`Daily Site Report \u2014 ${companyUser?.companyName || "Company"} \u2014 ${new Date().toLocaleDateString("en-GB")}`}
+              placeholder={`Daily Site Report \u2014 ${companyUser?.companyName || "Company"} \u2014 ${new Date(Date.now() - 86400000).toLocaleDateString("en-GB")}`}
               style={inp()}
             />
-            <p style={{ fontSize: "11px", color: "#94a3b8", margin: "4px 0 0" }}>Leave blank to use default: “Daily Site Report \u2014 {companyUser?.companyName} \u2014 {new Date().toLocaleDateString("en-GB")}”</p>
+            <p style={{ fontSize: "11px", color: "#94a3b8", margin: "4px 0 0" }}>Leave blank to use default: “Daily Site Report \u2014 {companyUser?.companyName} \u2014 {new Date(Date.now() - 86400000).toLocaleDateString("en-GB")}”</p>
           </div>
 
           {/* Row 3c: Body */}
@@ -834,7 +835,7 @@ function normalizePerms(p) {
   };
 }
 
-function EmployeeModal({ existing, token, employees = [], customRoles = [], currentUserRole = "admin", companyModules = null, onClose, onSaved }) {
+function EmployeeModal({ existing, token, employees = [], customRoles = [], currentUserRole = "admin", companyModules = null, shifts = [], onClose, onSaved }) {
   const isEdit = !!existing;
   const maskedPassword = isEdit && (existing?.password || existing?.hasPassword) ? "********" : "";
 
@@ -864,11 +865,17 @@ function EmployeeModal({ existing, token, employees = [], customRoles = [], curr
     moduleAccess: ["dashboard", "checklists", "logsheets", "mytasks", "locations"],
   };
   const [form, setForm] = useState(isEdit ? {
-    ...def, ...existing, password: maskedPassword,
-    username: existing.username || "",
+    ...def, ...existing,
+    // Coerce all string fields to "" to prevent null → React "uncontrolled input" warning
+    fullName:     existing.fullName     || "",
+    email:        existing.email        || "",
+    phone:        existing.phone        || "",
+    designation:  existing.designation  || "",
+    employeeCode: existing.employeeCode || "",
+    username:     existing.username     || "",
+    password: maskedPassword,
     supervisorId: existing.supervisorId ? String(existing.supervisorId) : "",
     shift: existing.shift || "",
-    employeeCode: existing.employeeCode || "",
     permissions: normalizePerms(existing.permissions),
     // If the DB has an empty moduleAccess array (default before feature existed),
     // fall back to the full default list so all checkboxes appear checked.
@@ -880,6 +887,19 @@ function EmployeeModal({ existing, token, employees = [], customRoles = [], curr
   const [showPassword, setShowPassword] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError]   = useState(null);
+  // Multi-select shifts
+  const [selectedShiftIds, setSelectedShiftIds] = useState([]);
+  const [shiftsLoaded, setShiftsLoaded] = useState(false);
+
+  // Load existing shift assignments when editing
+  useEffect(() => {
+    if (!isEdit || !existing?.id || !token) { setShiftsLoaded(true); return; }
+    fetch(`/api/company-portal/employees/${existing.id}/shifts`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => r.json())
+      .then((ids) => { if (Array.isArray(ids)) setSelectedShiftIds(ids.map(Number)); })
+      .catch(() => {})
+      .finally(() => setShiftsLoaded(true));
+  }, [isEdit, existing?.id, token]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const change = (k, v) => setForm((p) => ({ ...p, [k]: v }));
 
@@ -923,6 +943,15 @@ function EmployeeModal({ existing, token, employees = [], customRoles = [], curr
       const saved = isEdit
         ? await updateCompanyPortalEmployee(token, existing.id, payload)
         : await createCompanyPortalEmployee(token, payload);
+      // Sync shift assignments (PUT replaces full list atomically)
+      const empId = saved?.id || existing?.id;
+      if (empId) {
+        await fetch(`/api/company-portal/employees/${empId}/shifts`, {
+          method: 'PUT',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ shiftIds: selectedShiftIds }),
+        }).catch(() => {});
+      }
       onSaved(saved, isEdit);
     } catch (err) {
       setError(err.message || "Could not save");
@@ -1092,6 +1121,56 @@ function EmployeeModal({ existing, token, employees = [], customRoles = [], curr
                   </button>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* ── Multi-select Shifts ─────────────────────────────────── */}
+          {shifts.length > 0 && (
+            <div style={{ gridColumn: "span 2", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "10px", padding: "16px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#5b21b6" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                <p style={{ fontWeight: 700, fontSize: "13.5px", color: "#0f172a", margin: 0 }}>Shift Assignments</p>
+                {isEdit && !shiftsLoaded && <span style={{ fontSize: "11px", color: "#94a3b8" }}>Loading…</span>}
+              </div>
+              <p style={{ fontSize: "12px", color: "#64748b", marginBottom: "10px" }}>
+                Select one or more work shifts this employee is assigned to.
+              </p>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+                {shifts.filter((s) => s.status !== "inactive").map((s) => {
+                  const selected = selectedShiftIds.includes(Number(s.id));
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => setSelectedShiftIds((prev) =>
+                        selected ? prev.filter((id) => id !== Number(s.id)) : [...prev, Number(s.id)]
+                      )}
+                      style={{
+                        display: "inline-flex", alignItems: "center", gap: "7px",
+                        padding: "8px 14px", borderRadius: "20px", cursor: "pointer",
+                        border: `1.5px solid ${selected ? "#5b21b6" : "#e2e8f0"}`,
+                        background: selected ? "#ede9fe" : "#fff",
+                        color: selected ? "#5b21b6" : "#64748b",
+                        fontWeight: selected ? 700 : 400, fontSize: "12.5px",
+                        transition: "all 0.12s",
+                      }}
+                    >
+                      {selected && (
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
+                      )}
+                      {s.name}
+                      <span style={{ fontSize: "11px", opacity: 0.65 }}>
+                        {s.startTime || s.start_time} – {s.endTime || s.end_time}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              {selectedShiftIds.length > 0 && (
+                <p style={{ marginTop: "8px", fontSize: "11.5px", color: "#5b21b6" }}>
+                  {selectedShiftIds.length} shift{selectedShiftIds.length > 1 ? "s" : ""} selected
+                </p>
+              )}
             </div>
           )}
 
@@ -1461,8 +1540,17 @@ function AssignTemplateModal({ employee, token, checklists = [], logsheetTemplat
 ──────────────────────────────────────────────────────────────────────────── */
 function BldgFlrRoomModal({ title, accentColor, accentBg, accentBorder, items, editItem, setEditItem, onClose, onSave, onDelete, renderRow, columnHeaders, renderForm, allowBulk = false, onSaveBulk }) {
   const [formState, setFormState] = useState(() => editItem
-    ? { ...(editItem.name !== undefined ? { name: editItem.name } : {}), buildingId: String(editItem.buildingId || ""), floorNumber: editItem.floorNumber || "", floorId: String(editItem.floorId || ""), roomName: editItem.roomName || "" }
-    : { name: "", buildingId: "", floorNumber: "", floorId: "", roomName: "" }
+    ? { ...(editItem.name !== undefined ? { name: editItem.name } : {}), buildingId: String(editItem.buildingId || ""), floorNumber: editItem.floorNumber || "", floorId: String(editItem.floorId || ""), roomName: editItem.roomName || "", checklistId: editItem.checklistId ? String(editItem.checklistId) : "",
+        frequency: editItem.frequency || "", hourlyInterval: String(editItem.hourlyInterval || "1"), notificationTimer: editItem.notificationTimer ? String(editItem.notificationTimer) : "",
+        notificationTime: editItem.notificationTime || "",
+        weekDays: Array.isArray(editItem.weekDays) ? editItem.weekDays : [],
+        activeMonths: Array.isArray(editItem.activeMonths) ? editItem.activeMonths.map(Number) : [],
+        customHours: Array.isArray(editItem.customHours) ? editItem.customHours.map(Number) : [],
+        monthlyDay: editItem.monthlyDay ? String(editItem.monthlyDay) : "",
+        shiftIds: Array.isArray(editItem.shiftIds) ? editItem.shiftIds.map(Number) : [] }
+    : { name: "", buildingId: "", floorNumber: "", floorId: "", roomName: "", checklistId: "",
+        frequency: "", hourlyInterval: "1", notificationTimer: "",
+        notificationTime: "", weekDays: [], activeMonths: [], customHours: [], monthlyDay: "", shiftIds: [] }
   );
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
@@ -1481,17 +1569,28 @@ function BldgFlrRoomModal({ title, accentColor, accentBg, accentBorder, items, e
   // When editItem changes (user clicks edit on a row), populate the form
   useEffect(() => {
     if (editItem) {
-      setFormState({ name: editItem.name || "", buildingId: String(editItem.buildingId || ""), floorNumber: editItem.floorNumber || "", floorId: String(editItem.floorId || ""), roomName: editItem.roomName || "" });
+      setFormState({ name: editItem.name || "", buildingId: String(editItem.buildingId || ""), floorNumber: editItem.floorNumber || "", floorId: String(editItem.floorId || ""), roomName: editItem.roomName || "", checklistId: editItem.checklistId ? String(editItem.checklistId) : "",
+        frequency: editItem.frequency || "", hourlyInterval: String(editItem.hourlyInterval || "1"), notificationTimer: editItem.notificationTimer ? String(editItem.notificationTimer) : "",
+        notificationTime: editItem.notificationTime || "",
+        weekDays: Array.isArray(editItem.weekDays) ? editItem.weekDays : [],
+        activeMonths: Array.isArray(editItem.activeMonths) ? editItem.activeMonths.map(Number) : [],
+        customHours: Array.isArray(editItem.customHours) ? editItem.customHours.map(Number) : [],
+        monthlyDay: editItem.monthlyDay ? String(editItem.monthlyDay) : "",
+        shiftIds: Array.isArray(editItem.shiftIds) ? editItem.shiftIds.map(Number) : [] });
       setShowForm(true);
       setMultiAdd(false);
     } else {
-      setFormState({ name: "", buildingId: "", floorNumber: "", floorId: "", roomName: "" });
+      setFormState({ name: "", buildingId: "", floorNumber: "", floorId: "", roomName: "", checklistId: "",
+        frequency: "", hourlyInterval: "1", notificationTimer: "",
+        notificationTime: "", weekDays: [], activeMonths: [], customHours: [], monthlyDay: "", shiftIds: [] });
     }
   }, [editItem]);
 
   const resetForm = () => {
     setShowForm(false); setEditItem(null); setErr("");
-    setFormState({ name: "", buildingId: "", floorNumber: "", floorId: "", roomName: "" });
+    setFormState({ name: "", buildingId: "", floorNumber: "", floorId: "", roomName: "", checklistId: "",
+      frequency: "", hourlyInterval: "1", notificationTimer: "",
+      notificationTime: "", weekDays: [], activeMonths: [], customHours: [], monthlyDay: "", shiftIds: [] });
     setMultiAdd(false); setRoomPrefix("Room "); setRoomFrom(""); setRoomTo("");
   };
 
@@ -1677,34 +1776,216 @@ function FloorForm({ state, setState, buildings, styles: s }) {
   );
 }
 
-function RoomForm({ state, setState, buildings, floors, styles: s }) {
+function RoomForm({ state, setState, buildings, floors, checklists = [], shifts = [], styles: s }) {
   const inpStyle = s?.inpStyle || { width: "100%", padding: "7px 10px", borderRadius: "7px", border: "1px solid #e2e8f0", fontSize: "13px", outline: "none", boxSizing: "border-box" };
   const filteredFloors = floors.filter((f) => !state.buildingId || String(f.buildingId) === String(state.buildingId));
+  const now = new Date();
+  const [cvYear, setCvYear] = useState(now.getFullYear());
+  const [cvMonth, setCvMonth] = useState(now.getMonth());
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "12px" }}>
-      <div>
-        <label style={{ fontSize: "12px", fontWeight: 600, color: "#374151", display: "block", marginBottom: "4px" }}>Building *</label>
-        <SearchableSelect
-          value={String(state.buildingId ?? "")}
-          onChange={(v) => setState((p) => ({ ...p, buildingId: v, floorId: "" }))}
-          options={[{ value: "", label: "— Select —" }, ...buildings.map((b) => ({ value: String(b.id), label: b.name }))]}
-          placeholder="Search building…"
-        />
+    <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "12px" }}>
+        <div>
+          <label style={{ fontSize: "12px", fontWeight: 600, color: "#374151", display: "block", marginBottom: "4px" }}>Building *</label>
+          <SearchableSelect
+            value={String(state.buildingId ?? "")}
+            onChange={(v) => setState((p) => ({ ...p, buildingId: v, floorId: "" }))}
+            options={[{ value: "", label: "— Select —" }, ...buildings.map((b) => ({ value: String(b.id), label: b.name }))]}
+            placeholder="Search building…"
+          />
+        </div>
+        <div>
+          <label style={{ fontSize: "12px", fontWeight: 600, color: "#374151", display: "block", marginBottom: "4px" }}>Floor *</label>
+          <SearchableSelect
+            value={String(state.floorId ?? "")}
+            onChange={(v) => setState((p) => ({ ...p, floorId: v }))}
+            options={[{ value: "", label: "— Select —" }, ...filteredFloors.map((f) => ({ value: String(f.id), label: `Floor ${f.floorNumber}` }))]}
+            placeholder="Search floor…"
+            disabled={!state.buildingId}
+          />
+        </div>
+        <div>
+          <label style={{ fontSize: "12px", fontWeight: 600, color: "#374151", display: "block", marginBottom: "4px" }}>Room Name *</label>
+          <input value={state.roomName} onChange={(e) => setState((p) => ({ ...p, roomName: e.target.value }))} placeholder="e.g. Room 101" style={inpStyle} />
+        </div>
       </div>
       <div>
-        <label style={{ fontSize: "12px", fontWeight: 600, color: "#374151", display: "block", marginBottom: "4px" }}>Floor *</label>
-        <SearchableSelect
-          value={String(state.floorId ?? "")}
-          onChange={(v) => setState((p) => ({ ...p, floorId: v }))}
-          options={[{ value: "", label: "— Select —" }, ...filteredFloors.map((f) => ({ value: String(f.id), label: `Floor ${f.floorNumber}` }))]}
-          placeholder="Search floor…"
-          disabled={!state.buildingId}
-        />
+        <label style={{ fontSize: "12px", fontWeight: 600, color: "#374151", display: "block", marginBottom: "4px" }}>Assign Checklist (optional)</label>
+        {checklists.length > 0 ? (
+          <SearchableSelect
+            value={String(state.checklistId ?? "")}
+            onChange={(v) => setState((p) => ({ ...p, checklistId: v }))}
+            options={[{ value: "", label: "— None —" }, ...checklists.map(c => ({ value: String(c.id), label: c.templateName || c.template_name }))]}
+            placeholder="Search & select checklist…"
+          />
+        ) : (
+          <div style={{ padding: "7px 10px", borderRadius: "7px", border: "1px solid #e2e8f0", fontSize: "13px", color: "#94a3b8", background: "#f8fafc" }}>
+            Loading checklists…
+          </div>
+        )}
       </div>
-      <div>
-        <label style={{ fontSize: "12px", fontWeight: 600, color: "#374151", display: "block", marginBottom: "4px" }}>Room Name *</label>
-        <input value={state.roomName} onChange={(e) => setState((p) => ({ ...p, roomName: e.target.value }))} placeholder="e.g. Room 101" style={inpStyle} />
-      </div>
+      {/* ── Scheduling ── */}
+      {(() => {
+        const FREQS = ["Daily", "Hourly", "Weekly", "Monthly", "Quarterly", "Custom"];
+        const DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+        const MONTH_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+        const DAY_HEADERS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+        const firstDow = new Date(cvYear, cvMonth, 1).getDay();
+        const daysInMon = new Date(cvYear, cvMonth + 1, 0).getDate();
+        const cells = []; for (let i = 0; i < firstDow; i++) cells.push(null); for (let d = 1; d <= daysInMon; d++) cells.push(d); while (cells.length % 7 !== 0) cells.push(null);
+        const selDay = state.monthlyDay ? Number(state.monthlyDay) : null;
+        const sInp = { padding: "4px 8px", borderRadius: "6px", border: "1px solid #d1d5db", fontSize: "12px", outline: "none", boxSizing: "border-box", width: "100%" };
+        const fBtn = (on) => ({ padding: "4px 10px", borderRadius: "14px", fontSize: "11.5px", fontWeight: 600, cursor: "pointer", border: `1.5px solid ${on ? "#16a34a" : "#d1fae5"}`, background: on ? "#dcfce7" : "#fff", color: on ? "#15803d" : "#6b7280" });
+        return (
+          <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "9px", padding: "12px" }}>
+            <p style={{ fontSize: "12px", fontWeight: 700, color: "#15803d", marginBottom: "10px", display: "flex", alignItems: "center", gap: "6px" }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              Scheduling (optional)
+            </p>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "5px", marginBottom: "8px" }}>
+              {FREQS.map(f => <button key={f} type="button" onClick={() => setState(p => ({ ...p, frequency: p.frequency === f ? "" : f }))} style={fBtn(state.frequency === f)}>{f}</button>)}
+            </div>
+
+            {/* Hourly */}
+            {state.frequency === "Hourly" && (
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "6px", flexWrap: "nowrap" }}>
+                  <label style={{ fontSize: "11px", fontWeight: 600, color: "#374151", whiteSpace: "nowrap" }}>Repeat after</label>
+                  <input type="number" min="0" max="23" step="1"
+                    value={Math.floor(Number(state.hourlyInterval) || 1)}
+                    onChange={(e) => {
+                      const h = Math.max(0, parseInt(e.target.value) || 0);
+                      const m = Math.round(((Number(state.hourlyInterval) || 1) % 1) * 60);
+                      setState(p => ({ ...p, hourlyInterval: String(h + m / 60) }));
+                    }}
+                    style={{ width: "48px", ...sInp }} />
+                  <span style={{ fontSize: "11px", color: "#6b7280" }}>h</span>
+                  <input type="number" min="0" max="59" step="1"
+                    value={Math.round(((Number(state.hourlyInterval) || 1) % 1) * 60)}
+                    onChange={(e) => {
+                      const h = Math.floor(Number(state.hourlyInterval) || 1);
+                      const m = Math.max(0, Math.min(59, parseInt(e.target.value) || 0));
+                      setState(p => ({ ...p, hourlyInterval: String(h + m / 60) }));
+                    }}
+                    style={{ width: "48px", ...sInp }} />
+                  <span style={{ fontSize: "11px", color: "#6b7280" }}>min</span>
+                </div>
+                <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: "7px", padding: "8px 10px", marginBottom: "6px" }}>
+                  <label style={{ fontSize: "11px", fontWeight: 600, color: "#374151", display: "block", marginBottom: "3px" }}>Reminder (min before deadline)</label>
+                  <input type="number" min="1" max="59" value={state.notificationTimer || ""} onChange={(e) => setState(p => ({ ...p, notificationTimer: e.target.value }))} placeholder="e.g. 30" style={{ width: "90px", ...sInp }} />
+                </div>
+              </div>
+            )}
+
+            {/* Weekly */}
+            {state.frequency === "Weekly" && (
+              <div>
+                <label style={{ fontSize: "11px", fontWeight: 600, color: "#374151", display: "block", marginBottom: "4px" }}>Days of the week</label>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "5px", marginBottom: "5px" }}>
+                  {DAYS.map(day => { const on = (state.weekDays||[]).includes(day); return (
+                    <button key={day} type="button" onClick={() => setState(p => ({ ...p, weekDays: on ? (p.weekDays||[]).filter(d => d !== day) : [...(p.weekDays||[]), day] }))}
+                      style={{ padding: "4px 10px", borderRadius: "7px", fontSize: "11.5px", fontWeight: on ? 700 : 400, cursor: "pointer", border: on ? "2px solid #2563eb" : "1px solid #cbd5e1", background: on ? "#eff6ff" : "#f8fafc", color: on ? "#1e40af" : "#64748b" }}>{day}</button>
+                  ); })}
+                </div>
+                {(state.weekDays||[]).length > 0 ? <p style={{ fontSize: "11px", color: "#2563eb", fontWeight: 600, marginBottom: "5px" }}>Active: {(state.weekDays||[]).join(", ")}</p> : <p style={{ fontSize: "11px", color: "#94a3b8", marginBottom: "5px" }}>All days</p>}
+                <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: "7px", padding: "8px 10px", marginBottom: "6px" }}>
+                  <label style={{ fontSize: "11px", fontWeight: 600, color: "#374151", display: "block", marginBottom: "3px" }}>Friendly Reminder time</label>
+                  <input type="time" value={state.notificationTime || ""} onChange={(e) => setState(p => ({ ...p, notificationTime: e.target.value }))} style={{ width: "130px", ...sInp }} />
+                </div>
+              </div>
+            )}
+
+            {/* Monthly */}
+            {state.frequency === "Monthly" && (
+              <div>
+                <label style={{ fontSize: "11px", fontWeight: 600, color: "#374151", display: "block", marginBottom: "4px" }}>Active Months</label>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", marginBottom: "5px" }}>
+                  {MONTH_SHORT.map((m, i) => { const n = i+1; const on = (state.activeMonths||[]).includes(n); return (
+                    <button key={m} type="button" onClick={() => setState(p => ({ ...p, activeMonths: on ? (p.activeMonths||[]).filter(x => x !== n) : [...(p.activeMonths||[]), n].sort((a,b)=>a-b) }))}
+                      style={{ padding: "3px 9px", borderRadius: "14px", fontSize: "11px", fontWeight: on ? 700 : 400, cursor: "pointer", border: on ? "2px solid #7c3aed" : "1px solid #cbd5e1", background: on ? "#f5f3ff" : "#f8fafc", color: on ? "#7c3aed" : "#64748b" }}>{m}</button>
+                  ); })}
+                </div>
+                {(state.activeMonths||[]).length > 0 && <p style={{ fontSize: "11px", color: "#7c3aed", fontWeight: 600, marginBottom: "5px" }}>Runs in: {(state.activeMonths||[]).map(n => MONTH_SHORT[n-1]).join(", ")}</p>}
+                <div style={{ display: "inline-block", border: "1px solid #e2e8f0", borderRadius: "8px", overflow: "hidden", marginBottom: "6px" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", background: "#2563eb", color: "#fff" }}>
+                    <button type="button" onClick={() => { if (cvMonth === 0) { setCvYear(y => y-1); setCvMonth(11); } else setCvMonth(m => m-1); }} style={{ background: "rgba(255,255,255,0.2)", border: "none", borderRadius: "4px", color: "#fff", cursor: "pointer", width: "22px", height: "22px", fontSize: "13px" }}>‹</button>
+                    <span style={{ fontWeight: 700, fontSize: "12px" }}>{["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][cvMonth]} {cvYear}</span>
+                    <button type="button" onClick={() => { if (cvMonth === 11) { setCvYear(y => y+1); setCvMonth(0); } else setCvMonth(m => m+1); }} style={{ background: "rgba(255,255,255,0.2)", border: "none", borderRadius: "4px", color: "#fff", cursor: "pointer", width: "22px", height: "22px", fontSize: "13px" }}>›</button>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", background: "#f1f5f9" }}>
+                    {DAY_HEADERS.map(h => <div key={h} style={{ textAlign: "center", fontSize: "9px", fontWeight: 700, color: "#64748b", padding: "3px 0" }}>{h}</div>)}
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", padding: "3px" }}>
+                    {cells.map((d, idx) => { const isSel = d !== null && d === selDay; return (
+                      <button key={idx} type="button" onClick={() => d && setState(p => ({ ...p, monthlyDay: String(p.monthlyDay) === String(d) ? "" : String(d) }))}
+                        style={{ width: "26px", height: "26px", margin: "1px auto", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", border: "none", fontSize: "11px", fontWeight: isSel ? 700 : 400, background: isSel ? "#2563eb" : "transparent", color: isSel ? "#fff" : d ? "#1e293b" : "transparent", cursor: d ? "pointer" : "default" }}>
+                        {d || ""}</button>
+                    ); })}
+                  </div>
+                  <div style={{ textAlign: "center", padding: "4px 8px", borderTop: "1px solid #f1f5f9", fontSize: "11px" }}>
+                    {selDay ? <span style={{ color: "#2563eb", fontWeight: 600 }}>Day {selDay}</span> : <span style={{ color: "#94a3b8" }}>Click a date</span>}
+                  </div>
+                </div>
+                <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: "7px", padding: "8px 10px" }}>
+                  <label style={{ fontSize: "11px", fontWeight: 600, color: "#374151", display: "block", marginBottom: "3px" }}>Friendly Reminder time</label>
+                  <input type="time" value={state.notificationTime || ""} onChange={(e) => setState(p => ({ ...p, notificationTime: e.target.value }))} style={{ width: "130px", ...sInp }} />
+                </div>
+              </div>
+            )}
+
+            {/* Custom */}
+            {state.frequency === "Custom" && (
+              <div>
+                <label style={{ fontSize: "11px", fontWeight: 600, color: "#374151", display: "block", marginBottom: "4px" }}>Schedule Hours</label>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", marginBottom: "5px" }}>
+                  {Array.from({length:24},(_,h) => { const on = (state.customHours||[]).includes(h); return (
+                    <button key={h} type="button" onClick={() => setState(p => ({ ...p, customHours: on ? (p.customHours||[]).filter(x => x !== h) : [...(p.customHours||[]), h].sort((a,b)=>a-b) }))}
+                      style={{ padding: "3px 7px", borderRadius: "5px", fontSize: "11px", fontWeight: on ? 700 : 400, cursor: "pointer", minWidth: "42px", border: on ? "1.5px solid #2563eb" : "1px solid #cbd5e1", background: on ? "#eff6ff" : "#f8fafc", color: on ? "#1e40af" : "#64748b" }}>
+                      {`${String(h).padStart(2,"0")}:00`}</button>
+                  ); })}
+                </div>
+                {(state.customHours||[]).length > 0 && (
+                  <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: "7px", padding: "8px 10px" }}>
+                    <label style={{ fontSize: "11px", fontWeight: 600, color: "#374151", display: "block", marginBottom: "3px" }}>Reminder (min before each hour)</label>
+                    <input type="number" min="1" max="59" value={state.notificationTimer || ""} onChange={(e) => setState(p => ({ ...p, notificationTimer: e.target.value }))} placeholder="e.g. 30" style={{ width: "90px", ...sInp }} />
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Daily / Quarterly */}
+            {(state.frequency === "Daily" || state.frequency === "Quarterly") && (
+              <div>
+                <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: "7px", padding: "8px 10px" }}>
+                  <label style={{ fontSize: "11px", fontWeight: 600, color: "#374151", display: "block", marginBottom: "3px" }}>Reminder (min)</label>
+                  <input type="number" min="1" value={state.notificationTimer || ""} onChange={(e) => setState(p => ({ ...p, notificationTimer: e.target.value }))} placeholder="e.g. 30" style={{ width: "90px", ...sInp }} />
+                </div>
+              </div>
+            )}
+
+            {/* Shifts */}
+            {shifts.filter(sh => sh.status !== "inactive").length > 0 && (
+              <div style={{ marginTop: "8px" }}>
+                <label style={{ fontSize: "11px", fontWeight: 600, color: "#374151", display: "block", marginBottom: "4px" }}>Shifts</label>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "5px" }}>
+                  {shifts.filter(sh => sh.status !== "inactive").map(sh => {
+                    const sel = (Array.isArray(state.shiftIds) ? state.shiftIds : []).map(Number).includes(Number(sh.id));
+                    return (
+                      <button key={sh.id} type="button"
+                        onClick={() => setState(p => { const ids = (Array.isArray(p.shiftIds) ? p.shiftIds : []).map(Number); return { ...p, shiftIds: sel ? ids.filter(id => id !== Number(sh.id)) : [...ids, Number(sh.id)] }; })}
+                        style={{ padding: "3px 10px", borderRadius: "12px", fontSize: "11px", fontWeight: 600, cursor: "pointer",
+                          border: `1.5px solid ${sel ? "#16a34a" : "#d1d5db"}`,
+                          background: sel ? "#dcfce7" : "#fff", color: sel ? "#15803d" : "#6b7280" }}>
+                        {sh.name} {sh.startTime || sh.start_time}–{sh.endTime || sh.end_time}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -1713,7 +1994,7 @@ function RoomForm({ state, setState, buildings, floors, styles: s }) {
 const LocLbl = ({ children }) => <label style={{ fontSize: "12px", fontWeight: 600, color: "#475569", display: "block", marginBottom: "4px" }}>{children}</label>;
 const locInpStyle = { width: "100%", padding: "8px 12px", borderRadius: "8px", border: "1px solid #e2e8f0", fontSize: "13px", outline: "none", boxSizing: "border-box" };
 
-function LocationForm({ initial, onSave, onSaveBulk, onCancel, buildings = [], floors = [], rooms = [] }) {
+function LocationForm({ initial, onSave, onSaveBulk, onCancel, buildings = [], floors = [], rooms = [], checklists = [], shifts = [] }) {
   const isEdit = !!initial;
 
   // Resolve initial IDs — prefer stored FK values, fall back to name-matching
@@ -1740,7 +2021,22 @@ function LocationForm({ initial, onSave, onSaveBulk, onCancel, buildings = [], f
     room: initial?.room || "",
     roomId: initRoomId,
     status: initial?.status || "Active",
+    checklistId: initial?.checklistId ? String(initial.checklistId) : "",
+    frequency: initial?.frequency || "",
+    hourlyInterval: String(initial?.hourlyInterval || "1"),
+    startTime: initial?.startTime || "",
+    endTime: initial?.endTime || "",
+    notificationTimer: initial?.notificationTimer ? String(initial.notificationTimer) : "",
+    notificationTime: initial?.notificationTime || "",
+    weekDays: Array.isArray(initial?.weekDays) ? initial.weekDays : [],
+    activeMonths: Array.isArray(initial?.activeMonths) ? initial.activeMonths.map(Number) : [],
+    customHours: Array.isArray(initial?.customHours) ? initial.customHours.map(Number) : [],
+    monthlyDay: initial?.monthlyDay ? String(initial.monthlyDay) : "",
   });
+  const [selectedLocShiftIds, setSelectedLocShiftIds] = useState(
+    Array.isArray(initial?.shiftIds) ? initial.shiftIds.map(Number) : []
+  );
+  const [calViewDate, setCalViewDate] = useState(() => { const n = new Date(); return { year: n.getFullYear(), month: n.getMonth() }; });
   const [multiRoom, setMultiRoom] = useState(false);
   const [roomPrefix, setRoomPrefix] = useState("Room ");
   const [roomFrom, setRoomFrom] = useState("");
@@ -1799,6 +2095,16 @@ function LocationForm({ initial, onSave, onSaveBulk, onCancel, buildings = [], f
           ...(form.buildingId && { buildingId: Number(form.buildingId) }),
           ...(form.floorId    && { floorId:    Number(form.floorId) }),
           ...(form.roomId     && { roomId:     Number(form.roomId) }),
+          checklistId: form.checklistId ? Number(form.checklistId) : null,
+          frequency: form.frequency || null,
+          hourlyInterval: form.frequency === "Hourly" ? (Math.round((Number(form.hourlyInterval) || 1) * 4) / 4) || 0.25 : null,
+          notificationTimer: form.notificationTimer ? Number(form.notificationTimer) : null,
+          notificationTime: ["Weekly", "Monthly"].includes(form.frequency) ? (form.notificationTime || null) : null,
+          weekDays: form.frequency === "Weekly" ? form.weekDays : [],
+          activeMonths: form.frequency === "Monthly" ? form.activeMonths : [],
+          customHours: form.frequency === "Custom" ? form.customHours : [],
+          monthlyDay: form.frequency === "Monthly" && form.monthlyDay ? Number(form.monthlyDay) : null,
+          shiftIds: selectedLocShiftIds,
         });
       }
       catch (err) { setError(err.message || "Save failed"); }
@@ -1897,6 +2203,236 @@ function LocationForm({ initial, onSave, onSaveBulk, onCancel, buildings = [], f
           <option value="Inactive">Inactive</option>
         </select>
       </div>
+      <div>
+        <LocLbl>Assign Checklist (optional)</LocLbl>
+        {checklists.length > 0 ? (
+          <SearchableSelect
+            value={form.checklistId}
+            onChange={(v) => setForm(p => ({ ...p, checklistId: v }))}
+            options={[{ value: "", label: "— None —" }, ...checklists.map(c => ({ value: String(c.id), label: c.templateName || c.template_name }))]}
+            placeholder="Search & select checklist…"
+          />
+        ) : (
+          <div style={{ padding: "8px 12px", borderRadius: "8px", border: "1px solid #e2e8f0", fontSize: "13px", color: form.checklistId && initial?.checklistName ? "#0f172a" : "#94a3b8", background: "#f8fafc" }}>
+            {form.checklistId && initial?.checklistName ? initial.checklistName : "Loading checklists…"}
+          </div>
+        )}
+      </div>
+
+      {/* ── Scheduling ─────────────────────────────────────────────── */}
+      {(() => {
+        const FREQS = ["Daily", "Hourly", "Weekly", "Monthly", "Quarterly", "Custom"];
+        const DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+        const MONTH_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+        const DAY_HEADERS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+        const { year, month: calMonth } = calViewDate;
+        const firstDow = new Date(year, calMonth, 1).getDay();
+        const daysInMonth = new Date(year, calMonth + 1, 0).getDate();
+        const calCells = [];
+        for (let i = 0; i < firstDow; i++) calCells.push(null);
+        for (let d = 1; d <= daysInMonth; d++) calCells.push(d);
+        while (calCells.length % 7 !== 0) calCells.push(null);
+        const selectedDay = form.monthlyDay ? Number(form.monthlyDay) : null;
+        const fBtn = (active) => ({ padding: "5px 12px", borderRadius: "16px", fontSize: "12px", fontWeight: 600, cursor: "pointer",
+          border: `1.5px solid ${active ? "#16a34a" : "#d1fae5"}`, background: active ? "#dcfce7" : "#fff",
+          color: active ? "#15803d" : "#6b7280" });
+        const schedInput = { padding: "7px 10px", borderRadius: "7px", border: "1px solid #d1d5db", fontSize: "12.5px", outline: "none", boxSizing: "border-box", width: "100%" };
+        return (
+          <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "10px", padding: "14px" }}>
+            <p style={{ fontSize: "13px", fontWeight: 700, color: "#15803d", marginBottom: "12px", display: "flex", alignItems: "center", gap: "7px" }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              Scheduling (optional)
+            </p>
+
+            {/* Frequency buttons */}
+            <div style={{ marginBottom: "12px" }}>
+              <LocLbl>Frequency</LocLbl>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                {FREQS.map(f => (
+                  <button key={f} type="button" onClick={() => setForm(p => ({ ...p, frequency: p.frequency === f ? "" : f }))}
+                    style={fBtn(form.frequency === f)}>{f}</button>
+                ))}
+              </div>
+            </div>
+
+            {/* Hourly */}
+            {form.frequency === "Hourly" && (
+              <div style={{ marginBottom: "10px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "8px", flexWrap: "nowrap" }}>
+                  <LocLbl style={{ whiteSpace: "nowrap" }}>Repeat after</LocLbl>
+                  <input type="number" min="0" max="23" step="1"
+                    value={Math.floor(Number(form.hourlyInterval) || 1)}
+                    onChange={(e) => {
+                      const h = Math.max(0, parseInt(e.target.value) || 0);
+                      const m = Math.round(((Number(form.hourlyInterval) || 1) % 1) * 60);
+                      setForm(p => ({ ...p, hourlyInterval: String(h + m / 60) }));
+                    }}
+                    style={{ width: "52px", ...schedInput }} />
+                  <span style={{ fontSize: "12px", color: "#6b7280" }}>h</span>
+                  <input type="number" min="0" max="59" step="1"
+                    value={Math.round(((Number(form.hourlyInterval) || 1) % 1) * 60)}
+                    onChange={(e) => {
+                      const h = Math.floor(Number(form.hourlyInterval) || 1);
+                      const m = Math.max(0, Math.min(59, parseInt(e.target.value) || 0));
+                      setForm(p => ({ ...p, hourlyInterval: String(h + m / 60) }));
+                    }}
+                    style={{ width: "52px", ...schedInput }} />
+                  <span style={{ fontSize: "12px", color: "#6b7280" }}>min</span>
+                </div>
+                <div style={{ marginBottom: "8px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: "8px", padding: "10px 12px" }}>
+                  <LocLbl>Friendly Reminder Timer (minutes before deadline)</LocLbl>
+                  <input type="number" min="1" max="59" value={form.notificationTimer}
+                    onChange={(e) => setForm(p => ({ ...p, notificationTimer: e.target.value }))}
+                    placeholder="e.g. 30" style={{ width: "110px", ...schedInput }} />
+                </div>
+              </div>
+            )}
+
+            {/* Weekly */}
+            {form.frequency === "Weekly" && (
+              <div style={{ marginBottom: "10px" }}>
+                <LocLbl>Select days of the week</LocLbl>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "6px" }}>
+                  {DAYS.map(day => {
+                    const on = (form.weekDays || []).includes(day);
+                    return (
+                      <button key={day} type="button" onClick={() => setForm(p => ({ ...p, weekDays: on ? (p.weekDays||[]).filter(d => d !== day) : [...(p.weekDays||[]), day] }))}
+                        style={{ padding: "6px 14px", borderRadius: "8px", fontSize: "12px", fontWeight: on ? 700 : 400, cursor: "pointer",
+                          border: on ? "2px solid #2563eb" : "1px solid #cbd5e1", background: on ? "#eff6ff" : "#f8fafc", color: on ? "#1e40af" : "#64748b" }}>
+                        {day}</button>
+                    );
+                  })}
+                </div>
+                {(form.weekDays || []).length > 0
+                  ? <p style={{ fontSize: "11.5px", color: "#2563eb", fontWeight: 600 }}>Active on: {(form.weekDays||[]).join(", ")}</p>
+                  : <p style={{ fontSize: "11.5px", color: "#94a3b8" }}>No days selected — active every day.</p>}
+                <div style={{ marginTop: "8px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: "8px", padding: "10px 12px" }}>
+                  <LocLbl>Friendly Reminder (time to send notification on selected days)</LocLbl>
+                  <input type="time" value={form.notificationTime} onChange={(e) => setForm(p => ({ ...p, notificationTime: e.target.value }))} style={{ width: "150px", ...schedInput }} />
+                </div>
+              </div>
+            )}
+
+            {/* Monthly */}
+            {form.frequency === "Monthly" && (
+              <div style={{ marginBottom: "10px" }}>
+                <LocLbl>Active Months (leave all unselected for every month)</LocLbl>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "5px", marginBottom: "6px" }}>
+                  {MONTH_SHORT.map((m, i) => {
+                    const num = i + 1; const on = (form.activeMonths||[]).includes(num);
+                    return (
+                      <button key={m} type="button"
+                        onClick={() => setForm(p => ({ ...p, activeMonths: on ? (p.activeMonths||[]).filter(x => x !== num) : [...(p.activeMonths||[]), num].sort((a,b)=>a-b) }))}
+                        style={{ padding: "4px 12px", borderRadius: "18px", fontSize: "12px", fontWeight: on ? 700 : 400, cursor: "pointer",
+                          border: on ? "2px solid #7c3aed" : "1px solid #cbd5e1", background: on ? "#f5f3ff" : "#f8fafc", color: on ? "#7c3aed" : "#64748b" }}>
+                        {m}</button>
+                    );
+                  })}
+                </div>
+                {(form.activeMonths||[]).length > 0 && <p style={{ fontSize: "11.5px", color: "#7c3aed", fontWeight: 600, marginBottom: "8px" }}>Runs in: {(form.activeMonths||[]).map(n => MONTH_SHORT[n-1]).join(", ")}</p>}
+                <LocLbl>Day of Month</LocLbl>
+                <div style={{ display: "inline-block", border: "1px solid #e2e8f0", borderRadius: "10px", overflow: "hidden", marginBottom: "8px" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px", background: "#2563eb", color: "#fff" }}>
+                    <button type="button" onClick={() => setCalViewDate(({ year: y, month: m }) => m === 0 ? { year: y-1, month: 11 } : { year: y, month: m-1 })}
+                      style={{ background: "rgba(255,255,255,0.2)", border: "none", borderRadius: "5px", color: "#fff", cursor: "pointer", width: "26px", height: "26px" }}>‹</button>
+                    <span style={{ fontWeight: 700, fontSize: "13px" }}>{["January","February","March","April","May","June","July","August","September","October","November","December"][calMonth]} {year}</span>
+                    <button type="button" onClick={() => setCalViewDate(({ year: y, month: m }) => m === 11 ? { year: y+1, month: 0 } : { year: y, month: m+1 })}
+                      style={{ background: "rgba(255,255,255,0.2)", border: "none", borderRadius: "5px", color: "#fff", cursor: "pointer", width: "26px", height: "26px" }}>›</button>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", background: "#f1f5f9" }}>
+                    {DAY_HEADERS.map(h => <div key={h} style={{ textAlign: "center", fontSize: "10px", fontWeight: 700, color: "#64748b", padding: "4px 0" }}>{h}</div>)}
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", padding: "4px" }}>
+                    {calCells.map((d, idx) => {
+                      const isSel = d !== null && d === selectedDay;
+                      return (
+                        <button key={idx} type="button" onClick={() => d && setForm(p => ({ ...p, monthlyDay: String(p.monthlyDay) === String(d) ? "" : String(d) }))}
+                          style={{ width: "30px", height: "30px", margin: "1px auto", display: "flex", alignItems: "center", justifyContent: "center",
+                            borderRadius: "50%", border: "none", fontSize: "12px", fontWeight: isSel ? 700 : 400,
+                            background: isSel ? "#2563eb" : "transparent", color: isSel ? "#fff" : d ? "#1e293b" : "transparent", cursor: d ? "pointer" : "default" }}>
+                          {d || ""}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div style={{ textAlign: "center", padding: "6px 10px", borderTop: "1px solid #f1f5f9" }}>
+                    {selectedDay ? <span style={{ fontSize: "11px", color: "#2563eb", fontWeight: 600 }}>✓ Day {selectedDay} selected</span>
+                      : <span style={{ fontSize: "11px", color: "#94a3b8" }}>Click a date to select</span>}
+                  </div>
+                </div>
+                <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: "8px", padding: "10px 12px" }}>
+                  <LocLbl>Friendly Reminder (time on the scheduled day)</LocLbl>
+                  <input type="time" value={form.notificationTime} onChange={(e) => setForm(p => ({ ...p, notificationTime: e.target.value }))} style={{ width: "150px", ...schedInput }} />
+                </div>
+              </div>
+            )}
+
+            {/* Custom (Schedule Hours) */}
+            {form.frequency === "Custom" && (
+              <div style={{ marginBottom: "10px" }}>
+                <LocLbl>Schedule Hours (select hours when this location should trigger)</LocLbl>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "5px", marginBottom: "6px" }}>
+                  {Array.from({ length: 24 }, (_, h) => {
+                    const label = `${String(h).padStart(2,"0")}:00`;
+                    const on = (form.customHours || []).includes(h);
+                    return (
+                      <button key={h} type="button"
+                        onClick={() => setForm(p => ({ ...p, customHours: on ? (p.customHours||[]).filter(x => x !== h) : [...(p.customHours||[]), h].sort((a,b)=>a-b) }))}
+                        style={{ padding: "5px 8px", borderRadius: "6px", fontSize: "11.5px", fontWeight: on ? 700 : 400, cursor: "pointer", minWidth: "48px",
+                          border: on ? "1.5px solid #2563eb" : "1px solid #cbd5e1", background: on ? "#eff6ff" : "#f8fafc", color: on ? "#1e40af" : "#64748b" }}>
+                        {label}</button>
+                    );
+                  })}
+                </div>
+                {(form.customHours||[]).length > 0
+                  ? <p style={{ fontSize: "11.5px", color: "#2563eb", fontWeight: 600, marginBottom: "6px" }}>Triggers at: {(form.customHours||[]).map(h => `${String(h).padStart(2,"0")}:00`).join(", ")}</p>
+                  : <p style={{ fontSize: "11.5px", color: "#94a3b8", marginBottom: "6px" }}>No hours selected — can be filled any time.</p>}
+                {(form.customHours||[]).length > 0 && (
+                  <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: "8px", padding: "10px 12px" }}>
+                    <LocLbl>Friendly Reminder Timer (minutes before each scheduled hour)</LocLbl>
+                    <input type="number" min="1" max="59" value={form.notificationTimer}
+                      onChange={(e) => setForm(p => ({ ...p, notificationTimer: e.target.value }))}
+                      placeholder="e.g. 30" style={{ width: "110px", ...schedInput }} />
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Daily / Quarterly — reminder only */}
+            {(form.frequency === "Daily" || form.frequency === "Quarterly") && (
+              <div style={{ marginBottom: "10px" }}>
+                <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: "8px", padding: "10px 12px" }}>
+                  <LocLbl>Reminder (minutes before deadline)</LocLbl>
+                  <input type="number" min="1" value={form.notificationTimer} onChange={(e) => setForm(p => ({ ...p, notificationTimer: e.target.value }))} placeholder="e.g. 30" style={{ width: "110px", ...schedInput }} />
+                </div>
+              </div>
+            )}
+
+            {/* Shifts multi-select — always visible when there are shifts */}
+            {shifts.filter(sh => sh.status !== "inactive").length > 0 && (
+              <div style={{ marginTop: "4px" }}>
+                <LocLbl>Shifts</LocLbl>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                  {shifts.filter(sh => sh.status !== "inactive").map(sh => {
+                    const sel = selectedLocShiftIds.includes(Number(sh.id));
+                    return (
+                      <button key={sh.id} type="button"
+                        onClick={() => setSelectedLocShiftIds(prev => sel ? prev.filter(id => id !== Number(sh.id)) : [...prev, Number(sh.id)])}
+                        style={{ display: "inline-flex", alignItems: "center", gap: "5px", padding: "5px 12px", borderRadius: "16px", fontSize: "12px", fontWeight: 600, cursor: "pointer",
+                          border: `1.5px solid ${sel ? "#16a34a" : "#d1d5db"}`,
+                          background: sel ? "#dcfce7" : "#fff", color: sel ? "#15803d" : "#6b7280" }}>
+                        {sel && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>}
+                        {sh.name}
+                        <span style={{ fontSize: "11px", opacity: 0.7 }}>{sh.startTime || sh.start_time}–{sh.endTime || sh.end_time}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
       <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end", paddingTop: "4px" }}>
         <button type="button" onClick={onCancel} className="btn-cancel">Cancel</button>
         <button type="button" onClick={handleSave} className="btn-submit" disabled={saving}>
@@ -4948,6 +5484,7 @@ export default function CompanyEmployeePortal() {
   useEffect(() => { sessionStorage.setItem("cp_nav", nav); }, [nav]);
   const [chartStats, setChartStats] = useState(null);
   const [todaySiteScore, setTodaySiteScore] = useState(null);
+  const [shiftSiteScore, setShiftSiteScore] = useState([]);
   const [chartFilter, setChartFilter] = useState("day"); // day|week|month|year
   const [chartCustomStart, setChartCustomStart] = useState("");
   const [chartCustomEnd, setChartCustomEnd] = useState("");
@@ -5074,6 +5611,10 @@ export default function CompanyEmployeePortal() {
   const [bulkLocQrPrinting, setBulkLocQrPrinting] = useState(false);
   const [showLocSettings, setShowLocSettings] = useState(false);
   const [showLocImport, setShowLocImport] = useState(false);
+  const [locSortField, setLocSortField] = useState("floor");
+  const [locSortDir, setLocSortDir] = useState("asc");
+  const [showBulkAssign, setShowBulkAssign] = useState(false);
+  const [bulkAssignChecklistId, setBulkAssignChecklistId] = useState("");
 
   // Buildings / Floors / Rooms state
   const [buildings, setBuildings] = useState([]);
@@ -5140,6 +5681,7 @@ export default function CompanyEmployeePortal() {
     if (!token) return;
     load("dashboard", () => getCompanyPortalDashboard(token)).then((d) => d && setDashboard(d));
     getCompanyPortalSiteScore(token).then((d) => d && setTodaySiteScore(d)).catch(() => {});
+    getShiftSiteScore(token).then((d) => Array.isArray(d) && setShiftSiteScore(d)).catch(() => {});
     getCompanyPortalMe(token).then((me) => {
       if (me?.enabledModules) setEnabledModules(me.enabledModules);
       if (me?.logoUrl) setCompanyLogoUrl(me.logoUrl);
@@ -5214,6 +5756,8 @@ export default function CompanyEmployeePortal() {
     getCompanyPortalChartStats(token, { period: "custom", startDate: dashboardDate, endDate: dashboardDate })
       .then((d) => { if (d) { setChartStats(d); setChartError(null); } })
       .catch((e) => { setChartError(e?.message || "Failed to load chart data"); setChartStats(null); });
+    // Refresh shift-wise site score for the selected date
+    getShiftSiteScore(token, dashboardDate).then((d) => Array.isArray(d) && setShiftSiteScore(d)).catch(() => {});
   }, [token, dashboardDate, currentUser?.role, isCustomRole]);
 
   // Re-fetch dashboard data whenever the user navigates back to the dashboard tab
@@ -5222,6 +5766,7 @@ export default function CompanyEmployeePortal() {
     if (!token || nav !== "dashboard") return;
     load("dashboard", () => getCompanyPortalDashboard(token)).then((d) => d && setDashboard(d));
     getCompanyPortalSiteScore(token).then((d) => d && setTodaySiteScore(d)).catch(() => {});
+    getShiftSiteScore(token).then((d) => Array.isArray(d) && setShiftSiteScore(d)).catch(() => {});
     setRecentEntriesLoading(true);
     getCompanyPortalRecentLogsheetEntries(token)
       .then((d) => d && setRecentEntries(d))
@@ -5234,6 +5779,14 @@ export default function CompanyEmployeePortal() {
       .finally(() => setRecentChecklistsLoading(false));
     // Pre-load checklist templates so the "Recent Submissions" all-checklists view renders without requiring a page refresh
     getCompanyPortalChecklists(token).then((d) => d && setChecklists(d)).catch(() => {});
+    // Load locations + shifts for Recent Submissions slot generation (needed even before user visits Locations tab)
+    if (!locations.length) {
+      fetch("/api/company-portal/locations", { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.json()).then(d => Array.isArray(d) && setLocations(d)).catch(() => {});
+    }
+    if (!shifts.length) {
+      getShifts(token).then(d => d && setShifts(d)).catch(() => {});
+    }
     // Refresh dashboard quick-view (admin or custom role)
     if (currentUser?.role === "admin" || isCustomRole) {
       setDashboardAlertsLoading(true);
@@ -5530,6 +6083,7 @@ export default function CompanyEmployeePortal() {
         .then((r) => r.json()).then((d) => setFloors(Array.isArray(d) ? d : [])).catch(() => {});
       fetch("/api/company-portal/rooms", { headers: { Authorization: `Bearer ${token}` } })
         .then((r) => r.json()).then((d) => setRooms(Array.isArray(d) ? d : [])).catch(() => {});
+      if (!checklists.length) getCompanyPortalChecklists(token).then((d) => d && setChecklists(d)).catch(() => {});
     }
   }, [nav, token, load, assets.length, isAllCompaniesDashboard, moduleSiteFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -5588,14 +6142,39 @@ export default function CompanyEmployeePortal() {
     [departments, deptSearch]
   );
 
-  // Locations filtered
-  const filteredLocations = useMemo(() =>
-    locations.filter((l) => {
+  // Locations filtered + sorted
+  const filteredLocations = useMemo(() => {
+    const floorOrder = (f) => {
+      if (f == null || f === "") return 9999;
+      const s = String(f).trim().toLowerCase();
+      if (s === "g" || s === "ground") return 0;
+      if (s === "b" || s === "basement") return -1;
+      const n = parseFloat(s);
+      return isNaN(n) ? 9999 : n;
+    };
+    const list = locations.filter((l) => {
       const term = locSearch.toLowerCase();
       return !term || (l.name || "").toLowerCase().includes(term) || (l.building || "").toLowerCase().includes(term) || (l.campus || "").toLowerCase().includes(term);
-    }),
-    [locations, locSearch]
-  );
+    });
+    list.sort((a, b) => {
+      let av, bv;
+      if (locSortField === "floor") {
+        av = floorOrder(a.floor); bv = floorOrder(b.floor);
+      } else if (locSortField === "name") {
+        av = (a.name || "").toLowerCase(); bv = (b.name || "").toLowerCase();
+      } else if (locSortField === "building") {
+        av = (a.building || "").toLowerCase(); bv = (b.building || "").toLowerCase();
+      } else if (locSortField === "room") {
+        av = (a.room || "").toLowerCase(); bv = (b.room || "").toLowerCase();
+      } else if (locSortField === "status") {
+        av = (a.status || "").toLowerCase(); bv = (b.status || "").toLowerCase();
+      } else { return 0; }
+      if (av < bv) return locSortDir === "asc" ? -1 : 1;
+      if (av > bv) return locSortDir === "asc" ? 1 : -1;
+      return 0;
+    });
+    return list;
+  }, [locations, locSearch, locSortField, locSortDir]);
 
   const handleDeptSaved = (saved, isEdit) => {
     const norm = { ...saved, departmentName: saved.departmentName || saved.name };
@@ -5631,7 +6210,32 @@ export default function CompanyEmployeePortal() {
     if (!r.ok) throw new Error(data.message || "Save failed");
     if (isEdit) {
       setLocations(p => p.map(l => l.id === data.id ? data : l));
-      // Reload rooms so Manage Rooms modal reflects any room rename
+      // Fix 5: sync scheduling/checklist changes to the linked room (bidirectional sync)
+      if (editLoc.roomId) {
+        const linkedRoom = rooms.find(r => r.id === editLoc.roomId || String(r.id) === String(editLoc.roomId));
+        if (linkedRoom) {
+          await fetch(`/api/company-portal/rooms/${editLoc.roomId}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify({
+              buildingId: linkedRoom.buildingId,
+              floorId: linkedRoom.floorId,
+              roomName: linkedRoom.roomName,
+              checklistId: formData.checklistId,
+              frequency: formData.frequency,
+              hourlyInterval: formData.hourlyInterval,
+              notificationTimer: formData.notificationTimer,
+              notificationTime: formData.notificationTime,
+              weekDays: formData.weekDays,
+              activeMonths: formData.activeMonths,
+              customHours: formData.customHours,
+              monthlyDay: formData.monthlyDay,
+              shiftIds: formData.shiftIds,
+            }),
+          }).catch(() => {});
+        }
+      }
+      // Reload rooms so Manage Rooms modal reflects any scheduling changes
       reloadRooms();
     } else setLocations(p => [...p, data]);
     setShowLocModal(false); setEditLoc(null);
@@ -5710,6 +6314,24 @@ export default function CompanyEmployeePortal() {
     } catch (err) { alert(err.message || "Delete failed"); }
   };
 
+  const handleBulkAssignChecklist = async () => {
+    if (selectedLocIds.size === 0 || !bulkAssignChecklistId) return;
+    try {
+      const r = await fetch("/api/company-portal/locations/bulk-assign-checklist", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ locationIds: [...selectedLocIds], checklistId: Number(bulkAssignChecklistId) }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.message || "Assign failed");
+      const chk = checklists.find(c => String(c.id) === String(bulkAssignChecklistId));
+      setLocations(p => p.map(l => selectedLocIds.has(l.id) ? { ...l, checklistId: Number(bulkAssignChecklistId), checklistName: chk?.templateName || chk?.template_name } : l));
+      setShowBulkAssign(false);
+      setBulkAssignChecklistId("");
+      setSelectedLocIds(new Set());
+    } catch (err) { alert(err.message || "Assign failed"); }
+  };
+
   const handleShowLocQr = async (loc) => {
     setLocQrModal(loc);
     const url = `${window.location.origin}/location/${loc.id}`;
@@ -5774,15 +6396,30 @@ export default function CompanyEmployeePortal() {
     if (Array.isArray(d)) setRooms(d);
   };
 
-  const handleSaveRoom = async (buildingId, floorId, roomName, editId) => {
+  const handleSaveRoom = async (buildingId, floorId, roomName, editId, checklistId, scheduling = {}) => {
     const url = editId ? `/api/company-portal/rooms/${editId}` : "/api/company-portal/rooms";
-    const r = await fetch(url, { method: editId ? "PUT" : "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ buildingId, floorId, roomName }) });
+    const r = await fetch(url, { method: editId ? "PUT" : "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ buildingId, floorId, roomName, checklistId: checklistId ? Number(checklistId) : null, ...scheduling }) });
     const data = await r.json();
     if (!r.ok) throw new Error(data.message || "Save failed");
     // Optimistically update list immediately, then sync from server
     if (editId) {
       setRooms((p) => p.map((rm) => rm.id === data.id ? { ...rm, ...data } : rm));
-      // Also reload locations so the Room column in the table reflects the renamed room
+      // Also update the linked location's scheduling + reload locations table
+      const linkedLoc = locations.find(l => l.roomId === data.id || String(l.roomId) === String(data.id));
+      if (linkedLoc) {
+        await fetch(`/api/company-portal/locations/${linkedLoc.id}`, {
+          method: "PUT",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: linkedLoc.name, building: linkedLoc.building, floor: linkedLoc.floor,
+            room: roomName,  // use the NEW room name, not stale linkedLoc.room
+            status: linkedLoc.status,
+            checklistId: checklistId ? Number(checklistId) : null,
+            ...scheduling,
+          }),
+        }).catch(() => {});
+      }
       const lr = await fetch("/api/company-portal/locations", { headers: { Authorization: `Bearer ${token}` } });
       const ld = await lr.json();
       if (Array.isArray(ld)) setLocations(ld);
@@ -5804,6 +6441,9 @@ export default function CompanyEmployeePortal() {
             buildingId: Number(buildingId),
             floorId: Number(floorId),
             roomId: data.id,
+            // Phase 2/3: carry scheduling fields through to the linked location
+            checklistId: checklistId ? Number(checklistId) : null,
+            ...scheduling,
           }),
         }).then(async (lr) => {
           if (lr.ok) {
@@ -6557,14 +7197,145 @@ export default function CompanyEmployeePortal() {
           const _fmtMins = (mins) => { const h = Math.floor(mins / 60) % 24; const m = mins % 60; const ap = h >= 12 ? 'PM' : 'AM'; return `${h % 12 || 12}:${String(m).padStart(2,'0')} ${ap}`; };
           const _usedSubIds = new Set();
           const allChecklistRows = [];
+
+          // Phase 3/4: NEW MODEL — iterate active locations with checklist + frequency assigned
+          const activeLocations = locations.filter(l => l.status === 'Active' && l.checklistId);
+          for (const loc of activeLocations) {
+            const locFreq = (loc.frequency || '').toLowerCase();
+            const locShiftIds = Array.isArray(loc.shiftIds) ? loc.shiftIds.map(Number) : [];
+            const locInterval = Math.max(0.25, Number(loc.hourlyInterval) || 1);
+            const tpl = activeChklTemplates.find(t => t.id === loc.checklistId || String(t.id) === String(loc.checklistId));
+            if (!tpl) continue;
+
+            if (locFreq === 'hourly' && locShiftIds.length > 0) {
+              // Sort shifts by start time so slots appear in chronological order
+              const _sortedShiftIds = [...locShiftIds].sort((a, b) => {
+                const shA = shifts.find(s => s.id === a || String(s.id) === String(a));
+                const shB = shifts.find(s => s.id === b || String(s.id) === String(b));
+                return _toMins(shA?.startTime || shA?.start_time || '00:00') - _toMins(shB?.startTime || shB?.start_time || '00:00');
+              });
+              // Build [wStart, wEnd] for all shift windows (used for outside-window check)
+              const _locWindows = _sortedShiftIds.map(sid => {
+                const sh = shifts.find(s => s.id === sid || String(s.id) === String(sid));
+                return sh ? [_toMins(sh.startTime || sh.start_time), _toMins(sh.endTime || sh.end_time)] : null;
+              }).filter(Boolean);
+              // Generate slots per shift window
+              for (const shiftId of _sortedShiftIds) {
+                const shiftObj = shifts.find(s => s.id === shiftId || String(s.id) === String(shiftId));
+                if (!shiftObj) continue;
+                const startM = _toMins(shiftObj.startTime || shiftObj.start_time);
+                const endM   = _toMins(shiftObj.endTime || shiftObj.end_time);
+                const intM   = locInterval * 60;
+                for (let s = startM; s < endM; s += intM) {
+                  const slotEnd = Math.min(s + intM, endM);
+                  const match = filteredRecentChecklists.find(c =>
+                    (c.templateId === tpl.id || String(c.templateId) === String(tpl.id)) &&
+                    (c.locationId != null && (c.locationId === loc.id || String(c.locationId) === String(loc.id))) &&
+                    !_usedSubIds.has(c.id) &&
+                    c.submittedAt && (() => {
+                      const sm = new Date(c.submittedAt).getHours() * 60 + new Date(c.submittedAt).getMinutes();
+                      return sm >= s && sm < slotEnd;
+                    })()
+                  );
+                  if (match) _usedSubIds.add(match.id);
+                  allChecklistRows.push({
+                    id: match ? match.id : `slot-${loc.id}-${tpl.id}-${s}`,
+                    templateId: tpl.id, templateName: tpl.templateName,
+                    roomName: loc.name || loc.room || tpl.roomName || '—',
+                    timeSlot: `${_fmtMins(s)} – ${_fmtMins(slotEnd)}`,
+                    submittedBy: match?.submittedBy || null,
+                    submittedAt: match?.submittedAt || null,
+                    status: match ? (match.status || 'submitted') : 'not_submitted',
+                    _notSubmitted: !match, _hourlySlot: true,
+                  });
+                }
+              }
+              // Extra submissions: only show if genuinely outside all shift windows
+              for (const c of filteredRecentChecklists.filter(c => (c.templateId === tpl.id || String(c.templateId) === String(tpl.id)) && (c.locationId != null && (c.locationId === loc.id || String(c.locationId) === String(loc.id))) && !_usedSubIds.has(c.id))) {
+                _usedSubIds.add(c.id);
+                if (!c.submittedAt) continue;
+                const sm = new Date(c.submittedAt).getHours() * 60 + new Date(c.submittedAt).getMinutes();
+                // Skip if within any shift window — it was already covered by a matched slot
+                if (_locWindows.some(([wS, wE]) => sm >= wS && sm < wE)) continue;
+                allChecklistRows.push({ ...c, roomName: loc.name || loc.room || c.roomName || '—', timeSlot: `${_fmtMins(sm)} (outside window)`, _hourlySlot: true });
+              }
+            } else if (locFreq !== 'hourly' && locShiftIds.length > 0) {
+              // Non-hourly (Daily/Weekly/etc.) with shifts: show one slot per shift window
+              // Sort shifts by start time for chronological display
+              const _sortedShiftIdsNH = [...locShiftIds].sort((a, b) => {
+                const shA = shifts.find(s => s.id === a || String(s.id) === String(a));
+                const shB = shifts.find(s => s.id === b || String(s.id) === String(b));
+                return _toMins(shA?.startTime || shA?.start_time || '00:00') - _toMins(shB?.startTime || shB?.start_time || '00:00');
+              });
+              const _locWindowsNH = _sortedShiftIdsNH.map(sid => {
+                const sh = shifts.find(s => s.id === sid || String(s.id) === String(sid));
+                return sh ? [_toMins(sh.startTime || sh.start_time), _toMins(sh.endTime || sh.end_time)] : null;
+              }).filter(Boolean);
+              for (const shiftId of _sortedShiftIdsNH) {
+                const shiftObj = shifts.find(s => s.id === shiftId || String(s.id) === String(shiftId));
+                if (!shiftObj) continue;
+                const shiftStart = shiftObj.startTime || shiftObj.start_time;
+                const shiftEnd   = shiftObj.endTime   || shiftObj.end_time;
+                const startM = _toMins(shiftStart);
+                const endM   = _toMins(shiftEnd);
+                const slotLabel = shiftStart && shiftEnd ? `${_fmtMins(startM)} – ${_fmtMins(endM)}` : null;
+                // Match any submission within this shift window for today — scoped to this location
+                const match = filteredRecentChecklists.find(c =>
+                  (c.templateId === tpl.id || String(c.templateId) === String(tpl.id)) &&
+                  (c.locationId != null && (c.locationId === loc.id || String(c.locationId) === String(loc.id))) &&
+                  !_usedSubIds.has(c.id) && c.submittedAt && (() => {
+                    const sm = new Date(c.submittedAt).getHours() * 60 + new Date(c.submittedAt).getMinutes();
+                    return sm >= startM && sm < endM;
+                  })()
+                );
+                if (match) _usedSubIds.add(match.id);
+                allChecklistRows.push({
+                  id: match ? match.id : `slot-daily-${loc.id}-${tpl.id}-${shiftId}`,
+                  templateId: tpl.id, templateName: tpl.templateName,
+                  roomName: loc.name || loc.room || tpl.roomName || '—',
+                  timeSlot: slotLabel,
+                  submittedBy: match?.submittedBy || null,
+                  submittedAt: match?.submittedAt || null,
+                  status: match ? (match.status || 'submitted') : 'not_submitted',
+                  _notSubmitted: !match, _hourlySlot: !!slotLabel,
+                });
+              }
+              // Remaining submissions — skip if within any shift window (already represented)
+              for (const c of filteredRecentChecklists.filter(c => (c.templateId === tpl.id || String(c.templateId) === String(tpl.id)) && (c.locationId != null && (c.locationId === loc.id || String(c.locationId) === String(loc.id))) && !_usedSubIds.has(c.id))) {
+                _usedSubIds.add(c.id);
+                if (!c.submittedAt) continue;
+                const sm = new Date(c.submittedAt).getHours() * 60 + new Date(c.submittedAt).getMinutes();
+                if (_locWindowsNH.some(([wS, wE]) => sm >= wS && sm < wE)) continue;
+                allChecklistRows.push({ ...c, roomName: loc.name || loc.room || c.roomName || '—', timeSlot: `${_fmtMins(sm)} (outside window)`, _hourlySlot: true });
+              }
+            } else {
+              // Non-hourly location-linked checklist — scoped to this location
+              const subs = filteredRecentChecklists.filter(c => (c.templateId === tpl.id || String(c.templateId) === String(tpl.id)) && (c.locationId != null && (c.locationId === loc.id || String(c.locationId) === String(loc.id))) && !_usedSubIds.has(c.id));
+              if (subs.length > 0) {
+                subs.forEach(c => { _usedSubIds.add(c.id); allChecklistRows.push({ ...c, roomName: loc.name || loc.room || c.roomName || '—' }); });
+              } else {
+                allChecklistRows.push({
+                  id: `ns-loc-${loc.id}-${tpl.id}`, templateId: tpl.id, templateName: tpl.templateName,
+                  roomName: loc.name || loc.room || '—',
+                  submittedBy: null, submittedAt: null, status: 'not_submitted', _notSubmitted: true
+                });
+              }
+            }
+          }
+
+          // OLD MODEL — templates with their own scheduling that are NOT covered by locations above
+          const locationCoveredTemplateIds = new Set(activeLocations.map(l => l.checklistId ? String(l.checklistId) : null).filter(Boolean));
           for (const t of activeChklTemplates) {
+            // Skip if already covered by the location model
+            if (locationCoveredTemplateIds.has(String(t.id))) continue;
+            // Skip if the template's linked room no longer exists (deleted room)
+            if (t.roomId && !rooms.some(r => r.id === t.roomId || String(r.id) === String(t.roomId))) continue;
             const freq = (t.frequency || '').toLowerCase();
             const isHourly = freq === 'hourly' && t.startTime && t.endTime;
             if (isHourly) {
               const startM = _toMins(t.startTime);
               const endM   = _toMins(t.endTime);
-              const intM   = Math.max(1, Number(t.hourlyInterval) || 1) * 60;
-              // Generate one row per expected slot
+              const intM   = Math.max(0.25, Number(t.hourlyInterval) || 1) * 60;
               for (let s = startM; s < endM; s += intM) {
                 const slotEnd = Math.min(s + intM, endM);
                 const match = filteredRecentChecklists.find(c =>
@@ -6585,14 +7356,15 @@ export default function CompanyEmployeePortal() {
                   _notSubmitted: !match, _hourlySlot: true,
                 });
               }
-              // Out-of-window submissions still appear (labelled)
               for (const c of filteredRecentChecklists.filter(c => c.templateId === t.id && !_usedSubIds.has(c.id))) {
                 _usedSubIds.add(c.id);
+                if (!c.submittedAt) continue;
                 const sm = new Date(c.submittedAt).getHours() * 60 + new Date(c.submittedAt).getMinutes();
+                // Skip if within the template's own window (already represented by a matched slot)
+                if (sm >= startM && sm < endM) continue;
                 allChecklistRows.push({ ...c, roomName: t.roomName || c.roomName || '—', timeSlot: `${_fmtMins(sm)} (outside window)`, _hourlySlot: true });
               }
             } else {
-              // Non-hourly: show submitted rows; fall back to one not-submitted row
               const subs = filteredRecentChecklists.filter(c => c.templateId === t.id && !_usedSubIds.has(c.id));
               if (subs.length > 0) {
                 subs.forEach(c => { _usedSubIds.add(c.id); allChecklistRows.push(c); });
@@ -7751,7 +8523,7 @@ export default function CompanyEmployeePortal() {
                 })()}
                 {/* ── Main 2-col grid: Submission Overview (left) | Alerts + WO (right) ── */}
                 <style>{`@keyframes blink-dot{0%,100%{opacity:1}50%{opacity:0.12}} @keyframes pulse-dot{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.55);opacity:0.65}}`}</style>
-                <div data-print-grid="1" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "20px", marginBottom: "24px", alignItems: "start" }}>
+                <div data-print-grid="1" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "20px", marginBottom: "20px", alignItems: "start" }}>
 
                   {/* ── Left: Submission Overview ── */}
                   <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px" }}>
@@ -8073,6 +8845,36 @@ export default function CompanyEmployeePortal() {
                           {dashWOAssignSaving ? "Saving…" : "Assign"}
                         </button>
                       </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Shift Wise Site Score — full-width card below the 2-col grid ── */}
+                {shiftSiteScore.length > 0 && (
+                  <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px", marginBottom: "20px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+                      <div>
+                        <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", margin: 0 }}>Shift Wise Site Score</p>
+                        <p style={{ fontSize: "12px", color: "#94a3b8", margin: 0, marginTop: "2px" }}>Data for {new Date(dashboardDate + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}</p>
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(shiftSiteScore.length, 4)}, minmax(0, 1fr))`, gap: "12px" }}>
+                      {shiftSiteScore.map(sh => {
+                        const pctColor = sh.pct >= 75 ? "#16a34a" : sh.pct >= 40 ? "#d97706" : "#dc2626";
+                        const fmtT = (t) => { if (!t) return '—'; const [h, m = '00'] = t.split(':'); const hh = parseInt(h); const ap = hh >= 12 ? 'PM' : 'AM'; return `${hh % 12 || 12}:${String(m).padStart(2, '0')} ${ap}`; };
+                        return (
+                          <div key={sh.shiftId} style={{ border: "1px solid #e2e8f0", borderRadius: "12px", padding: "16px", textAlign: "center", background: "#fafafa" }}>
+                            <p style={{ fontWeight: 700, fontSize: "13px", color: "#0f172a", margin: "0 0 2px" }}>{sh.shiftName}</p>
+                            <p style={{ fontSize: "11px", color: "#94a3b8", margin: "0 0 10px" }}>{fmtT(sh.startTime)} – {fmtT(sh.endTime)}</p>
+                            <p style={{ fontSize: "30px", fontWeight: 800, color: pctColor, margin: "0 0 10px", lineHeight: 1 }}>{sh.pct}%</p>
+                            <div style={{ background: "#f1f5f9", borderRadius: "6px", padding: "8px", fontSize: "11px", color: "#475569", lineHeight: 1.9 }}>
+                              <div>Total: <strong>{sh.total}</strong></div>
+                              <div style={{ color: "#16a34a" }}>Filled: <strong>{sh.filled}</strong></div>
+                              <div style={{ color: "#dc2626" }}>Pending: <strong>{sh.pending}</strong></div>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -8490,7 +9292,7 @@ export default function CompanyEmployeePortal() {
           <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
             {/* Sub-navigation tabs */}
             <div style={{ display: "flex", gap: "4px", marginBottom: "24px", borderBottom: "2px solid #e2e8f0" }}>
-              {[{ k: "templates", label: "Templates" }, { k: "submissions", label: "Submissions & Reports" }].map(({ k, label }) => (
+              {[{ k: "templates", label: "Checklists" }, { k: "submissions", label: "Submissions & Reports" }].map(({ k, label }) => (
                 <button key={k} type="button" onClick={() => setChecklistSubNav(k)}
                   style={{ padding: "10px 20px", background: "none", border: "none",
                     borderBottom: checklistSubNav === k ? "3px solid #2563eb" : "3px solid transparent",
@@ -8753,15 +9555,47 @@ export default function CompanyEmployeePortal() {
                       QR Settings
                     </button>
                     {selectedLocIds.size > 0 && (
-                      <button onClick={handleDeleteSelectedLocations}
-                        style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "8px", background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca", cursor: "pointer", fontSize: "13px", fontWeight: 700 }}>
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
-                        Delete Selected ({selectedLocIds.size})
-                      </button>
+                      <>
+                        <button onClick={handleDeleteSelectedLocations}
+                          style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "8px", background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca", cursor: "pointer", fontSize: "13px", fontWeight: 700 }}>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                          Delete Selected ({selectedLocIds.size})
+                        </button>
+                        {checklists.length > 0 && (
+                          <button onClick={() => setShowBulkAssign(v => !v)}
+                            style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "8px", background: showBulkAssign ? "#e0f2fe" : "#f0f9ff", color: "#0369a1", border: "1px solid #bae6fd", cursor: "pointer", fontSize: "13px", fontWeight: 700 }}>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                            Assign Checklist ({selectedLocIds.size})
+                          </button>
+                        )}
+                      </>
                     )}
                   </div>
                 )}
               </div>
+
+              {/* Bulk Assign Checklist panel */}
+              {showBulkAssign && selectedLocIds.size > 0 && checklists.length > 0 && (
+                <div style={{ marginBottom: "14px", padding: "14px 16px", background: "#f0f9ff", borderRadius: "10px", border: "1px solid #bae6fd", display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+                  <span style={{ fontSize: "13px", fontWeight: 600, color: "#0369a1" }}>Assign checklist to {selectedLocIds.size} selected location{selectedLocIds.size > 1 ? "s" : ""}:</span>
+                  <div style={{ flex: 1, minWidth: "220px", maxWidth: "340px" }}>
+                    <SearchableSelect
+                      value={bulkAssignChecklistId}
+                      onChange={setBulkAssignChecklistId}
+                      options={[{ value: "", label: "— Select checklist —" }, ...checklists.map(c => ({ value: String(c.id), label: c.templateName || c.template_name }))]}
+                      placeholder="Search checklist…"
+                    />
+                  </div>
+                  <button onClick={handleBulkAssignChecklist} disabled={!bulkAssignChecklistId}
+                    style={{ padding: "8px 16px", borderRadius: "8px", background: bulkAssignChecklistId ? "#0369a1" : "#94a3b8", color: "#fff", border: "none", cursor: bulkAssignChecklistId ? "pointer" : "default", fontSize: "13px", fontWeight: 700 }}>
+                    Assign
+                  </button>
+                  <button onClick={() => { setShowBulkAssign(false); setBulkAssignChecklistId(""); }}
+                    style={{ padding: "8px 12px", borderRadius: "8px", background: "#fff", color: "#64748b", border: "1px solid #e2e8f0", cursor: "pointer", fontSize: "13px" }}>
+                    Cancel
+                  </button>
+                </div>
+              )}
 
               {/* Search */}
               <div style={{ marginBottom: "16px", maxWidth: "360px" }}>
@@ -8796,8 +9630,20 @@ export default function CompanyEmployeePortal() {
                             />
                           </th>
                         )}
-                        {["#", "Name", "Building", "Floor", "Room", "Status", "QR", isAdmin ? "Actions" : null].filter(Boolean).map((h) => (
-                          <th key={h} style={{ padding: "10px 14px", textAlign: "left", borderBottom: "2px solid #e2e8f0", color: "#475569", fontWeight: 700, whiteSpace: "nowrap" }}>{h}</th>
+                        {[
+                          { label: "Sr.No", field: null },
+                          { label: "Location Name", field: "name" },
+                          { label: "Building", field: "building" },
+                          { label: "Floor", field: "floor" },
+                          { label: "Room", field: "room" },
+                          { label: "Status", field: "status" },
+                          { label: "QR", field: null },
+                          ...(isAdmin ? [{ label: "Actions", field: null }] : []),
+                        ].map(({ label, field }) => (
+                          <th key={label} onClick={field ? () => { if (locSortField === field) setLocSortDir(d => d === "asc" ? "desc" : "asc"); else { setLocSortField(field); setLocSortDir("asc"); } } : undefined}
+                            style={{ padding: "10px 14px", textAlign: "left", borderBottom: "2px solid #e2e8f0", color: field ? "#2563eb" : "#475569", fontWeight: 700, whiteSpace: "nowrap", cursor: field ? "pointer" : "default", userSelect: "none" }}>
+                            {label}{field && (locSortField === field ? (locSortDir === "asc" ? " ↑" : " ↓") : " ⇅")}
+                          </th>
                         ))}
                       </tr>
                     </thead>
@@ -8906,12 +9752,12 @@ export default function CompanyEmployeePortal() {
                   editItem={editRoom}
                   setEditItem={setEditRoom}
                   onClose={() => { setShowRoomModal(false); setEditRoom(null); }}
-                  onSave={async (state, editId) => { await handleSaveRoom(state.buildingId, state.floorId, state.roomName, editId); }}
+                  onSave={async (state, editId) => { await handleSaveRoom(state.buildingId, state.floorId, state.roomName, editId, state.checklistId, { frequency: state.frequency || null, hourlyInterval: state.frequency === "Hourly" ? (Number(state.hourlyInterval) || 1) : null, startTime: state.startTime || null, endTime: state.endTime || null, notificationTimer: state.notificationTimer ? Number(state.notificationTimer) : null, notificationTime: ["Weekly","Monthly"].includes(state.frequency) ? (state.notificationTime || null) : null, weekDays: state.frequency === "Weekly" ? (state.weekDays || []) : [], activeMonths: state.frequency === "Monthly" ? (state.activeMonths || []) : [], customHours: state.frequency === "Custom" ? (state.customHours || []) : [], monthlyDay: state.frequency === "Monthly" && state.monthlyDay ? Number(state.monthlyDay) : null, shiftIds: Array.isArray(state.shiftIds) ? state.shiftIds : [] }); }}
                   onDelete={handleDeleteRoom}
                   renderRow={(rm) => <><span style={{ fontWeight: 600, color: "#0f172a" }}>{rm.roomName}</span><span style={{ color: "#64748b", marginLeft: 8 }}>— Floor {rm.floorNumber}, {rm.buildingName}</span></>}
                   columnHeaders={["Room", "Floor / Building"]}
                   renderForm={(state, setState) => (
-                    <RoomForm state={state} setState={setState} buildings={buildings} floors={floors} />
+                    <RoomForm state={state} setState={setState} buildings={buildings} floors={floors} checklists={checklists} shifts={shifts} />
                   )}
                   allowBulk={true}
                   onSaveBulk={handleSaveBulkRooms}
@@ -8921,12 +9767,14 @@ export default function CompanyEmployeePortal() {
               {showLocModal && (
                 <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.5)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}
                   onClick={() => { setShowLocModal(false); setEditLoc(null); }}>
-                  <div style={{ background: "#fff", borderRadius: "16px", padding: "28px", maxWidth: "520px", width: "100%", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }} onClick={(e) => e.stopPropagation()}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+                  <div style={{ background: "#fff", borderRadius: "16px", maxWidth: "520px", width: "100%", maxHeight: "90vh", display: "flex", flexDirection: "column", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }} onClick={(e) => e.stopPropagation()}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "20px 28px 16px", flexShrink: 0 }}>
                       <h2 style={{ fontSize: "17px", fontWeight: 700, color: "#0f172a" }}>{editLoc ? "Edit Location" : "Add Location"}</h2>
                       <button onClick={() => { setShowLocModal(false); setEditLoc(null); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: "22px" }}>✕</button>
                     </div>
-                    <LocationForm initial={editLoc} onSave={handleSaveLocation} onSaveBulk={handleBulkSaveLocations} onCancel={() => { setShowLocModal(false); setEditLoc(null); }} buildings={buildings} floors={floors} rooms={rooms} />
+                    <div style={{ overflowY: "auto", padding: "0 28px 28px", flex: 1 }}>
+                      <LocationForm initial={editLoc} onSave={handleSaveLocation} onSaveBulk={handleBulkSaveLocations} onCancel={() => { setShowLocModal(false); setEditLoc(null); }} buildings={buildings} floors={floors} rooms={rooms} checklists={checklists} shifts={shifts} />
+                    </div>
                   </div>
                 </div>
               )}
@@ -9562,9 +10410,9 @@ export default function CompanyEmployeePortal() {
                   const expanded = expandedShiftId === s.id;
                   const empList = shiftEmployees[s.id] || [];
                   return (
-                    <div key={s.id} style={{ background: "#fff", borderRadius: "12px", border: `1.5px solid ${active ? "#bbf7d0" : "#e2e8f0"}`, overflow: "hidden" }}>
+                    <div key={s.id} style={{ background: "#fff", borderRadius: "12px", border: `1.5px solid ${active ? "#bbf7d0" : "#e2e8f0"}`, position: "relative", zIndex: expanded ? 10 : 1 }}>
                       {/* Card header row */}
-                      <div style={{ display: "flex", alignItems: "center", gap: "12px", padding: "14px 18px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "12px", padding: "14px 18px", borderRadius: expanded ? "12px 12px 0 0" : "12px" }}>
                         <div style={{ width: "42px", height: "42px", borderRadius: "10px", background: active ? "#dcfce7" : "#f1f5f9", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={active ? "#16a34a" : "#64748b"} strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
                         </div>
@@ -9604,7 +10452,7 @@ export default function CompanyEmployeePortal() {
 
                       {/* Expanded employee panel */}
                       {expanded && (
-                        <div style={{ borderTop: "1px solid #f1f5f9", padding: "14px 18px", background: "#f8fafc" }}>
+                        <div style={{ borderTop: "1px solid #f1f5f9", padding: "14px 18px", background: "#f8fafc", borderRadius: "0 0 12px 12px", position: "relative", zIndex: 20 }}>
                           {shiftEmpError[s.id] && <p style={{ color: "#dc2626", fontSize: "12.5px", marginBottom: "8px" }}>{shiftEmpError[s.id]}</p>}
                           {!empList.length && !shiftEmpError[s.id] && (
                             <p style={{ color: "#94a3b8", fontSize: "13px", marginBottom: "10px" }}>No employees assigned to this shift yet.</p>
@@ -10622,6 +11470,7 @@ export default function CompanyEmployeePortal() {
           customRoles={customRoles}
           companyModules={enabledModules}
           currentUserRole={currentUser.role}
+          shifts={shifts}
           onClose={() => { setShowEmpModal(false); setEditEmp(null); }}
           onSaved={handleEmpSaved}
         />
