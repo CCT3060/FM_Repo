@@ -119,12 +119,29 @@ const normalizeInputType = (value) => {
 /* ── Helper: is this shift's time window currently active? ──────────────────
    Handles overnight shifts (end_time < start_time).                          */
 const isShiftActive = (startTime, endTime) => {
-  const now = new Date();
   const toMin = (t) => {
     const [h, m] = String(t).split(":").map(Number);
     return h * 60 + m;
   };
-  const nowMin   = now.getHours() * 60 + now.getMinutes();
+  // Use APP_TIMEZONE so the check is correct on UTC servers (EC2)
+  let nowMin;
+  try {
+    const tz = process.env.APP_TIMEZONE;
+    if (tz) {
+      const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false,
+      }).formatToParts(new Date());
+      const h = Number(parts.find((p) => p.type === "hour").value);
+      const m = Number(parts.find((p) => p.type === "minute").value);
+      nowMin = h * 60 + m;
+    } else {
+      const now = new Date();
+      nowMin = now.getHours() * 60 + now.getMinutes();
+    }
+  } catch {
+    const now = new Date();
+    nowMin = now.getHours() * 60 + now.getMinutes();
+  }
   const startMin = toMin(startTime);
   const endMin   = toMin(endTime);
   if (startMin <= endMin) {
