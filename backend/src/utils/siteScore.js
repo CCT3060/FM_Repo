@@ -25,9 +25,13 @@ function expectedSlots(frequency, hourlyInterval, startTime, endTime) {
   return Math.max(1, Math.floor(1440 / (interval * 60)));
 }
 
+// Locations with no shift when company uses shifts are out-of-scope; excluded so both engines agree.
 function expectedSlotsForPair(pair, shiftMap) {
   const shiftIds = Array.isArray(pair.shiftIds) ? pair.shiftIds.map(Number).filter(Boolean) : [];
-  if (shiftIds.length === 0) return expectedSlots(pair.frequency, pair.hourlyInterval, null, null);
+  if (shiftIds.length === 0) {
+    if (Object.keys(shiftMap).length > 0) return 0; // company is shift-based; unassigned location excluded
+    return expectedSlots(pair.frequency, pair.hourlyInterval, null, null);
+  }
   const total = shiftIds.reduce((sum, sid) => {
     const s = shiftMap[sid];
     return s ? sum + expectedSlots(pair.frequency, pair.hourlyInterval, s.startTime, s.endTime) : sum;
@@ -85,7 +89,8 @@ const LOC_PAIRS_SQL = (cid1, cid2) => pool.query(`
          LEAST(l.created_at, ct.created_at)::date::text AS "createdDate"
   FROM locations l
   JOIN checklist_templates ct ON ct.id = l.checklist_id
-  WHERE l.company_id = ? AND COALESCE(ct.status,'active') != 'inactive'
+  WHERE l.company_id = ? AND LOWER(COALESCE(l.status,'active')) = 'active'
+    AND COALESCE(ct.status,'active') != 'inactive'
   UNION
   SELECT ct.location_id, ct.id,
          COALESCE(l.frequency, ct.frequency, 'Daily'),
@@ -94,7 +99,8 @@ const LOC_PAIRS_SQL = (cid1, cid2) => pool.query(`
          LEAST(l.created_at, ct.created_at)::date::text
   FROM checklist_templates ct
   JOIN locations l ON l.id = ct.location_id
-  WHERE ct.company_id = ? AND COALESCE(ct.status,'active') != 'inactive'
+  WHERE ct.company_id = ? AND LOWER(COALESCE(l.status,'active')) = 'active'
+    AND COALESCE(ct.status,'active') != 'inactive'
     AND ct.location_id IS NOT NULL
     AND NOT EXISTS (SELECT 1 FROM locations l2 WHERE l2.company_id = l.company_id AND l2.checklist_id = ct.id AND l2.id = l.id)
 `, [cid1, cid2]);
@@ -172,8 +178,10 @@ export async function computeSiteScore(companyId, targetDate) {
       filledSlots += filled;
       breakdown.push({ locationId: Number(pair.locationId), templateId: Number(pair.templateId), expectedSlots: exp, filledSlots: filled });
     }
+    const companyHasShifts = Object.keys(shiftMap).length > 0;
     for (const t of standalone) {
       if (t.createdDate && t.createdDate > targetDate) continue;
+      if (companyHasShifts) continue; // no shift context; excluded when company uses shifts
       const exp = expectedSlots(t.frequency, t.hourlyInterval, t.startTime, t.endTime);
       if (exp <= 0) continue;
       totalExpected += exp;
@@ -247,6 +255,7 @@ export async function computeSiteScoreRange(companyId, dates) {
       standaloneSubMap[r.date][r.templateId] = Number(r.count) || 0;
     }
 
+    const rangeHasShifts = Object.keys(shiftMap).length > 0;
     return dates.map(dateStr => {
       let totalSlots = 0, filled = 0;
       for (const pair of locPairs) {
@@ -259,6 +268,7 @@ export async function computeSiteScoreRange(companyId, dates) {
       }
       for (const t of standalone) {
         if (t.createdDate && t.createdDate > dateStr) continue;
+        if (rangeHasShifts) continue; // no shift context; excluded when company uses shifts
         const exp = expectedSlots(t.frequency, t.hourlyInterval, t.startTime, t.endTime);
         if (exp <= 0) continue;
         totalSlots += exp;
