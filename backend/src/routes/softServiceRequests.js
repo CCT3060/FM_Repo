@@ -49,6 +49,8 @@ router.use(requireCompanyAuth);
     console.warn('[soft-service] migration warning:', e.message);
   }
 })();
+// Per-request cutoff notification tracker
+pool.query(`ALTER TABLE soft_service_requests ADD COLUMN IF NOT EXISTS cutoff_notified_at TIMESTAMPTZ DEFAULT NULL`).catch(() => {});
 
 /* ── Background escalation checker (runs every 5 minutes) ───────────────── */
 async function runEscalationCheck() {
@@ -138,6 +140,34 @@ async function runEscalationCheck() {
       }
 
       console.log(`[escalation] Request ${req.id} escalated to level ${newLevel} after ${ageLabel}`);
+    }
+
+    // Per-request cutoff_at — notify specific escalation user once when cutoff passes
+    const [cutoffReqs] = await pool.query(
+      `SELECT ssr.id, ssr.company_id AS "companyId",
+              ssr.cutoff_escalation_user_id AS "escalationUserId",
+              COALESCE(a.asset_name, loc.name, 'an item') AS "assetName",
+              cu.push_token AS "pushToken", cu.fcm_token AS "fcmToken"
+       FROM soft_service_requests ssr
+       LEFT JOIN assets a ON a.id = ssr.asset_id
+       LEFT JOIN locations loc ON loc.id = ssr.location_id
+       LEFT JOIN company_users cu ON cu.id = ssr.cutoff_escalation_user_id
+       WHERE ssr.status NOT IN ('resolved','closed')
+         AND ssr.cutoff_at IS NOT NULL AND ssr.cutoff_at < NOW()
+         AND ssr.cutoff_escalation_user_id IS NOT NULL
+         AND ssr.cutoff_notified_at IS NULL`
+    );
+    for (const req of cutoffReqs) {
+      await pool.query(`UPDATE soft_service_requests SET cutoff_notified_at = NOW() WHERE id = ?`, [req.id]);
+      const title = '⏰ HK Request Overdue';
+      const body  = `Cutoff exceeded for HK request: ${req.assetName}`;
+      await createInAppNotification(req.companyId, req.escalationUserId, title, body);
+      if (req.pushToken) {
+        await sendExpoPush(req.pushToken, title, body, { screen: '/(tabs)/soft-requests', requestId: String(req.id) });
+      }
+      if (req.fcmToken) {
+        await sendFCMPush(req.fcmToken, title, body, { screen: '/(tabs)/soft-requests', requestId: String(req.id) });
+      }
     }
   } catch (e) {
     console.error('[escalation] check failed:', e.message);
@@ -361,6 +391,23 @@ router.get("/requests/my", async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+/* ── GET /requests/escalation-users — All active company employees (for escalation dropdown) ── */
+router.get("/requests/escalation-users", async (req, res, next) => {
+  try {
+    const companyId = req.companyUser.companyId;
+    const [rows] = await pool.query(
+      `SELECT cu.id, cu.full_name AS "fullName", cu.designation,
+              COALESCE(cr.label, cu.role) AS "roleLabel"
+       FROM company_users cu
+       LEFT JOIN company_roles cr ON cr.company_id = cu.company_id AND cr.role_key = cu.role AND cr.is_active = TRUE
+       WHERE cu.company_id = ? AND cu.status = 'Active'
+       ORDER BY cu.full_name`,
+      [companyId]
+    );
+    res.json(rows);
+  } catch (err) { next(err); }
 });
 
 /* ── GET /requests/users ── List company users for assignment ────────────── */
@@ -699,15 +746,22 @@ router.put("/requests/:id/assign", async (req, res, next) => {
         `SELECT full_name, push_token, fcm_token FROM company_users WHERE id = ? AND company_id = ?`,
         [assignedToUserId, companyId]
       );
-      const [[assetRow]] = await pool.query(
-        `SELECT a.asset_name FROM soft_service_requests ssr JOIN assets a ON a.id = ssr.asset_id WHERE ssr.id = ?`,
+      const [[requestRow]] = await pool.query(
+        `SELECT a.asset_name, l.name AS location_name
+         FROM soft_service_requests ssr
+         LEFT JOIN assets a ON a.id = ssr.asset_id
+         LEFT JOIN locations l ON l.id = ssr.location_id
+         WHERE ssr.id = ?`,
         [requestId]
       );
       if (assignee) {
-        const notifTitle = "Soft Request Assigned";
-        const notifBody  = `Handle request for ${assetRow?.asset_name || "an asset"}.`;
+        const target = requestRow?.location_name
+          ? `location — '${requestRow.location_name}'`
+          : (requestRow?.asset_name ? `asset '${requestRow.asset_name}'` : 'an item');
+        const notifTitle = "HK Request Assigned";
+        const notifBody  = `Handle HK request for ${target}.`;
         const notifData  = { screen: "/(tabs)/soft-requests" };
-        await createInAppNotification(companyId, assignedToUserId, "Soft Request Assigned", `You have been assigned to handle a request for ${assetRow?.asset_name || "an asset"}.`);
+        await createInAppNotification(companyId, assignedToUserId, "HK Request Assigned", `You have been assigned to handle an HK request for ${target}.`);
         if (assignee.push_token) {
           await sendExpoPush(assignee.push_token, notifTitle, notifBody, notifData);
         }

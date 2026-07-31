@@ -51,7 +51,7 @@ router.post("/verify-company", async (req, res, next) => {
 
 /* ── Helper: fetch role capabilities from company_roles table ─────────────── */
 async function getRoleCapabilities(companyId, roleKey) {
-  const empty = { canRaiseSoftIssue: false, canResolveSoftIssue: false, isSoftManager: false, isTechnicalSupervisor: false, isTechnician: false, isClientSupervisor: false };
+  const empty = { canRaiseSoftIssue: false, canResolveSoftIssue: false, isSoftManager: false, isTechnicalSupervisor: false, isTechnician: false, isClientSupervisor: false, canRaiseAdditionalRequest: false };
   if (!roleKey) return empty;
 
   // Legacy built-in role keys that are always technical
@@ -68,7 +68,8 @@ async function getRoleCapabilities(companyId, roleKey) {
               can_resolve_soft_issue     AS "canResolveSoftIssue",
               is_soft_manager            AS "isSoftManager",
               is_technical_supervisor    AS "isTechnicalSupervisor",
-              is_technician              AS "isTechnician"
+              is_technician              AS "isTechnician",
+              COALESCE(can_raise_additional_request, FALSE) AS "canRaiseAdditionalRequest"
          FROM company_roles
         WHERE company_id = ? AND role_key = ? AND is_active = TRUE
         LIMIT 1`,
@@ -90,11 +91,12 @@ async function getRoleCapabilities(companyId, roleKey) {
   if (!row) return empty;
 
   const caps = {
-    canRaiseSoftIssue:     Boolean(row.canRaiseSoftIssue),
-    canResolveSoftIssue:   Boolean(row.canResolveSoftIssue),
-    isSoftManager:         Boolean(row.isSoftManager),
-    isTechnicalSupervisor: Boolean(row.isTechnicalSupervisor),
-    isTechnician:          Boolean(row.isTechnician),
+    canRaiseSoftIssue:          Boolean(row.canRaiseSoftIssue),
+    canResolveSoftIssue:        Boolean(row.canResolveSoftIssue),
+    isSoftManager:              Boolean(row.isSoftManager),
+    isTechnicalSupervisor:      Boolean(row.isTechnicalSupervisor),
+    isTechnician:               Boolean(row.isTechnician),
+    canRaiseAdditionalRequest:  Boolean(row.canRaiseAdditionalRequest),
   };
 
   // A "client supervisor" can only raise issues — no resolve, no manage, no tech access

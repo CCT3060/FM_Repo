@@ -184,6 +184,44 @@ export const deleteCompanyPortalEmployee = (token, id) => request("DELETE", `/ap
 export const bulkImportCompanyEmployees = (token, employees) => request("POST", "/api/company-portal/employees/bulk", { employees }, { authToken: token });
 export const getCompanyPortalSupervisors = (token) => request("GET", "/api/company-portal/employees/supervisors", undefined, { authToken: token });
 
+// ── Attendance ───────────────────────────────────────────────────────────────
+export const getAttendance = (token, params = {}) => {
+  const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null && v !== "")).toString();
+  return request("GET", `/api/company-portal/attendance${q ? `?${q}` : ""}`, undefined, { authToken: token });
+};
+export const upsertAttendance = (token, data) => request("PUT", "/api/company-portal/attendance", data, { authToken: token });
+export const bulkUpsertAttendance = (token, data) => request("PUT", "/api/company-portal/attendance/bulk", data, { authToken: token });
+export const submitAttendanceRecords = (token, data) => request("PUT", "/api/company-portal/attendance/submit", data, { authToken: token });
+export const deleteAttendanceRecord = (token, employeeId, date) =>
+  request("DELETE", `/api/company-portal/attendance/${employeeId}/${date}`, undefined, { authToken: token });
+export const bulkDeleteAttendanceRecords = (token, records) =>
+  request("POST", "/api/company-portal/attendance/bulk-delete", { records }, { authToken: token });
+export const getShiftAttendance = (token, date) =>
+  request("GET", `/api/company-portal/dashboard/shift-attendance${date ? `?date=${date}` : ""}`, undefined, { authToken: token });
+export const downloadAttendanceExport = async (token, params = {}) => {
+  const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null && v !== "")).toString();
+  const base = getApiBaseUrl();
+  const res = await fetch(`${base}/api/company-portal/attendance/export${q ? `?${q}` : ""}`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) throw new Error("Export failed");
+  const blob = await res.blob();
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a"); a.href = url;
+  a.download = `attendance_export.xlsx`; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+
+export const downloadAttendancePdf = async (token, params = {}) => {
+  const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null && v !== "")).toString();
+  const base = getApiBaseUrl();
+  const res = await fetch(`${base}/api/company-portal/attendance/export/pdf${q ? `?${q}` : ""}`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) throw new Error("PDF export failed");
+  const blob = await res.blob();
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a"); a.href = url;
+  a.download = `attendance_report.pdf`; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+
 // ── Custom roles / hierarchy (per-company) ───────────────────────────────────
 export const getCompanyRoles    = (token) => request("GET",  "/api/company-portal/roles", undefined, { authToken: token });
 export const createCompanyRole  = (token, data) => request("POST", "/api/company-portal/roles", data, { authToken: token });
@@ -403,6 +441,30 @@ export const updateSoftRequestStatus   = (token, id, status) =>
   request("PUT", `/api/soft-service/requests/${id}/status`, { status }, { authToken: token });
 export const getSoftRequestUsers       = (token) =>
   request("GET", `/api/soft-service/requests/users`, undefined, { authToken: token });
+export const getSoftRequestEscalationUsers = (token) =>
+  request("GET", `/api/soft-service/requests/escalation-users`, undefined, { authToken: token });
 export const getOneSoftServiceRequest  = (token, id) =>
   request("GET", `/api/soft-service/requests/${id}`, undefined, { authToken: token });
+
+// ── Additional Requests ───────────────────────────────────────────────────────
+export const getAdditionalRequestServices  = (token, companyId) =>
+  request("GET", `/api/additional-requests/services${companyId ? `?companyId=${companyId}` : ""}`, undefined, { authToken: token });
+export const createAdditionalRequestService  = (token, data) =>
+  request("POST", "/api/additional-requests/services", data, { authToken: token });
+export const updateAdditionalRequestService  = (token, id, data) =>
+  request("PUT", `/api/additional-requests/services/${id}`, data, { authToken: token });
+export const deleteAdditionalRequestService  = (token, id) =>
+  request("DELETE", `/api/additional-requests/services/${id}`, undefined, { authToken: token });
+export const getAdditionalRequestsAll  = (token, params = "") =>
+  request("GET", `/api/additional-requests/requests/all${params ? `?${params}` : ""}`, undefined, { authToken: token });
+export const assignAdditionalRequest   = (token, id, assignedToUserId) =>
+  request("PUT", `/api/additional-requests/requests/${id}/assign`, { assignedToUserId }, { authToken: token });
+export const setCutoffAdditionalRequest = (token, id, cutoffAt, escalationUserId) =>
+  request("PUT", `/api/additional-requests/requests/${id}/cutoff`, { cutoffAt, escalationUserId }, { authToken: token });
+export const updateAdditionalRequestStatus = (token, id, status) =>
+  request("PUT", `/api/additional-requests/requests/${id}/status`, { status }, { authToken: token });
+export const getAdditionalRequestUsers = (token) =>
+  request("GET", "/api/additional-requests/requests/users", undefined, { authToken: token });
+export const getOneAdditionalRequest   = (token, id) =>
+  request("GET", `/api/additional-requests/requests/${id}`, undefined, { authToken: token });
 

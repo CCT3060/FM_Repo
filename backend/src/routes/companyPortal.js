@@ -5,6 +5,8 @@ import { fileURLToPath } from "url";
 import fs from "fs";
 import multer from "multer";
 import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
+import PDFDocument from "pdfkit";
 import pool from "../db.js";
 import { computeSiteScore, computeSiteScoreRange } from "../utils/siteScore.js";
 import { requireCompanyAuth } from "../middleware/companyAuth.js";
@@ -207,6 +209,70 @@ pool.query("ALTER TABLE notifications ALTER COLUMN user_id DROP NOT NULL").catch
 // Ensure push token columns exist on company_users for device push notifications
 pool.query("ALTER TABLE company_users ADD COLUMN IF NOT EXISTS push_token TEXT NULL").catch(() => {});
 pool.query("ALTER TABLE company_users ADD COLUMN IF NOT EXISTS push_token_platform VARCHAR(20) NULL").catch(() => {});
+
+// ── Attendance module migrations ──────────────────────────────────────────────
+pool.query("ALTER TABLE company_users ADD COLUMN IF NOT EXISTS eligible_for_attendance BOOLEAN NOT NULL DEFAULT TRUE").catch(() => {});
+pool.query(`
+  CREATE TABLE IF NOT EXISTS employee_attendance (
+    id           BIGSERIAL    PRIMARY KEY,
+    company_id   INTEGER      NOT NULL,
+    employee_id  BIGINT       NOT NULL REFERENCES company_users(id) ON DELETE CASCADE,
+    date         DATE         NOT NULL,
+    status       VARCHAR(20)  NOT NULL DEFAULT 'Present',
+    marked_by    BIGINT       REFERENCES company_users(id) ON DELETE SET NULL,
+    created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_attendance_employee_date UNIQUE (company_id, employee_id, date)
+  )
+`).catch(() => {});
+pool.query("CREATE INDEX IF NOT EXISTS idx_attendance_company_date ON employee_attendance (company_id, date)").catch(() => {});
+
+// ── Additional Request module migrations ──────────────────────────────────────
+pool.query("ALTER TABLE company_roles ADD COLUMN IF NOT EXISTS can_raise_additional_request BOOLEAN NOT NULL DEFAULT FALSE").catch(() => {});
+pool.query(`
+  CREATE TABLE IF NOT EXISTS additional_request_services (
+    id          BIGSERIAL    PRIMARY KEY,
+    company_id  INTEGER      NOT NULL,
+    name        VARCHAR(100) NOT NULL,
+    is_active   BOOLEAN      NOT NULL DEFAULT TRUE,
+    sort_order  SMALLINT     NOT NULL DEFAULT 0,
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_ars_company_name UNIQUE (company_id, name)
+  )
+`).catch(() => {});
+pool.query("CREATE INDEX IF NOT EXISTS idx_ars_company ON additional_request_services (company_id)").catch(() => {});
+pool.query(`
+  CREATE TABLE IF NOT EXISTS additional_requests (
+    id                        BIGSERIAL    PRIMARY KEY,
+    company_id                INTEGER      NOT NULL,
+    service_id                BIGINT       NOT NULL,
+    priority                  VARCHAR(20)  NOT NULL DEFAULT 'Moderate',
+    remark                    TEXT         NOT NULL DEFAULT '',
+    status                    VARCHAR(20)  NOT NULL DEFAULT 'open',
+    raised_by_user_id         BIGINT       NOT NULL,
+    raised_at                 TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    assigned_to_user_id       BIGINT       DEFAULT NULL,
+    cutoff_at                 TIMESTAMPTZ  DEFAULT NULL,
+    cutoff_escalation_user_id BIGINT       DEFAULT NULL,
+    escalation_level          INTEGER      NOT NULL DEFAULT 0,
+    escalated_at              TIMESTAMPTZ  DEFAULT NULL,
+    resolved_by_user_id       BIGINT       DEFAULT NULL,
+    resolved_at               TIMESTAMPTZ  DEFAULT NULL,
+    notes                     TEXT         DEFAULT NULL,
+    created_at                TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at                TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+  )
+`).catch(() => {});
+pool.query("CREATE INDEX IF NOT EXISTS idx_ar_company ON additional_requests (company_id)").catch(() => {});
+pool.query("CREATE INDEX IF NOT EXISTS idx_ar_status  ON additional_requests (company_id, status)").catch(() => {});
+pool.query("CREATE INDEX IF NOT EXISTS idx_ar_raiser  ON additional_requests (raised_by_user_id)").catch(() => {});
+pool.query(`
+  CREATE TABLE IF NOT EXISTS additional_request_escalation_settings (
+    company_id   INTEGER PRIMARY KEY,
+    cutoff_hours INTEGER NOT NULL DEFAULT 24,
+    updated_at   TIMESTAMPTZ DEFAULT NOW()
+  )
+`).catch(() => {});
 
 // Ensure tabular-logsheet columns exist (migration 2026-03-02-tabular-logsheet)
 pool.query("ALTER TABLE logsheet_templates ADD COLUMN IF NOT EXISTS layout_type VARCHAR(20) NOT NULL DEFAULT 'standard'").catch(() => {});
@@ -3129,6 +3195,7 @@ router.get("/employees", async (req, res, next) => {
               COALESCE(cu.service_domain, 'technical') AS "serviceDomain",
               cu.permissions,
               cu.module_access AS "moduleAccess",
+              COALESCE(cu.eligible_for_attendance, TRUE) AS "eligibleForAttendance",
               s.full_name AS "supervisorName",
               s.role AS "supervisorRole",
               cu.created_at AS "createdAt",
@@ -3204,7 +3271,7 @@ router.get("/my-team", async (req, res, next) => {
 
 router.post("/employees", async (req, res, next) => {
   try {
-    const { fullName, email, phone, designation, role = "employee", status = "Active", password, username, supervisorId, shift, serviceDomain = "technical", employeeCode } = req.body;
+    const { fullName, email, phone, designation, role = "employee", status = "Active", password, username, supervisorId, shift, serviceDomain = "technical", employeeCode, eligibleForAttendance } = req.body;
     if (!fullName || !email) return res.status(400).json({ message: "fullName and email are required" });
 
     if (req.companyUser.role !== "admin" && req.companyUser.role !== "supervisor") {
@@ -3222,8 +3289,8 @@ router.post("/employees", async (req, res, next) => {
     if (password) passwordHash = await bcrypt.hash(password, 10);
 
     const [rows] = await pool.query(
-      `INSERT INTO company_users (company_id, full_name, email, phone, designation, role, shift, status, password_hash, username, supervisor_id, service_domain, employee_code)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO company_users (company_id, full_name, email, phone, designation, role, shift, status, password_hash, username, supervisor_id, service_domain, employee_code, eligible_for_attendance)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        RETURNING id,
                  company_id     AS "companyId",
                  full_name      AS "fullName",
@@ -3231,8 +3298,9 @@ router.post("/employees", async (req, res, next) => {
                  employee_code  AS "employeeCode",
                  supervisor_id  AS "supervisorId",
                  service_domain AS "serviceDomain",
+                 eligible_for_attendance AS "eligibleForAttendance",
                  created_at     AS "createdAt"`,
-      [cid(req), fullName, email, phone || null, designation || null, role, shift || null, status, passwordHash, username || null, resolvedSupervisorId, resolvedDomain, employeeCode || null]
+      [cid(req), fullName, email, phone || null, designation || null, role, shift || null, status, passwordHash, username || null, resolvedSupervisorId, resolvedDomain, employeeCode || null, eligibleForAttendance !== false]
     );
     const newEmployee = rows[0];
     // Auto-assign all active checklist templates if the new employee is a catalyst supervisor
@@ -3272,7 +3340,7 @@ router.post("/employees", async (req, res, next) => {
 router.put("/employees/:id", async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { fullName, email, phone, designation, role, status, password, username, supervisorId, shift, serviceDomain, employeeCode, permissions, moduleAccess } = req.body;
+    const { fullName, email, phone, designation, role, status, password, username, supervisorId, shift, serviceDomain, employeeCode, permissions, moduleAccess, eligibleForAttendance } = req.body;
 
     if (req.companyUser.role !== "admin" && req.companyUser.role !== "supervisor") {
       return res.status(403).json({ message: "Not authorised" });
@@ -3307,6 +3375,7 @@ router.put("/employees/:id", async (req, res, next) => {
     let employeeCodeClause = employeeCode !== undefined ? ", employee_code = ?" : "";
     let permissionsClause = "";
     let moduleAccessClause = "";
+    let eligibleForAttendanceClause = eligibleForAttendance !== undefined ? ", eligible_for_attendance = ?" : "";
     if (serviceDomain !== undefined && validDomains.includes(serviceDomain)) {
       serviceDomainClause = ", service_domain = ?";
     }
@@ -3324,6 +3393,7 @@ router.put("/employees/:id", async (req, res, next) => {
     if (employeeCodeClause) params.push(employeeCode || null);
     if (permissionsClause) params.push(JSON.stringify(permissions && typeof permissions === 'object' ? permissions : {}));
     if (moduleAccessClause) params.push(JSON.stringify(Array.isArray(moduleAccess) ? moduleAccess : []));
+    if (eligibleForAttendanceClause) params.push(eligibleForAttendance !== false);
     if (password) {
       const hash = await bcrypt.hash(password, 10);
       passwordClause = ", password_hash = ?";
@@ -3333,7 +3403,7 @@ router.put("/employees/:id", async (req, res, next) => {
 
     const [rows] = await pool.query(
       `UPDATE company_users
-       SET full_name = ?, email = ?, phone = ?, designation = ?, role = ?, status = ?${usernameClause}${supervisorClause}${shiftClause}${serviceDomainClause}${employeeCodeClause}${permissionsClause}${moduleAccessClause}${passwordClause}, updated_at = NOW()
+       SET full_name = ?, email = ?, phone = ?, designation = ?, role = ?, status = ?${usernameClause}${supervisorClause}${shiftClause}${serviceDomainClause}${employeeCodeClause}${permissionsClause}${moduleAccessClause}${eligibleForAttendanceClause}${passwordClause}, updated_at = NOW()
        WHERE id = ?
        RETURNING id,
                  full_name      AS "fullName",
@@ -3342,7 +3412,8 @@ router.put("/employees/:id", async (req, res, next) => {
                  supervisor_id  AS "supervisorId",
                  service_domain AS "serviceDomain",
                  permissions,
-                 module_access  AS "moduleAccess"`,
+                 module_access  AS "moduleAccess",
+                 eligible_for_attendance AS "eligibleForAttendance"`,
       params
     );
     res.json(rows[0]);
@@ -5861,6 +5932,18 @@ router.post("/switch-company", async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+/* Helper: expected checklist slots for a template on a given day */
+const expectedSlotsForTemplate = (t) => {
+  const freq = (t.frequency || 'Daily').toLowerCase();
+  if (freq !== 'hourly') return 1;
+  if (!t.startTime || !t.endTime) return 1;
+  const toMins = (s) => { const [h, m = 0] = String(s).split(':').map(Number); return h * 60 + m; };
+  const interval = Math.max(0.25, Number(t.hourlyInterval) || 1);
+  const sStart = toMins(t.startTime), sEnd = toMins(t.endTime);
+  const totalMins = sEnd <= sStart ? (1440 - sStart) + sEnd : sEnd - sStart;
+  return Math.max(1, Math.floor(totalMins / (interval * 60)));
+};
+
 /* ── GET /api/company-portal/combined-dashboard ──────────────────────────────
    Returns aggregated stats across all UCA companies for the logged-in user.
    Used by the "All Companies" combined dashboard view.                        */
@@ -5895,8 +5978,9 @@ router.get("/combined-dashboard", async (req, res, next) => {
       [nscsRows],
       [nsleRows],
     ] = await Promise.all([
-      // Per-company stats
+      // Per-company stats — each company wrapped independently so one failure doesn't break all
       Promise.all(companies.map(async (co) => {
+        try {
         const [templates] = await pool.query(
           `SELECT ct.id, ct.template_name AS "templateName", ct.frequency,
                   ct.hourly_interval AS "hourlyInterval",
@@ -5984,6 +6068,10 @@ router.get("/combined-dashboard", async (req, res, next) => {
           totalLogsheetTemplates:Number(row?.total_logsheet_tpls    ?? 0),
           filledLogsheetsToday:  Number(row?.filled_logsheets_today ?? 0),
         };
+        } catch (e) {
+          console.error('[combined-dashboard] per-company error for', co.id, e.message);
+          return { id: co.id, companyName: co.companyName, totalTemplates: 0, filledToday: 0, siteScore: 0, activeLocations: 0, openSoftRequests: 0, totalAssets: 0, activeAssets: 0, totalDepartments: 0, activeEmployees: 0, openIssues: 0, openFlags: 0, criticalFlags: 0, totalLogsheetTemplates: 0, filledLogsheetsToday: 0 };
+        }
       })),
       // Recent open alerts across all companies
       safe(() => pool.query(
@@ -6139,6 +6227,531 @@ router.get("/combined-dashboard", async (req, res, next) => {
       notSubmittedChecklists: nscsRows   || [],
       notSubmittedLogsheets:  nsleRows   || [],
     });
+  } catch (err) {
+    console.error('[combined-dashboard] fatal error:', err.message, '\nStack:', err.stack?.split('\n').slice(0,5).join('\n'));
+    next(err);
+  }
+});
+
+/* =============================================================================
+   ATTENDANCE MODULE
+   ============================================================================= */
+
+const VALID_ATTENDANCE_STATUSES = ['Present', 'Absent', 'Half Day', 'Leave', 'Week Off', 'Holiday'];
+
+/* ── GET /attendance — list eligible employees + their status for a date/range */
+router.get("/attendance", async (req, res, next) => {
+  try {
+    const rawCid = req.query.companyId;
+    const isAllCompanies = rawCid === 'all';
+    let companyIds;
+    if (isAllCompanies) {
+      const accessible = await getAccessibleCompanies(req.companyUser.id, cid(req));
+      companyIds = accessible.map(c => Number(c.id));
+      if (!companyIds.length) return res.json([]);
+    } else {
+      companyIds = [rawCid ? Number(rawCid) : cid(req)];
+    }
+    const { date, startDate, endDate, month, year } = req.query;
+
+    let qStart, qEnd;
+    if (startDate && endDate) {
+      qStart = startDate; qEnd = endDate;
+    } else if (month && year) {
+      const m = String(month).padStart(2, '0');
+      const daysInMonth = new Date(Number(year), Number(month), 0).getDate();
+      qStart = `${year}-${m}-01`;
+      qEnd   = `${year}-${m}-${String(daysInMonth).padStart(2, '0')}`;
+    } else if (year && !month) {
+      qStart = `${year}-01-01`; qEnd = `${year}-12-31`;
+    } else {
+      const d = date || new Date().toISOString().slice(0, 10);
+      qStart = d; qEnd = d;
+    }
+
+    const idPH = companyIds.map(() => '?').join(',');
+    const [emps] = await pool.query(
+      `SELECT cu.id, cu.full_name AS "fullName", cu.designation, cu.role,
+              cu.employee_code AS "employeeCode",
+              cu.company_id AS "companyId",
+              c.company_name AS "companyName",
+              COALESCE(
+                (SELECT STRING_AGG(s.name, ', ' ORDER BY s.start_time)
+                 FROM employee_shifts es JOIN shifts s ON s.id = es.shift_id
+                 WHERE es.company_user_id = cu.id AND s.company_id = cu.company_id AND s.status = 'active'),
+                '—'
+              ) AS "shiftNames"
+       FROM company_users cu
+       JOIN companies c ON c.id = cu.company_id
+       WHERE cu.company_id IN (${idPH}) AND LOWER(cu.status) = 'active' AND cu.eligible_for_attendance = TRUE
+       ORDER BY c.company_name, cu.full_name`,
+      companyIds
+    );
+    if (!emps.length) return res.json([]);
+
+    const empIds = emps.map(e => e.id);
+    const ph = empIds.map(() => '?').join(',');
+
+    const [records] = await pool.query(
+      `SELECT employee_id AS "employeeId", company_id AS "companyId", date::text AS date,
+              status, marked_by AS "markedBy", updated_at AS "updatedAt"
+       FROM employee_attendance
+       WHERE company_id IN (${idPH}) AND employee_id IN (${ph}) AND date BETWEEN ?::date AND ?::date`,
+      [...companyIds, ...empIds, qStart, qEnd]
+    );
+
+    const recMap = {};
+    for (const r of records) {
+      recMap[`${r.employeeId}_${r.date}`] = r;
+    }
+
+    const dates = [];
+    const [sy, sm, sd] = qStart.split('-').map(Number);
+    const [ey, em, ed] = qEnd.split('-').map(Number);
+    for (let ms = Date.UTC(sy, sm - 1, sd), endMs = Date.UTC(ey, em - 1, ed); ms <= endMs; ms += 86400000)
+      dates.push(new Date(ms).toISOString().slice(0, 10));
+
+    const rows = [];
+    for (const emp of emps) {
+      for (const d of dates) {
+        const rec = recMap[`${emp.id}_${d}`];
+        rows.push({
+          employeeId:    emp.id,
+          fullName:      emp.fullName,
+          designation:   emp.designation,
+          role:          emp.role,
+          employeeCode:  emp.employeeCode,
+          shiftNames:    emp.shiftNames || '—',
+          companyId:     emp.companyId,
+          companyName:   emp.companyName,
+          date:          d,
+          status:        rec?.status || 'Present',
+          recordExists:  !!rec,
+          markedBy:      rec?.markedBy || null,
+          updatedAt:     rec?.updatedAt || null,
+        });
+      }
+    }
+    res.setHeader("Cache-Control", "no-store");
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
+/* ── PUT /attendance — upsert a single record (admin only) */
+router.put("/attendance", async (req, res, next) => {
+  try {
+    if (req.companyUser.role !== 'admin') return res.status(403).json({ message: 'Admin only' });
+    const companyId = cid(req);
+    const { employeeId, date, status } = req.body;
+    if (!employeeId || !date) return res.status(400).json({ message: 'employeeId and date required' });
+    if (!VALID_ATTENDANCE_STATUSES.includes(status)) return res.status(400).json({ message: 'Invalid status' });
+    if (date > new Date().toISOString().slice(0, 10)) return res.status(400).json({ message: 'Cannot mark attendance for future dates' });
+
+    const [[emp]] = await pool.query(
+      `SELECT id FROM company_users WHERE id = ? AND company_id = ? AND eligible_for_attendance = TRUE`,
+      [employeeId, companyId]
+    );
+    if (!emp) return res.status(404).json({ message: 'Employee not found or not attendance-eligible' });
+
+    const [rows] = await pool.query(
+      `INSERT INTO employee_attendance (company_id, employee_id, date, status, marked_by)
+       VALUES (?, ?, ?::date, ?, ?)
+       ON CONFLICT (company_id, employee_id, date)
+       DO UPDATE SET status = EXCLUDED.status, marked_by = EXCLUDED.marked_by, updated_at = NOW()
+       RETURNING id, employee_id AS "employeeId", date::text AS date, status`,
+      [companyId, employeeId, date, status, req.companyUser.id]
+    );
+    res.json(rows[0]);
+  } catch (err) { next(err); }
+});
+
+/* ── PUT /attendance/bulk — upsert multiple records in one transaction (admin only) */
+router.put("/attendance/bulk", async (req, res, next) => {
+  try {
+    if (req.companyUser.role !== 'admin') return res.status(403).json({ message: 'Admin only' });
+    const companyId = cid(req);
+    const { employeeIds, date, status } = req.body;
+    if (!Array.isArray(employeeIds) || !employeeIds.length || !date)
+      return res.status(400).json({ message: 'employeeIds array and date required' });
+    if (!VALID_ATTENDANCE_STATUSES.includes(status)) return res.status(400).json({ message: 'Invalid status' });
+    if (date > new Date().toISOString().slice(0, 10)) return res.status(400).json({ message: 'Cannot mark attendance for future dates' });
+
+    const safeIds = employeeIds.map(Number).filter(n => Number.isFinite(n) && n > 0);
+    let upserted = 0;
+    for (const eid of safeIds) {
+      const [[emp]] = await pool.query(
+        `SELECT id FROM company_users WHERE id = ? AND company_id = ? AND eligible_for_attendance = TRUE`,
+        [eid, companyId]
+      );
+      if (!emp) continue;
+      await pool.query(
+        `INSERT INTO employee_attendance (company_id, employee_id, date, status, marked_by)
+         VALUES (?, ?, ?::date, ?, ?)
+         ON CONFLICT (company_id, employee_id, date)
+         DO UPDATE SET status = EXCLUDED.status, marked_by = EXCLUDED.marked_by, updated_at = NOW()`,
+        [companyId, eid, date, status, req.companyUser.id]
+      );
+      upserted++;
+    }
+    res.json({ upserted });
+  } catch (err) { next(err); }
+});
+
+/* ── GET /attendance/export — download xlsx for filtered attendance */
+router.get("/attendance/export", async (req, res, next) => {
+  try {
+    if (req.companyUser.role !== 'admin') return res.status(403).json({ message: 'Admin only' });
+    const rawCid = req.query.companyId;
+    const isAllCompanies = rawCid === 'all';
+    let companyIds;
+    if (isAllCompanies) {
+      const accessible = await getAccessibleCompanies(req.companyUser.id, cid(req));
+      companyIds = accessible.map(c => Number(c.id));
+    } else {
+      companyIds = [rawCid ? Number(rawCid) : cid(req)];
+    }
+    const { date, startDate, endDate, month, year, recordsOnly } = req.query;
+    const onlySubmitted = recordsOnly === '1' || recordsOnly === 'true';
+
+    let qStart, qEnd;
+    if (startDate && endDate) { qStart = startDate; qEnd = endDate; }
+    else if (month && year) {
+      const m = String(month).padStart(2, '0');
+      const daysInMonth = new Date(Number(year), Number(month), 0).getDate();
+      qStart = `${year}-${m}-01`;
+      qEnd   = `${year}-${m}-${String(daysInMonth).padStart(2, '0')}`;
+    } else if (year && !month) { qStart = `${year}-01-01`; qEnd = `${year}-12-31`; }
+    else { const d = date || new Date().toISOString().slice(0, 10); qStart = d; qEnd = d; }
+
+    const [emps] = await pool.query(
+      `SELECT id, full_name AS "fullName", designation, employee_code AS "employeeCode"
+       FROM company_users
+       WHERE company_id = ? AND LOWER(status) = 'active' AND eligible_for_attendance = TRUE
+       ORDER BY full_name`,
+      [companyId]
+    );
+
+    const empIds = emps.map(e => e.id);
+    const [records] = empIds.length ? await pool.query(
+      `SELECT ea.employee_id AS "employeeId", ea.date::text AS date, ea.status,
+              cu.full_name AS "markedByName"
+       FROM employee_attendance ea
+       LEFT JOIN company_users cu ON cu.id = ea.marked_by
+       WHERE ea.company_id = ? AND ea.employee_id IN (${empIds.map(() => '?').join(',')}) AND ea.date BETWEEN ?::date AND ?::date`,
+      [companyId, ...empIds, qStart, qEnd]
+    ) : [[]];
+
+    const recMap = {};
+    for (const r of records) recMap[`${r.employeeId}_${r.date}`] = r;
+
+    const dates = [];
+    const [sy, sm, sd] = qStart.split('-').map(Number);
+    const [ey, em, ed] = qEnd.split('-').map(Number);
+    for (let ms = Date.UTC(sy, sm - 1, sd), endMs = Date.UTC(ey, em - 1, ed); ms <= endMs; ms += 86400000)
+      dates.push(new Date(ms).toISOString().slice(0, 10));
+
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Attendance');
+    const cols = [
+      { header: 'Sr.No',       key: 'srno',        width: 7  },
+      { header: 'Emp Code',    key: 'code',        width: 12 },
+      { header: 'Name',        key: 'name',        width: 22 },
+      { header: 'Designation', key: 'desig',       width: 18 },
+      { header: 'Date',        key: 'date',        width: 14 },
+      { header: 'Status',      key: 'status',      width: 14 },
+      { header: 'Marked By',   key: 'markedBy',    width: 18 },
+    ];
+    if (isAllCompanies) cols.splice(1, 0, { header: 'Company', key: 'company', width: 20 });
+    ws.columns = cols;
+    ws.getRow(1).eachCell(cell => { cell.font = { bold: true }; });
+
+    let srno = 1;
+    for (const emp of emps) {
+      for (const d of dates) {
+        const rec = recMap[`${emp.id}_${d}`];
+        if (onlySubmitted && !rec) continue;
+        ws.addRow({
+          srno:     srno++,
+          ...(isAllCompanies ? { company: emp.companyName || '' } : {}),
+          code:     emp.employeeCode || '',
+          name:     emp.fullName || '',
+          desig:    emp.designation || '',
+          date:     d,
+          status:   rec?.status || 'Present',
+          markedBy: rec?.markedByName || '-',
+        });
+      }
+    }
+
+    const buf = await wb.xlsx.writeBuffer();
+    res.writeHead(200, {
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="attendance_${qStart}_${qEnd}.xlsx"`,
+      'Content-Length': buf.length,
+    });
+    res.end(buf);
+  } catch (err) {
+    console.error('[XLSX_EXPORT_ERROR]', err.message, err.stack);
+    next(err);
+  }
+});
+
+/* ── GET /attendance/export/pdf — download PDF for filtered attendance */
+router.get("/attendance/export/pdf", async (req, res, next) => {
+  try {
+    if (req.companyUser.role !== 'admin') return res.status(403).json({ message: 'Admin only' });
+    const rawCid = req.query.companyId;
+    const isAllCompanies = rawCid === 'all';
+    let companyIds;
+    if (isAllCompanies) {
+      const accessible = await getAccessibleCompanies(req.companyUser.id, cid(req));
+      companyIds = accessible.map(c => Number(c.id));
+    } else {
+      companyIds = [rawCid ? Number(rawCid) : cid(req)];
+    }
+    const { date, startDate, endDate, month, year, recordsOnly } = req.query;
+    const onlySubmitted = recordsOnly === '1' || recordsOnly === 'true';
+
+    let qStart, qEnd;
+    if (startDate && endDate) { qStart = startDate; qEnd = endDate; }
+    else if (month && year) {
+      const m = String(month).padStart(2, '0');
+      const daysInMonth = new Date(Number(year), Number(month), 0).getDate();
+      qStart = `${year}-${m}-01`;
+      qEnd   = `${year}-${m}-${String(daysInMonth).padStart(2, '0')}`;
+    } else if (year && !month) { qStart = `${year}-01-01`; qEnd = `${year}-12-31`; }
+    else { const d = date || new Date().toISOString().slice(0, 10); qStart = d; qEnd = d; }
+
+    const idPH2 = companyIds.map(() => '?').join(',');
+    const [emps] = await pool.query(
+      `SELECT cu.id, cu.full_name AS "fullName", cu.designation, cu.employee_code AS "employeeCode",
+              c.company_name AS "companyName"
+       FROM company_users cu JOIN companies c ON c.id = cu.company_id
+       WHERE cu.company_id IN (${idPH2}) AND LOWER(cu.status) = 'active' AND cu.eligible_for_attendance = TRUE
+       ORDER BY c.company_name, cu.full_name`,
+      companyIds
+    );
+
+    const empIds = emps.map(e => e.id);
+    const [records] = empIds.length ? await pool.query(
+      `SELECT ea.employee_id AS "employeeId", ea.date::text AS date, ea.status,
+              cu.full_name AS "markedByName"
+       FROM employee_attendance ea
+       LEFT JOIN company_users cu ON cu.id = ea.marked_by
+       WHERE ea.company_id IN (${idPH2}) AND ea.employee_id IN (${empIds.map(() => '?').join(',')}) AND ea.date BETWEEN ?::date AND ?::date`,
+      [...companyIds, ...empIds, qStart, qEnd]
+    ) : [[]];
+
+    const recMap = {};
+    for (const r of records) recMap[`${r.employeeId}_${r.date}`] = r;
+
+    const dates = [];
+    const [sy, sm, sd] = qStart.split('-').map(Number);
+    const [ey, em, ed] = qEnd.split('-').map(Number);
+    for (let ms = Date.UTC(sy, sm - 1, sd), endMs = Date.UTC(ey, em - 1, ed); ms <= endMs; ms += 86400000)
+      dates.push(new Date(ms).toISOString().slice(0, 10));
+
+    // Build PDF fully in memory before sending — errors thrown before res.end are catchable
+    const pdfBuf = await new Promise((resolve, reject) => {
+      try {
+        const doc = new PDFDocument({ margin: 30, size: 'A4', layout: 'landscape' });
+        const chunks = [];
+        doc.on('data', chunk => chunks.push(chunk));
+        doc.on('end', () => resolve(Buffer.concat(chunks)));
+        doc.on('error', reject);
+
+        const MARGIN = 30;
+        const PAGE_W = doc.page.width - MARGIN * 2;
+        const ROW_H  = 20;
+        const HDR_H  = 24;
+        const rawCols = [
+          { header: 'Sr.No',       key: 'srno',     w: 0.06 },
+          ...(isAllCompanies ? [{ header: 'Company', key: 'company', w: 0.13 }] : []),
+          { header: 'Emp Code',    key: 'code',     w: isAllCompanies ? 0.09 : 0.11 },
+          { header: 'Name',        key: 'name',     w: isAllCompanies ? 0.17 : 0.22 },
+          { header: 'Designation', key: 'desig',    w: 0.15 },
+          { header: 'Date',        key: 'date',     w: 0.12 },
+          { header: 'Status',      key: 'status',   w: 0.13 },
+          { header: 'Marked By',   key: 'markedBy', w: isAllCompanies ? 0.15 : 0.18 },
+        ];
+        const colDefs = rawCols.map(c => ({ ...c, w: Math.floor(c.w * PAGE_W) }));
+
+        doc.fontSize(14).font('Helvetica-Bold').text('Attendance Report', MARGIN, MARGIN, { align: 'center', width: PAGE_W });
+        doc.fontSize(9).font('Helvetica').text(`Period: ${qStart} to ${qEnd}`, MARGIN, MARGIN + 18, { align: 'center', width: PAGE_W });
+
+        let curY = MARGIN + 42;
+
+        const drawHeaderRow = () => {
+          let x = MARGIN;
+          doc.rect(x, curY, PAGE_W, HDR_H).fill('#1e293b');
+          doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(8);
+          for (const col of colDefs) {
+            doc.text(col.header, x + 4, curY + 7, { width: col.w - 8, lineBreak: false });
+            x += col.w;
+          }
+          curY += HDR_H;
+        };
+
+        const drawDataRow = (rowData, shade) => {
+          let x = MARGIN;
+          doc.rect(x, curY, PAGE_W, ROW_H).fill(shade ? '#f8fafc' : '#ffffff');
+          doc.rect(x, curY, PAGE_W, ROW_H).stroke('#e2e8f0');
+          doc.fillColor('#0f172a').font('Helvetica').fontSize(7.5);
+          for (const col of colDefs) {
+            doc.text(String(rowData[col.key] ?? ''), x + 4, curY + 5, { width: col.w - 8, lineBreak: false });
+            x += col.w;
+          }
+          curY += ROW_H;
+        };
+
+        drawHeaderRow();
+        let srno = 1;
+        let shade = false;
+        for (const emp of emps) {
+          for (const d of dates) {
+            const rec = recMap[`${emp.id}_${d}`];
+            if (onlySubmitted && !rec) continue;
+            if (curY + ROW_H > doc.page.height - MARGIN) {
+              doc.addPage();
+              curY = MARGIN;
+              drawHeaderRow();
+            }
+            drawDataRow({
+              srno:     srno++,
+              ...(isAllCompanies ? { company: emp.companyName || '' } : {}),
+              code:     emp.employeeCode || '',
+              name:     emp.fullName || '',
+              desig:    emp.designation || '',
+              date:     d,
+              status:   rec?.status || 'Present',
+              markedBy: rec?.markedByName || '-',
+            }, shade);
+            shade = !shade;
+          }
+        }
+        doc.end();
+      } catch (syncErr) { reject(syncErr); }
+    });
+
+    res.writeHead(200, {
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="attendance_${qStart}_${qEnd}.pdf"`,
+      'Content-Length': pdfBuf.length,
+    });
+    res.end(pdfBuf);
+  } catch (err) {
+    console.error('[PDF_EXPORT_ERROR]', err.message, err.stack);
+    next(err);
+  }
+});
+
+/* ── DELETE /attendance/:employeeId/:date — delete a single attendance record */
+router.delete("/attendance/:employeeId/:date", async (req, res, next) => {
+  try {
+    if (req.companyUser.role !== 'admin') return res.status(403).json({ message: 'Admin only' });
+    const companyId = cid(req);
+    const { employeeId, date } = req.params;
+    await pool.query(
+      `DELETE FROM employee_attendance WHERE company_id = ? AND employee_id = ? AND date = ?::date`,
+      [companyId, Number(employeeId), date]
+    );
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+/* ── POST /attendance/bulk-delete — delete multiple attendance records */
+router.post("/attendance/bulk-delete", async (req, res, next) => {
+  try {
+    if (req.companyUser.role !== 'admin') return res.status(403).json({ message: 'Admin only' });
+    const companyId = cid(req);
+    const { records } = req.body; // [{employeeId, date}]
+    if (!Array.isArray(records) || !records.length) return res.status(400).json({ message: 'records[] required' });
+    let deleted = 0;
+    for (const rec of records) {
+      if (!rec.employeeId || !rec.date) continue;
+      const result = await pool.query(
+        `DELETE FROM employee_attendance WHERE company_id = ? AND employee_id = ? AND date = ?::date`,
+        [companyId, Number(rec.employeeId), rec.date]
+      );
+      if (result[0]?.rowCount > 0 || result[0]?.affectedRows > 0) deleted++;
+    }
+    res.json({ ok: true, deleted });
+  } catch (err) { next(err); }
+});
+
+/* ── PUT /attendance/submit — save per-employee statuses for one date (admin) */
+router.put("/attendance/submit", async (req, res, next) => {
+  try {
+    if (req.companyUser.role !== 'admin') return res.status(403).json({ message: 'Admin only' });
+    const companyId = cid(req);
+    const { date, records } = req.body;
+    if (!date || !Array.isArray(records) || !records.length)
+      return res.status(400).json({ message: 'date and records[] required' });
+    if (date > new Date().toISOString().slice(0, 10))
+      return res.status(400).json({ message: 'Cannot mark attendance for future dates' });
+    let saved = 0;
+    for (const rec of records) {
+      const { employeeId, status } = rec;
+      if (!Number.isFinite(Number(employeeId)) || !VALID_ATTENDANCE_STATUSES.includes(status)) continue;
+      const [[emp]] = await pool.query(
+        `SELECT id FROM company_users WHERE id = ? AND company_id = ? AND eligible_for_attendance = TRUE`,
+        [Number(employeeId), companyId]
+      );
+      if (!emp) continue;
+      await pool.query(
+        `INSERT INTO employee_attendance (company_id, employee_id, date, status, marked_by)
+         VALUES (?, ?, ?::date, ?, ?)
+         ON CONFLICT (company_id, employee_id, date)
+         DO UPDATE SET status = EXCLUDED.status, marked_by = EXCLUDED.marked_by, updated_at = NOW()`,
+        [companyId, Number(employeeId), date, status, req.companyUser.id]
+      );
+      saved++;
+    }
+    res.json({ saved });
+  } catch (err) { next(err); }
+});
+
+/* ── GET /dashboard/shift-attendance — per-shift attendance counts for a date */
+router.get("/dashboard/shift-attendance", async (req, res, next) => {
+  try {
+    const companyId = cid(req);
+    const targetDate = req.query.date || new Date().toISOString().slice(0, 10);
+    const [shifts] = await pool.query(
+      `SELECT id, name, start_time AS "startTime", end_time AS "endTime"
+       FROM shifts WHERE company_id = ? AND status = 'active' ORDER BY start_time`,
+      [companyId]
+    );
+    if (!shifts.length) return res.json([]);
+    const result = [];
+    for (const shift of shifts) {
+      const [empRows] = await pool.query(
+        `SELECT cu.id FROM company_users cu
+         JOIN employee_shifts es ON es.company_user_id = cu.id AND es.shift_id = ?
+         WHERE cu.company_id = ? AND LOWER(cu.status) = 'active' AND cu.eligible_for_attendance = TRUE`,
+        [shift.id, companyId]
+      );
+      const total = empRows.length;
+      if (total === 0) continue;
+      const empIds = empRows.map(e => e.id);
+      const ph = empIds.map(() => '?').join(',');
+      const [attRows] = await pool.query(
+        `SELECT employee_id AS "employeeId", status FROM employee_attendance
+         WHERE company_id = ? AND employee_id IN (${ph}) AND date = ?::date`,
+        [companyId, ...empIds, targetDate]
+      );
+      const attMap = {};
+      for (const a of attRows) attMap[a.employeeId] = a.status;
+      let present = 0, absent = 0, other = 0;
+      for (const emp of empRows) {
+        const s = attMap[emp.id] || 'Present'; // unsubmitted defaults to Present
+        if (s === 'Present' || s === 'Half Day') present++;
+        else if (s === 'Absent') absent++;
+        else other++;
+      }
+      result.push({ shiftId: shift.id, shiftName: shift.name, startTime: shift.startTime, endTime: shift.endTime, total, present, absent, other });
+    }
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(result);
   } catch (err) { next(err); }
 });
 

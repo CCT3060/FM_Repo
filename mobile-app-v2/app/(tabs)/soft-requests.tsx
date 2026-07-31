@@ -8,28 +8,44 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
-import { fetchMySoftRequests, fetchAllSoftRequests } from '../../utils/api';
+import { fetchMySoftRequests, fetchAllSoftRequests, updateSoftRequestStatus } from '../../utils/api';
 import { isSoftManager, canResolveSoft } from '../../utils/permissions';
 import { useTheme, Typography, Spacing, Radius } from '../../utils/theme';
 import StatusBadge from '../../components/StatusBadge';
 import EmptyState from '../../components/EmptyState';
 import type { SoftRequest } from '../../utils/api';
 
+const STATUS_MAP: Record<string, { label: string; variant: 'success' | 'warning' | 'error' | 'info' | 'default' }> = {
+  open:         { label: 'Open',         variant: 'warning' },
+  acknowledged: { label: 'Acknowledged', variant: 'info' },
+  in_progress:  { label: 'In Progress',  variant: 'info' },
+  closed:       { label: 'Closed',       variant: 'success' },
+  resolved:     { label: 'Resolved',     variant: 'success' },
+};
+
 function RequestCard({ req, canResolve, currentUserId }: { req: SoftRequest; canResolve: boolean; currentUserId?: number }) {
   const { theme } = useTheme();
-  const isAssignedToMe = canResolve && req.status === 'open' && !!req.assignedToId && Number(req.assignedToId) === Number(currentUserId);
+  const isActive = ['open', 'acknowledged', 'in_progress'].includes(req.status);
+  const isAssignedToMe = canResolve && isActive && !!req.assignedToId && Number(req.assignedToId) === Number(currentUserId);
   const isUnassignedOpen = canResolve && req.status === 'open' && !req.assignedToId;
+  const needsAcknowledge = isAssignedToMe && req.status === 'open';
 
   const handlePress = () => {
-    if (isAssignedToMe) {
+    if (isAssignedToMe && !needsAcknowledge) {
       router.push({ pathname: '/soft-resolve', params: { requestId: String(req.id) } });
     } else if (isUnassignedOpen) {
-      // Must scan the asset QR before resolving
       router.push({ pathname: '/qr-scanner', params: { mode: 'resolve-request', requestId: String(req.id), expectedAssetId: String(req.assetId ?? '') } } as any);
     } else {
       router.push({ pathname: '/soft-resolve', params: { requestId: String(req.id), readOnly: 'true' } });
     }
   };
+
+  const handleAcknowledge = async () => {
+    try { await updateSoftRequestStatus(req.id, 'in_progress'); }
+    catch { /* silent */ }
+  };
+
+  const statusInfo = STATUS_MAP[req.status] ?? { label: req.status, variant: 'default' };
 
   return (
     <TouchableOpacity
@@ -46,14 +62,22 @@ function RequestCard({ req, canResolve, currentUserId }: { req: SoftRequest; can
             {req.assetName || req.locationName || req.assetUniqueId || ''}
           </Text>
         </View>
-        <StatusBadge label={req.status === 'open' ? 'Open' : 'Resolved'} variant={req.status === 'open' ? 'warning' : 'success'} />
+        <StatusBadge label={statusInfo.label} variant={statusInfo.variant} />
       </View>
       <View style={styles.cardBottom}>
         <Text style={[styles.meta, { color: theme.textSecondary }]}>
           {req.raisedByName ? `Raised by ${req.raisedByName} · ` : ''}
           {new Date(req.raisedAt).toLocaleDateString()}
         </Text>
-        {isAssignedToMe ? (
+        {needsAcknowledge ? (
+          <TouchableOpacity
+            style={[styles.resolveBtn, { backgroundColor: '#FEF3C7' }]}
+            onPress={handleAcknowledge}
+          >
+            <MaterialCommunityIcons name="check" size={14} color="#D97706" />
+            <Text style={[styles.resolveBtnText, { color: '#D97706' }]}>Acknowledge</Text>
+          </TouchableOpacity>
+        ) : isAssignedToMe ? (
           <TouchableOpacity
             style={[styles.resolveBtn, { backgroundColor: theme.primaryBg }]}
             onPress={handlePress}
@@ -107,8 +131,8 @@ export default function SoftRequestsTab() {
   }, [isFocused, initialFilter, load]);
 
   const filtered = items.filter((i) => {
-    if (filter === 'open')     return i.status === 'open';
-    if (filter === 'resolved') return i.status === 'resolved';
+    if (filter === 'open')     return ['open', 'acknowledged', 'in_progress'].includes(i.status);
+    if (filter === 'resolved') return ['resolved', 'closed'].includes(i.status);
     return true;
   });
 

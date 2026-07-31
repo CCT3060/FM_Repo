@@ -133,6 +133,14 @@ export default function HomeScreen() {
            <ActionCard icon="alert-circle-outline" label="Raise Issue" sublabel="Soft service" color={theme.danger} onPress={() => router.push('/soft-raise')} />
           ) : null}
 
+          {capabilities?.canRaiseAdditionalRequest ? (
+            <ActionCard icon="file-plus-outline" label="Additional Request" sublabel="Plumbing · Electrical…" color="#7c3aed" onPress={() => router.push('/additional-request' as any)} />
+          ) : null}
+
+          {user?.role === 'admin' && user?.companyEnabledModules?.includes('attendance') ? (
+            <ActionCard icon="account-check-outline" label="Attendance" sublabel="Mark today's attendance" color="#0891b2" onPress={() => router.push('/attendance-mark' as any)} />
+          ) : null}
+
           {hasSoftAccess(capabilities) ? (
             <ActionCard
               icon="wrench-outline"

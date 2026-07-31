@@ -7,6 +7,7 @@ import {
   updateSoftRequestStatus,
   resolveSoftServiceRequest,
   getSoftRequestUsers,
+  getSoftRequestEscalationUsers,
   getOneSoftServiceRequest,
 } from "../api.js";
 import { getApiBaseUrl } from "../utils/runtimeConfig.js";
@@ -73,8 +74,15 @@ function AssignModal({ req, users, token, onClose, onDone }) {
 }
 
 /* ── Cutoff Modal ──────────────────────────────────────────────────────────── */
-function CutoffModal({ req, users, token, onClose, onDone }) {
-  const [date, setDate] = useState(req.cutoffAt ? req.cutoffAt.slice(0, 16) : "");
+// Convert UTC ISO string to YYYY-MM-DDTHH:MM local time for datetime-local input
+const toLocalInput = (utcStr) => {
+  if (!utcStr) return "";
+  const d = new Date(utcStr);
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+};
+
+function CutoffModal({ req, escalationUsers, token, onClose, onDone }) {
+  const [date, setDate] = useState(toLocalInput(req.cutoffAt));
   const [escalateUser, setEscalateUser] = useState(req.cutoffEscalateToId ? String(req.cutoffEscalateToId) : "");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState(null);
@@ -111,7 +119,7 @@ function CutoffModal({ req, users, token, onClose, onDone }) {
           onChange={setEscalateUser}
           options={[
             { value: "", label: "— No escalation —" },
-            ...users.map((u) => ({ value: String(u.id), label: `${u.fullName} · ${u.roleLabel || u.role || ""}` }))
+            ...escalationUsers.map((u) => ({ value: String(u.id), label: `${u.fullName} \u00b7 ${u.roleLabel || u.role || ""}` }))
           ]}
           placeholder="Search user…"
           style={{ marginBottom: "20px" }}
@@ -280,6 +288,7 @@ export default function SoftRequestsPanel({ token, currentUser, allCompanies = f
   const [busy, setBusy]                 = useState({});
   const [selected, setSelected]         = useState(new Set());
   const [deleting, setDeleting]         = useState(false);
+  const [escalationUsers, setEscalationUsers] = useState([]);
 
   const isAdmin    = currentUser?.role === "admin";
   const canResolve = isAdmin || currentUser?.canResolveSoftIssue;
@@ -296,6 +305,7 @@ export default function SoftRequestsPanel({ token, currentUser, allCompanies = f
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
     getSoftRequestUsers(token).then((d) => setUsers(Array.isArray(d) ? d : [])).catch(() => {});
+    getSoftRequestEscalationUsers(token).then((d) => setEscalationUsers(Array.isArray(d) ? d : [])).catch(() => {});
   }, [token]);
 
   const deleteOne = async (id) => {
@@ -554,7 +564,7 @@ export default function SoftRequestsPanel({ token, currentUser, allCompanies = f
           onDone={() => { setAssignModal(null); load(); }} />
       )}
       {cutoffModal && (
-        <CutoffModal req={cutoffModal} users={users} token={token}
+        <CutoffModal req={cutoffModal} escalationUsers={escalationUsers} token={token}
           onClose={() => setCutoffModal(null)}
           onDone={() => { setCutoffModal(null); load(); }} />
       )}

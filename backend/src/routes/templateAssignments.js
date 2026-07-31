@@ -781,21 +781,26 @@ router.post(
              WHERE s.id IN (${shiftPlaceholders}) AND s.company_id = ?`,
             [req.companyUser.id, ...locShiftIds, cid(req)]
           ).catch(() => [[]]);
-          const assignedShift = locShifts.find(s => s.employeeShiftId);
-          if (assignedShift) assignedShiftId = assignedShift.id || null;
-          if (!assignedShift) {
+          // Find ALL shifts the employee is assigned to, then pick the one currently in its window
+          const assignedShifts = locShifts.filter(s => s.employeeShiftId);
+          if (assignedShifts.length === 0) {
             const shiftNames = locShifts.map(s => s.shiftName).join(", ");
             return res.status(403).json({
               message: `You are not assigned to any required shift for this location (${shiftNames}).`,
               shiftLocked: true, shiftName: shiftNames,
             });
           }
-          if (assignedShift.shiftStatus !== 'active' || !isShiftActive(assignedShift.startTime, assignedShift.endTime)) {
+          const activeAssignedShift = assignedShifts.find(
+            s => s.shiftStatus === 'active' && isShiftActive(s.startTime, s.endTime)
+          );
+          if (!activeAssignedShift) {
+            const assignedNames = assignedShifts.map(s => `${s.shiftName} (${s.startTime}–${s.endTime})`).join(", ");
             return res.status(403).json({
-              message: `Your shift "${assignedShift.shiftName}" is not currently active (${assignedShift.startTime}–${assignedShift.endTime}).`,
-              shiftLocked: true, shiftName: assignedShift.shiftName,
+              message: `Your assigned shift(s) are not currently active: ${assignedNames}.`,
+              shiftLocked: true, shiftName: assignedShifts.map(s => s.shiftName).join(", "),
             });
           }
+          assignedShiftId = activeAssignedShift.id || null;
         } else {
           // Legacy: checklist-level shift enforcement
           const [[shiftInfo]] = await pool.query(
@@ -1408,11 +1413,10 @@ router.get("/location-templates/:locationId", async (req, res, next) => {
     if (locShiftIds.length > 0 && req.companyUser.role !== 'admin') {
       const shiftPH = locShiftIds.map(() => '?').join(',');
       const [empShifts] = await pool.query(
-        `SELECT s.id, s.name AS "shiftName", s.start_time AS "startTime"
+        `SELECT s.id, s.name AS "shiftName", s.start_time AS "startTime", s.end_time AS "endTime"
          FROM shifts s
          JOIN employee_shifts es ON es.shift_id = s.id
-         WHERE s.id IN (${shiftPH}) AND es.company_user_id = ? AND s.status = 'active'
-         ORDER BY s.start_time LIMIT 1`,
+         WHERE s.id IN (${shiftPH}) AND es.company_user_id = ? AND s.status = 'active'`,
         [...locShiftIds, userId]
       ).catch(() => [[]]);
       if (empShifts.length === 0) {
@@ -1430,10 +1434,12 @@ router.get("/location-templates/:locationId", async (req, res, next) => {
           shiftMessage: `You are not assigned to ${shiftList} required for this location. Please contact your administrator.`,
         });
       }
-      // Capture employee's shift for per-shift slot anchor and completedToday scoping
-      if (empShifts[0]?.startTime) {
-        employeeShiftId = empShifts[0].id;
-        const [ssh, ssm = 0] = empShifts[0].startTime.split(':').map(Number);
+      // Prefer the currently-active shift for slot anchor; fall back to first by start_time
+      const activeNow = empShifts.find(s => isShiftActive(s.startTime, s.endTime));
+      const chosenShift = activeNow ?? empShifts.sort((a, b) => a.startTime.localeCompare(b.startTime))[0];
+      if (chosenShift?.startTime) {
+        employeeShiftId = chosenShift.id;
+        const [ssh, ssm = 0] = chosenShift.startTime.split(':').map(Number);
         effectiveLocStartMins = (ssh || 0) * 60 + (ssm || 0);
       }
     }
@@ -1533,7 +1539,7 @@ router.get("/location-templates/:locationId", async (req, res, next) => {
     );
 
     // Get the most recent submission for any template at this location
-    // Phase 3: also check cs.location_id directly + locations.checklist_id link
+    // Prioritise direct cs.location_id match; fallback to template-level assignment only
     const [[recentSubmission]] = await pool.query(
       `SELECT cs.id, cs.submitted_at AS "submittedAt", cs.status,
               ct.template_name AS "templateName",
@@ -1547,15 +1553,13 @@ router.get("/location-templates/:locationId", async (req, res, next) => {
        WHERE ct.company_id = ?
          AND (
            cs.location_id = ?
-           OR ct.location_id = ?
-           OR ct.id = (SELECT checklist_id FROM locations WHERE id = ? AND company_id = ?)
-           OR (ct.building_id IN (SELECT b.id FROM buildings b JOIN locations l ON l.id = ? WHERE b.company_id = ct.company_id AND b.name = TRIM(l.building))
-               AND ct.floor_id IN (SELECT f.id FROM floors f JOIN locations l ON l.id = ? WHERE f.company_id = ct.company_id AND f.floor_number = TRIM(l.floor))
-               AND ct.room_id  IN (SELECT r.id FROM rooms  r JOIN locations l ON l.id = ? WHERE r.company_id = ct.company_id AND r.room_name = TRIM(l.room)))
+           OR (cs.location_id IS NULL AND ct.location_id = ?)
          )
-       ORDER BY cs.submitted_at DESC NULLS LAST
+       ORDER BY
+         CASE WHEN cs.location_id = ? THEN 0 ELSE 1 END,
+         cs.submitted_at DESC NULLS LAST
        LIMIT 1`,
-      [companyId, locationId, locationId, locationId, companyId, locationId, locationId, locationId]
+      [companyId, locationId, locationId, locationId]
     );
 
     // Get open soft requests assigned to this user at this location

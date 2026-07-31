@@ -12,6 +12,7 @@ import SubmissionsPanel from "../components/SubmissionsPanel.jsx";
 import WarningsPanel from "../components/WarningsPanel.jsx";
 import WorkOrdersPanel from "../components/WorkOrdersPanel.jsx";
 import SoftRequestsPanel from "../components/SoftRequestsPanel.jsx";
+import AdditionalRequestsPanel from "../components/AdditionalRequestsPanel.jsx";
 import AssetDashboard from "../components/AssetDashboard.jsx";
 import OjtTrainingBuilder, { TrainingPreviewModal, TrainingQRModal } from "../components/OjtTrainingBuilder.jsx";
 import SearchableSelect from "../components/SearchableSelect.jsx";
@@ -95,6 +96,16 @@ import {
   getMyCompanies,
   switchPortalCompany,
   getShiftSiteScore,
+  getAttendance,
+  upsertAttendance,
+  bulkUpsertAttendance,
+  downloadAttendanceExport,
+  downloadAttendancePdf,
+  submitAttendanceRecords,
+  deleteAttendanceRecord,
+  bulkDeleteAttendanceRecords,
+  getShiftAttendance,
+  getAdditionalRequestsAll,
 } from "../api.js";
 
 /* ─── Role definitions ────────────────────────────────────────────── */
@@ -172,8 +183,10 @@ const NAV_ALL = [
   { key: "notifications", label: "Notifications", roles: ["admin","supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg> },
   { key: "workorders", label: "Requests", roles: ["admin","supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-4 0v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg> },
   { key: "softrequests", label: "Soft Requests", roles: ["admin","supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> },
+  { key: "additional-requests", label: "Additional Request", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg> },
   { key: "locations", label: "Locations", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg> },
   { key: "shifts", label: "Shifts", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> },
+  { key: "attendance", label: "Attendance", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="16 11 18 13 22 9"/></svg> },
   { key: "roles", label: "Manage Roles", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 7h18M3 12h18M3 17h18"/></svg> },
   { key: "asset-types", label: "Asset Types", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg> },
   { key: "ojt", label: "OJT Management", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg> },
@@ -861,6 +874,7 @@ function EmployeeModal({ existing, token, employees = [], customRoles = [], curr
     fullName: "", email: "", phone: "", designation: "", role: "technician",
     shift: "", status: "Active", password: "", username: "", supervisorId: "",
     employeeCode: "",
+    eligibleForAttendance: true,
     permissions: normalizePerms(null),
     moduleAccess: ["dashboard", "checklists", "logsheets", "mytasks", "locations"],
   };
@@ -1173,6 +1187,23 @@ function EmployeeModal({ existing, token, employees = [], customRoles = [], curr
               )}
             </div>
           )}
+
+          {/* ── Eligible for Attendance ────────────────────────────── */}
+          <div style={{ gridColumn: "span 2", display: "flex", alignItems: "center", gap: "10px", padding: "10px 14px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "10px" }}>
+            <input
+              type="checkbox"
+              id="eligibleForAttendance"
+              checked={form.eligibleForAttendance !== false}
+              onChange={(e) => change("eligibleForAttendance", e.target.checked)}
+              style={{ width: "16px", height: "16px", accentColor: "#2563eb", cursor: "pointer" }}
+            />
+            <label htmlFor="eligibleForAttendance" style={{ fontSize: "13px", fontWeight: 600, color: "#0f172a", cursor: "pointer", userSelect: "none" }}>
+              Eligible for Attendance
+              <span style={{ display: "block", fontSize: "11.5px", fontWeight: 400, color: "#64748b", marginTop: "1px" }}>
+                If unchecked, this employee won't appear in the Attendance module
+              </span>
+            </label>
+          </div>
 
           {/* Hierarchy parent picker */}
           {showParentField && (
@@ -4120,6 +4151,7 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false, ena
   const [draftIsManager, setDraftIsManager]   = useState(false);
   const [draftIsTechSupervisor, setDraftIsTechSupervisor] = useState(false);
   const [draftIsTechnician, setDraftIsTechnician]         = useState(false);
+  const [draftCanRaiseAdditional, setDraftCanRaiseAdditional] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [rolePerms, setRolePerms] = useState({});
@@ -4162,6 +4194,7 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false, ena
       isSoftManager:        !!r.isSoftManager,
       isTechnicalSupervisor:!!r.isTechnicalSupervisor,
       isTechnician:         !!r.isTechnician,
+      canRaiseAdditionalRequest: !!r.canRaiseAdditionalRequest,
     });
   };
 
@@ -4179,6 +4212,7 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false, ena
         isSoftManager:        editForm.isSoftManager,
         isTechnicalSupervisor:editForm.isTechnicalSupervisor,
         isTechnician:         editForm.isTechnician,
+        canRaiseAdditionalRequest: editForm.canRaiseAdditionalRequest,
       });
       const list = await getCompanyRoles(token);
       setRoles(list || []);
@@ -4205,6 +4239,7 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false, ena
         isSoftManager:       draftIsManager,
         isTechnicalSupervisor: draftIsTechSupervisor,
         isTechnician:          draftIsTechnician,
+        canRaiseAdditionalRequest: draftCanRaiseAdditional,
         companyId: myCompanies.length > 1 ? draftCompanyId : undefined,
       });
       const list = await getCompanyRoles(token);
@@ -4212,7 +4247,7 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false, ena
       onSaved(list || []);
       setDraftLabel(""); setDraftParent(""); setDraftColor("#2563eb"); setDraftCompanyId("");
       setDraftCanRaise(false); setDraftCanResolve(false); setDraftIsManager(false);
-      setDraftIsTechSupervisor(false); setDraftIsTechnician(false);
+      setDraftIsTechSupervisor(false); setDraftIsTechnician(false); setDraftCanRaiseAdditional(false);
     } catch (err) { setError(err.message || "Create failed"); }
     finally { setSaving(false); }
   };
@@ -4257,6 +4292,7 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false, ena
             { key: "canRaiseSoftIssue",   label: "Can raise issues (Client Supervisor)" },
             { key: "canResolveSoftIssue", label: "Can resolve issues (Catalyst Supervisor)" },
             { key: "isSoftManager",       label: "Manager view only (Client Manager)" },
+            { key: "canRaiseAdditionalRequest", label: "Can raise Additional Request" },
           ].map(({ key, label }) => (
             <label key={key} style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "#475569", cursor: "pointer" }}>
               <input type="checkbox" checked={!!form[key]} onChange={(e) => {
@@ -4404,14 +4440,14 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false, ena
           <Btn onClick={addRole} disabled={saving || !draftLabel.trim()}>Add</Btn>
         </div>
         <PermCheckboxes
-          form={{ canRaiseSoftIssue: draftCanRaise, canResolveSoftIssue: draftCanResolve, isSoftManager: draftIsManager, isTechnicalSupervisor: draftIsTechSupervisor, isTechnician: draftIsTechnician }}
+          form={{ canRaiseSoftIssue: draftCanRaise, canResolveSoftIssue: draftCanResolve, isSoftManager: draftIsManager, isTechnicalSupervisor: draftIsTechSupervisor, isTechnician: draftIsTechnician, canRaiseAdditionalRequest: draftCanRaiseAdditional }}
           setForm={(updater) => {
             const next = typeof updater === "function"
-              ? updater({ canRaiseSoftIssue: draftCanRaise, canResolveSoftIssue: draftCanResolve, isSoftManager: draftIsManager, isTechnicalSupervisor: draftIsTechSupervisor, isTechnician: draftIsTechnician })
+              ? updater({ canRaiseSoftIssue: draftCanRaise, canResolveSoftIssue: draftCanResolve, isSoftManager: draftIsManager, isTechnicalSupervisor: draftIsTechSupervisor, isTechnician: draftIsTechnician, canRaiseAdditionalRequest: draftCanRaiseAdditional })
               : updater;
             setDraftCanRaise(next.canRaiseSoftIssue); setDraftCanResolve(next.canResolveSoftIssue);
             setDraftIsManager(next.isSoftManager); setDraftIsTechSupervisor(next.isTechnicalSupervisor);
-            setDraftIsTechnician(next.isTechnician);
+            setDraftIsTechnician(next.isTechnician); setDraftCanRaiseAdditional(next.canRaiseAdditionalRequest ?? false);
           }}
         />
       </div>
@@ -5452,7 +5488,9 @@ export default function CompanyEmployeePortal() {
   const prevWOCount     = useRef(null);   // null = not yet initialised (suppress first-load sound)
   const prevAssignCount = useRef(null);   // null = not yet initialised
   const prevSoftCount   = useRef(null);   // null = not yet initialised (suppress first-load sound)
+  const prevAdditionalCount = useRef(null); // null = suppress first-load sound
   const [openSoftCount, setOpenSoftCount] = useState(0);
+  const [openAdditionalCount, setOpenAdditionalCount] = useState(0);
 
   // Modular alert sound hook — single shared AudioContext, throttled, localStorage preference
   const {
@@ -5534,6 +5572,8 @@ export default function CompanyEmployeePortal() {
   // Dashboard soft requests (visible to all roles that can raise soft requests)
   const [dashboardSoftRequests, setDashboardSoftRequests] = useState([]);
   const [dashboardSoftLoading, setDashboardSoftLoading]   = useState(false);
+  const [dashboardAdditionalRequests, setDashboardAdditionalRequests] = useState([]);
+  const [dashboardAdditionalLoading,  setDashboardAdditionalLoading]  = useState(false);
   const [departments, setDepartments] = useState([]);
   const [assetTypesList, setAssetTypesList] = useState([]);
   const [assets, setAssets] = useState([]);
@@ -5555,6 +5595,31 @@ export default function CompanyEmployeePortal() {
   const [shiftEmpError, setShiftEmpError] = useState({});
   const [addEmpInput, setAddEmpInput] = useState({});
   const [shiftSaving, setShiftSaving] = useState(false);
+  // Attendance module state
+  const [attDate,         setAttDate]         = useState(new Date().toISOString().slice(0, 10));
+  const [attSearch,       setAttSearch]       = useState('');
+  const [attRows,         setAttRows]         = useState([]);
+  const [attLoading,      setAttLoading]      = useState(false);
+  const [attSelected,     setAttSelected]     = useState(new Set());
+  const [bulkStatus,      setBulkStatus]      = useState('Present');
+  const [attExporting,    setAttExporting]    = useState(false);
+  const [attPending,      setAttPending]      = useState({}); // { employeeId: status }
+  const [attSubmitting,   setAttSubmitting]   = useState(false);
+  const [attShowReport,   setAttShowReport]   = useState(false);
+  const [attRepRows,      setAttRepRows]      = useState([]);
+  const [attRepLoading,   setAttRepLoading]   = useState(false);
+  const [attRepExporting, setAttRepExporting] = useState(false);
+  const [attRepPdfing,    setAttRepPdfing]    = useState(false);
+  const [attRepSelected,  setAttRepSelected]  = useState(new Set()); // {employeeId_date}
+  const [attRepBulkStatus, setAttRepBulkStatus] = useState('Present');
+  const [attRepEdits,     setAttRepEdits]     = useState({}); // {employeeId_date: status}
+  const [attRepMonth,     setAttRepMonth]     = useState(() => new Date().getMonth() + 1);
+  const [attRepYear,      setAttRepYear]      = useState(() => new Date().getFullYear());
+  const [attRepMode,      setAttRepMode]      = useState('month'); // 'month'|'range'
+  const [attRepStart,     setAttRepStart]     = useState('');
+  const [attRepEnd,       setAttRepEnd]       = useState('');
+  // Shift-wise attendance for dashboard card
+  const [shiftAttendance, setShiftAttendance] = useState([]);
   const [shiftForm, setShiftForm] = useState({ name: "", startTime: "", endTime: "", description: "", status: "active" });
   const [shiftFormError, setShiftFormError] = useState(null);
   const [directFillLogsheet, setDirectFillLogsheet] = useState(null);
@@ -5758,6 +5823,16 @@ export default function CompanyEmployeePortal() {
       .catch((e) => { setChartError(e?.message || "Failed to load chart data"); setChartStats(null); });
     // Refresh shift-wise site score for the selected date
     getShiftSiteScore(token, dashboardDate).then((d) => Array.isArray(d) && setShiftSiteScore(d)).catch(() => {});
+    // Refresh shift-wise attendance for the selected date
+    getShiftAttendance(token, dashboardDate).then((d) => Array.isArray(d) && setShiftAttendance(d)).catch(() => {});
+    // Refresh open additional request count for the selected date
+    if (currentUser?.role === 'admin') {
+      setDashboardAdditionalLoading(true);
+      getAdditionalRequestsAll(token, `status=open&date=${dashboardDate}`)
+        .then((r) => setDashboardAdditionalRequests(Array.isArray(r) ? r : []))
+        .catch(() => {})
+        .finally(() => setDashboardAdditionalLoading(false));
+    }
   }, [token, dashboardDate, currentUser?.role, isCustomRole]);
 
   // Re-fetch dashboard data whenever the user navigates back to the dashboard tab
@@ -5811,6 +5886,12 @@ export default function CompanyEmployeePortal() {
         .then((d) => setDashboardSoftRequests(Array.isArray(d) ? d.slice(0, 5) : []))
         .catch(() => {})
         .finally(() => setDashboardSoftLoading(false));
+      // Additional requests for current dashboard date
+      setDashboardAdditionalLoading(true);
+      getAdditionalRequestsAll(token, `status=open&date=${dashboardDate}`)
+        .then((r) => setDashboardAdditionalRequests(Array.isArray(r) ? r : []))
+        .catch(() => {})
+        .finally(() => setDashboardAdditionalLoading(false));
     } else if (currentUser?.role === "supervisor") {
       // Supervisor sees their own open soft requests
       setDashboardSoftLoading(true);
@@ -5899,8 +5980,8 @@ export default function CompanyEmployeePortal() {
         const prev     = prevWarnCount.current;
         prevWarnCount.current = newCount;
         setDashboardAlerts(res.data ?? []);
-        // Merge flag alerts, soft_request and checklist_reminder notifications into bell
-        const softNotifs = Array.isArray(notifRes) ? notifRes.filter(n => n.type === 'soft_request').slice(0, 3) : [];
+        // Merge flag alerts, soft_request, additional_request and checklist_reminder notifications into bell
+        const softNotifs = Array.isArray(notifRes) ? notifRes.filter(n => n.type === 'soft_request' || n.type === 'additional_request').slice(0, 3) : [];
         const checklistReminders = Array.isArray(notifRes) ? notifRes.filter(n => n.type === 'checklist_reminder' && !n.isRead).slice(0, 3) : [];
         const merged = [
           ...(res.data ?? []),
@@ -5945,13 +6026,31 @@ export default function CompanyEmployeePortal() {
           if (prevSoftCount.current !== null && newSoftCount > prevSoftCount.current) {
             const diff = newSoftCount - prevSoftCount.current;
             const newest = Array.isArray(srRes) ? srRes[0] : null;
-            const assetLabel = newest?.assetName || "an asset";
-            pushToast(`${diff} new soft request${diff > 1 ? "s" : ""} raised — ${assetLabel}`, "high");
+            const locLabel = newest?.locationName
+              ? `for location — '${newest.locationName}'`
+              : (newest?.assetName ? `for ${newest.assetName}` : 'for an item');
+            pushToast(`${diff} new HK request${diff > 1 ? "s" : ""} raised ${locLabel}`, "high");
             playAlertSound("high");
             ringBell();
           }
           prevSoftCount.current = newSoftCount;
           setOpenSoftCount(newSoftCount);
+          // Poll additional request open count and toast if enabled
+          try {
+            const arRes = await getAdditionalRequestsAll(token, "status=open");
+            const newArCount = Array.isArray(arRes) ? arRes.length : 0;
+            if (prevAdditionalCount.current !== null && newArCount > prevAdditionalCount.current &&
+                (!enabledModules || enabledModules.includes("additional-requests"))) {
+              const diff2 = newArCount - prevAdditionalCount.current;
+              const newestAr = Array.isArray(arRes) ? arRes[0] : null;
+              const arLabel = newestAr?.serviceName ? `— '${newestAr.serviceName}'` : '';
+              pushToast(`${diff2} new Additional Request${diff2 > 1 ? "s" : ""} raised ${arLabel}`, "high");
+              playAlertSound("high");
+              ringBell();
+            }
+            prevAdditionalCount.current = newArCount;
+            setOpenAdditionalCount(newArCount);
+          } catch { /* silent */ }
         } catch (_) { /* silent */ }
       }
     };
@@ -5966,8 +6065,8 @@ export default function CompanyEmployeePortal() {
       if (flagRes) {
         prevWarnCount.current = flagRes.total ?? 0;
         setDashboardAlerts(flagRes.data ?? []);
-        // Merge flag alerts, soft_request and checklist_reminder notifications into bell
-        const softNotifs = Array.isArray(notifRes) ? notifRes.filter(n => n.type === 'soft_request').slice(0, 3) : [];
+        // Merge flag alerts, soft_request, additional_request and checklist_reminder notifications into bell
+        const softNotifs = Array.isArray(notifRes) ? notifRes.filter(n => n.type === 'soft_request' || n.type === 'additional_request').slice(0, 3) : [];
         const checklistReminders = Array.isArray(notifRes) ? notifRes.filter(n => n.type === 'checklist_reminder' && !n.isRead).slice(0, 3) : [];
         const merged = [
           ...(flagRes.data ?? []),
@@ -5986,6 +6085,16 @@ export default function CompanyEmployeePortal() {
         const cnt = Array.isArray(srRes) ? srRes.length : (srRes?.total ?? 0);
         prevSoftCount.current = cnt;
         setOpenSoftCount(cnt);
+      }
+      // Seed additional request count on initial load
+      if (isAdmin) {
+        getAdditionalRequestsAll(token, "status=open")
+          .then(r => {
+            const cnt = Array.isArray(r) ? r.length : 0;
+            prevAdditionalCount.current = cnt;
+            setOpenAdditionalCount(cnt);
+          })
+          .catch(() => {});
       }
     }).catch(() => {});
 
@@ -6086,6 +6195,49 @@ export default function CompanyEmployeePortal() {
       if (!checklists.length) getCompanyPortalChecklists(token).then((d) => d && setChecklists(d)).catch(() => {});
     }
   }, [nav, token, load, assets.length, isAllCompaniesDashboard, moduleSiteFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Attendance data loader ──────────────────────────────────────────────────
+  useEffect(() => {
+    if (!token || nav !== "attendance") return;
+    setAttLoading(true);
+    setAttPending({});
+    setAttSelected(new Set());
+    const params = { date: attDate };
+    const scopedCid = isAllCompaniesDashboard ? (moduleSiteFilter === 'all' ? 'all' : moduleSiteFilter) : undefined;
+    if (scopedCid) params.companyId = scopedCid;
+    getAttendance(token, params)
+      .then(d => { if (Array.isArray(d)) { setAttRows(d); } })
+      .catch(() => {})
+      .finally(() => setAttLoading(false));
+  }, [nav, token, attDate, isAllCompaniesDashboard, moduleSiteFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reload attendance report whenever report filters change
+  useEffect(() => {
+    if (!token || nav !== 'attendance' || !attShowReport) return;
+    const scopedCid = isAllCompaniesDashboard ? (moduleSiteFilter === 'all' ? 'all' : moduleSiteFilter) : undefined;
+    setAttRepLoading(true);
+    const params = {};
+    if (scopedCid) params.companyId = scopedCid;
+    if (attRepMode === 'range' && attRepStart && attRepEnd) { params.startDate = attRepStart; params.endDate = attRepEnd; }
+    else { params.month = attRepMonth; params.year = attRepYear; }
+    getAttendance(token, params)
+      .then(d => { if (Array.isArray(d)) setAttRepRows(d.filter(r => r.recordExists)); })
+      .catch(() => {}).finally(() => setAttRepLoading(false));
+  }, [nav, token, attShowReport, attRepMode, attRepMonth, attRepYear, attRepStart, attRepEnd, isAllCompaniesDashboard, moduleSiteFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reload report when report filters change
+  useEffect(() => {
+    if (!token || nav !== 'attendance' || !attShowReport) return;
+    const companyIdScope = isAllCompaniesDashboard ? (moduleSiteFilter === 'all' ? 'all' : moduleSiteFilter) : undefined;
+    setAttRepLoading(true);
+    const params = {};
+    if (companyIdScope) params.companyId = companyIdScope;
+    if (attRepMode === 'range' && attRepStart && attRepEnd) { params.startDate = attRepStart; params.endDate = attRepEnd; }
+    else { params.month = attRepMonth; params.year = attRepYear; }
+    getAttendance(token, params)
+      .then(d => { if (Array.isArray(d)) setAttRepRows(d.filter(r => r.recordExists)); })
+      .catch(() => {}).finally(() => setAttRepLoading(false));
+  }, [nav, token, attShowReport, attRepMode, attRepMonth, attRepYear, attRepStart, attRepEnd, isAllCompaniesDashboard, moduleSiteFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Auto-refresh current page data every 60 seconds ──
   useEffect(() => {
@@ -7001,6 +7153,11 @@ export default function CompanyEmployeePortal() {
               {item.key === "softrequests" && openSoftCount > 0 && (
                 <span style={{ background: "#7c3aed", color: "#fff", borderRadius: "10px", fontSize: "10px", fontWeight: 800, padding: "1px 6px", minWidth: "18px", textAlign: "center", lineHeight: "16px" }}>
                   {openSoftCount > 99 ? "99+" : openSoftCount}
+                </span>
+              )}
+              {item.key === "additional-requests" && openAdditionalCount > 0 && (
+                <span style={{ background: "#7c3aed", color: "#fff", borderRadius: "10px", fontSize: "10px", fontWeight: 800, padding: "1px 6px", minWidth: "18px", textAlign: "center", lineHeight: "16px" }}>
+                  {openAdditionalCount > 99 ? "99+" : openAdditionalCount}
                 </span>
               )}
             </button>
@@ -8431,6 +8588,15 @@ export default function CompanyEmployeePortal() {
                       onClick={() => setNav("softrequests")}
                       icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>} />
                     )}
+                    {(!enabledModules || enabledModules.includes("additional-requests")) && (
+                    <StatCard label="Open Additional Requests" value={dashboardAdditionalRequests.length}
+                      sub={dashboardAdditionalRequests.length > 0 ? "Needs attention" : "All clear"}
+                      subCol={dashboardAdditionalRequests.length > 0 ? "#7c3aed" : "#22c55e"}
+                      iconBg={dashboardAdditionalRequests.length > 0 ? "#f3e8ff" : "#f0fdf4"}
+                      iconCol={dashboardAdditionalRequests.length > 0 ? "#7c3aed" : "#22c55e"}
+                      onClick={() => setNav("additional-requests")}
+                      icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>} />
+                    )}
                     {(!enabledModules || enabledModules.includes("warnings") || enabledModules.includes("flags")) && (
                     <StatCard label="Total Warnings" value={(dashboard.flags?.open || 0) + (dashboard.softRequestWarnings || 0)}
                       sub={`${dashboard.flags?.critical || 0} critical flags${dashboard.softRequestWarnings ? ` + ${dashboard.softRequestWarnings} escalated requests` : ""}`}
@@ -8773,6 +8939,53 @@ export default function CompanyEmployeePortal() {
                     );
                   })()}
 
+                  {/* Additional Requests panel card */}
+                  {currentUser?.role === "admin" && (!enabledModules || enabledModules.includes("additional-requests")) && (() => {
+                    return (
+                  <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+                      <div>
+                        <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", margin: 0 }}>Additional Requests</p>
+                        <p style={{ fontSize: "12px", color: "#94a3b8", margin: 0, marginTop: "2px" }}>Open requests raised on {new Date(dashboardDate + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}</p>
+                      </div>
+                    </div>
+                    {dashboardAdditionalLoading ? (
+                      <p style={{ color: "#94a3b8", fontSize: "13px", padding: "8px 0" }}>Loading…</p>
+                    ) : dashboardAdditionalRequests.length === 0 ? (
+                      <div style={{ padding: "24px", textAlign: "center", color: "#94a3b8", background: "#f8fafc", borderRadius: "8px", fontSize: "13px" }}>
+                        ✅ No open additional requests for this date
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                        {dashboardAdditionalRequests.map((ar) => (
+                          <div key={ar.id} style={{ display: "flex", alignItems: "flex-start", gap: "10px", padding: "10px 12px", borderRadius: "8px", border: "1px solid #f1f5f9", background: "#fafafa" }}>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "3px" }}>
+                                <span style={{ flexShrink: 0, padding: "2px 8px", borderRadius: "20px", fontSize: "10.5px", fontWeight: 700, background: ar.priority === "Critical" ? "#fee2e2" : ar.priority === "High" ? "#fff7ed" : ar.priority === "Moderate" ? "#fef3c7" : "#f0fdf4", color: ar.priority === "Critical" ? "#991b1b" : ar.priority === "High" ? "#c2410c" : ar.priority === "Moderate" ? "#92400e" : "#166534" }}>
+                                  {ar.priority || "Low"}
+                                </span>
+                                <p style={{ margin: 0, fontWeight: 700, fontSize: "12.5px", color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                  {ar.serviceName || `AR-${ar.id}`}
+                                </p>
+                              </div>
+                              <p style={{ margin: 0, fontSize: "11.5px", color: "#64748b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                {ar.requestNumber}{ar.raisedByName ? ` — by ${ar.raisedByName}` : ""}
+                              </p>
+                              <p style={{ margin: "3px 0 0", fontSize: "10.5px", color: "#94a3b8" }}>
+                                {ar.raisedAt ? new Date(ar.raisedAt).toLocaleString() : ""}
+                              </p>
+                            </div>
+                            <span style={{ flexShrink: 0, padding: "4px 10px", borderRadius: "6px", border: "1px solid #c4b5fd", background: "#f3e8ff", color: "#7c3aed", fontSize: "11.5px", fontWeight: 600 }}>
+                              Open
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                    );
+                  })()}
+
                   {/* Notifications quick-view */}
                   {currentUser?.role === "admin" && (
                   <DashboardNotificationsBox token={token} onViewAll={() => setNav("notifications")} filterDate={dashboardDate}
@@ -8871,6 +9084,39 @@ export default function CompanyEmployeePortal() {
                               <div>Total: <strong>{sh.total}</strong></div>
                               <div style={{ color: "#16a34a" }}>Filled: <strong>{sh.filled}</strong></div>
                               <div style={{ color: "#dc2626" }}>Pending: <strong>{sh.pending}</strong></div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Shift Wise Attendance ─────────────────────────────────── */}
+                {shiftAttendance.length > 0 && (!enabledModules || enabledModules.includes("attendance")) && (
+                  <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px", marginBottom: "20px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+                      <div>
+                        <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", margin: 0 }}>Shift Wise Attendance</p>
+                        <p style={{ fontSize: "12px", color: "#94a3b8", margin: 0, marginTop: "2px" }}>Data for {new Date(dashboardDate + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}</p>
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(shiftAttendance.length, 4)}, minmax(0, 1fr))`, gap: "12px" }}>
+                      {shiftAttendance.map(sh => {
+                        const fmtT = (t) => { if (!t) return '—'; const [h, m = '00'] = t.split(':'); const hh = parseInt(h); return `${hh % 12 || 12}:${String(m).padStart(2,'0')} ${hh >= 12 ? 'PM' : 'AM'}`; };
+                        const pctColor = sh.total > 0 ? (sh.present / sh.total >= 0.9 ? "#16a34a" : sh.present / sh.total >= 0.6 ? "#d97706" : "#dc2626") : "#94a3b8";
+                        return (
+                          <div key={sh.shiftId} style={{ border: "1px solid #e2e8f0", borderRadius: "12px", padding: "16px", textAlign: "center", background: "#fafafa" }}>
+                            <p style={{ fontWeight: 700, fontSize: "13px", color: "#0f172a", margin: "0 0 2px" }}>{sh.shiftName}</p>
+                            <p style={{ fontSize: "11px", color: "#94a3b8", margin: "0 0 10px" }}>{fmtT(sh.startTime)} – {fmtT(sh.endTime)}</p>
+                            <p style={{ fontSize: "26px", fontWeight: 800, color: pctColor, margin: "0 0 10px", lineHeight: 1 }}>
+                              {sh.total > 0 ? Math.round((sh.present / sh.total) * 100) : 0}%
+                            </p>
+                            <div style={{ background: "#f1f5f9", borderRadius: "6px", padding: "8px", fontSize: "11px", color: "#475569", lineHeight: 1.9 }}>
+                              <div>Total: <strong>{sh.total}</strong></div>
+                              <div style={{ color: "#16a34a" }}>Present: <strong>{sh.present}</strong></div>
+                              <div style={{ color: "#dc2626" }}>Absent: <strong>{sh.absent}</strong></div>
+                              {sh.other > 0 && <div style={{ color: "#d97706" }}>Other: <strong>{sh.other}</strong></div>}
                             </div>
                           </div>
                         );
@@ -9393,6 +9639,17 @@ export default function CompanyEmployeePortal() {
 
         {/* ── Soft Service Requests ─────────────────────────────── */}
         {nav === "softrequests" && <SoftRequestsPanel token={token} currentUser={currentUser} allCompanies={isAllCompaniesDashboard && moduleSiteFilter === "all"} />}
+
+        {/* ── Additional Requests ───────────────────────────────── */}
+        {nav === "additional-requests" && (
+          <AdditionalRequestsPanel
+            token={token}
+            currentUser={currentUser}
+            allCompanies={isAllCompaniesDashboard && moduleSiteFilter === "all"}
+            companyId={isAllCompaniesDashboard && moduleSiteFilter !== "all" ? moduleSiteFilter : currentUser.companyId}
+            onCountChange={(cnt) => setOpenAdditionalCount(cnt)}
+          />
+        )}
 
         {/* ── Locations ─────────────────────────────────────────── */}
         {nav === "locations" && (() => {
@@ -10274,6 +10531,256 @@ export default function CompanyEmployeePortal() {
         {nav === "asset-types" && (
           <AssetTypesPanel token={token} onLayoutSaved={() => getCompanyPortalAssetTypes(token).then(d => d && setAssetTypesList(d)).catch(() => {})} />
         )}
+
+        {/* ── Attendance ────────────────────────────────────────── */}
+        {nav === "attendance" && (() => {
+          const STATUSES = ['Present', 'Absent', 'Half Day', 'Leave', 'Week Off', 'Holiday'];
+          const STATUS_META = {
+            'Present':  { color: '#16a34a', bg: '#dcfce7', dot: '✅' },
+            'Absent':   { color: '#dc2626', bg: '#fee2e2', dot: '❌' },
+            'Half Day': { color: '#d97706', bg: '#fef3c7', dot: '🟡' },
+            'Leave':    { color: '#16a34a', bg: '#f0fdf4', dot: '🟢' },
+            'Week Off': { color: '#2563eb', bg: '#eff6ff', dot: '🔵' },
+            'Holiday':  { color: '#ea580c', bg: '#fff7ed', dot: '🟠' },
+          };
+          const effectiveCompanyId = isAllCompaniesDashboard ? (moduleSiteFilter === 'all' ? 'all' : moduleSiteFilter) : undefined;
+          const today = new Date().toISOString().slice(0, 10);
+          const isFutureDate = attDate > today;
+
+          const reloadAtt = () => {
+            setAttLoading(true);
+            setAttPending({});
+            const params = { date: attDate };
+            if (effectiveCompanyId) params.companyId = effectiveCompanyId;
+            getAttendance(token, params)
+              .then(d => { if (Array.isArray(d)) { setAttRows(d); setAttSelected(new Set()); } })
+              .catch(() => {}).finally(() => setAttLoading(false));
+          };
+
+          const handleSubmit = async () => {
+            const records = Object.entries(attPending).map(([employeeId, status]) => ({ employeeId: Number(employeeId), status }));
+            if (!records.length) return;
+            if (isFutureDate) { alert('Cannot mark attendance for future dates.'); return; }
+            setAttSubmitting(true);
+            try { await submitAttendanceRecords(token, { date: attDate, records }); reloadAtt(); }
+            catch (e) { alert(e.message || 'Submit failed'); }
+            finally { setAttSubmitting(false); }
+          };
+
+          const reloadReport = () => {
+            setAttRepLoading(true);
+            setAttRepSelected(new Set());
+            setAttRepEdits({});
+            const params = {};
+            if (effectiveCompanyId) params.companyId = effectiveCompanyId;
+            if (attRepMode === 'range' && attRepStart && attRepEnd) { params.startDate = attRepStart; params.endDate = attRepEnd; }
+            else { params.month = attRepMonth; params.year = attRepYear; }
+            getAttendance(token, params)
+              .then(d => { if (Array.isArray(d)) setAttRepRows(d.filter(r => r.recordExists)); })
+              .catch(() => {}).finally(() => setAttRepLoading(false));
+          };
+
+          const displayRows = attRows.map(r => ({ ...r, status: attPending[r.employeeId] !== undefined ? attPending[r.employeeId] : r.status }));
+          const filtered = displayRows.filter(r => {
+            const q = attSearch.toLowerCase();
+            return !q || r.fullName.toLowerCase().includes(q) || (r.employeeCode || '').toLowerCase().includes(q) || r.status.toLowerCase().includes(q) || (r.shiftNames || '').toLowerCase().includes(q);
+          });
+          const allSelected = filtered.length > 0 && filtered.every(r => attSelected.has(r.employeeId));
+          const hasPending = Object.keys(attPending).length > 0;
+
+          const repFiltered = attRepRows.filter(r => {
+            const q = attSearch.toLowerCase();
+            return !q || r.fullName.toLowerCase().includes(q) || (r.employeeCode || '').toLowerCase().includes(q) || r.status.toLowerCase().includes(q) || (r.shiftNames || '').toLowerCase().includes(q) || (r.date || '').includes(q);
+          });
+
+          return (
+            <div>
+            {attShowReport ? (
+              <div key="att-report">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '20px', flexWrap: 'wrap' }}>
+                  <button onClick={() => setAttShowReport(false)} style={{ padding: '7px 14px', border: '1px solid #e2e8f0', background: '#fff', color: '#475569', borderRadius: '8px', fontWeight: 600, fontSize: '13px', cursor: 'pointer' }}>← Back</button>
+                  <div><h2 style={{ fontSize: '20px', fontWeight: 800, color: '#0f172a', margin: 0 }}>Attendance Report</h2><p style={{ fontSize: '13px', color: '#64748b', marginTop: '2px' }}>Historical submitted records</p></div>
+                  <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}>
+                    <button onClick={() => { const params = {}; if (effectiveCompanyId) params.companyId = effectiveCompanyId; if (attRepMode === 'range' && attRepStart && attRepEnd) { params.startDate = attRepStart; params.endDate = attRepEnd; } else { params.month = attRepMonth; params.year = attRepYear; } params.recordsOnly = '1'; setAttRepExporting(true); downloadAttendanceExport(token, params).catch(e => alert(e?.message || 'Export failed')).finally(() => setAttRepExporting(false)); }} disabled={attRepExporting} style={{ padding: '7px 14px', background: '#0f172a', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 600, fontSize: '13px', cursor: attRepExporting ? 'not-allowed' : 'pointer', opacity: attRepExporting ? 0.7 : 1 }}>{attRepExporting ? 'Exporting…' : 'Export Excel'}</button>
+                    <button onClick={() => { const params = {}; if (effectiveCompanyId) params.companyId = effectiveCompanyId; if (attRepMode === 'range' && attRepStart && attRepEnd) { params.startDate = attRepStart; params.endDate = attRepEnd; } else { params.month = attRepMonth; params.year = attRepYear; } params.recordsOnly = '1'; setAttRepPdfing(true); downloadAttendancePdf(token, params).catch(e => alert(e?.message || 'PDF export failed')).finally(() => setAttRepPdfing(false)); }} disabled={attRepPdfing} style={{ padding: '7px 14px', background: '#dc2626', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 600, fontSize: '13px', cursor: attRepPdfing ? 'not-allowed' : 'pointer', opacity: attRepPdfing ? 0.7 : 1 }}>{attRepPdfing ? 'Generating…' : 'Export PDF'}</button>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: '10px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'center', background: '#f8fafc', padding: '12px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+                  <select value={attRepMode} onChange={e => setAttRepMode(e.target.value)} style={{ padding: '7px 10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px' }}>
+                    <option value="month">Month</option><option value="range">Date Range</option>
+                  </select>
+                  {attRepMode === 'month' ? (
+                    <>
+                      <select value={attRepMonth} onChange={e => setAttRepMonth(Number(e.target.value))} style={{ padding: '7px 10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px' }}>
+                        {['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].map((m, i) => <option key={i+1} value={i+1}>{m}</option>)}
+                      </select>
+                      <select value={attRepYear} onChange={e => setAttRepYear(Number(e.target.value))} style={{ padding: '7px 10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px' }}>
+                        {[0,1,2].map(o => { const y = new Date().getFullYear() - o; return <option key={y} value={y}>{y}</option>; })}
+                      </select>
+                    </>
+                  ) : (
+                    <>
+                      <input type="date" value={attRepStart} max={today} onChange={e => setAttRepStart(e.target.value)} style={{ padding: '7px 10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px' }} />
+                      <span style={{ color: '#94a3b8' }}>to</span>
+                      <input type="date" value={attRepEnd} max={today} onChange={e => setAttRepEnd(e.target.value)} style={{ padding: '7px 10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px' }} />
+                    </>
+                  )}
+                  <div style={{ position: 'relative', marginLeft: 'auto' }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2" style={{ position: 'absolute', left: '9px', top: '50%', transform: 'translateY(-50%)' }}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                    <input value={attSearch} onChange={e => setAttSearch(e.target.value)} placeholder="Search…" style={{ padding: '7px 10px 7px 30px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', outline: 'none', width: '180px' }} />
+                  </div>
+                </div>
+                {/* Bulk action bar */}
+                {attRepSelected.size > 0 && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px', padding: '8px 14px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '13px', fontWeight: 600, color: '#1d4ed8' }}>{attRepSelected.size} selected</span>
+                    <select value={attRepBulkStatus} onChange={e => setAttRepBulkStatus(e.target.value)} style={{ padding: '4px 8px', borderRadius: '6px', border: '1px solid #bfdbfe', fontSize: '13px', background: '#fff' }}>
+                      {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                    <button onClick={async () => {
+                      const upds = [...attRepSelected].map(k => { const [eid, d] = k.split('__'); return { employeeId: Number(eid), status: attRepBulkStatus, date: d }; });
+                      try { await submitAttendanceRecords(token, { date: upds[0]?.date, records: upds.map(u => ({ employeeId: u.employeeId, status: u.status })) }); reloadReport(); setAttRepSelected(new Set()); setAttRepEdits({}); } catch (e) { alert(e.message || 'Update failed'); }
+                    }} style={{ padding: '5px 12px', background: '#2563eb', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 700, fontSize: '12.5px', cursor: 'pointer' }}>Bulk Update</button>
+                    <button onClick={async () => {
+                      if (!window.confirm(`Delete ${attRepSelected.size} record(s)?`)) return;
+                      const recs = [...attRepSelected].map(k => { const [eid, d] = k.split('__'); return { employeeId: Number(eid), date: d }; });
+                      try { await bulkDeleteAttendanceRecords(token, recs); reloadReport(); setAttRepSelected(new Set()); } catch (e) { alert(e.message || 'Delete failed'); }
+                    }} style={{ padding: '5px 12px', background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: '6px', fontWeight: 700, fontSize: '12.5px', cursor: 'pointer' }}>Bulk Delete</button>
+                    <button onClick={() => setAttRepSelected(new Set())} style={{ padding: '5px 10px', background: '#f1f5f9', color: '#64748b', border: 'none', borderRadius: '6px', fontSize: '12.5px', cursor: 'pointer' }}>Clear</button>
+                  </div>
+                )}
+                <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: '12px', overflow: 'hidden' }}>
+                  {attRepLoading ? <div style={{ padding: '40px', textAlign: 'center', color: '#94a3b8' }}>Loading…</div> : repFiltered.length === 0 ? (
+                    <div style={{ padding: '40px', textAlign: 'center', color: '#94a3b8' }}>No submitted records for this period.</div>
+                  ) : (
+                    <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead><tr style={{ background: '#f8fafc' }}>
+                        <th style={{ padding: '11px 12px', width: '36px' }}>
+                          <input type="checkbox" checked={repFiltered.length > 0 && repFiltered.every(r => attRepSelected.has(`${r.employeeId}__${r.date}`))} onChange={e => { if (e.target.checked) setAttRepSelected(new Set(repFiltered.map(r => `${r.employeeId}__${r.date}`))); else setAttRepSelected(new Set()); }} style={{ accentColor: '#2563eb', cursor: 'pointer' }} />
+                        </th>
+                        {[...(isAllCompaniesDashboard && moduleSiteFilter === 'all' ? ['COMPANY'] : []),'EMP ID','EMP NAME','EMP SHIFT','DATE','STATUS','ACTIONS'].map(h => <th key={h} style={{ padding: '11px 12px', fontSize: '11.5px', fontWeight: 700, color: '#64748b', textAlign: 'left', whiteSpace: 'nowrap', borderBottom: '1px solid #e2e8f0' }}>{h}</th>)}
+                      </tr></thead>
+                      <tbody>{repFiltered.map((row, idx) => {
+                        const rowKey = `${row.employeeId}__${row.date}`;
+                        const editStatus = attRepEdits[rowKey];
+                        const displayStatus = editStatus ?? row.status;
+                        const meta = STATUS_META[displayStatus] || STATUS_META['Present'];
+                        const isChecked = attRepSelected.has(rowKey);
+                        return (
+                          <tr key={idx} style={{ borderTop: '1px solid #f1f5f9', background: isChecked ? '#f0f9ff' : editStatus ? '#fffbeb' : undefined }}>
+                            <td style={{ padding: '11px 12px' }}><input type="checkbox" checked={isChecked} onChange={() => setAttRepSelected(p => { const n = new Set(p); if (isChecked) n.delete(rowKey); else n.add(rowKey); return n; })} style={{ accentColor: '#2563eb', cursor: 'pointer' }} /></td>
+                            {isAllCompaniesDashboard && moduleSiteFilter === 'all' && <td style={{ padding: '11px 12px', fontSize: '11.5px', color: '#7c3aed', fontWeight: 600, whiteSpace: 'nowrap' }}>{row.companyName || '—'}</td>}
+                            <td style={{ padding: '11px 12px', fontSize: '12.5px', color: '#64748b', fontWeight: 600 }}>{row.employeeCode || '—'}</td>
+                            <td style={{ padding: '11px 12px', fontSize: '13px', fontWeight: 600, color: '#0f172a' }}>{row.fullName}</td>
+                            <td style={{ padding: '11px 12px', fontSize: '12px', color: '#475569' }}>{row.shiftNames || '—'}</td>
+                            <td style={{ padding: '11px 12px', fontSize: '12.5px', color: '#475569', whiteSpace: 'nowrap' }}>{row.date}</td>
+                            <td style={{ padding: '11px 12px' }}>
+                              <select value={displayStatus} onChange={e => setAttRepEdits(p => ({ ...p, [rowKey]: e.target.value }))}
+                                style={{ padding: '4px 8px', borderRadius: '7px', fontSize: '12px', fontWeight: 600, outline: 'none', border: `1.5px solid ${editStatus ? '#f59e0b' : meta.color + '30'}`, background: meta.bg, color: meta.color, cursor: 'pointer' }}>
+                                {STATUSES.map(s => <option key={s} value={s}>{STATUS_META[s]?.dot || ''} {s}</option>)}
+                              </select>
+                            </td>
+                            <td style={{ padding: '11px 12px', whiteSpace: 'nowrap' }}>
+                              <div style={{ display: 'flex', gap: '6px' }}>
+                                {editStatus && (
+                                  <button onClick={async () => {
+                                    try { await submitAttendanceRecords(token, { date: row.date, records: [{ employeeId: row.employeeId, status: editStatus }] }); setAttRepEdits(p => { const n = { ...p }; delete n[rowKey]; return n; }); reloadReport(); } catch (e) { alert(e.message || 'Save failed'); }
+                                  }} style={{ padding: '4px 10px', background: '#2563eb', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 700, fontSize: '12px', cursor: 'pointer' }}>Save</button>
+                                )}
+                                <button onClick={async () => {
+                                  if (!window.confirm('Delete this record?')) return;
+                                  try { await deleteAttendanceRecord(token, row.employeeId, row.date); setAttRepEdits(p => { const n = { ...p }; delete n[rowKey]; return n; }); reloadReport(); } catch (e) { alert(e.message || 'Delete failed'); }
+                                }} style={{ padding: '4px 10px', background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: '6px', fontWeight: 700, fontSize: '12px', cursor: 'pointer' }}>Delete</button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}</tbody>
+                    </table></div>
+                  )}
+                </div>
+                {!attRepLoading && repFiltered.length > 0 && <p style={{ marginTop: '8px', fontSize: '12px', color: '#94a3b8', textAlign: 'right' }}>{repFiltered.length} records</p>}
+              </div>
+            ) : (
+            <div key="att-main">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '22px', flexWrap: 'wrap', gap: '12px' }}>
+                <div>
+                  <h1 style={{ fontSize: '24px', fontWeight: 800, color: '#0f172a', letterSpacing: '-0.5px', marginBottom: '4px' }}>Attendance</h1>
+                  <p style={{ color: '#64748b', fontSize: '13.5px', margin: 0 }}>Daily attendance for {currentUser.companyName} · {attDate}</p>
+                </div>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <input type="date" value={attDate} max={today} onChange={e => { setAttDate(e.target.value); setAttPending({}); }} style={{ padding: '8px 10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', cursor: 'pointer', outline: 'none' }} />
+                  {isFutureDate && <span style={{ fontSize: '12px', color: '#dc2626', fontWeight: 600 }}>⚠ Future date — disabled</span>}
+                  <Btn outline color="#64748b" onClick={() => { setAttShowReport(true); reloadReport(); }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>
+                    Report
+                  </Btn>
+                  <Btn onClick={handleSubmit} disabled={attSubmitting || !hasPending || isFutureDate} color={hasPending && !isFutureDate ? '#2563eb' : '#94a3b8'}>
+                    {attSubmitting ? 'Saving…' : hasPending ? `Submit (${Object.keys(attPending).length})` : 'Submit'}
+                  </Btn>
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '14px', marginBottom: '22px' }}>
+                <StatCard label="Total Eligible" value={attRows.length} sub="employees" iconBg="#eff6ff" iconCol="#2563eb" icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>} />
+                <StatCard label="Present" value={displayRows.filter(r => r.status === 'Present').length} subCol="#16a34a" sub="✓ on time" iconBg="#f0fdf4" iconCol="#22c55e" icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12"/></svg>} />
+                <StatCard label="Absent" value={displayRows.filter(r => r.status === 'Absent').length} subCol={displayRows.filter(r => r.status === 'Absent').length > 0 ? '#dc2626' : '#16a34a'} sub={displayRows.filter(r => r.status === 'Absent').length > 0 ? 'needs attention' : 'none absent'} iconBg="#fef2f2" iconCol="#dc2626" icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>} />
+                <StatCard label="Leave / Other" value={displayRows.filter(r => r.status !== 'Present' && r.status !== 'Absent').length} sub="half day · leave · holiday" iconBg="#fff7ed" iconCol="#ea580c" icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>} />
+              </div>
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: hasPending ? '8px' : '14px', flexWrap: 'wrap' }}>
+                <div style={{ position: 'relative', flex: '1', minWidth: '220px' }}>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2" style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                  <input value={attSearch} onChange={e => setAttSearch(e.target.value)} placeholder="Search by name, ID, shift or status…" style={{ width: '100%', padding: '8px 10px 8px 32px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', outline: 'none', boxSizing: 'border-box' }} />
+                </div>
+                {attSelected.size > 0 && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px' }}>
+                    <span style={{ fontSize: '13px', fontWeight: 600, color: '#1d4ed8' }}>{attSelected.size} selected</span>
+                    <select value={bulkStatus} onChange={e => setBulkStatus(e.target.value)} style={{ padding: '4px 8px', borderRadius: '6px', border: '1px solid #bfdbfe', fontSize: '13px', background: '#fff' }}>{STATUSES.map(s => <option key={s} value={s}>{s}</option>)}</select>
+                    <button onClick={() => { const upd = {}; for (const id of attSelected) upd[id] = bulkStatus; setAttPending(p => ({ ...p, ...upd })); setAttSelected(new Set()); }} style={{ padding: '5px 12px', background: '#2563eb', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 700, fontSize: '12.5px', cursor: 'pointer' }}>Apply</button>
+                    <button onClick={() => setAttSelected(new Set())} style={{ padding: '5px 10px', background: '#f1f5f9', color: '#64748b', border: 'none', borderRadius: '6px', fontSize: '12.5px', cursor: 'pointer' }}>Clear</button>
+                  </div>
+                )}
+
+              </div>
+              {hasPending && <div style={{ marginBottom: '14px', padding: '10px 16px', background: '#fef9c3', border: '1px solid #fde68a', borderRadius: '8px', fontSize: '13px', color: '#92400e', display: 'flex', alignItems: 'center', gap: '8px' }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span><strong>{Object.keys(attPending).length} unsaved change{Object.keys(attPending).length !== 1 ? 's' : ''}</strong> — click <strong>Submit</strong> to save.</span></div>}
+              <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: '12px', overflow: 'hidden' }}>
+                {attLoading ? <div style={{ padding: '40px', textAlign: 'center', color: '#94a3b8', fontSize: '14px' }}>Loading attendance…</div> : filtered.length === 0 ? <div style={{ padding: '40px', textAlign: 'center', color: '#94a3b8', fontSize: '14px' }}>{attRows.length === 0 ? 'No eligible employees found.' : 'No results match your search.'}</div> : (
+                  <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead><tr style={{ background: '#f8fafc' }}>
+                      <th style={{ padding: '12px 14px', width: '36px' }}><input type="checkbox" checked={allSelected} onChange={() => { if (allSelected) setAttSelected(new Set()); else setAttSelected(new Set(filtered.map(r => r.employeeId))); }} style={{ accentColor: '#2563eb', cursor: 'pointer' }} /></th>
+                      {['SR. NO','EMP ID','EMP NAME','EMP SHIFT','STATUS'].map(h => <th key={h} style={{ padding: '12px 10px', fontSize: '11.5px', fontWeight: 700, color: '#64748b', textAlign: 'left', whiteSpace: 'nowrap', borderBottom: '1px solid #e2e8f0' }}>{h}</th>)}
+                    </tr></thead>
+                    <tbody>{filtered.map((row, idx) => {
+                      const meta = STATUS_META[row.status] || STATUS_META['Present'];
+                      const checked = attSelected.has(row.employeeId);
+                      const isDirty = attPending[row.employeeId] !== undefined;
+                      return (
+                        <tr key={`${row.employeeId}_${row.date}`} style={{ borderTop: '1px solid #f1f5f9', background: checked ? '#f0f9ff' : isDirty ? '#fffbeb' : undefined, borderLeft: isDirty ? '3px solid #f59e0b' : '3px solid transparent' }}>
+                          <td style={{ padding: '12px 14px' }}><input type="checkbox" checked={checked} onChange={() => setAttSelected(p => { const n = new Set(p); if (checked) n.delete(row.employeeId); else n.add(row.employeeId); return n; })} style={{ accentColor: '#2563eb', cursor: 'pointer' }} /></td>
+                          <td style={{ padding: '12px 10px', fontSize: '13px', color: '#94a3b8', fontWeight: 600 }}>{idx + 1}</td>
+                          <td style={{ padding: '12px 10px', fontSize: '12.5px', color: '#64748b', fontWeight: 600, whiteSpace: 'nowrap' }}>{row.employeeCode || '—'}</td>
+                          <td style={{ padding: '12px 10px', minWidth: '140px' }}>
+                            <div style={{ fontWeight: 600, fontSize: '13.5px', color: '#0f172a' }}>{row.fullName}</div>
+                            {row.designation && <div style={{ fontSize: '11.5px', color: '#94a3b8', marginTop: '2px' }}>{row.designation}</div>}
+                          </td>
+                          <td style={{ padding: '12px 10px', fontSize: '12px', color: '#475569', whiteSpace: 'nowrap' }}>{row.shiftNames || '—'}</td>
+                          <td style={{ padding: '12px 10px' }}>
+                            <select value={row.status} disabled={isFutureDate} onChange={e => setAttPending(p => ({ ...p, [row.employeeId]: e.target.value }))}
+                              style={{ padding: '6px 10px', borderRadius: '8px', fontSize: '13px', fontWeight: 600, cursor: isFutureDate ? 'not-allowed' : 'pointer', outline: 'none', border: `1.5px solid ${isDirty ? '#f59e0b' : meta.color + '30'}`, background: meta.bg, color: meta.color }}>
+                              {STATUSES.map(s => <option key={s} value={s}>{STATUS_META[s]?.dot || ''} {s}</option>)}
+                            </select>
+                          </td>
+                        </tr>
+                      );
+                    })}</tbody>
+                  </table></div>
+                )}
+              </div>
+              {!attLoading && filtered.length > 0 && <p style={{ marginTop: '10px', fontSize: '12px', color: '#94a3b8', textAlign: 'right' }}>{filtered.length} employee{filtered.length !== 1 ? 's' : ''} · {attDate}</p>}
+            </div>
+            )}
+            </div>
+          );
+        })()}
 
         {/* ── Shifts ────────────────────────────────────────────── */}
         {nav === "shifts" && (() => {

@@ -81,7 +81,7 @@ export interface SoftRequest {
   templateId:      number;
   templateType:    string;
   templateName?:   string;
-  status:          'open' | 'resolved';
+  status:          'open' | 'acknowledged' | 'in_progress' | 'closed' | 'resolved';
   raisedAt:        string;
   raisedByName?:   string;
   resolvedAt?:     string;
@@ -535,6 +535,10 @@ export async function getSoftRequestById(id: number): Promise<SoftRequest> {
   return apiGet<SoftRequest>(`/api/soft-service/requests/${id}`);
 }
 
+export async function updateSoftRequestStatus(id: number, status: string): Promise<unknown> {
+  return apiPut<unknown>(`/api/soft-service/requests/${id}/status`, { status });
+}
+
 export async function resolveSoftRequest(id: number, resolveSubmissionId?: number): Promise<unknown> {
   return apiPut<unknown>(`/api/soft-service/requests/${id}/resolve`, { resolveSubmissionId });
 }
@@ -542,6 +546,35 @@ export async function resolveSoftRequest(id: number, resolveSubmissionId?: numbe
 // ─── Notifications ────────────────────────────────────────────────────────────
 export async function fetchNotifications() {
   return apiGet<unknown[]>('/api/notifications');
+}
+
+// ─── Additional Requests ─────────────────────────────────────────────────────
+export interface AdditionalRequestService { id: number; name: string; }
+
+export async function fetchAdditionalRequestServices(): Promise<AdditionalRequestService[]> {
+  return apiGet<AdditionalRequestService[]>('/api/additional-requests/services');
+}
+
+export async function raiseAdditionalRequest(payload: {
+  serviceId: number;
+  priority: string;
+  remark: string;
+}): Promise<unknown> {
+  return apiPost<unknown>('/api/additional-requests/requests', payload);
+}
+
+// ─── Attendance ───────────────────────────────────────────────────────────────
+export interface AttendanceEmployee {
+  employeeId: number; fullName: string; employeeCode: string; shiftNames: string; status: string; recordExists: boolean;
+}
+
+export async function fetchAttendanceToday(): Promise<AttendanceEmployee[]> {
+  const today = new Date().toISOString().slice(0, 10);
+  return apiGet<AttendanceEmployee[]>(`/api/company-portal/attendance?date=${today}`);
+}
+
+export async function submitAttendance(date: string, records: { employeeId: number; status: string }[]): Promise<unknown> {
+  return apiPut<unknown>('/api/company-portal/attendance/submit', { date, records });
 }
 
 export async function fetchNotificationCount(): Promise<{ count: number }> {

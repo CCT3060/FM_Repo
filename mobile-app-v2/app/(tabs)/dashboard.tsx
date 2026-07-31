@@ -95,6 +95,7 @@ export default function DashboardScreen() {
   const { theme }  = useTheme();
   const { user, capabilities }   = useAuth();
   const showSoft = hasSoftAccess(capabilities);
+  const showAdditional = !!(capabilities?.canRaiseAdditionalRequest);
   const [score,      setScore]      = useState<SiteScore | null>(null);
   const [loading,    setLoading]    = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -288,6 +289,7 @@ const styles = StyleSheet.create({
   statCard:     { flex: 1, borderRadius: Radius.lg, padding: Spacing.md, alignItems: 'center', gap: 4, borderWidth: 1 },
   statIcon:     { width: 36, height: 36, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
   statValue:    { fontSize: 20, fontWeight: '700' },
+  additionalCard: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, borderRadius: Radius.xl, padding: Spacing.lg, borderWidth: 1 },
   statLabel:    { fontSize: 10, textAlign: 'center' },
 
   alertBanner:  { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, padding: Spacing.md, borderRadius: Radius.lg, borderWidth: 1 },
