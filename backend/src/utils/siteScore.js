@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Phase 4 + Task 2 — Location-based, shift-window-scoped site score engine.
  *
  * Option B: locations with no shift assigned fall back to full-day assumption.
@@ -143,6 +143,8 @@ export async function computeSiteScore(companyId, targetDate) {
         )
         AND cs.location_id IS NOT NULL AND cs.status NOT IN ('rejected')
         AND COALESCE(cs.is_soft_raise, FALSE) = FALSE
+        AND COALESCE(cs.is_soft_resolve, FALSE) = FALSE
+        AND NOT EXISTS (SELECT 1 FROM soft_service_requests ssr WHERE ssr.resolve_submission_id = cs.id)
         AND COALESCE(ct.status,'active') != 'inactive'
         ${SHIFT_WINDOW_FILTER}
       GROUP BY cs.location_id, cs.template_id`, [companyId, targetDate, targetDate]);
@@ -154,6 +156,8 @@ export async function computeSiteScore(companyId, targetDate) {
       WHERE ct.company_id = ? AND cs.submitted_at::date = ?::date
         AND cs.location_id IS NULL AND cs.status NOT IN ('rejected')
         AND COALESCE(cs.is_soft_raise, FALSE) = FALSE
+        AND COALESCE(cs.is_soft_resolve, FALSE) = FALSE
+        AND NOT EXISTS (SELECT 1 FROM soft_service_requests ssr WHERE ssr.resolve_submission_id = cs.id)
         AND COALESCE(ct.status,'active') != 'inactive'
         AND (LOWER(COALESCE(ct.frequency,'daily')) != 'hourly' OR ct.start_time IS NULL OR ct.end_time IS NULL OR
              ((EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at)) >= (EXTRACT(HOUR FROM ct.start_time::time)*60+EXTRACT(MINUTE FROM ct.start_time::time))
@@ -227,6 +231,8 @@ export async function computeSiteScoreRange(companyId, dates) {
       WHERE ct.company_id = ? AND cs.submitted_at::date BETWEEN ?::date AND (?::date + INTERVAL '1 day')::date
         AND cs.location_id IS NOT NULL AND cs.status NOT IN ('rejected')
         AND COALESCE(cs.is_soft_raise, FALSE) = FALSE
+        AND COALESCE(cs.is_soft_resolve, FALSE) = FALSE
+        AND NOT EXISTS (SELECT 1 FROM soft_service_requests ssr WHERE ssr.resolve_submission_id = cs.id)
         AND COALESCE(ct.status,'active') != 'inactive'
         ${SHIFT_WINDOW_FILTER}
       GROUP BY cs.location_id, cs.template_id, date`, [companyId, startDate, endDate]);
@@ -238,6 +244,8 @@ export async function computeSiteScoreRange(companyId, dates) {
       WHERE ct.company_id = ? AND cs.submitted_at::date BETWEEN ?::date AND ?::date
         AND cs.location_id IS NULL AND cs.status NOT IN ('rejected')
         AND COALESCE(cs.is_soft_raise, FALSE) = FALSE
+        AND COALESCE(cs.is_soft_resolve, FALSE) = FALSE
+        AND NOT EXISTS (SELECT 1 FROM soft_service_requests ssr WHERE ssr.resolve_submission_id = cs.id)
         AND COALESCE(ct.status,'active') != 'inactive'
         AND (LOWER(COALESCE(ct.frequency,'daily')) != 'hourly' OR ct.start_time IS NULL OR ct.end_time IS NULL OR
              ((EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at)) >= (EXTRACT(HOUR FROM ct.start_time::time)*60+EXTRACT(MINUTE FROM ct.start_time::time))

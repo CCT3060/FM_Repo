@@ -121,15 +121,15 @@ export default function LoginScreen() {
           {/* ─── Form card ───────────────────────────────────────── */}
           <View style={[styles.card, { backgroundColor: theme.surface, shadowColor: theme.cardShadow, width: CARD_MAX }]}>
 
-            {/* Employee ID */}
-            <Text style={[styles.label, { color: theme.textSecondary }]}>Employee ID</Text>
+            {/* Username */}
+            <Text style={[styles.label, { color: theme.textSecondary }]}>Username</Text>
             <View style={[styles.inputWrap, { backgroundColor: theme.inputBg, borderColor: theme.inputBorder }]}>
               <MaterialCommunityIcons name="account-outline" size={20} color={theme.textMuted} style={styles.inputIcon} />
               <TextInput
                 style={[styles.input, { color: theme.inputText }]}
                 value={employeeId}
                 onChangeText={setEmployeeId}
-                placeholder="Enter your ID"
+                placeholder="Enter your Username"
                 placeholderTextColor={theme.inputPlaceholder}
                 autoCapitalize="none"
                 autoCorrect={false}

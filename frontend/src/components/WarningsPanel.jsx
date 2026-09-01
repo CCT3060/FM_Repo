@@ -1,5 +1,6 @@
-﻿import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { getApiBaseUrl } from "../utils/runtimeConfig";
+import { confirmDeleteAction } from "../pages/CompanyEmployeePortal.jsx";
 
 const BASE = getApiBaseUrl();
 
@@ -31,8 +32,8 @@ const STATUS_STYLES = {
 const SOURCE_LABELS = { checklist: "Checklist", logsheet: "Logsheet", manual: "Manual" };
 const SEVERITY_SORT = { critical: 0, high: 1, medium: 2, low: 3 };
 const FILTER_TABS = [
-  { key: "open",        label: "Open",        color: "#dc2626" },
   { key: "all",         label: "All",         color: "#475569" },
+  { key: "open",        label: "Open",        color: "#dc2626" },
   { key: "in_progress", label: "In Progress", color: "#1d4ed8" },
   { key: "resolved",    label: "Resolved",    color: "#16a34a" },
   { key: "critical",    label: "Critical ⚡", color: "#ea580c" },
@@ -40,12 +41,12 @@ const FILTER_TABS = [
 ];
 const LIMIT = 50;
 
-export default function WarningsPanel({ token, companyId: initialCompanyId, companies = [] }) {
+export default function WarningsPanel({ token, currentUser, hasPerm, companyId: initialCompanyId, companies = [] }) {
   const [companyId,  setCompanyId]  = useState(initialCompanyId || null);
   const [flags,      setFlags]      = useState([]);
   const [total,      setTotal]      = useState(0);
   const [summary,    setSummary]    = useState(null);
-  const [filter,     setFilter]     = useState("open");
+  const [filter,     setFilter]     = useState("all");
   const [search,     setSearch]     = useState("");
   const [page,       setPage]       = useState(0);
   const [loading,    setLoading]    = useState(false);
@@ -59,6 +60,12 @@ export default function WarningsPanel({ token, companyId: initialCompanyId, comp
   const [woSaving,   setWoSaving]   = useState(false);
   const [woErr,      setWoErr]      = useState(null);
   const prevCid = useRef(initialCompanyId);
+
+  const isAdmin         = currentUser?.role === "admin" || currentUser?.role === "catalyst_admin";
+  const canAssign       = isAdmin || (hasPerm ? (hasPerm("warnings", "assign_cutoff_warnings_web") || hasPerm("warnings", "u")) : true);
+  const canCreateWo     = isAdmin || (hasPerm ? (hasPerm("warnings", "create_workorder") || hasPerm("workorders", "c")) : true);
+  const canChangeStatus = isAdmin || (hasPerm ? (hasPerm("warnings", "change_status_warnings_web") || hasPerm("warnings", "u")) : true);
+  const canDelete       = isAdmin || (hasPerm ? hasPerm("warnings", "d") : isAdmin);
 
   useEffect(() => {
     if (initialCompanyId && initialCompanyId !== prevCid.current) {
@@ -76,6 +83,7 @@ export default function WarningsPanel({ token, companyId: initialCompanyId, comp
       const params = new URLSearchParams({ limit: LIMIT, offset: page * LIMIT, companyId });
       if (filter === "critical") params.set("severity", "critical");
       else if (filter === "escalated") params.set("escalated", "true");
+      else if (filter === "open") params.set("status", "open,in_progress");
       else if (filter !== "all") params.set("status", filter);
 
       const [flagsRes, sumRes] = await Promise.all([
@@ -115,7 +123,7 @@ export default function WarningsPanel({ token, companyId: initialCompanyId, comp
 
   const handleBulkDelete = async () => {
     if (selected.size === 0) return;
-    if (!window.confirm(`Delete ${selected.size} warning${selected.size > 1 ? "s" : ""}? This cannot be undone.`)) return;
+    if (!confirmDeleteAction(canDelete, `Delete ${selected.size} warning${selected.size > 1 ? "s" : ""}? This cannot be undone.`)) return;
     setDeleting(true);
     try {
       await apiFetch("DELETE", "/api/flags/admin/bulk", { ids: [...selected] }, token);
@@ -167,11 +175,10 @@ export default function WarningsPanel({ token, companyId: initialCompanyId, comp
         issueDescription: woModal.description || `Flag: ${woModal.severity} severity on ${woModal.assetName || "asset"}`,
         priority: woForm.priority,
       };
-      if (woForm.assignedTo) body.assignedTo = Number(woForm.assignedTo);
-      await apiFetch("POST", "/api/company-portal/work-orders", body, token);
+      const res = await apiFetch("POST", "/api/company-portal/work-orders", body, token);
       // update local flag to show WO badge
       setFlags((prev) =>
-        prev.map((f) => f.id === woModal.id ? { ...f, workOrderCreated: true } : f)
+        prev.map((f) => f.id === woModal.id ? { ...f, workOrderId: res?.id || true, workOrderCreated: true, status: "in_progress" } : f)
       );
       setWoModal(null);
     } catch (e) {
@@ -225,7 +232,7 @@ export default function WarningsPanel({ token, companyId: initialCompanyId, comp
           </select>
         )}
         <button onClick={() => loadFlags()} style={{ padding: "8px 16px", borderRadius: "8px", border: "1px solid #e2e8f0", background: "#f8fafc", color: "#475569", fontWeight: 600, fontSize: "13px", cursor: "pointer" }}>↻ Refresh</button>
-        {selected.size > 0 && (
+        {canDelete && selected.size > 0 && (
           <button onClick={handleBulkDelete} disabled={deleting}
             style={{ padding: "8px 16px", borderRadius: "8px", border: "1px solid #fecaca", background: "#fef2f2", color: "#dc2626", fontWeight: 700, fontSize: "13px", cursor: deleting ? "not-allowed" : "pointer", opacity: deleting ? 0.7 : 1, display: "inline-flex", alignItems: "center", gap: "6px" }}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
@@ -370,29 +377,28 @@ export default function WarningsPanel({ token, companyId: initialCompanyId, comp
                           <td style={{ padding: "12px 14px", fontSize: "12px", color: "#94a3b8", whiteSpace: "nowrap" }}>{f.createdAt ? new Date(f.createdAt).toLocaleString() : "—"}</td>
                           <td style={{ padding: "12px 14px" }}>
                             <div style={{ display: "flex", gap: "6px" }}>
-                              {f.status === "open" && (
+                              {canChangeStatus && f.status === "open" && (
                                 <button disabled={isUpd} onClick={() => updateStatus(f.id, "in_progress")}
                                   style={{ padding: "5px 9px", borderRadius: "6px", border: "1px solid #93c5fd", background: "#eff6ff", color: "#1d4ed8", fontSize: "11px", fontWeight: 700, cursor: "pointer", opacity: isUpd ? 0.5 : 1, whiteSpace: "nowrap" }}>
                                   Acknowledge
                                 </button>
                               )}
-                              {(f.status === "open" || f.status === "in_progress") && (
+                              {canChangeStatus && (f.status === "open" || f.status === "in_progress") && (
                                 <button disabled={isUpd} onClick={() => updateStatus(f.id, "resolved")}
                                   style={{ padding: "5px 9px", borderRadius: "6px", border: "1px solid #86efac", background: "#f0fdf4", color: "#166534", fontSize: "11px", fontWeight: 700, cursor: "pointer", opacity: isUpd ? 0.5 : 1, whiteSpace: "nowrap" }}>
                                   Resolve
                                 </button>
                               )}
                               {f.status === "resolved" && <span style={{ fontSize: "12px", color: "#22c55e", fontWeight: 700 }}>✓ Resolved</span>}
-                              {/* Work Order button — show whenever flag is open/in-progress and no WO has been
-                                  manually created via this panel. Auto-created WOs (workOrderId) do NOT hide the button. */}
-                              {(f.status === "open" || f.status === "in_progress") && !f.workOrderCreated && (
+                              {/* Work Order button — show when flag is open/in-progress and no WO has been created */}
+                              {canCreateWo && (f.status === "open" || f.status === "in_progress") && !f.workOrderId && !f.workOrderCreated && (
                                 <button disabled={isUpd} onClick={() => openWoModal(f)}
                                   style={{ padding: "5px 9px", borderRadius: "6px", border: "1px solid #fde68a", background: "#fefce8", color: "#92400e", fontSize: "11px", fontWeight: 700, cursor: "pointer", opacity: isUpd ? 0.5 : 1, whiteSpace: "nowrap" }}>
                                   🔧 Create Work Order
                                 </button>
                               )}
-                              {f.workOrderCreated && (
-                                <span style={{ padding: "4px 9px", borderRadius: "6px", background: "#f0fdf4", color: "#166534", fontSize: "11px", fontWeight: 700, border: "1px solid #86efac" }}>✓ WO Created</span>
+                              {(f.workOrderId || f.workOrderCreated) && (
+                                <span style={{ padding: "4px 9px", borderRadius: "6px", background: "#f0fdf4", color: "#166534", fontSize: "11px", fontWeight: 700, border: "1px solid #86efac", whiteSpace: "nowrap" }}>✓ WO Created</span>
                               )}
                             </div>
                           </td>

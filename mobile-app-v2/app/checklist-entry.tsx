@@ -804,7 +804,9 @@ export default function ChecklistEntryScreen() {
                 <ActivityIndicator color="#fff" />
               ) : (
                 <>
-                  <Text style={styles.submitText}>{isSoftRaise ? 'Raise Issue' : 'Submit Checklist'}</Text>
+                  <Text style={styles.submitText}>
+                    {isSoftRaise ? 'Raise Issue' : (templateType === 'logsheet' ? 'Submit Logsheet' : 'Submit Checklist')}
+                  </Text>
                   <MaterialCommunityIcons name={isSoftRaise ? 'alert-circle-outline' : 'send'} size={18} color="#fff" />
                 </>
               )}

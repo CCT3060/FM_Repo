@@ -30,6 +30,7 @@ import { requireCompanyAuth } from "../middleware/companyAuth.js";
 import { flexCompanyAuth } from "../middleware/companyAuth.js";
 import { requireAuth } from "../middleware/auth.js";
 import { createFlag, updateAssetHealth } from "../utils/flagsHelper.js";
+import { hasModulePerm } from "../utils/permissions.js";
 
 const router = Router();
 
@@ -78,12 +79,32 @@ router.get(
   async (req, res, next) => {
     try {
       // companyId from JWT (cp_token) or from query param (main platform token)
+      const isAll = req.query.companyId === "all";
       const companyId = req.companyUser?.companyId || parseInt(req.query.companyId, 10);
-      if (!companyId || isNaN(companyId)) return res.status(400).json({ message: "companyId required" });
+      if (!isAll && (!companyId || isNaN(companyId))) return res.status(400).json({ message: "companyId required" });
       const { status, severity, source, escalated, limit = 100, offset = 0 } = req.query;
-      const conditions = ["f.company_id = ?"];
-      const params     = [companyId];
-      if (status)   { conditions.push("f.status = ?");   params.push(status); }
+      const conditions = [];
+      const params     = [];
+
+      if (isAll && req.companyUser) {
+        conditions.push("f.company_id IN (SELECT company_id FROM user_company_assignments WHERE user_id = ? UNION SELECT ?::integer)");
+        params.push(req.companyUser.id, req.companyUser.companyId);
+      } else {
+        conditions.push("f.company_id = ?");
+        params.push(companyId);
+      }
+      if (status) {
+        const statusList = status.split(",").map(s => s.trim()).filter(Boolean);
+        if (statusList.length === 1 && statusList[0] === "open") {
+          conditions.push("f.status IN ('open', 'in_progress')");
+        } else if (statusList.length === 1) {
+          conditions.push("f.status = ?");
+          params.push(statusList[0]);
+        } else if (statusList.length > 1) {
+          conditions.push(`f.status IN (${statusList.map(() => "?").join(",")})`);
+          params.push(...statusList);
+        }
+      }
       if (severity) { conditions.push("f.severity = ?"); params.push(severity); }
       if (source)   { conditions.push("f.source = ?");   params.push(source); }
       if (escalated === "true")  { conditions.push("f.escalated = TRUE"); }
@@ -159,6 +180,20 @@ router.put(
       const { id } = req.params;
       const companyId = req.companyUser?.companyId || parseInt(req.body.companyId, 10) || parseInt(req.query.companyId, 10);
       if (!companyId || isNaN(companyId)) { await conn.release(); return res.status(400).json({ message: "companyId required" }); }
+      
+      const role = req.companyUser?.role;
+      const isAdmin = role === "admin" || role === "catalyst_admin";
+      if (!isAdmin) {
+        const canChangeStatus =
+          (await hasModulePerm(req, "warnings", "change_status_warnings_web")) ||
+          (await hasModulePerm(req, "warnings", "change_status_warnings_mobile")) ||
+          (await hasModulePerm(req, "warnings", "u"));
+        if (!canChangeStatus) {
+          await conn.release();
+          return res.status(403).json({ message: "Not authorized to change warning status" });
+        }
+      }
+
       const { status, remark } = req.body;
 
       await conn.beginTransaction();
@@ -194,6 +229,38 @@ router.put(
     } finally {
       conn.release();
     }
+  }
+);
+
+// DELETE /flags/admin/bulk
+router.delete(
+  "/admin/bulk",
+  flexCompanyAuth,
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyUser?.companyId || parseInt(req.body.companyId, 10) || parseInt(req.query.companyId, 10);
+      if (!companyId || isNaN(companyId)) return res.status(400).json({ message: "companyId required" });
+
+      const role = req.companyUser?.role;
+      const isAdmin = role === "admin" || role === "catalyst_admin";
+      if (!isAdmin && !(await hasModulePerm(req, "warnings", "d"))) {
+        return res.status(403).json({ message: "Not authorized to delete warnings" });
+      }
+
+      const { ids } = req.body || {};
+      if (!Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({ message: "ids array required" });
+      }
+
+      const numIds = ids.map(Number).filter(Number.isFinite);
+      if (numIds.length === 0) return res.status(400).json({ message: "No valid ids provided" });
+
+      const [delResult] = await pool.query(
+        `DELETE FROM flags WHERE company_id = ? AND id IN (${numIds.map(() => '?').join(',')})`,
+        [companyId, ...numIds]
+      );
+      res.json({ success: true, deleted: delResult?.affectedRows ?? numIds.length });
+    } catch (err) { next(err); }
   }
 );
 

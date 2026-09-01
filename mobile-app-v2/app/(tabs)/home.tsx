@@ -11,6 +11,9 @@ import { useAuth } from '../../context/AuthContext';
 import {
   hasTechAccess, hasSoftAccess, canManageTeam,
   canViewNotifications, canViewWarnings,
+  canFillLogsheet, canAssignLogsheet, canViewChecklists,
+  canExecuteWorkOrders, canManageWorkOrders,
+  canViewAssets, canViewTraining,
 } from '../../utils/permissions';
 import { fetchMyTodayProgress, fetchNotificationCount } from '../../utils/api';
 import { useTheme, Typography, Spacing, Radius } from '../../utils/theme';
@@ -69,9 +72,33 @@ export default function HomeScreen() {
   const canResolve = capabilities.canResolveSoftIssue;
   const canRaise   = capabilities.canRaiseSoftIssue;
 
+  const isModuleEnabled = (mod: string) => {
+    if (!user?.companyEnabledModules || !Array.isArray(user.companyEnabledModules)) return true;
+    const aliases: Record<string, string[]> = {
+      workorders: ['workorders', 'requests'],
+      requests: ['workorders', 'requests'],
+      softrequests: ['softrequests', 'soft-requests'],
+      'soft-requests': ['softrequests', 'soft-requests'],
+      ojt: ['ojt', 'ojt-training', 'ojtTraining'],
+      'ojt-training': ['ojt', 'ojt-training', 'ojtTraining'],
+      'additional-requests': ['additional-requests', 'additionalRequests'],
+      additionalRequests: ['additional-requests', 'additionalRequests'],
+      checklists: ['checklists'],
+      logsheets: ['logsheets'],
+      assets: ['assets'],
+      attendance: ['attendance'],
+      locations: ['locations'],
+      warnings: ['warnings'],
+      fleet: ['fleet'],
+    };
+    const checkList = aliases[mod] || [mod];
+    return checkList.some((m) => user.companyEnabledModules!.includes(m));
+  };
+
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
   const firstName = user?.fullName?.split(' ')[0] ?? 'there';
+  const isAdmin = user?.role === 'admin';
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.background }]} edges={['top']}>
@@ -113,55 +140,69 @@ export default function HomeScreen() {
         {/* ── Quick actions ─────────────────────────────────────────────── */}
         <Text style={[styles.sectionTitle, { color: theme.textMuted }]}>QUICK ACTIONS</Text>
         <View style={styles.actionsGrid}>
-          {(!user?.moduleAccess?.length || user?.moduleAccess?.includes('assets')) ? (
+          {isModuleEnabled('assets') && (isAdmin || hasTechAccess(capabilities) || canViewAssets(capabilities)) ? (
             <ActionCard icon="package-variant" label="Assets" sublabel="Browse & scan" color={theme.primary} onPress={() => router.push('/assets')} />
           ) : null}
 
-          {hasTechAccess(capabilities) ? (
-            <ActionCard icon="clipboard-check-outline" label="Checklists" sublabel="My assignments" color="#059669" onPress={() => router.push('/(tabs)/checklists')} />
+          {isModuleEnabled('checklists') && (isAdmin || canViewChecklists(capabilities)) ? (
+            <ActionCard
+              icon="clipboard-check-outline"
+              label="Checklists"
+              sublabel="View assigned"
+              color="#059669"
+              onPress={() => router.push({ pathname: '/all-templates', params: { initialFilter: 'all', type: 'checklist' } } as any)}
+            />
           ) : null}
 
-          {canManageTeam(capabilities) ? (
-            <ActionCard icon="account-group-outline" label="My Team" sublabel="Assignments" color="#7C3AED" onPress={() => router.push('/(tabs)/assignments')} />
+          {isModuleEnabled('logsheets') && (isAdmin || canFillLogsheet(capabilities) || canAssignLogsheet(capabilities) || hasTechAccess(capabilities)) ? (
+            <ActionCard
+              icon="table-large"
+              label="Logsheets"
+              sublabel="View logs"
+              color="#7C3AED"
+              onPress={() => router.push({ pathname: '/all-templates', params: { initialFilter: 'all', type: 'logsheet' } } as any)}
+            />
           ) : null}
 
-          {hasTechAccess(capabilities) ? (
+          {isModuleEnabled('workorders') && (isAdmin || canExecuteWorkOrders(capabilities) || canManageWorkOrders(capabilities)) ? (
             <ActionCard icon="briefcase-outline" label="Work Orders" sublabel="Active orders" color="#D97706" onPress={() => router.push('/work-orders')} />
           ) : null}
 
-          {canRaise && !capabilities.isClientSupervisor ? (
-           <ActionCard icon="alert-circle-outline" label="Raise Issue" sublabel="Soft service" color={theme.danger} onPress={() => router.push('/soft-raise')} />
+          {isModuleEnabled('softrequests') && (isAdmin || canRaise) && !capabilities.isClientSupervisor ? (
+           <ActionCard icon="alert-circle-outline" label="Raise Issue" sublabel="HK Request" color={theme.danger} onPress={() => router.push('/soft-raise')} />
           ) : null}
 
-          {capabilities?.canRaiseAdditionalRequest ? (
+          {isModuleEnabled('additional-requests') && (isAdmin || capabilities?.canRaiseAdditionalRequest) ? (
             <ActionCard icon="file-plus-outline" label="Additional Request" sublabel="Plumbing · Electrical…" color="#7c3aed" onPress={() => router.push('/additional-request' as any)} />
           ) : null}
 
-          {user?.role === 'admin' && user?.companyEnabledModules?.includes('attendance') ? (
+          {isModuleEnabled('attendance') && (isAdmin || capabilities?.canMarkAttendance) ? (
             <ActionCard icon="account-check-outline" label="Attendance" sublabel="Mark today's attendance" color="#0891b2" onPress={() => router.push('/attendance-mark' as any)} />
           ) : null}
 
-          {hasSoftAccess(capabilities) ? (
+          {isModuleEnabled('softrequests') && (isAdmin || hasSoftAccess(capabilities) || capabilities?.canAssignRaisedRequests) ? (
             <ActionCard
               icon="wrench-outline"
-              label="Requests"
+              label="HK Requests"
               sublabel={isSoftMgr ? 'All requests' : canResolve ? 'Resolve issues' : 'My requests'}
               color="#0284C7"
               onPress={() => router.push('/(tabs)/soft-requests')}
             />
           ) : null}
 
-          {canViewWarnings(capabilities) ? (
+          {isModuleEnabled('warnings') && (isAdmin || canViewWarnings(capabilities)) ? (
             <ActionCard icon="alert-outline" label="Warnings" sublabel="Flag alerts" color="#D97706" onPress={() => router.push('/warnings')} />
           ) : null}
 
-          <ActionCard icon="history" label="History" sublabel="Past submissions" color={theme.info} onPress={() => router.push('/history')} />
+          {(isAdmin || hasTechAccess(capabilities) || hasSoftAccess(capabilities)) ? (
+            <ActionCard icon="history" label="History" sublabel="Past submissions" color={theme.info} onPress={() => router.push('/history')} />
+          ) : null}
 
-          {hasTechAccess(capabilities) && user?.companyEnabledModules?.includes('ojt') ? (
+          {isModuleEnabled('ojt') && (isAdmin || canViewTraining(capabilities)) ? (
             <ActionCard icon="school-outline" label="Training" sublabel="OJT modules" color="#059669" onPress={() => router.push('/training')} />
           ) : null}
 
-          {user?.moduleAccess?.includes('locations') ? (
+          {isModuleEnabled('locations') && (isAdmin || hasTechAccess(capabilities)) ? (
             <ActionCard icon="map-marker-outline" label="Locations" sublabel="Browse locations" color="#0891B2" onPress={() => router.push('/locations' as any)} />
           ) : null}
         </View>

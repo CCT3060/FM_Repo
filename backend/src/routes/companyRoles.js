@@ -39,15 +39,24 @@ const slugify = (s) =>
       ALTER TABLE company_roles
         DROP CONSTRAINT IF EXISTS company_roles_company_id_role_key_key
     `);
+  } catch (err) { /* silent */ }
+  try {
     await pool.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS company_roles_active_unique
         ON company_roles (company_id, role_key)
         WHERE is_active = TRUE
     `);
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error("[company-roles] migration:", err.message);
-  }
+  } catch (err) { /* silent */ }
+  try {
+    await pool.query(`
+      ALTER TABLE company_roles ADD COLUMN IF NOT EXISTS can_mark_attendance BOOLEAN NOT NULL DEFAULT FALSE
+    `);
+  } catch (err) { /* silent */ }
+  try {
+    await pool.query(`
+      ALTER TABLE company_roles ADD COLUMN IF NOT EXISTS can_assign_raised_requests BOOLEAN NOT NULL DEFAULT FALSE
+    `);
+  } catch (err) { /* silent */ }
 })();
 
 /* ── List roles ───────────────────────────────────────────────────────────── */
@@ -70,7 +79,9 @@ router.get("/", async (req, res, next) => {
                 is_soft_manager          AS "isSoftManager",
                 is_technical_supervisor  AS "isTechnicalSupervisor",
                 is_technician            AS "isTechnician",
-                COALESCE(can_raise_additional_request, FALSE) AS "canRaiseAdditionalRequest"
+                COALESCE(can_raise_additional_request, FALSE) AS "canRaiseAdditionalRequest",
+                COALESCE(can_mark_attendance, FALSE) AS "canMarkAttendance",
+                COALESCE(can_assign_raised_requests, FALSE) AS "canAssignRaisedRequests"
            FROM company_roles
           WHERE company_id = ?
             AND is_active = TRUE
@@ -111,7 +122,8 @@ router.post("/", async (req, res, next) => {
   try {
     const { label, parentRoleKey, color, bgColor, sortOrder,
             canRaiseSoftIssue, canResolveSoftIssue, isSoftManager,
-            isTechnicalSupervisor, isTechnician, canRaiseAdditionalRequest, companyId } = req.body || {};
+            isTechnicalSupervisor, isTechnician, canRaiseAdditionalRequest,
+            canMarkAttendance, canAssignRaisedRequests, companyId } = req.body || {};
     if (!label || !String(label).trim()) {
       return res.status(400).json({ message: "label is required" });
     }
@@ -162,16 +174,19 @@ router.post("/", async (req, res, next) => {
         `INSERT INTO company_roles
            (company_id, role_key, label, parent_role_key, sort_order, color, bg_color,
             can_raise_soft_issue, can_resolve_soft_issue, is_soft_manager,
-            is_technical_supervisor, is_technician, can_raise_additional_request)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            is_technical_supervisor, is_technician, can_raise_additional_request,
+            can_mark_attendance, can_assign_raised_requests)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           ...baseValues,
-          canRaiseSoftIssue     ? 1 : 0,
-          canResolveSoftIssue   ? 1 : 0,
-          isSoftManager         ? 1 : 0,
-          isTechnicalSupervisor ? 1 : 0,
-          isTechnician          ? 1 : 0,
-          canRaiseAdditionalRequest ? 1 : 0,
+          Boolean(canRaiseSoftIssue),
+          Boolean(canResolveSoftIssue),
+          Boolean(isSoftManager),
+          Boolean(isTechnicalSupervisor),
+          Boolean(isTechnician),
+          Boolean(canRaiseAdditionalRequest),
+          Boolean(canMarkAttendance),
+          Boolean(canAssignRaisedRequests),
         ]
       );
     } catch (insertErr) {
@@ -188,88 +203,6 @@ router.post("/", async (req, res, next) => {
       }
     }
     res.status(201).json({ ok: true, roleKey: key });
-  } catch (err) {
-    next(err);
-  }
-});
-
-/* ── Update role ──────────────────────────────────────────────────────────── */
-router.put("/:id", async (req, res, next) => {
-  try {
-    const id = Number(req.params.id);
-    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
-    const { label, parentRoleKey, color, bgColor, sortOrder,
-            canRaiseSoftIssue, canResolveSoftIssue, isSoftManager,
-            isTechnicalSupervisor, isTechnician, canRaiseAdditionalRequest } = req.body || {};
-    const fields = [];
-    const params = [];
-    if (label !== undefined) {
-      fields.push(`label = ?`);
-      params.push(String(label).trim().slice(0, 120));
-    }
-    if (parentRoleKey !== undefined) {
-      fields.push(`parent_role_key = ?`);
-      params.push(parentRoleKey ? slugify(parentRoleKey) : null);
-    }
-    if (color !== undefined) {
-      fields.push(`color = ?`);
-      params.push(color);
-    }
-    if (bgColor !== undefined) {
-      fields.push(`bg_color = ?`);
-      params.push(bgColor);
-    }
-    if (sortOrder !== undefined && Number.isFinite(sortOrder)) {
-      fields.push(`sort_order = ?`);
-      params.push(sortOrder);
-    }
-    if (canRaiseSoftIssue !== undefined) {
-      fields.push(`can_raise_soft_issue = ?`);
-      params.push(canRaiseSoftIssue ? 1 : 0);
-    }
-    if (canResolveSoftIssue !== undefined) {
-      fields.push(`can_resolve_soft_issue = ?`);
-      params.push(canResolveSoftIssue ? 1 : 0);
-    }
-    if (isSoftManager !== undefined) {
-      fields.push(`is_soft_manager = ?`);
-      params.push(isSoftManager ? 1 : 0);
-    }
-    if (isTechnicalSupervisor !== undefined) {
-      fields.push(`is_technical_supervisor = ?`);
-      params.push(isTechnicalSupervisor ? 1 : 0);
-    }
-    if (isTechnician !== undefined) {
-      fields.push(`is_technician = ?`);
-      params.push(isTechnician ? 1 : 0);
-    }
-    if (canRaiseAdditionalRequest !== undefined) {
-      fields.push(`can_raise_additional_request = ?`);
-      params.push(canRaiseAdditionalRequest ? 1 : 0);
-    }
-    if (!fields.length) return res.json({ ok: true });
-    fields.push(`updated_at = NOW()`);
-    params.push(cid(req), id);
-    await pool.query(
-      `UPDATE company_roles SET ${fields.join(", ")} WHERE company_id = ? AND id = ?`,
-      params
-    );
-    res.json({ ok: true });
-  } catch (err) {
-    next(err);
-  }
-});
-
-/* ── Delete role ──────────────────────────────────────────────────────────── */
-router.delete("/:id", async (req, res, next) => {
-  try {
-    const id = Number(req.params.id);
-    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
-    await pool.query(
-      `DELETE FROM company_roles WHERE company_id = ? AND id = ?`,
-      [cid(req), id]
-    );
-    res.json({ ok: true });
   } catch (err) {
     next(err);
   }
@@ -314,16 +247,139 @@ router.get("/role-permissions", async (req, res, next) => {
 router.put("/role-permissions", async (req, res, next) => {
   try {
     if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    const companyId = cid(req);
     for (const [role, perms] of Object.entries(req.body)) {
       const permJson = JSON.stringify(perms);
       await pool.query(
         `INSERT INTO role_permissions (company_id, role, permissions) VALUES (?, ?, ?)
          ON CONFLICT (company_id, role) DO UPDATE SET permissions = EXCLUDED.permissions`,
-        [cid(req), role, permJson]
+        [companyId, role, permJson]
       );
+
+      // Dual-write sync to company_roles capability columns for seamless backward compatibility
+      if (perms && typeof perms === "object") {
+        const isSoftManager = perms._meta?.isManagerViewOnly;
+        const canRaiseSoftIssue = perms.softrequests?.raise_hk_issues;
+        const canResolveSoftIssue = perms.softrequests?.resolve_hk_issues;
+        const canRaiseAdditional = perms['additional-requests']?.raise_additional_request;
+        const canMarkAttendance = perms.attendance?.mark_mobile_attendance;
+        const canAssignRequests = perms['additional-requests']?.assign_additional_request;
+        const isTechSupervisor = perms.checklists?.assign_checklists || perms.workorders?.assign_work_orders;
+        const isTechnician = perms.checklists?.fill_checklists || perms.workorders?.execute_work_orders;
+
+        const syncUpdates = [];
+        const syncParams = [];
+        if (isSoftManager !== undefined) { syncUpdates.push("is_soft_manager = ?"); syncParams.push(Boolean(isSoftManager)); }
+        if (canRaiseSoftIssue !== undefined) { syncUpdates.push("can_raise_soft_issue = ?"); syncParams.push(Boolean(canRaiseSoftIssue)); }
+        if (canResolveSoftIssue !== undefined) { syncUpdates.push("can_resolve_soft_issue = ?"); syncParams.push(Boolean(canResolveSoftIssue)); }
+        if (canRaiseAdditional !== undefined) { syncUpdates.push("can_raise_additional_request = ?"); syncParams.push(Boolean(canRaiseAdditional)); }
+        if (canMarkAttendance !== undefined) { syncUpdates.push("can_mark_attendance = ?"); syncParams.push(Boolean(canMarkAttendance)); }
+        if (canAssignRequests !== undefined) { syncUpdates.push("can_assign_raised_requests = ?"); syncParams.push(Boolean(canAssignRequests)); }
+        if (isTechSupervisor !== undefined) { syncUpdates.push("is_technical_supervisor = ?"); syncParams.push(Boolean(isTechSupervisor)); }
+        if (isTechnician !== undefined) { syncUpdates.push("is_technician = ?"); syncParams.push(Boolean(isTechnician)); }
+
+        if (syncUpdates.length) {
+          syncParams.push(companyId, role);
+          await pool.query(
+            `UPDATE company_roles SET ${syncUpdates.join(", ")} WHERE company_id = ? AND role_key = ?`,
+            syncParams
+          ).catch(() => {});
+        }
+      }
     }
     res.json({ ok: true });
   } catch (err) { next(err); }
+});
+
+/* ── Update role ──────────────────────────────────────────────────────────── */
+router.put("/:id", async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+    const { label, parentRoleKey, color, bgColor, sortOrder,
+            canRaiseSoftIssue, canResolveSoftIssue, isSoftManager,
+            isTechnicalSupervisor, isTechnician, canRaiseAdditionalRequest,
+            canMarkAttendance, canAssignRaisedRequests } = req.body || {};
+    const fields = [];
+    const params = [];
+    if (label !== undefined) {
+      fields.push(`label = ?`);
+      params.push(String(label).trim().slice(0, 120));
+    }
+    if (parentRoleKey !== undefined) {
+      fields.push(`parent_role_key = ?`);
+      params.push(parentRoleKey ? slugify(parentRoleKey) : null);
+    }
+    if (color !== undefined) {
+      fields.push(`color = ?`);
+      params.push(color);
+    }
+    if (bgColor !== undefined) {
+      fields.push(`bg_color = ?`);
+      params.push(bgColor);
+    }
+    if (sortOrder !== undefined && Number.isFinite(sortOrder)) {
+      fields.push(`sort_order = ?`);
+      params.push(sortOrder);
+    }
+    if (canRaiseSoftIssue !== undefined) {
+      fields.push(`can_raise_soft_issue = ?`);
+      params.push(Boolean(canRaiseSoftIssue));
+    }
+    if (canResolveSoftIssue !== undefined) {
+      fields.push(`can_resolve_soft_issue = ?`);
+      params.push(Boolean(canResolveSoftIssue));
+    }
+    if (isSoftManager !== undefined) {
+      fields.push(`is_soft_manager = ?`);
+      params.push(Boolean(isSoftManager));
+    }
+    if (isTechnicalSupervisor !== undefined) {
+      fields.push(`is_technical_supervisor = ?`);
+      params.push(Boolean(isTechnicalSupervisor));
+    }
+    if (isTechnician !== undefined) {
+      fields.push(`is_technician = ?`);
+      params.push(Boolean(isTechnician));
+    }
+    if (canRaiseAdditionalRequest !== undefined) {
+      fields.push(`can_raise_additional_request = ?`);
+      params.push(Boolean(canRaiseAdditionalRequest));
+    }
+    if (canMarkAttendance !== undefined) {
+      fields.push(`can_mark_attendance = ?`);
+      params.push(Boolean(canMarkAttendance));
+    }
+    if (canAssignRaisedRequests !== undefined) {
+      fields.push(`can_assign_raised_requests = ?`);
+      params.push(Boolean(canAssignRaisedRequests));
+    }
+    if (!fields.length) return res.json({ ok: true });
+    fields.push(`updated_at = NOW()`);
+    params.push(cid(req), id);
+    await pool.query(
+      `UPDATE company_roles SET ${fields.join(", ")} WHERE company_id = ? AND id = ?`,
+      params
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ── Delete role ──────────────────────────────────────────────────────────── */
+router.delete("/:id", async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+    await pool.query(
+      `DELETE FROM company_roles WHERE company_id = ? AND id = ?`,
+      [cid(req), id]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
 });
 
 export default router;

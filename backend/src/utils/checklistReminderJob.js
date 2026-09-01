@@ -290,12 +290,37 @@ async function sendLocationReminderIfNeeded({ locationId, templateId, companyId,
     [templateId]
   ).catch(() => [[]]);
 
-  // Also notify admins and supervisors
-  const [managers] = await pool.query(
-    `SELECT id, fcm_token AS "fcmToken"
-     FROM company_users WHERE company_id = ? AND role IN ('admin', 'supervisor') AND status = 'Active'`,
-    [companyId]
-  ).catch(() => [[]]);
+async function getManagersToNotify(companyId) {
+  try {
+    const [users] = await pool.query(
+      `SELECT cu.id, cu.fcm_token AS "fcmToken", cu.role,
+              cr.is_technical_supervisor AS "isTechSupervisor",
+              rp.permissions
+       FROM company_users cu
+       LEFT JOIN company_roles cr ON cr.company_id = cu.company_id AND cr.role_key = cu.role AND cr.is_active = TRUE
+       LEFT JOIN role_permissions rp ON rp.company_id = cu.company_id AND rp.role = cu.role
+       WHERE cu.company_id = ? AND cu.status = 'Active'`,
+      [companyId]
+    );
+
+    return (users || []).filter((u) => {
+      if (u.role === 'admin' || u.role === 'supervisor' || u.role === 'catalyst_admin') return true;
+      if (u.isTechSupervisor) return true;
+      if (u.permissions) {
+        const p = typeof u.permissions === 'string' ? JSON.parse(u.permissions) : u.permissions;
+        if (p?.notifications?.v || p?.notifications?.r || p?.notifications?.read) return true;
+        if (p?.checklists?.assign_checklists || p?.checklists?.fill_checklists) return true;
+      }
+      return false;
+    });
+  } catch (err) {
+    console.error("[ChecklistReminder] getManagersToNotify error:", err.message);
+    return [];
+  }
+}
+
+  // Also notify admins, supervisors, and users with notification/checklist permissions
+  const managers = await getManagersToNotify(companyId);
 
   const pushTitle = `Checklist Reminder 🔔`;
   const inAppTitle = "Checklist Reminder";
@@ -342,12 +367,9 @@ async function sendLocationPostSlotNotif({ locationId, templateId, companyId, te
   const inAppTitle = "Checklist Not Submitted";
   const inAppMessage = `"${templateName}" at ${locationName} was not submitted for ${windowLabel}.`;
 
-  const [admins] = await pool.query(
-    `SELECT id FROM company_users WHERE company_id = ? AND role = 'admin' AND status = 'Active'`,
-    [companyId]
-  ).catch(() => [[]]);
+  const admins = await getManagersToNotify(companyId);
 
-  for (const admin of (admins || [])) {
+  for (const admin of admins) {
     await createNotification({
       companyId, recipientId: admin.id, flagId: null,
       type: 'checklist_reminder', title: inAppTitle, message: inAppMessage,
@@ -454,20 +476,17 @@ async function sendPostSlotAdminNotif({ templateId, companyId, templateName, win
   const inAppTitle = "Checklist Not Submitted";
   const inAppMessage = `The checklist "${templateName}" was not submitted for the ${windowLabel} window.`;
 
-  // Notify admins only (post-slot is an admin audit notification in the portal)
-  const [admins] = await pool.query(
-    `SELECT id FROM company_users WHERE company_id = ? AND role = 'admin' AND status = 'Active'`,
-    [companyId]
-  ).catch(() => [[]]);
+  // Notify admins and managers (post-slot is an audit notification in the portal)
+  const admins = await getManagersToNotify(companyId);
 
-  for (const admin of (admins || [])) {
+  for (const admin of admins) {
     await createNotification({
       companyId, recipientId: admin.id, flagId: null,
       type: "checklist_reminder", title: inAppTitle, message: inAppMessage,
     }).catch(() => {});
   }
 
-  if ((admins || []).length > 0) {
+  if (admins.length > 0) {
     console.log(`[ChecklistReminder] Post-slot admin notification — template ${templateId} ("${templateName}") — ${windowLabel}`);
   }
 }
@@ -624,23 +643,20 @@ async function sendReminderIfNeeded({ templateId, companyId, templateName, windo
     }).catch(() => {});
   }
 
-  // Notify company admins
-  const [admins] = await pool.query(
-    `SELECT id FROM company_users WHERE company_id = ? AND role = 'admin' AND status = 'Active'`,
-    [companyId]
-  ).catch(() => [[]]);
+  // Notify company admins and managers
+  const admins = await getManagersToNotify(companyId);
 
-  for (const admin of (admins || [])) {
+  for (const admin of admins) {
     await createNotification({
       companyId, recipientId: admin.id, flagId: null,
       type: "checklist_reminder", title: inAppTitle, message: inAppMessage,
     }).catch(() => {});
   }
 
-  if ((assignedUsers || []).length > 0 || (admins || []).length > 0) {
+  if ((assignedUsers || []).length > 0 || admins.length > 0) {
     console.log(
       `[ChecklistReminder] Sent reminder for template ${templateId} ("${templateName}") — ${windowLabel}, ` +
-      `${(assignedUsers || []).length} user(s), ${(admins || []).length} admin(s) notified.`
+      `${(assignedUsers || []).length} user(s), ${admins.length} admin(s)/manager(s) notified.`
     );
   }
 }

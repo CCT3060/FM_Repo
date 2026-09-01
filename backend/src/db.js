@@ -50,7 +50,10 @@ const isTransientDbError = (error) => {
     code === "etimedout" ||
     code === "econnreset" ||
     code === "enetunreach" ||
-    code === "econnrefused"
+    code === "econnrefused" ||
+    code === "57p03" ||
+    code === "57p01" ||
+    code === "57p02"
   );
 };
 

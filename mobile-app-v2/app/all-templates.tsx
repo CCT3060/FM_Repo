@@ -1,12 +1,11 @@
 /**
- * All Templates screen — shows every active checklist and logsheet template
- * for the company (filtered by role: soft service templates hidden for
- * technical-only users). Read-only browse; tap to open the entry screen if
- * the user has an assignment for that template.
+ * All Templates screen — shows every active checklist slot and logsheet template
+ * for the company with granular location, room, shift, and slot breakdown.
+ * Mathematically consistent with Mobile Dashboard summary cards.
  */
 
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   ActivityIndicator, RefreshControl, ScrollView,
   StyleSheet, Text, TextInput, TouchableOpacity, View,
@@ -15,17 +14,33 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { fetchAllTemplates } from '../utils/api';
 import { useTheme, Spacing, Radius, Typography } from '../utils/theme';
-import { useAuth } from '../context/AuthContext';
 import StatusBadge from '../components/StatusBadge';
 import EmptyState from '../components/EmptyState';
 
 type Template = {
-  id: number;
+  id: string | number;
+  templateId: number;
   templateName: string;
+  locationId?: number | null;
+  locationName?: string | null;
+  campus?: string | null;
+  building?: string | null;
+  floor?: string | number | null;
+  room?: string | null;
   assetType?: string;
   frequency?: string;
+  hourlyInterval?: number | string | null;
+  shiftId?: number | null;
+  shiftName?: string | null;
+  shiftWindow?: string | null;
+  slotTiming?: string | null;
+  slotIndex?: number;
+  totalSlotsInShift?: number;
   templateType: 'checklist' | 'logsheet';
   completedToday: boolean;
+  submissionId?: number | null;
+  submittedAt?: string | null;
+  submittedByName?: string | null;
 };
 
 const TYPE_CONFIG = {
@@ -33,14 +48,38 @@ const TYPE_CONFIG = {
   logsheet:  { icon: 'table-large',             color: '#7C3AED', label: 'Logsheet'  },
 } as const;
 
-function TemplateRow({ item, onPress }: { item: Template; onPress?: () => void }) {
+function getLocationText(item: Template): string | null {
+  const hasRoom = Boolean(item.room && String(item.room).trim());
+  const hasFloor = item.floor != null && String(item.floor).trim() !== '';
+  const buildingSuffix = item.building && (!item.locationName || !item.locationName.includes(item.building))
+    ? ` (${item.building})`
+    : '';
+
+  if (hasRoom && hasFloor) {
+    return `Room: ${item.room} · Floor ${item.floor}${buildingSuffix}`;
+  }
+  if (hasRoom) {
+    return `Room: ${item.room}${buildingSuffix}`;
+  }
+  if (hasFloor) {
+    return `Floor ${item.floor}${buildingSuffix}`;
+  }
+  if (item.locationName) {
+    return `${item.locationName}${buildingSuffix}`;
+  }
+  if (item.building) {
+    return item.building;
+  }
+  return null;
+}
+
+function TemplateRow({ item }: { item: Template }) {
   const { theme } = useTheme();
   const cfg = TYPE_CONFIG[item.templateType] ?? TYPE_CONFIG.checklist;
+  const locText = getLocationText(item);
 
   return (
-    <TouchableOpacity
-      onPress={onPress}
-      activeOpacity={onPress ? 0.8 : 1}
+    <View
       style={[styles.row, { backgroundColor: theme.surface, borderColor: theme.border }]}
     >
       <View style={[styles.rowIcon, { backgroundColor: cfg.color + '15' }]}>
@@ -50,29 +89,56 @@ function TemplateRow({ item, onPress }: { item: Template; onPress?: () => void }
         <Text style={[styles.rowTitle, { color: theme.textPrimary }]} numberOfLines={2}>
           {item.templateName}
         </Text>
+
+        {locText ? (
+          <View style={styles.locationWrap}>
+            <MaterialCommunityIcons name="map-marker-outline" size={13} color="#0891B2" style={{ marginTop: 2 }} />
+            <Text style={[styles.locationText, { color: '#0891B2' }]} numberOfLines={2}>
+              {locText}
+            </Text>
+          </View>
+        ) : null}
+
+        {item.slotTiming || item.shiftWindow ? (
+          <View style={styles.shiftWrap}>
+            <MaterialCommunityIcons name="clock-outline" size={12} color="#6366F1" />
+            <Text style={[styles.shiftText, { color: '#6366F1' }]} numberOfLines={1}>
+              {item.totalSlotsInShift && item.totalSlotsInShift > 1
+                ? `Slot ${item.slotIndex}/${item.totalSlotsInShift} (${item.slotTiming || item.shiftWindow})`
+                : `Slot (${item.slotTiming || item.shiftWindow})`}
+            </Text>
+          </View>
+        ) : null}
+
         <View style={styles.rowMeta}>
           <View style={[styles.typePill, { backgroundColor: cfg.color + '15' }]}>
             <Text style={[styles.typePillText, { color: cfg.color }]}>{cfg.label}</Text>
           </View>
-          {item.assetType ? (
-            <Text style={[styles.rowSub, { color: theme.textMuted }]}>{item.assetType}</Text>
-          ) : null}
           {item.frequency ? (
-            <Text style={[styles.rowSub, { color: theme.textMuted }]}>· {item.frequency}</Text>
+            <Text style={[styles.rowSub, { color: theme.textMuted }]}>{item.frequency}</Text>
+          ) : null}
+          {item.assetType ? (
+            <Text style={[styles.rowSub, { color: theme.textMuted }]}>· {item.assetType}</Text>
+          ) : null}
+          {item.completedToday && item.submittedByName ? (
+            <Text style={[styles.rowSub, { color: '#059669', fontWeight: '600' }]}>
+              · Filled by {item.submittedByName}
+            </Text>
           ) : null}
         </View>
       </View>
-      <StatusBadge
-        label={item.completedToday ? 'Done' : 'Pending'}
-        variant={item.completedToday ? 'success' : 'warning'}
-      />
-    </TouchableOpacity>
+      <View style={styles.rowRight}>
+        <StatusBadge
+          label={item.completedToday ? 'Done' : 'Pending'}
+          variant={item.completedToday ? 'success' : 'warning'}
+        />
+      </View>
+    </View>
   );
 }
 
 export default function AllTemplatesScreen() {
   const { theme } = useTheme();
-  const { capabilities } = useAuth();
   const { initialFilter, type: typeFilter } = useLocalSearchParams<{ initialFilter?: string; type?: string }>();
   const [items,      setItems]      = useState<Template[]>([]);
   const [loading,    setLoading]    = useState(true);
@@ -87,7 +153,7 @@ export default function AllTemplatesScreen() {
     try {
       setError(null);
       const data = await fetchAllTemplates();
-      setItems(data as Template[]);
+      setItems(Array.isArray(data) ? (data as Template[]) : []);
     } catch (e: any) {
       setError(e?.message ?? 'Failed to load templates');
     } finally {
@@ -101,23 +167,39 @@ export default function AllTemplatesScreen() {
   const onRefresh = () => { setRefreshing(true); void load(); };
 
   const filtered = items.filter((t) => {
-    const matchSearch = !search || t.templateName.toLowerCase().includes(search.toLowerCase())
-      || (t.assetType ?? '').toLowerCase().includes(search.toLowerCase());
-    const matchFilter = filter === 'all'
-      || (filter === 'done'    &&  t.completedToday)
-      || (filter === 'pending' && !t.completedToday);
+    const q = search.toLowerCase().trim();
+    const matchSearch = !q
+      || (t.templateName || '').toLowerCase().includes(q)
+      || (t.locationName || '').toLowerCase().includes(q)
+      || (t.building || '').toLowerCase().includes(q)
+      || (t.floor != null ? String(t.floor).toLowerCase().includes(q) : false)
+      || (t.room || '').toLowerCase().includes(q)
+      || (t.slotTiming || '').toLowerCase().includes(q)
+      || (t.frequency || '').toLowerCase().includes(q)
+      || (t.assetType || '').toLowerCase().includes(q);
+
+    const matchFilter =
+      filter === 'all'
+        ? true
+        : filter === 'done'
+        ? t.completedToday
+        : !t.completedToday;
+
     const matchType = !typeFilter || typeFilter === 'all' || t.templateType === typeFilter;
     return matchSearch && matchFilter && matchType;
   });
 
-  const checklists = filtered.filter((t) => t.templateType === 'checklist');
-  const logsheets  = filtered.filter((t) => t.templateType === 'logsheet');
-
   const typedItems = !typeFilter || typeFilter === 'all'
     ? items
     : items.filter((t) => t.templateType === typeFilter);
+
+  const checklists = filtered.filter((t) => t.templateType === 'checklist');
+  const logsheets  = filtered.filter((t) => t.templateType === 'logsheet');
+
   const doneCount    = typedItems.filter((t) =>  t.completedToday).length;
   const pendingCount = typedItems.filter((t) => !t.completedToday).length;
+
+  const pageTitle = typeFilter === 'checklist' ? 'Checklists' : typeFilter === 'logsheet' ? 'Logsheets' : 'Checklists & Templates';
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.background }]} edges={['top']}>
@@ -127,7 +209,7 @@ export default function AllTemplatesScreen() {
           <MaterialCommunityIcons name="arrow-left" size={22} color={theme.textPrimary} />
         </TouchableOpacity>
         <View style={styles.headerText}>
-          <Text style={[styles.title, { color: theme.textPrimary }]}>All Templates</Text>
+          <Text style={[styles.title, { color: theme.textPrimary }]}>{pageTitle}</Text>
           <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
             {loading ? '…' : `${typedItems.length} total · ${doneCount} done · ${pendingCount} pending`}
           </Text>
@@ -141,7 +223,7 @@ export default function AllTemplatesScreen() {
           style={[styles.searchInput, { color: theme.inputText }]}
           value={search}
           onChangeText={setSearch}
-          placeholder="Search templates or asset type…"
+          placeholder={`Search ${pageTitle.toLowerCase()}, location, room or timing…`}
           placeholderTextColor={theme.inputPlaceholder}
           returnKeyType="search"
           clearButtonMode="while-editing"
@@ -162,10 +244,9 @@ export default function AllTemplatesScreen() {
             style={[styles.pill, { backgroundColor: filter === f ? theme.primary : theme.surface, borderColor: filter === f ? theme.primary : theme.border }]}
           >
             <Text style={[styles.pillText, { color: filter === f ? '#fff' : theme.textSecondary }]}>
-              {f.charAt(0).toUpperCase() + f.slice(1)}
-              {f === 'done'    ? ` (${doneCount})`    : ''}
-              {f === 'pending' ? ` (${pendingCount})` : ''}
-              {f === 'all'     ? ` (${typedItems.length})` : ''}
+              {f === 'all'     ? `All (${typedItems.length})` : ''}
+              {f === 'pending' ? `Pending (${pendingCount})` : ''}
+              {f === 'done'    ? `Done (${doneCount})`    : ''}
             </Text>
           </TouchableOpacity>
         ))}
@@ -204,15 +285,9 @@ export default function AllTemplatesScreen() {
                       <Text style={[styles.badgeText, { color: '#2563EB' }]}>{checklists.length}</Text>
                     </View>
                   </View>
-                  {checklists.map((t) => {
-                    let onPress: (() => void) | undefined;
-                    if (capabilities.isTechnicalSupervisor) {
-                      onPress = () => router.push({ pathname: '/qr-scanner', params: { templateId: String(t.id), templateName: t.templateName, mode: 'checklist-location' } } as any);
-                    } else if (capabilities.isTechnician) {
-                      onPress = () => router.push({ pathname: '/checklist-entry', params: { templateId: String(t.id), templateType: 'checklist', templateName: t.templateName } } as any);
-                    }
-                    return <TemplateRow key={`c-${t.id}`} item={t} onPress={onPress} />;
-                  })}
+                  {checklists.map((t) => (
+                    <TemplateRow key={`c-${t.id}`} item={t} />
+                  ))}
                 </>
               )}
 
@@ -238,7 +313,7 @@ export default function AllTemplatesScreen() {
 
 const styles = StyleSheet.create({
   safe:          { flex: 1 },
-  header:        { flexDirection: 'row', alignItems: 'center', padding: Spacing.lg, paddingBottom: Spacing.md, borderBottomWidth: 1, gap: Spacing.md },
+  header:        { flexDirection: 'row', alignItems: 'center', padding: Spacing.lg, paddingBottom: Spacing.md, borderBottomWidth: 1, borderBottomColor: '#eee' },
   backBtn:       { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   headerText:    { flex: 1 },
   title:         { fontSize: 18, fontWeight: '700' },
@@ -262,9 +337,14 @@ const styles = StyleSheet.create({
   row:           { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, borderRadius: Radius.lg, padding: Spacing.md, borderWidth: 1, marginBottom: Spacing.xs },
   rowIcon:       { width: 42, height: 42, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },
   rowBody:       { flex: 1 },
-  rowTitle:      { fontSize: 14, fontWeight: '600', marginBottom: 4 },
+  rowTitle:      { fontSize: 14, fontWeight: '600', marginBottom: 2 },
+  locationWrap:  { flexDirection: 'row', alignItems: 'flex-start', gap: 4, marginBottom: 2 },
+  locationText:  { fontSize: 11.5, fontWeight: '600', flex: 1 },
+  shiftWrap:     { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 },
+  shiftText:     { fontSize: 11, fontWeight: '600', flexShrink: 1 },
   rowMeta:       { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 4 },
   typePill:      { paddingHorizontal: 7, paddingVertical: 2, borderRadius: Radius.full },
   typePillText:  { fontSize: 10, fontWeight: '700' },
   rowSub:        { fontSize: 11 },
+  rowRight:      { alignItems: 'flex-end', justifyContent: 'center' },
 });

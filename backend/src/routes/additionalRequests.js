@@ -23,6 +23,7 @@
 import { Router } from "express";
 import pool from "../db.js";
 import { requireCompanyAuth } from "../middleware/companyAuth.js";
+import { hasModulePerm, canViewAllModuleRequests } from "../utils/permissions.js";
 import { sendFCMPush } from "../utils/firebaseService.js";
 
 const router = Router();
@@ -47,7 +48,16 @@ async function sendExpoPush(token, title, body, data = {}) {
     await fetch("https://exp.host/--/api/v2/push/send", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ to: token, title, body, data }),
+      body: JSON.stringify({
+        to: token,
+        title,
+        body,
+        data,
+        sound: "default",
+        priority: "high",
+        channelId: data?.channelId || "default",
+        _displayInForeground: true,
+      }),
     });
   } catch { /* non-critical */ }
 }
@@ -61,6 +71,21 @@ async function hasRaiseCapability(companyId, roleKey) {
     [companyId, roleKey]
   ).catch(() => [[null]]);
   return Boolean(row?.canRaise);
+}
+
+async function hasCapabilityStrict(companyId, roleKey, column) {
+  if (!roleKey) return false;
+  if (roleKey === 'admin') return true;
+  try {
+    const [[row]] = await pool.query(
+      `SELECT ${column} AS cap FROM company_roles
+        WHERE company_id = ? AND role_key = ? AND is_active = TRUE LIMIT 1`,
+      [companyId, roleKey]
+    );
+    return !!(row && row.cap);
+  } catch {
+    return false;
+  }
 }
 
 /* ── Background escalation (every 5 min) ────────────────────────────────────── */
@@ -306,6 +331,9 @@ router.get("/requests/my", async (req, res, next) => {
 /* ── GET /requests/all — Admin / manager ── */
 router.get("/requests/all", async (req, res, next) => {
   try {
+    if (!(await hasModulePerm(req, "additional-requests", "v"))) {
+      return res.status(403).json({ message: "Unauthorized: View permission denied for Additional Requests" });
+    }
     const userId = req.companyUser.id;
     const roleKey = req.companyUser.role;
     const companyId = cid(req);
@@ -314,25 +342,19 @@ router.get("/requests/all", async (req, res, next) => {
 
     let companyWhere, companyParams;
     if (qCid === "all") {
-      companyWhere  = "ar.company_id IN (SELECT company_id FROM user_company_assignments WHERE user_id = ?)";
-      companyParams = [userId];
+      companyWhere  = "ar.company_id IN (SELECT company_id FROM user_company_assignments WHERE user_id = ? UNION SELECT ?::integer)";
+      companyParams = [userId, companyId];
     } else {
       companyWhere  = "ar.company_id = ?";
-      companyParams = [companyId];
+      companyParams = [qCid ? Number(qCid) : companyId];
     }
 
     const conditions = [], extraParams = [];
-    const isAdmin = roleKey === "admin";
-    if (!isAdmin) {
-      const [[roleRow]] = await pool.query(
-        `SELECT is_soft_manager AS "isSoftManager" FROM company_roles
-         WHERE company_id = ? AND role_key = ? AND is_active = TRUE LIMIT 1`,
-        [companyId, roleKey]
-      ).catch(() => [[null]]);
-      if (!roleRow?.isSoftManager) {
-        conditions.push("ar.assigned_to_user_id = ?");
-        extraParams.push(userId);
-      }
+    const isManagerRole = await canViewAllModuleRequests(req, "additional-requests");
+
+    if (!isManagerRole) {
+      conditions.push("(ar.assigned_to_user_id = ? OR ar.raised_by_user_id = ?)");
+      extraParams.push(userId, userId);
     }
     if (status) { conditions.push("ar.status = ?"); extraParams.push(status); }
     const date = req.query.date;
@@ -419,6 +441,19 @@ router.put("/requests/:id/assign", async (req, res, next) => {
     const { assignedToUserId } = req.body;
     const companyId = cid(req);
     if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+
+    const hasAssignPerm =
+      req.companyUser.role === 'admin' ||
+      req.companyUser.role === 'supervisor' ||
+      await hasCapabilityStrict(companyId, req.companyUser.role, 'can_assign_raised_requests') ||
+      await hasCapabilityStrict(companyId, req.companyUser.role, 'is_soft_manager') ||
+      await hasModulePerm(req, "additional-requests", "u") ||
+      req.companyUser.role.toLowerCase().includes('manager');
+
+    if (!hasAssignPerm) {
+      return res.status(403).json({ message: "Unauthorized to assign requests" });
+    }
+
     const [[row]] = await pool.query(
       `SELECT id FROM additional_requests WHERE id = ? AND company_id = ?`, [id, companyId]
     );
@@ -437,7 +472,7 @@ router.put("/requests/:id/assign", async (req, res, next) => {
         `SELECT s.name AS "serviceName" FROM additional_requests ar
          JOIN additional_request_services s ON s.id = ar.service_id
          WHERE ar.id = ?`,
-        [id]
+         [id]
       ).catch(() => [[null]]);
       const serviceName = arRow?.serviceName || 'an additional request';
       if (assignee) {
@@ -458,6 +493,19 @@ router.put("/requests/:id/cutoff", async (req, res, next) => {
     const { cutoffAt, escalationUserId } = req.body;
     const companyId = cid(req);
     if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+
+    const hasAssignPerm =
+      req.companyUser.role === 'admin' ||
+      req.companyUser.role === 'supervisor' ||
+      await hasCapabilityStrict(companyId, req.companyUser.role, 'can_assign_raised_requests') ||
+      await hasCapabilityStrict(companyId, req.companyUser.role, 'is_soft_manager') ||
+      await hasModulePerm(req, "additional-requests", "u") ||
+      req.companyUser.role.toLowerCase().includes('manager');
+
+    if (!hasAssignPerm) {
+      return res.status(403).json({ message: "Unauthorized to set cutoff" });
+    }
+
     const [[row]] = await pool.query(
       `SELECT id FROM additional_requests WHERE id = ? AND company_id = ?`, [id, companyId]
     );
@@ -479,9 +527,22 @@ router.put("/requests/:id/status", async (req, res, next) => {
     if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
     if (!VALID_STATUSES.includes(status)) return res.status(400).json({ message: "Invalid status" });
     const [[row]] = await pool.query(
-      `SELECT id FROM additional_requests WHERE id = ? AND company_id = ?`, [id, companyId]
+      `SELECT id, assigned_to_user_id AS "assignedToUserId" FROM additional_requests WHERE id = ? AND company_id = ?`, [id, companyId]
     );
     if (!row) return res.status(404).json({ message: "Request not found" });
+
+    const isAssignee = row.assignedToUserId && Number(row.assignedToUserId) === Number(req.companyUser.id);
+    const hasAssignPerm =
+      req.companyUser.role === 'admin' ||
+      req.companyUser.role === 'supervisor' ||
+      await hasCapabilityStrict(companyId, req.companyUser.role, 'can_assign_raised_requests') ||
+      await hasCapabilityStrict(companyId, req.companyUser.role, 'is_soft_manager') ||
+      await hasModulePerm(req, "additional-requests", "u") ||
+      req.companyUser.role.toLowerCase().includes('manager');
+
+    if (!hasAssignPerm && !isAssignee) {
+      return res.status(403).json({ message: "Unauthorized to update status" });
+    }
     const isClosed = status === "closed";
     const resolvedFields = isClosed ? `, resolved_by_user_id = ${req.companyUser.id}, resolved_at = NOW()` : "";
     await pool.query(
@@ -492,17 +553,23 @@ router.put("/requests/:id/status", async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-/* ── DELETE /requests/:id ── */
+/* ── DELETE /requests/:id ── Delete request (admin or permission matrix) ── */
 router.delete("/requests/:id", async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     const companyId = cid(req);
     if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
-    const [[row]] = await pool.query(
-      `SELECT id FROM additional_requests WHERE id = ? AND company_id = ?`, [id, companyId]
+
+    // Check delete permission using matrix helper
+    const hasAssignPerm = await hasModulePerm(req, "additional-requests", "d");
+    if (!hasAssignPerm) {
+      return res.status(403).json({ message: "Unauthorized to delete requests" });
+    }
+
+    await pool.query(
+      `DELETE FROM additional_requests WHERE id = ? AND company_id = ?`,
+      [id, companyId]
     );
-    if (!row) return res.status(404).json({ message: "Not found" });
-    await pool.query(`DELETE FROM additional_requests WHERE id = ?`, [id]);
     res.json({ ok: true });
   } catch (err) { next(err); }
 });
@@ -511,6 +578,13 @@ router.delete("/requests/:id", async (req, res, next) => {
 router.post("/requests/bulk-delete", async (req, res, next) => {
   try {
     const companyId = cid(req);
+
+    // Check delete permission using matrix helper
+    const hasAssignPerm = await hasModulePerm(req, "additional-requests", "d");
+    if (!hasAssignPerm) {
+      return res.status(403).json({ message: "Unauthorized to delete requests" });
+    }
+
     const ids = (req.body.ids || []).map(Number).filter(Boolean);
     if (!ids.length) return res.status(400).json({ message: "No ids provided" });
     const [rows] = await pool.query(

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import SearchableSelect from "./SearchableSelect.jsx";
+import { confirmDeleteAction } from "../pages/CompanyEmployeePortal.jsx";
 import {
   getAdditionalRequestsAll,
   assignAdditionalRequest,
@@ -182,7 +183,7 @@ function ViewModal({ id, token, onClose }) {
 }
 
 /* ── Services Config Modal ────────────────────────────────────────────────── */
-function ServicesModal({ token, companyId, onClose }) {
+function ServicesModal({ token, companyId, canDelete, onClose }) {
   const [services, setServices] = useState([]);
   const [newName, setNewName] = useState("");
   const [saving, setSaving] = useState(false);
@@ -204,7 +205,7 @@ function ServicesModal({ token, companyId, onClose }) {
   };
 
   const remove = async (id) => {
-    if (!window.confirm("Remove this service?")) return;
+    if (!confirmDeleteAction(canDelete, "Remove this service?")) return;
     try {
       await deleteAdditionalRequestService(token, id);
       setServices((p) => p.filter((s) => s.id !== id));
@@ -241,7 +242,7 @@ function ServicesModal({ token, companyId, onClose }) {
 /* ═══════════════════════════════════════════════════════════════════════════
    Main Panel
    ═══════════════════════════════════════════════════════════════════════════ */
-export default function AdditionalRequestsPanel({ token, currentUser, allCompanies = false, companyId, onCountChange }) {
+export default function AdditionalRequestsPanel({ token, currentUser, hasPerm, allCompanies = false, companyId, onCountChange, isViewOnly = false }) {
   const [requests, setRequests] = useState([]);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -249,7 +250,10 @@ export default function AdditionalRequestsPanel({ token, currentUser, allCompani
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState(new Set());
   const [modal, setModal] = useState(null); // { type: "assign"|"cutoff"|"view"|"services", req? }
-  const isAdmin = currentUser?.role === "admin";
+  const isAdmin = currentUser?.role === "admin" || currentUser?.role === "catalyst_admin";
+  const isManager = isAdmin || currentUser?.role === "supervisor" || currentUser?.isSoftManager || currentUser?.roleCapabilities?.isSoftManager || currentUser?.roleCapabilities?.canAssignRaisedRequests || currentUser?.role?.toLowerCase().includes("manager");
+  const canMutate = (isAdmin || isManager) && !isViewOnly;
+  const canDelete = !isViewOnly && (isAdmin || (hasPerm ? hasPerm("additional-requests", "d") : isAdmin));
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -259,12 +263,17 @@ export default function AdditionalRequestsPanel({ token, currentUser, allCompani
         getAdditionalRequestsAll(token, params),
         getAdditionalRequestUsers(token),
       ]);
-      const reqList = Array.isArray(reqs) ? reqs : [];
-      setRequests(reqList);
+      const list = Array.isArray(reqs) ? reqs : [];
+      setRequests(list);
       setUsers(Array.isArray(us) ? us : []);
-      if (onCountChange) onCountChange(reqList.filter((r) => r.status === "open").length);
-    } catch { /* ignore */ }
-    finally { setLoading(false); }
+      if (onCountChange) {
+        onCountChange(list.filter((r) => r.status === "open").length);
+      }
+    } catch {
+      setRequests([]);
+    } finally {
+      setLoading(false);
+    }
   }, [token, allCompanies, companyId, onCountChange]);
 
   useEffect(() => { void load(); }, [load]);
@@ -290,7 +299,7 @@ export default function AdditionalRequestsPanel({ token, currentUser, allCompani
 
   const bulkDelete = async () => {
     if (!selected.size) return;
-    if (!window.confirm(`Delete ${selected.size} request(s)? This cannot be undone.`)) return;
+    if (!confirmDeleteAction(canDelete, `Delete ${selected.size} request(s)? This cannot be undone.`)) return;
     try {
       const res = await fetch(`${API_BASE}/api/additional-requests/requests/bulk-delete`, {
         method: "POST",
@@ -309,7 +318,7 @@ export default function AdditionalRequestsPanel({ token, currentUser, allCompani
   };
 
   const deleteOne = async (req) => {
-    if (!window.confirm(`Delete ${req.requestNumber}?`)) return;
+    if (!confirmDeleteAction(canDelete, `Delete ${req.requestNumber}?`)) return;
     try {
       await fetch(`${API_BASE}/api/additional-requests/requests/${req.id}`, {
         method: "DELETE", headers: { Authorization: `Bearer ${token}` },
@@ -321,7 +330,7 @@ export default function AdditionalRequestsPanel({ token, currentUser, allCompani
   return (
     <div>
       {/* Config button */}
-      {isAdmin && (
+      {canMutate && (
         <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "12px" }}>
           <button onClick={() => setModal({ type: "services" })}
             style={{ padding: "7px 14px", borderRadius: "8px", border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: "13px", fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: "6px" }}>
@@ -361,7 +370,7 @@ export default function AdditionalRequestsPanel({ token, currentUser, allCompani
         <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search service, raised by, remark…"
           style={{ padding: "7px 12px", borderRadius: "8px", border: "1px solid #e2e8f0", fontSize: "13px", width: "240px" }} />
         {/* Bulk delete */}
-        {isAdmin && selected.size > 0 && (
+        {canMutate && selected.size > 0 && (
           <button onClick={bulkDelete} style={{ padding: "7px 14px", borderRadius: "8px", background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca", fontWeight: 600, fontSize: "13px", cursor: "pointer" }}>
             Delete {selected.size}
           </button>
@@ -383,7 +392,7 @@ export default function AdditionalRequestsPanel({ token, currentUser, allCompani
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr style={{ background: "#f8fafc" }}>
-                  {isAdmin && (
+                  {canMutate && (
                     <th style={{ padding: "12px 10px", width: "36px" }}>
                       <input type="checkbox"
                         checked={filtered.length > 0 && filtered.every((r) => selected.has(r.id))}
@@ -406,7 +415,7 @@ export default function AdditionalRequestsPanel({ token, currentUser, allCompani
                   const isClosed = req.status === "closed";
                   return (
                     <tr key={req.id} style={{ borderTop: "1px solid #f1f5f9", background: selected.has(req.id) ? "#f0f9ff" : undefined }}>
-                      {isAdmin && (
+                      {canMutate && (
                         <td style={{ padding: "12px 10px" }}>
                           <input type="checkbox" checked={selected.has(req.id)}
                             onChange={(e) => setSelected((p) => { const n = new Set(p); if (e.target.checked) n.add(req.id); else n.delete(req.id); return n; })}
@@ -443,7 +452,7 @@ export default function AdditionalRequestsPanel({ token, currentUser, allCompani
                         <div style={{ display: "flex", gap: "5px", flexWrap: "wrap" }}>
                           <button onClick={() => setModal({ type: "view", req })}
                             style={{ padding: "4px 10px", borderRadius: "6px", border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: "12px", cursor: "pointer", fontWeight: 600 }}>View</button>
-                          {!isClosed && isAdmin && (
+                          {!isClosed && canMutate && (
                             <>
                               <button onClick={() => setModal({ type: "assign", req })}
                                 style={{ padding: "4px 10px", borderRadius: "6px", border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: "12px", cursor: "pointer", fontWeight: 600 }}>Reassign</button>
@@ -461,11 +470,11 @@ export default function AdditionalRequestsPanel({ token, currentUser, allCompani
                                 style={{ padding: "4px 10px", borderRadius: "6px", border: "1px solid #bbf7d0", background: "#dcfce7", color: "#166534", fontSize: "12px", cursor: "pointer", fontWeight: 600 }}>Close</button>
                             </>
                           )}
-                          {isClosed && isAdmin && (
+                          {isClosed && canMutate && (
                             <button onClick={() => statusAction(req, "open")}
                               style={{ padding: "4px 10px", borderRadius: "6px", border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: "12px", cursor: "pointer", fontWeight: 600 }}>Reopen</button>
                           )}
-                          {isAdmin && (
+                          {canMutate && (
                             <button onClick={() => deleteOne(req)}
                               style={{ padding: "4px 10px", borderRadius: "6px", border: "1px solid #fecaca", background: "#fef2f2", color: "#dc2626", fontSize: "12px", cursor: "pointer", fontWeight: 600 }}>✕</button>
                           )}
@@ -484,7 +493,7 @@ export default function AdditionalRequestsPanel({ token, currentUser, allCompani
       {modal?.type === "assign"   && <AssignModal   req={modal.req} users={users} token={token} onClose={() => setModal(null)} onDone={() => { setModal(null); void load(); }} />}
       {modal?.type === "cutoff"   && <CutoffModal   req={modal.req} users={users} token={token} onClose={() => setModal(null)} onDone={() => { setModal(null); void load(); }} />}
       {modal?.type === "view"     && <ViewModal     id={modal.req.id} token={token} onClose={() => setModal(null)} />}
-      {modal?.type === "services" && <ServicesModal token={token} companyId={companyId} onClose={() => setModal(null)} />}
+      {modal?.type === "services" && <ServicesModal token={token} companyId={companyId} canDelete={canDelete} onClose={() => setModal(null)} />}
     </div>
   );
 }

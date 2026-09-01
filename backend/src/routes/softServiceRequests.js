@@ -15,6 +15,7 @@ import { Router } from "express";
 import pool from "../db.js";
 import { requireCompanyAuth } from "../middleware/companyAuth.js";
 import { sendFCMPush } from "../utils/firebaseService.js";
+import { hasModulePerm, canViewAllModuleRequests } from "../utils/permissions.js";
 
 const router = Router();
 router.use(requireCompanyAuth);
@@ -186,7 +187,16 @@ async function sendExpoPush(pushToken, title, body, data = {}) {
     await fetch("https://exp.host/--/api/v2/push/send", {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ to: pushToken, title, body, data, sound: "default" }),
+      body: JSON.stringify({
+        to: pushToken,
+        title,
+        body,
+        data,
+        sound: "default",
+        priority: "high",
+        channelId: data?.channelId || "default",
+        _displayInForeground: true,
+      }),
     });
   } catch {
     // Non-fatal
@@ -221,6 +231,21 @@ async function hasCapability(companyId, roleKey, column) {
     return true;
   } catch {
     return true; // DB error → allow
+  }
+}
+
+async function hasCapabilityStrict(companyId, roleKey, column) {
+  if (!roleKey) return false;
+  if (roleKey === 'admin') return true;
+  try {
+    const [[row]] = await pool.query(
+      `SELECT ${column} AS cap FROM company_roles
+        WHERE company_id = ? AND role_key = ? AND is_active = TRUE LIMIT 1`,
+      [companyId, roleKey]
+    );
+    return !!(row && row.cap);
+  } catch {
+    return false;
   }
 }
 
@@ -440,6 +465,9 @@ router.get("/requests/users", async (req, res, next) => {
 /* ── GET /requests/all ── Manager sees all requests ─────────────────────── */
 router.get("/requests/all", async (req, res, next) => {
   try {
+    if (!(await hasModulePerm(req, "softrequests", "v"))) {
+      return res.status(403).json({ message: "Unauthorized: View permission denied for Soft Requests" });
+    }
     const userId    = req.companyUser.id;
     const roleKey   = req.companyUser.role;
     const companyId = req.companyUser.companyId;
@@ -450,22 +478,20 @@ router.get("/requests/all", async (req, res, next) => {
     // Determine company scope (single company or all UCA companies)
     let companyWhere, companyParams;
     if (qCid === "all") {
-      companyWhere  = "ssr.company_id IN (SELECT company_id FROM user_company_assignments WHERE user_id = ?)";
-      companyParams = [userId];
+      companyWhere  = "ssr.company_id IN (SELECT company_id FROM user_company_assignments WHERE user_id = ? UNION SELECT ?::integer)";
+      companyParams = [userId, companyId];
     } else {
       companyWhere  = "ssr.company_id = ?";
-      companyParams = [companyId];
+      companyParams = [qCid ? Number(qCid) : companyId];
     }
 
     const conditions = [];
     const extraParams = [];
-    const isSoftManagerRole = roleKey === "admin"
-      ? true
-      : await hasCapability(companyId, roleKey, "is_soft_manager");
+    const isSoftManagerRole = await canViewAllModuleRequests(req, "softrequests");
 
     if (!isSoftManagerRole) {
-      conditions.push("ssr.assigned_to_user_id = ?");
-      extraParams.push(userId);
+      conditions.push("(ssr.assigned_to_user_id = ? OR ssr.raised_by_user_id = ?)");
+      extraParams.push(userId, userId);
     }
 
     if (status)  { conditions.push("ssr.status = ?");   extraParams.push(status); }
@@ -654,7 +680,7 @@ router.get("/requests/:id", async (req, res, next) => {
 /* ── PUT /requests/:id/resolve ── Resolve a request ─────────────────────── */
 router.put("/requests/:id/resolve", async (req, res, next) => {
   try {
-    const requestId         = Number(req.params.id);
+    const requestId = Number(req.params.id);
     const { resolveSubmissionId } = req.body || {};
     const userId    = req.companyUser.id;
     const companyId = req.companyUser.companyId;
@@ -662,8 +688,19 @@ router.put("/requests/:id/resolve", async (req, res, next) => {
 
     if (!Number.isFinite(requestId)) return res.status(400).json({ message: "Invalid request id" });
 
-    // Permission check (pass-through if role not configured yet)
-    const canResolve = await hasCapability(companyId, roleKey, "can_resolve_soft_issue");
+    // Permission check
+    const isManager =
+      roleKey === "admin" ||
+      roleKey === "catalyst_admin" ||
+      (await hasCapabilityStrict(companyId, roleKey, "is_soft_manager")) ||
+      (await hasCapabilityStrict(companyId, roleKey, "can_assign_raised_requests")) ||
+      (await hasModulePerm(req, "softrequests", "change_status_hk_web")) ||
+      (await hasModulePerm(req, "softrequests", "change_status_hk_mobile"));
+
+    const canResolve =
+      isManager ||
+      (await hasModulePerm(req, "softrequests", "resolve_hk_issues")) ||
+      (await hasCapabilityStrict(companyId, roleKey, "can_resolve_soft_issue"));
     if (!canResolve) {
       return res.status(403).json({ message: "Your role cannot resolve soft-service requests" });
     }
@@ -677,9 +714,8 @@ router.put("/requests/:id/resolve", async (req, res, next) => {
     );
     if (!request) return res.status(404).json({ message: "Request not found" });
     if (request.status === "resolved") return res.status(409).json({ message: "Request already resolved" });
-    // Admins can resolve any request; non-admins can only resolve requests assigned to themselves or unassigned
-    const isAdmin = roleKey === "admin";
-    if (!isAdmin && request.assignedToUserId && Number(request.assignedToUserId) !== Number(userId)) {
+    // Managers & admins can resolve any request; field users can resolve requests assigned to themselves or unassigned
+    if (!isManager && request.assignedToUserId && Number(request.assignedToUserId) !== Number(userId)) {
       return res.status(403).json({ message: "This request is assigned to another supervisor" });
     }
 
@@ -696,41 +732,38 @@ router.put("/requests/:id/resolve", async (req, res, next) => {
       `SELECT full_name, push_token FROM company_users WHERE id = ?`,
       [request.raisedByUserId]
     );
-    if (raiser) {
-      const [[asset]] = await pool.query(
-        `SELECT asset_name FROM assets WHERE id = ?`, [request.assetId]
+    if (raiser?.push_token) {
+      sendExpoPush(
+        raiser.push_token,
+        "HK Request Resolved",
+        "Your request has been resolved.",
+        { screen: "/(tabs)/soft-requests" }
       );
-      const label = asset?.asset_name || "the asset";
-
-      await createInAppNotification(
-        companyId, request.raisedByUserId,
-        "Request Resolved",
-        `Your request for ${label} has been closed.`
-      );
-
-      if (raiser.push_token) {
-        await sendExpoPush(
-          raiser.push_token,
-          "Request Resolved",
-          `Your request for ${label} has been closed.`,
-          { screen: "/soft-my-requests", requestId }
-        );
-      }
     }
-
     res.json({ ok: true });
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 });
 
-/* ── PUT /requests/:id/assign ── Assign to a user ───────────────────────── */
+/* ── PUT /requests/:id/assign ── Assign to supervisor ───────────────────── */
 router.put("/requests/:id/assign", async (req, res, next) => {
   try {
     const requestId = Number(req.params.id);
     const { assignedToUserId } = req.body;
     const companyId = req.companyUser.companyId;
     if (!Number.isFinite(requestId)) return res.status(400).json({ message: "Invalid request id" });
+
+    const hasAssignPerm =
+      req.companyUser.role === 'admin' ||
+      req.companyUser.role === 'catalyst_admin' ||
+      await hasCapabilityStrict(companyId, req.companyUser.role, 'is_soft_manager') ||
+      await hasCapabilityStrict(companyId, req.companyUser.role, 'can_assign_raised_requests') ||
+      await hasModulePerm(req, "softrequests", "assign_cutoff_hk_web") ||
+      await hasModulePerm(req, "softrequests", "assign_cutoff_hk_mobile");
+
+    if (!hasAssignPerm) {
+      return res.status(403).json({ message: "Unauthorized to assign requests" });
+    }
+
     const [[request]] = await pool.query(
       `SELECT id, status FROM soft_service_requests WHERE id = ? AND company_id = ?`,
       [requestId, companyId]
@@ -781,6 +814,19 @@ router.put("/requests/:id/cutoff", async (req, res, next) => {
     const { cutoffAt, escalationUserId } = req.body;
     const companyId = req.companyUser.companyId;
     if (!Number.isFinite(requestId)) return res.status(400).json({ message: "Invalid request id" });
+
+    const hasAssignPerm =
+      req.companyUser.role === 'admin' ||
+      req.companyUser.role === 'catalyst_admin' ||
+      await hasCapabilityStrict(companyId, req.companyUser.role, 'is_soft_manager') ||
+      await hasCapabilityStrict(companyId, req.companyUser.role, 'can_assign_raised_requests') ||
+      await hasModulePerm(req, "softrequests", "assign_cutoff_hk_web") ||
+      await hasModulePerm(req, "softrequests", "assign_cutoff_hk_mobile");
+
+    if (!hasAssignPerm) {
+      return res.status(403).json({ message: "Unauthorized to set cutoff" });
+    }
+
     const [[request]] = await pool.query(
       `SELECT id FROM soft_service_requests WHERE id = ? AND company_id = ?`,
       [requestId, companyId]
@@ -804,10 +850,22 @@ router.put("/requests/:id/status", async (req, res, next) => {
     if (!Number.isFinite(requestId)) return res.status(400).json({ message: "Invalid request id" });
     if (!validStatuses.includes(status)) return res.status(400).json({ message: "Invalid status" });
     const [[request]] = await pool.query(
-      `SELECT id, status AS currentStatus FROM soft_service_requests WHERE id = ? AND company_id = ?`,
+      `SELECT id, status AS currentStatus, assigned_to_user_id AS "assignedToUserId" FROM soft_service_requests WHERE id = ? AND company_id = ?`,
       [requestId, companyId]
     );
     if (!request) return res.status(404).json({ message: "Request not found" });
+
+    const isAssignee = request.assignedToUserId && Number(request.assignedToUserId) === Number(req.companyUser.id);
+    const hasStatusPerm =
+      req.companyUser.role === 'admin' ||
+      req.companyUser.role === 'catalyst_admin' ||
+      await hasCapabilityStrict(companyId, req.companyUser.role, 'is_soft_manager') ||
+      await hasModulePerm(req, "softrequests", "change_status_hk_web") ||
+      await hasModulePerm(req, "softrequests", "change_status_hk_mobile");
+
+    if (!hasStatusPerm && !isAssignee) {
+      return res.status(403).json({ message: "Unauthorized to update status" });
+    }
     const isClosed = status === "closed" || status === "resolved";
     const resolvedFields = isClosed
       ? `, resolved_by_user_id = ${req.companyUser.id}, resolved_at = NOW()`
@@ -857,7 +915,14 @@ router.delete("/requests/:id", async (req, res, next) => {
   try {
     const companyId = req.companyUser.companyId;
     const id = Number(req.params.id);
-    if (!id) return res.status(400).json({ message: "Invalid id" });
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+
+    // Check delete permission using matrix helper
+    const hasAssignPerm = await hasModulePerm(req, "softrequests", "d");
+    if (!hasAssignPerm) {
+      return res.status(403).json({ message: "Unauthorized to delete requests" });
+    }
+
     const [[row]] = await pool.query(
       "SELECT id FROM soft_service_requests WHERE id = ? AND company_id = ?",
       [id, companyId]
@@ -872,6 +937,13 @@ router.delete("/requests/:id", async (req, res, next) => {
 router.post("/requests/bulk-delete", async (req, res, next) => {
   try {
     const companyId = req.companyUser.companyId;
+
+    // Check delete permission using matrix helper
+    const hasAssignPerm = await hasModulePerm(req, "softrequests", "d");
+    if (!hasAssignPerm) {
+      return res.status(403).json({ message: "Unauthorized to delete requests" });
+    }
+
     const ids = (req.body.ids || []).map(Number).filter(Boolean);
     if (!ids.length) return res.status(400).json({ message: "No ids provided" });
     const [rows] = await pool.query(

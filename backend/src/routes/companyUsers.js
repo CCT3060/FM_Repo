@@ -45,6 +45,8 @@ const router = Router();
         UNIQUE (user_id, company_id)
       )
     `);
+    await pool.query(`ALTER TABLE company_users ADD COLUMN IF NOT EXISTS can_access_combined_view BOOLEAN DEFAULT TRUE`);
+    await pool.query(`ALTER TABLE company_users ADD COLUMN IF NOT EXISTS default_company_id INTEGER`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_uca_user_id ON user_company_assignments(user_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_uca_company_id ON user_company_assignments(company_id)`);
   } catch (err) {
@@ -88,11 +90,11 @@ const buildCompanyInClause = (columnSql, filter) => {
 // ── GET /api/company-users?companyId=:id ──────────────────────────────────────
 router.get("/", async (req, res, next) => {
   try {
-    const companyId = Number(req.query.companyId);
-    if (!companyId) return res.status(400).json({ message: "companyId is required" });
-
-    const ok = await verifyCompanyOwner(companyId);
-    if (!ok) return res.status(403).json({ message: "Access denied" });
+    const rawCid = req.query.companyId;
+    if (!rawCid) return res.status(400).json({ message: "companyId is required" });
+    const filter = parseCompanyFilter(rawCid);
+    const { whereSql, params } = buildCompanyInClause("company_id", filter);
+    const where = whereSql ? `WHERE ${whereSql}` : "";
 
     const [rows] = await pool.query(
       `SELECT id,
@@ -108,9 +110,9 @@ router.get("/", async (req, res, next) => {
               module_access AS "moduleAccess",
               created_at   AS "createdAt"
        FROM company_users
-       WHERE company_id = ?
+       ${where}
        ORDER BY created_at DESC`,
-      [companyId]
+      params
     );
     res.json(rows);
   } catch (err) {
@@ -501,11 +503,22 @@ router.get("/employees", requireAuth, async (req, res, next) => {
     let rows;
     const filter = parseCompanyFilter(companyId);
     if (filter.all) {
-      // Return all employees across all companies with the company name included
+      // Return all employees across all companies with the assigned companies included
       [rows] = await pool.query(
         `SELECT cu.id, cu.full_name AS "fullName", cu.email, cu.phone, cu.role, cu.designation,
                 cu.department_id AS "departmentId", cu.status, cu.username,
                 cu.company_id AS "companyId", c.company_name AS "companyName",
+                COALESCE(cu.can_access_combined_view, TRUE) AS "canAccessCombinedView",
+                cu.default_company_id AS "defaultCompanyId",
+                COALESCE(
+                  (
+                    SELECT json_agg(json_build_object('id', c2.id, 'companyName', c2.company_name, 'companyCode', c2.company_code) ORDER BY c2.company_name)
+                    FROM user_company_assignments uca2
+                    JOIN companies c2 ON c2.id = uca2.company_id
+                    WHERE uca2.user_id = cu.id
+                  ),
+                  json_build_array(json_build_object('id', c.id, 'companyName', c.company_name, 'companyCode', c.company_code))
+                ) AS "assignedCompanies",
                 cu.permissions, cu.module_access AS "moduleAccess", cu.created_at AS "createdAt",
                 CASE WHEN cu.password_hash IS NOT NULL AND cu.password_hash <> '' THEN TRUE ELSE FALSE END AS "hasPassword"
          FROM company_users cu
@@ -519,13 +532,25 @@ router.get("/employees", requireAuth, async (req, res, next) => {
         `SELECT cu.id, cu.full_name AS "fullName", cu.email, cu.phone, cu.role, cu.designation,
                 cu.department_id AS "departmentId", cu.status, cu.username,
                 cu.company_id AS "companyId", c.company_name AS "companyName",
+                COALESCE(cu.can_access_combined_view, TRUE) AS "canAccessCombinedView",
+                cu.default_company_id AS "defaultCompanyId",
+                COALESCE(
+                  (
+                    SELECT json_agg(json_build_object('id', c2.id, 'companyName', c2.company_name, 'companyCode', c2.company_code) ORDER BY c2.company_name)
+                    FROM user_company_assignments uca2
+                    JOIN companies c2 ON c2.id = uca2.company_id
+                    WHERE uca2.user_id = cu.id
+                  ),
+                  json_build_array(json_build_object('id', c.id, 'companyName', c.company_name, 'companyCode', c.company_code))
+                ) AS "assignedCompanies",
                 cu.permissions, cu.module_access AS "moduleAccess", cu.created_at AS "createdAt",
                 CASE WHEN cu.password_hash IS NOT NULL AND cu.password_hash <> '' THEN TRUE ELSE FALSE END AS "hasPassword"
          FROM company_users cu
          JOIN companies c ON c.id = cu.company_id
          WHERE cu.company_id IN (${placeholders})
+            OR cu.id IN (SELECT user_id FROM user_company_assignments WHERE company_id IN (${placeholders}))
          ORDER BY c.company_name, cu.full_name`,
-        filter.ids
+        [...filter.ids, ...filter.ids]
       );
     }
     res.json(rows);
@@ -535,17 +560,21 @@ router.get("/employees", requireAuth, async (req, res, next) => {
 // POST /api/company-users/employees – create employee (admin)
 router.post("/employees", requireAuth, async (req, res, next) => {
   try {
-    const { companyId, fullName, email, phone, role = "technician", designation, departmentId, status = "Active", username, password, permissions, moduleAccess } = req.body;
+    const {
+      companyId, fullName, email, phone, role = "technician", designation, departmentId,
+      status = "Active", username, password, permissions, moduleAccess,
+      canAccessCombinedView = true, defaultCompanyId = null,
+    } = req.body;
     if (!companyId || !fullName || !email) return res.status(400).json({ message: "companyId, fullName, email required" });
     const bcrypt = (await import("bcryptjs")).default;
     const hashedPw = password ? await bcrypt.hash(password, 10) : await bcrypt.hash("changeme123", 10);
     const permJson = JSON.stringify(permissions && typeof permissions === "object" ? permissions : {});
     const modJson  = JSON.stringify(Array.isArray(moduleAccess) ? moduleAccess : []);
     const [rows] = await pool.query(
-      `INSERT INTO company_users (company_id, full_name, email, phone, role, designation, department_id, username, password_hash, status, permissions, module_access)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb)
-       RETURNING id, full_name AS "fullName", email, phone, role, designation, status, username`,
-      [companyId, fullName, email, phone || null, role, designation || null, departmentId || null, username || null, hashedPw, status, permJson, modJson]
+      `INSERT INTO company_users (company_id, full_name, email, phone, role, designation, department_id, username, password_hash, status, permissions, module_access, can_access_combined_view, default_company_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?)
+       RETURNING id, full_name AS "fullName", email, phone, role, designation, status, username, can_access_combined_view AS "canAccessCombinedView", default_company_id AS "defaultCompanyId"`,
+      [companyId, fullName, email, phone || null, role, designation || null, departmentId || null, username || null, hashedPw, status, permJson, modJson, Boolean(canAccessCombinedView), defaultCompanyId ? Number(defaultCompanyId) : null]
     );
     const newUser = rows[0];
     // Sync extra company assignments if provided
@@ -566,7 +595,10 @@ router.post("/employees", requireAuth, async (req, res, next) => {
 // PUT /api/company-users/employees/:id – update employee (admin)
 router.put("/employees/:id", requireAuth, async (req, res, next) => {
   try {
-    const { fullName, email, phone, role, designation, departmentId, status, username, password, permissions, moduleAccess } = req.body;
+    const {
+      fullName, email, phone, role, designation, departmentId, status, username,
+      password, permissions, moduleAccess, canAccessCombinedView, defaultCompanyId,
+    } = req.body;
     const fields = []; const params = [];
     if (fullName !== undefined)    { fields.push("full_name = ?");    params.push(fullName); }
     if (email !== undefined)       { fields.push("email = ?");        params.push(email); }
@@ -576,6 +608,8 @@ router.put("/employees/:id", requireAuth, async (req, res, next) => {
     if (departmentId !== undefined){ fields.push("department_id = ?");params.push(departmentId); }
     if (status !== undefined)      { fields.push("status = ?");       params.push(status); }
     if (username !== undefined)    { fields.push("username = ?");     params.push(username || null); }
+    if (canAccessCombinedView !== undefined) { fields.push("can_access_combined_view = ?"); params.push(Boolean(canAccessCombinedView)); }
+    if (defaultCompanyId !== undefined) { fields.push("default_company_id = ?"); params.push(defaultCompanyId ? Number(defaultCompanyId) : null); }
     if (password)                  {
       const bcrypt = (await import("bcryptjs")).default;
       fields.push("password_hash = ?");
@@ -586,7 +620,7 @@ router.put("/employees/:id", requireAuth, async (req, res, next) => {
     if (!fields.length) return res.status(400).json({ message: "No fields" });
     params.push(req.params.id);
     const [rows] = await pool.query(
-      `UPDATE company_users SET ${fields.join(", ")} WHERE id = ? RETURNING id, full_name AS "fullName", email, phone, role, designation, status, username, company_id AS "companyId"`,
+      `UPDATE company_users SET ${fields.join(", ")} WHERE id = ? RETURNING id, full_name AS "fullName", email, phone, role, designation, status, username, company_id AS "companyId", can_access_combined_view AS "canAccessCombinedView", default_company_id AS "defaultCompanyId"`,
       params
     );
     const updated = rows[0];

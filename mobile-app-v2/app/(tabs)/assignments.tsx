@@ -106,7 +106,7 @@ export default function AssignmentsTab() {
               <MaterialCommunityIcons name="clipboard-plus-outline" size={18} color="#fff" />
               <Text style={styles.actionBtnText}>Assign Template</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={[styles.actionBtn, { backgroundColor: theme.secondary ?? '#7C3AED' }]} onPress={() => router.push('/work-orders')}>
+            <TouchableOpacity style={[styles.actionBtn, { backgroundColor: (theme as any).secondary ?? '#7C3AED' }]} onPress={() => router.push('/work-orders')}>
               <MaterialCommunityIcons name="briefcase-plus-outline" size={18} color="#fff" />
               <Text style={styles.actionBtnText}>Work Orders</Text>
             </TouchableOpacity>

@@ -994,8 +994,8 @@ const TemplateList = memo(function TemplateList({ token, companies, fetchTemplat
     setLoading(true);
     setError(null);
     try {
-      // Backend now supports companyId="all" for multi-company aggregation
-      const params = (companyId && companyId !== "all") ? `companyId=${companyId}&includeQuestions=true` : "includeQuestions=true";
+      // Backend supports companyId="all" for multi-company aggregation
+      const params = companyId ? `companyId=${companyId}&includeQuestions=true` : "includeQuestions=true";
       const data = await fetchTemplates(token, params);
       setTemplates(Array.isArray(data) ? data : []);
     } catch (err) {

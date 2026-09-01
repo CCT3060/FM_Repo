@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import SearchableSelect from "./SearchableSelect.jsx";
+import { confirmDeleteAction } from "../pages/CompanyEmployeePortal.jsx";
 import {
   getSoftServiceRequestsAll,
   assignSoftServiceRequest,
@@ -276,7 +277,7 @@ function ViewModal({ req, token, onClose }) {
 }
 
 /* ── Main Panel ────────────────────────────────────────────────────────────── */
-export default function SoftRequestsPanel({ token, currentUser, allCompanies = false }) {
+export default function SoftRequestsPanel({ token, currentUser, hasPerm, allCompanies = false, isViewOnly = false }) {
   const [requests, setRequests]         = useState([]);
   const [users, setUsers]               = useState([]);
   const [loading, setLoading]           = useState(true);
@@ -290,8 +291,13 @@ export default function SoftRequestsPanel({ token, currentUser, allCompanies = f
   const [deleting, setDeleting]         = useState(false);
   const [escalationUsers, setEscalationUsers] = useState([]);
 
-  const isAdmin    = currentUser?.role === "admin";
-  const canResolve = isAdmin || currentUser?.canResolveSoftIssue;
+  const isAdmin    = currentUser?.role === "admin" || currentUser?.role === "catalyst_admin";
+  const isManager  = isAdmin || currentUser?.role === "supervisor" || currentUser?.isSoftManager || currentUser?.roleCapabilities?.isSoftManager || currentUser?.role?.toLowerCase().includes("manager");
+  const canResolve = isAdmin || isManager || currentUser?.canResolveSoftIssue || currentUser?.roleCapabilities?.canResolveSoftIssue;
+
+  const canAssign       = !isViewOnly && (isAdmin || (hasPerm ? hasPerm("softrequests", "assign_cutoff_hk_web") : isManager));
+  const canChangeStatus = !isViewOnly && (isAdmin || (hasPerm ? hasPerm("softrequests", "change_status_hk_web") : canResolve));
+  const canDelete       = !isViewOnly && (isAdmin || (hasPerm ? hasPerm("softrequests", "d") : isAdmin));
 
   const load = useCallback(() => {
     setLoading(true);
@@ -309,7 +315,7 @@ export default function SoftRequestsPanel({ token, currentUser, allCompanies = f
   }, [token]);
 
   const deleteOne = async (id) => {
-    if (!window.confirm("Delete this request? This cannot be undone.")) return;
+    if (!confirmDeleteAction(canDelete, "Delete this request? This cannot be undone.")) return;
     setDeleting(true);
     try {
       const res = await fetch(`${API_BASE_SR}/api/soft-service/requests/${id}`, {
@@ -325,7 +331,7 @@ export default function SoftRequestsPanel({ token, currentUser, allCompanies = f
 
   const deleteBulk = async () => {
     if (!selected.size) return;
-    if (!window.confirm(`Delete ${selected.size} request${selected.size > 1 ? "s" : ""}? This cannot be undone.`)) return;
+    if (!confirmDeleteAction(canDelete, `Delete ${selected.size} request${selected.size > 1 ? "s" : ""}? This cannot be undone.`)) return;
     setDeleting(true);
     try {
       const res = await fetch(`${API_BASE_SR}/api/soft-service/requests/bulk-delete`, {
@@ -398,11 +404,10 @@ export default function SoftRequestsPanel({ token, currentUser, allCompanies = f
   // Single progressive status button
   const StatusBtn = ({ r }) => {
     const busy_ = !!busy[r.id];
+    if (!canChangeStatus) return null;
     if (r.status === "closed") {
-      if (!canResolve) return null;
       return <button onClick={() => doStatus(r, "open")} disabled={busy_} style={bStyle("#eff6ff","#bfdbfe","#2563eb",busy_)}>{busy_ ? "…" : "Reopen"}</button>;
     }
-    if (!canResolve) return null;
     if (r.status === "open")
       return <button onClick={() => doStatus(r, "acknowledged")} disabled={busy_} style={bStyle("#fffbeb","#fde68a","#b45309",busy_)}>{busy_ ? "…" : "Acknowledge"}</button>;
     if (r.status === "acknowledged")
@@ -456,7 +461,7 @@ export default function SoftRequestsPanel({ token, currentUser, allCompanies = f
         <button onClick={load} style={{ padding: "7px 14px", borderRadius: "8px", border: "1px solid #e2e8f0", background: "#f8fafc", color: "#475569", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
           ↻ Refresh
         </button>
-        {selected.size > 0 && (
+        {canDelete && selected.size > 0 && (
           <button onClick={deleteBulk} disabled={deleting}
             style={{ padding: "7px 14px", borderRadius: "8px", border: "1px solid #fecaca",
               background: "#fef2f2", color: "#dc2626", cursor: deleting ? "not-allowed" : "pointer",
@@ -479,9 +484,9 @@ export default function SoftRequestsPanel({ token, currentUser, allCompanies = f
           {/* Header */}
           <div style={{ display: "grid", gridTemplateColumns: "32px 100px 1.8fr 1fr 1fr 1fr 0.9fr 0.9fr 2.5fr", gap: "8px", padding: "10px 16px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", fontSize: "11px", fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.04em", alignItems: "center" }}>
             <span>
-              <input type="checkbox" checked={selected.size === filtered.length && filtered.length > 0}
+              {!isViewOnly && <input type="checkbox" checked={selected.size === filtered.length && filtered.length > 0}
                 onChange={() => setSelected(selected.size === filtered.length ? new Set() : new Set(filtered.map((r) => r.id)))}
-                style={{ cursor: "pointer", width: "14px", height: "14px" }} />
+                style={{ cursor: "pointer", width: "14px", height: "14px" }} />}
             </span>
             <span>Req #</span><span>Checklist</span><span>Raised By</span><span>Assigned To</span><span>Status</span><span>Raised</span><span>Cutoff</span><span>Actions</span>
           </div>
@@ -496,8 +501,8 @@ export default function SoftRequestsPanel({ token, currentUser, allCompanies = f
 
                 {/* Checkbox */}
                 <div>
-                  <input type="checkbox" checked={selected.has(r.id)}
-                    onChange={() => toggleSelect(r.id)} style={{ cursor: "pointer", width: "14px", height: "14px" }} />
+                  {!isViewOnly && <input type="checkbox" checked={selected.has(r.id)}
+                    onChange={() => toggleSelect(r.id)} style={{ cursor: "pointer", width: "14px", height: "14px" }} />}
                 </div>
 
                 {/* Req # */}
@@ -546,10 +551,10 @@ export default function SoftRequestsPanel({ token, currentUser, allCompanies = f
                 {/* Actions */}
                 <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
                   <button onClick={() => setViewModal(r)} style={bStyle("#f8fafc","#e2e8f0","#475569",false)}>View</button>
-                  {isActive && <button onClick={() => setAssignModal(r)} disabled={busy_} style={bStyle("#eff6ff","#bfdbfe","#2563eb",busy_)}>{r.assignedToId ? "Reassign" : "Assign"}</button>}
-                  {isActive && <button onClick={() => setCutoffModal(r)} disabled={busy_} style={bStyle("#fffbeb","#fde68a","#b45309",busy_)}>Cutoff</button>}
+                  {isActive && canAssign && <button onClick={() => setAssignModal(r)} disabled={busy_} style={bStyle("#eff6ff","#bfdbfe","#2563eb",busy_)}>{r.assignedToId ? "Reassign" : "Assign"}</button>}
+                  {isActive && canAssign && <button onClick={() => setCutoffModal(r)} disabled={busy_} style={bStyle("#fffbeb","#fde68a","#b45309",busy_)}>Cutoff</button>}
                   <StatusBtn r={r} />
-                  <button onClick={() => deleteOne(r.id)} disabled={deleting} style={bStyle("#fef2f2","#fecaca","#dc2626",deleting)}>🗑</button>
+                  {canDelete && <button onClick={() => deleteOne(r.id)} disabled={deleting} style={bStyle("#fef2f2","#fecaca","#dc2626",deleting)}>🗑</button>}
                 </div>
               </div>
             );

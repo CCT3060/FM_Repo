@@ -87,7 +87,7 @@ export default function AssetDetailsScreen() {
         getStoredUser(),
       ]);
       setData(assetData);
-      setRecentSubmission(assetData?.recentSubmission ?? null);
+      setRecentSubmission((assetData as any)?.recentSubmission ?? null);
 
       const caps = user?.roleCapabilities ?? null;
       setUserCaps(caps ? { canRaiseSoftIssue: !!caps.canRaiseSoftIssue, canResolveSoftIssue: !!caps.canResolveSoftIssue } : null);

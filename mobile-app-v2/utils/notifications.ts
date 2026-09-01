@@ -40,12 +40,21 @@ export async function registerForPushNotifications(): Promise<string | null> {
         vibrationPattern: [0, 250, 250, 250],
         lightColor: '#2563EB',
         sound: 'default',
+        enableLights: true,
+        enableVibrate: true,
+        showBadge: true,
+        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
       });
       await Notifications.setNotificationChannelAsync('tasks', {
         name: 'Task Assignments',
-        importance: Notifications.AndroidImportance.HIGH,
+        importance: Notifications.AndroidImportance.MAX,
+        vibrationPattern: [0, 250, 250, 250],
         lightColor: '#7C3AED',
         sound: 'default',
+        enableLights: true,
+        enableVibrate: true,
+        showBadge: true,
+        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
       });
     }
 

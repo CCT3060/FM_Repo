@@ -15,13 +15,17 @@ import type { RoleCapabilities } from './permissions';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const getDevApiBase = (): string | null => {
+  // Cast legacy manifest shapes to `any` — newer expo-constants types narrowed
+  // `manifest` to EmbeddedManifest which dropped `hostUri` / `debuggerHost`.
+  const legacyManifest = Constants.manifest as any;
+  const legacyManifest2Client = Constants.manifest2?.extra?.expoClient as any;
   const hostUri =
     Constants.expoConfig?.hostUri ||
-    Constants.manifest?.hostUri ||
+    legacyManifest?.hostUri ||
     // Older/newer Expo manifest shapes
-    Constants.manifest2?.extra?.expoClient?.hostUri ||
-    Constants.manifest?.debuggerHost ||
-    Constants.manifest2?.extra?.expoClient?.debuggerHost ||
+    legacyManifest2Client?.hostUri ||
+    legacyManifest?.debuggerHost ||
+    legacyManifest2Client?.debuggerHost ||
     '';
 
   if (!hostUri) return null;
@@ -93,6 +97,31 @@ export interface SoftRequest {
   beforeSubmittedAt?: string;
   raiseSubmissionId?: number;
   resolveSubmissionId?: number;
+}
+
+export interface AdditionalRequest {
+  id:              number;
+  serviceId:       number;
+  serviceName?:    string;
+  priority:        string;
+  remark?:         string;
+  status:          string;
+  raisedAt:        string;
+  raisedByName?:   string;
+  raisedById?:     number;
+  assignedToId?:   number;
+  assignedToName?: string;
+  cutoffAt?:       string;
+  resolvedAt?:     string;
+  resolvedByName?: string;
+  /** discriminant to tell request type apart in a unified list */
+  _type:           'additional';
+}
+
+export interface AssignableUser {
+  id:       number;
+  fullName: string;
+  role?:    string;
 }
 
 // ─── Token helpers ────────────────────────────────────────────────────────────
@@ -202,6 +231,15 @@ async function apiPatch<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+async function apiDelete<T>(path: string): Promise<T> {
+  const res = await authenticatedFetch(path, { method: 'DELETE' });
+  if (!res.ok) {
+    const msg = await res.text().catch(() => 'Request failed');
+    throw new ApiError(res.status, msg || `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<T>;
+}
+
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 export async function verifyCompanyCode(code: string): Promise<StoredCompany> {
   const res = await fetch(`${API_BASE}/api/mobile-auth/verify-company`, {
@@ -291,7 +329,7 @@ export async function fetchAssets(params?: { search?: string; type?: string; ass
   if (params?.type)         q.set('type', params.type);
   if (params?.assignedOnly) q.set('assignedOnly', 'true');
   const qs = q.toString() ? `?${q}` : '';
-  return apiGet<unknown[]>(`/api/company-portal/assets${qs}`, true);
+  return apiGet<unknown[]>(`/api/company-portal/assets${qs}`);
 }
 
 export async function fetchAssetById(id: number) {
@@ -423,6 +461,7 @@ export async function submitChecklistAuth(payload: {
   overallRemark?: string;
   locationId?: number | null;
   softRaise?: string;
+  softResolve?: boolean | string;
 }): Promise<unknown> {
   return apiPost<unknown>('/api/template-assignments/submit-checklist', payload);
 }
@@ -487,9 +526,13 @@ export async function submitLogsheet(
 }
 
 // ─── Work Orders ──────────────────────────────────────────────────────────────
-export async function fetchWorkOrders(params?: { status?: string }) {
-  const q = params?.status ? `?status=${params.status}` : '';
-  return apiGet<unknown[]>(`/api/company-portal/work-orders${q}`);
+export async function fetchWorkOrders(params?: { status?: string; assignedTo?: number }) {
+  const q = new URLSearchParams();
+  if (params?.status) q.set('status', params.status);
+  if (params?.assignedTo) q.set('assignedTo', String(params.assignedTo));
+  const queryStr = q.toString() ? `?${q.toString()}` : '';
+  const res = await apiGet<{ total?: number; data?: any[] } | any[]>(`/api/company-portal/work-orders${queryStr}`);
+  return Array.isArray(res) ? res : (res && Array.isArray((res as any).data) ? (res as any).data : []);
 }
 
 export async function fetchWorkOrderById(id: number) {
@@ -543,7 +586,56 @@ export async function resolveSoftRequest(id: number, resolveSubmissionId?: numbe
   return apiPut<unknown>(`/api/soft-service/requests/${id}/resolve`, { resolveSubmissionId });
 }
 
-// ─── Notifications ────────────────────────────────────────────────────────────
+export async function assignSoftRequest(id: number, assignedToUserId: number): Promise<unknown> {
+  return apiPut<unknown>(`/api/soft-service/requests/${id}/assign`, { assignedToUserId });
+}
+
+export async function setSoftRequestCutoff(id: number, cutoffAt: string, escalationUserId?: number): Promise<unknown> {
+  return apiPut<unknown>(`/api/soft-service/requests/${id}/cutoff`, { cutoffAt, escalationUserId });
+}
+
+export async function deleteSoftRequest(id: number): Promise<unknown> {
+  return apiDelete<unknown>(`/api/soft-service/requests/${id}`);
+}
+
+/** Returns users who can be assigned a soft-service request (can_resolve_soft_issue = TRUE) */
+export async function fetchSoftRequestAssignableUsers(): Promise<AssignableUser[]> {
+  return apiGet<AssignableUser[]>('/api/soft-service/requests/users');
+}
+
+/** Returns user list for escalation — typically company supervisors / executives */
+export async function fetchSoftRequestEscalationUsers(): Promise<AssignableUser[]> {
+  return apiGet<AssignableUser[]>('/api/soft-service/requests/escalation-users');
+}
+
+// ─── Additional Requests (management) ────────────────────────────────────────
+export async function fetchMyAdditionalRequests(): Promise<AdditionalRequest[]> {
+  const raw = await apiGet<any[]>('/api/additional-requests/requests/my');
+  return raw.map((r) => ({ ...r, _type: 'additional' as const }));
+}
+
+export async function fetchAllAdditionalRequests(): Promise<AdditionalRequest[]> {
+  const raw = await apiGet<any[]>('/api/additional-requests/requests/all');
+  return raw.map((r) => ({ ...r, _type: 'additional' as const }));
+}
+
+export async function assignAdditionalRequest(id: number, assignedToUserId: number): Promise<unknown> {
+  return apiPut<unknown>(`/api/additional-requests/requests/${id}/assign`, { assignedToUserId });
+}
+
+export async function setAdditionalRequestCutoff(id: number, cutoffAt: string, escalationUserId?: number): Promise<unknown> {
+  return apiPut<unknown>(`/api/additional-requests/requests/${id}/cutoff`, { cutoffAt, escalationUserId });
+}
+
+export async function updateAdditionalRequestStatus(id: number, status: string): Promise<unknown> {
+  return apiPut<unknown>(`/api/additional-requests/requests/${id}/status`, { status });
+}
+
+export async function deleteAdditionalRequest(id: number): Promise<unknown> {
+  return apiDelete<unknown>(`/api/additional-requests/requests/${id}`);
+}
+
+
 export async function fetchNotifications() {
   return apiGet<unknown[]>('/api/notifications');
 }
@@ -625,12 +717,26 @@ export async function fetchEmployeesByRole(role?: string) {
 }
 
 // ─── Shifts ───────────────────────────────────────────────────────────────────
+export interface CompanyShift {
+  id:          number;
+  name:        string;
+  startTime:   string;
+  endTime:     string;
+  status:      string;
+  description: string | null;
+}
+
 export async function fetchMyShifts() {
   return apiGet<unknown[]>('/api/shifts/my-shifts');
 }
 
 export async function fetchActiveShift() {
   return apiGet<unknown>('/api/shifts/active');
+}
+
+/** Fetch all shifts defined for this company (admin only). */
+export async function fetchCompanyShifts(): Promise<CompanyShift[]> {
+  return apiGet<CompanyShift[]>('/api/shifts');
 }
 
 // ─── File upload ─────────────────────────────────────────────────────────────
@@ -644,7 +750,7 @@ const MAX_PHOTO_BYTES = 14 * 1024 * 1024; // 14 MB — nginx limit is 15m
 /** Compress an image so it is under 14 MB. Returns the (possibly new) URI. */
 async function compressToUnder5MB(uri: string): Promise<string> {
   try {
-    const info = await FileSystem.getInfoAsync(uri, { size: true });
+    const info = await FileSystem.getInfoAsync(uri);
     const size = (info as any).size as number | undefined;
     if (!size || size <= MAX_PHOTO_BYTES) return uri; // already fine
 
@@ -653,7 +759,7 @@ async function compressToUnder5MB(uri: string): Promise<string> {
       const result = await ImageManipulator.manipulateAsync(
         uri, [], { compress: quality, format: ImageManipulator.SaveFormat.JPEG }
       );
-      const info2 = await FileSystem.getInfoAsync(result.uri, { size: true });
+      const info2 = await FileSystem.getInfoAsync(result.uri);
       if (!(info2 as any).size || (info2 as any).size <= MAX_PHOTO_BYTES) {
         return result.uri;
       }

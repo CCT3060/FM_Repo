@@ -224,9 +224,10 @@ export default function SoftResolveScreen() {
         });
 
         const submission: any = await submitChecklistAuth({
-          templateId: request!.templateId,
-          assetId:    request!.assetId,
-          answers:    answerArray,
+          templateId:  request!.templateId,
+          assetId:     request!.assetId,
+          answers:     answerArray,
+          softResolve: true,
         });
         submissionId = submission?.submissionId ?? submission?.id ?? undefined;
       }

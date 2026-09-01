@@ -339,7 +339,7 @@ function TemplateBuilder({ token, companies, assets, shifts = [], onBack, onSave
   const [form, setForm] = useState(() => {
     if (editTemplate) {
       return {
-        companyId: editTemplate.companyId || companies[0]?.id || "",
+        companyId: editTemplate.companyId || companies?.[0]?.id || "",
         templateName: editTemplate.templateName || "",
         assetType: editTemplate.assetType || "technical",
         assetModel: editTemplate.assetModel || "",
@@ -351,7 +351,7 @@ function TemplateBuilder({ token, companies, assets, shifts = [], onBack, onSave
       };
     }
     return {
-      companyId: companies[0]?.id || "",
+      companyId: companies?.[0]?.id || "",
       templateName: "",
       assetType: "technical",
       assetModel: "",
@@ -399,7 +399,7 @@ function TemplateBuilder({ token, companies, assets, shifts = [], onBack, onSave
   );
 
   // Self-fetch assets for the selected company so this builder is independent of parent state
-  const [fetchedAssets, setFetchedAssets] = useState(assets);
+  const [fetchedAssets, setFetchedAssets] = useState(Array.isArray(assets) ? assets : []);
   useEffect(() => {
     if (!token || !form.companyId) return;
     let cancelled = false;
@@ -414,10 +414,10 @@ function TemplateBuilder({ token, companies, assets, shifts = [], onBack, onSave
       .then((data) => { if (!cancelled) setFetchedAssets(Array.isArray(data) ? data : []); })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [token, form.companyId]);  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [token, form.companyId, companyPortalMode]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const filteredAssets = useMemo(() =>
-    fetchedAssets.filter((a) => (a.assetType || a.asset_type) === form.assetType),
+    (Array.isArray(fetchedAssets) ? fetchedAssets : []).filter((a) => (a.assetType || a.asset_type) === form.assetType),
     [fetchedAssets, form.assetType]
   );
 
@@ -563,7 +563,7 @@ function TemplateBuilder({ token, companies, assets, shifts = [], onBack, onSave
             <div style={{ padding: "16px 20px" }}>
               <Label required>Company</Label>
               <Select value={form.companyId} onChange={(e) => setForm((p) => ({ ...p, companyId: e.target.value }))}>
-                {companies.map((c) => <option key={c.id} value={c.id}>{c.companyName}</option>)}
+                {(companies || []).map((c) => <option key={c.id} value={c.id}>{c.companyName || c.name || `Company #${c.id}`}</option>)}
               </Select>
               {!form.companyId && <p style={{ fontSize: "11px", color: "#ef4444", marginTop: "4px" }}>Select a company before building the tabular template.</p>}
             </div>
@@ -588,7 +588,7 @@ function TemplateBuilder({ token, companies, assets, shifts = [], onBack, onSave
           <div>
             <Label required>Company</Label>
             <Select value={form.companyId} onChange={(e) => setForm((p) => ({ ...p, companyId: e.target.value, assetId: "" }))}>
-              {companies.map((c) => <option key={c.id} value={c.id}>{c.companyName}</option>)}
+              {(companies || []).map((c) => <option key={c.id} value={c.id}>{c.companyName || c.name || `Company #${c.id}`}</option>)}
             </Select>
           </div>
           )}
@@ -698,18 +698,20 @@ function LogsheetFillView({ token, template, asset, onBack, fetchEntries, submit
   const dateColumns = Array.from({ length: days }, (_, i) => i + 1);
 
   const allQuestions = useMemo(() =>
-    (template.sections || []).flatMap((s) => s.questions.map((q) => ({ ...q, sectionName: s.sectionName || s.name }))),
+    ((template && template.sections) || []).flatMap((s) => (s.questions || []).map((q) => ({ ...q, sectionName: s.sectionName || s.name }))),
     [template]
   );
 
   useEffect(() => {
+    if (!template?.id) return;
     const load = async () => {
       setLoadingEntries(true);
       try {
-        const data = await (fetchEntries || getLogsheetEntriesByTemplate)(token, template.id, `assetId=${asset.id}&month=${month}&year=${year}`);
-        setEntries(data);
+        const assetParam = asset?.id ? `assetId=${asset.id}&` : "";
+        const data = await (fetchEntries || getLogsheetEntriesByTemplate)(token, template.id, `${assetParam}month=${month}&year=${year}`);
+        setEntries(Array.isArray(data) ? data : []);
         // Pre-fill answers from the latest entry
-        if (data.length) {
+        if (Array.isArray(data) && data.length) {
           const latest = data[0];
           const prefilled = {};
           (latest.answers || []).forEach((a) => {
@@ -725,7 +727,7 @@ function LogsheetFillView({ token, template, asset, onBack, fetchEntries, submit
       }
     };
     load();
-  }, [token, template.id, asset.id, month, year]);
+  }, [token, template?.id, asset?.id, month, year, fetchEntries]);
 
   const setAnswer = (qId, day, val) => {
     setAnswers((prev) => ({ ...prev, [qId]: { ...(prev[qId] || {}), [day]: val } }));
@@ -1397,7 +1399,7 @@ function AssignModal({ token, companyId, template, templateType, onClose, compan
 /* ─────────────────────────────────────────────────────────────────
    Template List (main view)
 ───────────────────────────────────────────────────────────────── */
-function TemplateList({ token, companies, assets, onBuild, onImport, onFill, fetchTemplates, onEdit, onDelete, canBuild, fetchGrid, companyPortalMode = false }) {
+function TemplateList({ token, companies = [], assets = [], onBuild, onImport, onFill, fetchTemplates, onEdit, onDelete, canBuild = true, canFill = true, canAssign = true, fetchGrid, companyPortalMode = false }) {
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -1416,28 +1418,31 @@ function TemplateList({ token, companies, assets, onBuild, onImport, onFill, fet
       if (filterCompanyId) params += `&companyId=${filterCompanyId}`;
       if (filterType) params += `&assetType=${filterType}`;
       const data = await (fetchTemplates || getLogsheetTemplates)(token, params);
-      setTemplates(data);
+      setTemplates(Array.isArray(data) ? data : (Array.isArray(data?.templates) ? data.templates : []));
     } catch (err) {
       setError(err.message || "Could not load templates");
+      setTemplates([]);
     } finally {
       setLoading(false);
     }
-  }, [token, filterCompanyId, filterType]);
+  }, [token, filterCompanyId, filterType, fetchTemplates]);
 
   useEffect(() => { loadTemplates(); }, [loadTemplates]);
 
+  const safeTemplates = Array.isArray(templates) ? templates : [];
+
   const filtered = useMemo(() =>
-    templates.filter((t) => !search || t.templateName?.toLowerCase().includes(search.toLowerCase()) || (t.assetModel || "").toLowerCase().includes(search.toLowerCase())),
-    [templates, search]
+    safeTemplates.filter((t) => !search || t.templateName?.toLowerCase().includes(search.toLowerCase()) || (t.assetModel || "").toLowerCase().includes(search.toLowerCase())),
+    [safeTemplates, search]
   );
 
-  const statsTotal = templates.length;
-  const statsActive = templates.filter((t) => t.isActive !== false).length;
+  const statsTotal = safeTemplates.length;
+  const statsActive = safeTemplates.filter((t) => t.isActive !== false).length;
   const typeCounts = useMemo(() => {
     const m = {};
-    templates.forEach((t) => { m[t.assetType] = (m[t.assetType] || 0) + 1; });
+    safeTemplates.forEach((t) => { m[t.assetType] = (m[t.assetType] || 0) + 1; });
     return m;
-  }, [templates]);
+  }, [safeTemplates]);
 
   const handleDelete = async (id, name) => {
     if (!onDelete) return;
@@ -1600,25 +1605,25 @@ function TemplateList({ token, companies, assets, onBuild, onImport, onFill, fet
                           </button>
                         )}
                         {/* Assign */}
-                        {canBuild && (
+                        {canAssign && (
                           <button onClick={() => setAssignTarget(t)} title="Assign to user"
                             style={{ padding: "5px 9px", background: "#f5f3ff", color: "#7c3aed", border: "1px solid #ddd6fe", borderRadius: "6px", fontSize: "12px", cursor: "pointer", fontWeight: 600 }}>
                             👤 Assign
                           </button>
                         )}
                         {/* Fill button - only for the directly bound asset */}
-                        {onFill && boundAsset ? (
+                        {canFill && onFill && boundAsset ? (
                           <button title={`Fill logsheet for ${boundAsset.assetName || boundAsset.asset_name}`} onClick={() => onFill(t, boundAsset)}
                             style={{ padding: "5px 10px", background: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe", borderRadius: "6px", fontSize: "12px", cursor: "pointer", fontWeight: 600, whiteSpace: "nowrap" }}>
                             📋 Fill Logsheet
                           </button>
-                        ) : onFill && !boundAsset && t.layoutType === "tabular" ? (
+                        ) : canFill && onFill && !boundAsset && t.layoutType === "tabular" ? (
                           // Tabular templates have their own asset picker inside the fill form
                           <button title="Fill tabular logsheet" onClick={() => onFill(t, { id: null })}
                             style={{ padding: "5px 10px", background: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe", borderRadius: "6px", fontSize: "12px", cursor: "pointer", fontWeight: 600, whiteSpace: "nowrap" }}>
                             📋 Fill Logsheet
                           </button>
-                        ) : onFill && !boundAsset ? (
+                        ) : canFill && onFill && !boundAsset ? (
                           <span title="Edit this template and assign an asset to enable filling" style={{ fontSize: "12px", color: "#94a3b8", padding: "5px 0" }}>No asset assigned</span>
                         ) : null}
                       </div>
@@ -1637,7 +1642,7 @@ function TemplateList({ token, companies, assets, onBuild, onImport, onFill, fet
 /* ─────────────────────────────────────────────────────────────────
    LogsheetModule root
 ───────────────────────────────────────────────────────────────── */
-export default function LogsheetModule({ token, assets, companies, shifts = [], fetchTemplates, fetchEntries, submitEntry, createTemplate, assignTemplate, canBuild = true, fetchTemplate, updateTemplate, deleteTemplate, fetchGrid, companyPortalMode = false, directFill = null, onDirectFillConsumed }) {
+export default function LogsheetModule({ token, assets, companies, shifts = [], fetchTemplates, fetchEntries, submitEntry, createTemplate, assignTemplate, canBuild = true, canFill = true, canAssign = true, fetchTemplate, updateTemplate, deleteTemplate, fetchGrid, companyPortalMode = false, directFill = null, onDirectFillConsumed }) {
   const [showImport, setShowImport] = useState(false);
   // view: "list" | "builder" | "editor" | "fill"
   const [view, setView] = useState("list");
@@ -1664,6 +1669,7 @@ export default function LogsheetModule({ token, assets, companies, shifts = [], 
   }, [directFill]);
 
   const handleFill = async (template, asset) => {
+    if (!canFill) return;
     // If the template from the list doesn't have sections loaded, fetch the full template first
     let fullTemplate = template;
     if (fetchTemplate && (!template.sections || template.sections.length === 0)) {
@@ -1744,7 +1750,7 @@ export default function LogsheetModule({ token, assets, companies, shifts = [], 
     );
   }
 
-  if (view === "fill" && fillTemplate && (fillAsset || fillTemplate.layoutType === "tabular")) {
+  if (view === "fill" && canFill && fillTemplate && (fillAsset || fillTemplate.layoutType === "tabular")) {
     // Tabular logsheets use their own specialised fill component
     if (fillTemplate.layoutType === "tabular") {
       return (
@@ -1792,11 +1798,13 @@ export default function LogsheetModule({ token, assets, companies, shifts = [], 
         assets={assets}
         onBuild={canBuild ? () => setView("builder") : null}
         onImport={canBuild && createTemplate ? () => setShowImport(true) : null}
-        onFill={handleFill}
+        onFill={canFill ? handleFill : null}
         fetchTemplates={fetchTemplates}
         onEdit={canBuild && updateTemplate ? handleEdit : null}
         onDelete={canBuild && deleteTemplate ? handleDelete : null}
         canBuild={canBuild}
+        canFill={canFill}
+        canAssign={canAssign}
         fetchGrid={fetchGrid}
         companyPortalMode={companyPortalMode}
       />

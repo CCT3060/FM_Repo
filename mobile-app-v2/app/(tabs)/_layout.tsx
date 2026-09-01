@@ -55,43 +55,47 @@ export default function TabsLayout() {
         }}
       />
 
-      {/* Checklists — tech roles only */}
+      {/* Checklists — accessed via Home card (view-only), hidden from bottom nav */}
       <Tabs.Screen
         name="checklists"
         options={{
-          title: 'Checklists',
-          tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="clipboard-check" size={size} color={color} />,
-          href: (capabilities.isTechnicalSupervisor || capabilities.isTechnician) ? undefined : null,
+          href: null,
         }}
       />
 
-      {/* Tasks — supervisor unified view */}
+      {/* Tasks — hidden from bottom nav */}
       <Tabs.Screen
         name="tasks"
         options={{
-          title: 'Tasks',
-          tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="format-list-checks" size={size} color={color} />,
-          href: capabilities.isTechnicalSupervisor ? undefined : null,
+          href: null,
         }}
       />
 
-      {/* Team / Assignments — supervisors only */}
+      {/* Team / Assignments — hidden from bottom nav */}
       <Tabs.Screen
         name="assignments"
         options={{
-          title: 'Team',
-          tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="account-group" size={size} color={color} />,
-          href: capabilities.isTechnicalSupervisor ? undefined : null,
+          href: null,
         }}
       />
 
-      {/* Soft Requests — soft service roles */}
+      {/* Requests (Work Orders, Soft Service & Additional Requests) */}
       <Tabs.Screen
         name="soft-requests"
         options={{
           title: 'Requests',
           tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="wrench-outline" size={size} color={color} />,
-          href: (capabilities.canRaiseSoftIssue || capabilities.canResolveSoftIssue || capabilities.isSoftManager) ? undefined : null,
+          href: (
+            capabilities.canRaiseSoftIssue ||
+            capabilities.canResolveSoftIssue ||
+            capabilities.isSoftManager ||
+            capabilities.canExecuteWorkOrders ||
+            capabilities.canAssignWorkOrders ||
+            capabilities.isTechnician ||
+            capabilities.isTechnicalSupervisor ||
+            capabilities.canRaiseAdditionalRequest ||
+            capabilities.canAssignRaisedRequests
+          ) ? undefined : null,
         }}
       />
 

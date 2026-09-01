@@ -1,7 +1,8 @@
-﻿import { useState, useEffect, useCallback, useRef, useMemo, memo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, memo } from "react";
 import * as XLSX from "xlsx";
 import { getApiBaseUrl } from "../utils/runtimeConfig";
 import SearchableSelect from "./SearchableSelect.jsx";
+import { confirmDeleteAction } from "../pages/CompanyEmployeePortal.jsx";
 
 const API_BASE = getApiBaseUrl();
 
@@ -1210,7 +1211,7 @@ function UserDrilldown({ userName, companyId, type, token, onBack }) {
 }
 
 /* --- Asset Drilldown View --------------------------------------- */
-function AssetDrilldown({ assetId, assetName, companyId, type, token, onBack }) {
+function AssetDrilldown({ assetId, assetName, companyId, type, token, isAdmin, onBack }) {
   const [period,   setPeriod]   = useState("today");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo,   setDateTo]   = useState("");
@@ -1261,11 +1262,12 @@ function AssetDrilldown({ assetId, assetName, companyId, type, token, onBack }) 
   };
 
   const deleteOne = async (id) => {
-    if (!window.confirm("Delete this submission? This cannot be undone.")) return;
+    if (!confirmDeleteAction(isAdmin, "Delete this submission? This cannot be undone.")) return;
     setDeleting(true);
     try {
+      const subEndpoint = type === "logsheets" ? "logsheet-submissions" : "checklist-submissions";
       const qs = companyId ? `?companyId=${companyId}` : "";
-      const res = await fetch(`${API_BASE}/api/company-portal/checklist-submissions/${id}${qs}`, {
+      const res = await fetch(`${API_BASE}/api/company-portal/${subEndpoint}/${id}${qs}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -1278,11 +1280,12 @@ function AssetDrilldown({ assetId, assetName, companyId, type, token, onBack }) 
 
   const deleteBulk = async () => {
     if (!selected.size) return;
-    if (!window.confirm(`Delete ${selected.size} submission${selected.size > 1 ? "s" : ""}? This cannot be undone.`)) return;
+    if (!confirmDeleteAction(isAdmin, `Delete ${selected.size} submission${selected.size > 1 ? "s" : ""}? This cannot be undone.`)) return;
     setDeleting(true);
     try {
+      const subEndpoint = type === "logsheets" ? "logsheet-submissions" : "checklist-submissions";
       const qs = companyId ? `?companyId=${companyId}` : "";
-      const res = await fetch(`${API_BASE}/api/company-portal/checklist-submissions/bulk-delete${qs}`, {
+      const res = await fetch(`${API_BASE}/api/company-portal/${subEndpoint}/bulk-delete${qs}`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ ids: [...selected] }),
@@ -1657,11 +1660,12 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
   const toggleAll = () => setSelected((prev) => prev.size === sorted.length && sorted.length > 0 ? new Set() : new Set(sorted.map((r) => r.id)));
   const deleteBulk = async () => {
     if (!selected.size) return;
-    if (!window.confirm(`Delete ${selected.size} submission${selected.size > 1 ? "s" : ""}? This cannot be undone.`)) return;
+    if (!confirmDeleteAction(isAdmin, `Delete ${selected.size} submission${selected.size > 1 ? "s" : ""}? This cannot be undone.`)) return;
     setDeleting(true);
     try {
+      const subEndpoint = type === "logsheets" ? "logsheet-submissions" : "checklist-submissions";
       const qs = companyId ? `?companyId=${companyId}` : "";
-      const res = await fetch(`${API_BASE}/api/company-portal/checklist-submissions/bulk-delete${qs}`, {
+      const res = await fetch(`${API_BASE}/api/company-portal/${subEndpoint}/bulk-delete${qs}`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ ids: [...selected] }),
@@ -1675,12 +1679,13 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
 
   /* -- Delete one submission (admin only) -- */
   const deleteOneSubmission = async (id) => {
-    if (!window.confirm("Delete this submission? This cannot be undone.")) return;
+    if (!confirmDeleteAction(isAdmin, "Delete this submission? This cannot be undone.")) return;
     setDeleting(true);
     try {
+      const subEndpoint = type === "logsheets" ? "logsheet-submissions" : "checklist-submissions";
       const qs = companyId ? `?companyId=${companyId}` : "";
       const res = await fetch(
-        `${API_BASE}/api/company-portal/checklist-submissions/${id}${qs}`,
+        `${API_BASE}/api/company-portal/${subEndpoint}/${id}${qs}`,
         { method: "DELETE", headers: { Authorization: `Bearer ${token}` } }
       );
       if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || "Delete failed"); }
@@ -1859,6 +1864,7 @@ const SubmissionsPanel = memo(function SubmissionsPanel({ token: tokenProp, type
         companyId={companyId}
         type={type}
         token={token}
+        isAdmin={isAdmin}
         onBack={() => setAssetView({ active: false, templateId: null, templateName: "", assetId: null })}
       />
     );

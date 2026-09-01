@@ -115,7 +115,7 @@ export default function QRScannerScreen() {
 
       if (mode === 'resolve-request' && requestId) {
         // Verify the scanned asset matches the expected asset for this request
-        if (expectedAssetId && String(asset.id ?? assetId) !== String(expectedAssetId)) {
+        if (expectedAssetId && String((asset as any)?.id ?? assetId) !== String(expectedAssetId)) {
           Alert.alert(
             'Wrong QR Code',
             'This QR code does not match the asset for this request. Please scan the correct asset.',

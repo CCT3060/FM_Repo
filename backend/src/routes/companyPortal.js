@@ -10,6 +10,8 @@ import PDFDocument from "pdfkit";
 import pool from "../db.js";
 import { computeSiteScore, computeSiteScoreRange } from "../utils/siteScore.js";
 import { requireCompanyAuth } from "../middleware/companyAuth.js";
+import { getRolePortalPerms, hasModulePerm } from "../utils/permissions.js";
+import { getRoleCapabilities } from "./companyAuth.js";
 import { evaluateRule, createFlag, detectChecklistFlags } from "../utils/flagsHelper.js";
 import { dispatchFlagNotifications } from "../utils/notificationsHelper.js";
 import { sendFCMPush } from "../utils/firebaseService.js";
@@ -722,6 +724,8 @@ router.get("/dashboard/shift-site-score", async (req, res, next) => {
         )
         AND cs.location_id IS NOT NULL AND cs.status NOT IN ('rejected')
         AND COALESCE(cs.is_soft_raise, FALSE) = FALSE
+        AND COALESCE(cs.is_soft_resolve, FALSE) = FALSE
+        AND NOT EXISTS (SELECT 1 FROM soft_service_requests ssr WHERE ssr.resolve_submission_id = cs.id)
         AND COALESCE(ct.status,'active') != 'inactive'
       GROUP BY cs.location_id, cs.template_id, s.id`,
       [companyId, targetDate, targetDate]
@@ -773,15 +777,24 @@ router.get("/dashboard/site-score-history", async (req, res, next) => {
     for (let ms = Date.UTC(sy, sm-1, sd), endMs = Date.UTC(ey, em-1, ed); ms <= endMs; ms += 86400000)
       dates.push(new Date(ms).toISOString().slice(0, 10));
 
-    // Always use computeSiteScoreRange — bypasses stale frozen snapshots
-    // (snapshots may have been saved with old calculation; live scoring is always accurate)
-    const liveScores = dates.length > 0 ? await computeSiteScoreRange(companyId, dates) : [];
+    // Use frozen snapshots for past dates; live compute only for missing dates / today
+    const [snapshots] = await pool.query(
+      `SELECT snapshot_date::text AS date, site_score_pct AS "siteScore"
+       FROM daily_checklist_snapshots
+       WHERE company_id = ? AND snapshot_date BETWEEN ?::date AND ?::date`,
+      [companyId, startDate, endDate]
+    );
+    const snapshotMap = {};
+    for (const s of snapshots) snapshotMap[s.date] = Number(s.siteScore);
+
+    const liveDates = dates.filter(d => snapshotMap[d] === undefined);
+    const liveScores = liveDates.length > 0 ? await computeSiteScoreRange(companyId, liveDates) : [];
     const liveMap = {};
     for (const s of liveScores) liveMap[s.date] = s.siteScore;
 
     res.json(dates.map(d => ({
       date: d,
-      siteScore: liveMap[d] ?? 0,
+      siteScore: snapshotMap[d] !== undefined ? snapshotMap[d] : (liveMap[d] ?? 0),
     })));
   } catch (err) { next(err); }
 });
@@ -958,7 +971,7 @@ router.get("/departments", async (req, res, next) => {
 
 router.post("/departments", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "departments", "c"))) return res.status(403).json({ message: "Insufficient permissions" });
     const { name, description } = req.body;
     if (!name?.trim()) return res.status(400).json({ message: "name is required" });
     const [rows] = await pool.query(
@@ -974,7 +987,7 @@ router.post("/departments", async (req, res, next) => {
 
 router.put("/departments/:id", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "departments", "u"))) return res.status(403).json({ message: "Insufficient permissions" });
     const { id } = req.params;
     const { name, description } = req.body;
     const [[check]] = await pool.query("SELECT id FROM departments WHERE id = ? AND company_id = ?", [id, cid(req)]);
@@ -992,7 +1005,7 @@ router.put("/departments/:id", async (req, res, next) => {
 
 router.delete("/departments/:id", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "departments", "d"))) return res.status(403).json({ message: "Insufficient permissions" });
     const { id } = req.params;
     const [[check]] = await pool.query("SELECT id FROM departments WHERE id = ? AND company_id = ?", [id, cid(req)]);
     if (!check) return res.status(404).json({ message: "Department not found" });
@@ -1099,6 +1112,7 @@ router.get("/assets", async (req, res, next) => {
       const docs = r.documents == null ? undefined : (typeof r.documents === "string" ? JSON.parse(r.documents) : r.documents);
       return { ...r, metadata: docs ? { ...meta, documents: docs } : meta, documents: undefined };
     });
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
     res.json(normalized);
   } catch (err) {
     next(err);
@@ -1171,7 +1185,7 @@ router.get("/assets/:id", async (req, res, next) => {
 
 router.post("/assets", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "assets", "c"))) return res.status(403).json({ message: "Insufficient permissions" });
     const { assetName, assetUniqueId, assetType, departmentId, building, floor, room, status = "Active", metadata = {} } = req.body;
     if (!assetName?.trim() || !assetType) return res.status(400).json({ message: "assetName and assetType are required" });
     const [rows] = await pool.query(
@@ -1194,7 +1208,7 @@ router.post("/assets", async (req, res, next) => {
 
 router.put("/assets/:id", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "assets", "u"))) return res.status(403).json({ message: "Insufficient permissions" });
     const { id } = req.params;
     const { assetName, assetUniqueId, assetType, departmentId, building, floor, room, status, metadata = {} } = req.body;
     const [[check]] = await pool.query("SELECT id FROM assets WHERE id = ? AND company_id = ?", [id, cid(req)]);
@@ -1225,7 +1239,7 @@ router.put("/assets/:id", async (req, res, next) => {
 
 router.delete("/assets/:id", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "assets", "d"))) return res.status(403).json({ message: "Insufficient permissions" });
     const { id } = req.params;
     const [[check]] = await pool.query("SELECT id FROM assets WHERE id = ? AND company_id = ?", [id, cid(req)]);
     if (!check) return res.status(404).json({ message: "Asset not found" });
@@ -1302,6 +1316,7 @@ router.get("/locations", async (req, res, next) => {
 /* ── Locations: Export to Excel (must be before /:id) ───────────────────── */
 router.get("/locations/export", async (req, res, next) => {
   try {
+    if (!(await hasModulePerm(req, "locations", "export"))) return res.status(403).json({ message: "Insufficient permissions" });
     const companyId = cid(req);
     const [rows] = await pool.query(
       `SELECT name AS "Location Name", campus AS "Campus", building AS "Building",
@@ -1349,6 +1364,7 @@ const uploadLocImport = multer({
 /* ── Locations: Bulk create (multiple rooms) — must be before POST /:id ──── */
 router.post("/locations/bulk", async (req, res, next) => {
   try {
+    if (!(await hasModulePerm(req, "locations", "c"))) return res.status(403).json({ message: "Insufficient permissions" });
     const companyId = cid(req);
     const userId = req.companyUser.id;
     const { locations } = req.body;
@@ -1467,6 +1483,9 @@ router.post("/locations/sync-hierarchy", async (req, res, next) => {
 /* ── Locations: Bulk import from Excel/CSV ──────────────────────────────── */
 router.post("/locations/bulk-import", uploadLocImport.single("file"), async (req, res, next) => {
   try {
+    if (!(await hasModulePerm(req, "locations", "bulk_import")) && !(await hasModulePerm(req, "locations", "c"))) {
+      return res.status(403).json({ message: "Insufficient permissions" });
+    }
     const companyId = cid(req);
     const userId = req.companyUser.id;
     if (!req.file) return res.status(400).json({ message: "No file uploaded" });
@@ -1553,6 +1572,7 @@ router.post("/locations/bulk-import", uploadLocImport.single("file"), async (req
 
 router.post("/locations", async (req, res, next) => {
   try {
+    if (!(await hasModulePerm(req, "locations", "c"))) return res.status(403).json({ message: "Insufficient permissions" });
     const companyId = cid(req);
     const userId = req.companyUser.id;
     const { name, campus, building, floor, room, status = "Active",
@@ -1661,6 +1681,7 @@ router.post("/locations", async (req, res, next) => {
 
 router.put("/locations/:id", async (req, res, next) => {
   try {
+    if (!(await hasModulePerm(req, "locations", "u"))) return res.status(403).json({ message: "Insufficient permissions" });
     const companyId = cid(req);
     const { id } = req.params;
     const { name, campus, building, floor, room, status, checklistId,
@@ -1778,6 +1799,7 @@ router.put("/locations/:id", async (req, res, next) => {
 
 router.delete("/locations/:id", async (req, res, next) => {
   try {
+    if (!(await hasModulePerm(req, "locations", "d"))) return res.status(403).json({ message: "Insufficient permissions" });
     const companyId = cid(req);
     const { id } = req.params;
     // Clean up the auto-created room that was back-linked to this location
@@ -1802,6 +1824,7 @@ router.delete("/locations/:id", async (req, res, next) => {
 
 router.delete("/locations", async (req, res, next) => {
   try {
+    if (!(await hasModulePerm(req, "locations", "d"))) return res.status(403).json({ message: "Insufficient permissions" });
     const companyId = cid(req);
     const { ids } = req.body;
     if (!Array.isArray(ids) || ids.length === 0)
@@ -1951,6 +1974,7 @@ router.get("/buildings", async (req, res, next) => {
 
 router.post("/buildings", async (req, res, next) => {
   try {
+    if (!(await hasModulePerm(req, "locations", "c"))) return res.status(403).json({ message: "Insufficient permissions" });
     const { name } = req.body;
     if (!name?.trim()) return res.status(400).json({ message: "Building name is required" });
     const [rows] = await pool.query(
@@ -1963,6 +1987,7 @@ router.post("/buildings", async (req, res, next) => {
 
 router.put("/buildings/:id", async (req, res, next) => {
   try {
+    if (!(await hasModulePerm(req, "locations", "u"))) return res.status(403).json({ message: "Insufficient permissions" });
     const { name } = req.body;
     if (!name?.trim()) return res.status(400).json({ message: "Building name is required" });
     const companyId = cid(req);
@@ -1993,6 +2018,7 @@ router.put("/buildings/:id", async (req, res, next) => {
 
 router.delete("/buildings/:id", async (req, res, next) => {
   try {
+    if (!(await hasModulePerm(req, "locations", "d"))) return res.status(403).json({ message: "Insufficient permissions" });
     await pool.query("DELETE FROM buildings WHERE id = ? AND company_id = ?", [req.params.id, cid(req)]);
     res.json({ success: true });
   } catch (err) { next(err); }
@@ -2019,6 +2045,7 @@ router.get("/floors", async (req, res, next) => {
 
 router.post("/floors", async (req, res, next) => {
   try {
+    if (!(await hasModulePerm(req, "locations", "c"))) return res.status(403).json({ message: "Insufficient permissions" });
     const { buildingId, floorNumber } = req.body;
     if (!buildingId) return res.status(400).json({ message: "buildingId is required" });
     if (!String(floorNumber ?? "").trim()) return res.status(400).json({ message: "Floor number is required" });
@@ -2033,6 +2060,7 @@ router.post("/floors", async (req, res, next) => {
 
 router.put("/floors/:id", async (req, res, next) => {
   try {
+    if (!(await hasModulePerm(req, "locations", "u"))) return res.status(403).json({ message: "Insufficient permissions" });
     const { buildingId, floorNumber } = req.body;
     if (!String(floorNumber ?? "").trim()) return res.status(400).json({ message: "Floor number is required" });
     const companyId = cid(req);
@@ -2065,6 +2093,7 @@ router.put("/floors/:id", async (req, res, next) => {
 
 router.delete("/floors/:id", async (req, res, next) => {
   try {
+    if (!(await hasModulePerm(req, "locations", "d"))) return res.status(403).json({ message: "Insufficient permissions" });
     await pool.query("DELETE FROM floors WHERE id = ? AND company_id = ?", [req.params.id, cid(req)]);
     res.json({ success: true });
   } catch (err) { next(err); }
@@ -2074,6 +2103,7 @@ router.delete("/floors/:id", async (req, res, next) => {
 // Bulk-assign a checklist to multiple locations (must be before /rooms generic route)
 router.post("/locations/bulk-assign-checklist", async (req, res, next) => {
   try {
+    if (!(await hasModulePerm(req, "locations", "u"))) return res.status(403).json({ message: "Insufficient permissions" });
     const { locationIds, checklistId } = req.body;
     if (!Array.isArray(locationIds) || locationIds.length === 0) {
       return res.status(400).json({ message: "locationIds array is required" });
@@ -2121,6 +2151,7 @@ router.get("/rooms", async (req, res, next) => {
 
 router.post("/rooms", async (req, res, next) => {
   try {
+    if (!(await hasModulePerm(req, "locations", "c"))) return res.status(403).json({ message: "Insufficient permissions" });
     const { buildingId, floorId, roomName, checklistId,
             frequency, hourlyInterval, startTime, endTime, notificationTimer, notificationTime,
             weekDays, activeMonths, shiftIds, customHours, monthlyDay } = req.body;
@@ -2155,6 +2186,7 @@ router.post("/rooms", async (req, res, next) => {
 
 router.put("/rooms/:id", async (req, res, next) => {
   try {
+    if (!(await hasModulePerm(req, "locations", "u"))) return res.status(403).json({ message: "Insufficient permissions" });
     const { buildingId, floorId, roomName, checklistId,
             frequency, hourlyInterval, startTime, endTime, notificationTimer, notificationTime,
             weekDays, activeMonths, shiftIds, customHours, monthlyDay } = req.body;
@@ -2230,6 +2262,7 @@ router.put("/rooms/:id", async (req, res, next) => {
 
 router.delete("/rooms/:id", async (req, res, next) => {
   try {
+    if (!(await hasModulePerm(req, "locations", "d"))) return res.status(403).json({ message: "Insufficient permissions" });
     const companyId = cid(req);
     const roomId = req.params.id;
     // Clear FK back-references in locations before deleting the room.
@@ -2285,8 +2318,8 @@ router.get("/checklists", async (req, res, next) => {
     
     // Support multi-company queries for employees assigned to multiple companies
     if (qCid === "all") {
-      companyCond = "IN (SELECT company_id FROM user_company_assignments WHERE user_id = ?)";
-      companyParams = [req.companyUser.id];
+      companyCond = "IN (SELECT company_id FROM user_company_assignments WHERE user_id = ? UNION SELECT ?::integer)";
+      companyParams = [req.companyUser.id, cid(req)];
     } else if (qCid) {
       // Verify user has access to the requested company
       const [[access]] = await pool.query(
@@ -2399,7 +2432,7 @@ router.get("/checklists", async (req, res, next) => {
 
 router.post("/checklists", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "checklists", "c"))) return res.status(403).json({ message: "Insufficient permissions" });
     const { templateName, assetType, serviceType, assetId, locationId, buildingId, floorId, roomId, category, description, frequency = "Daily", shift, shiftId, status = "active", questions, hasRemark, weekDays, hourlyInterval, startTime, endTime, monthlyDay, notificationTimer, notificationTime, activeMonths } = req.body;
     if (!templateName?.trim()) return res.status(400).json({ message: "templateName is required" });
     const resolvedAssetType = assetType || serviceType || null;
@@ -2444,7 +2477,7 @@ router.post("/checklists", async (req, res, next) => {
 
 router.put("/checklists/:id", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "checklists", "u"))) return res.status(403).json({ message: "Insufficient permissions" });
     const { id } = req.params;
     const { templateName, assetType, serviceType, assetId, locationId, buildingId, floorId, roomId, category, description, frequency, shift, shiftId, status, questions, hasRemark, weekDays, hourlyInterval, startTime, endTime, monthlyDay, notificationTimer, notificationTime, activeMonths } = req.body;
     const [[check]] = await pool.query("SELECT id FROM checklist_templates WHERE id = ? AND company_id = ?", [id, cid(req)]);
@@ -2491,7 +2524,7 @@ router.put("/checklists/:id", async (req, res, next) => {
 
 router.delete("/checklists", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "checklists", "d"))) return res.status(403).json({ message: "Insufficient permissions" });
     const { ids } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ message: "ids array required" });
     const numIds = ids.map(Number).filter((n) => Number.isFinite(n) && n > 0);
@@ -2508,7 +2541,7 @@ router.delete("/checklists", async (req, res, next) => {
 
 router.delete("/checklists/:id", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "checklists", "d"))) return res.status(403).json({ message: "Insufficient permissions" });
     const { id } = req.params;
     const [[check]] = await pool.query("SELECT id FROM checklist_templates WHERE id = ? AND company_id = ?", [id, cid(req)]);
     if (!check) return res.status(404).json({ message: "Checklist not found" });
@@ -2520,8 +2553,8 @@ router.delete("/checklists/:id", async (req, res, next) => {
 /* ── Create Logsheet Template ──────────────────────────────────────────────── */
 router.post("/logsheet-templates", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin" && req.companyUser.role !== "supervisor") {
-      return res.status(403).json({ message: "Only admin or supervisor can create logsheet templates" });
+    if (!(await hasModulePerm(req, "logsheets", "c"))) {
+      return res.status(403).json({ message: "Insufficient permissions" });
     }
     const { templateName, assetType, assetModel, frequency = "daily", assetId, description,
             headerConfig = {}, sections, layoutType = "standard", shiftId } = req.body;
@@ -2596,6 +2629,10 @@ router.post("/logsheet-templates", async (req, res, next) => {
 /* ── Assign Logsheet Template to Asset ──────────────────────────────────────── */
 router.post("/logsheet-templates/:templateId/assign", async (req, res, next) => {
   try {
+    if (req.companyUser?.role !== "admin") {
+      const canAssign = await hasModulePerm(req, "logsheets", "assign_logsheets");
+      if (!canAssign) return res.status(403).json({ message: "You do not have permission to assign logsheets" });
+    }
     const { templateId } = req.params;
     const { assetId } = req.body;
     if (!assetId) return res.status(400).json({ message: "assetId is required" });
@@ -2616,8 +2653,17 @@ router.post("/logsheet-templates/:templateId/assign", async (req, res, next) => 
 /* ── Logsheet Templates ─────────────────────────────────────────────────────── */
 router.get("/logsheet-templates", async (req, res, next) => {
   try {
+    const qCid = req.query.companyId;
+    let ltCompanyCond, ltCompanyParams;
+    if (qCid === "all") {
+      ltCompanyCond = "IN (SELECT company_id FROM user_company_assignments WHERE user_id = ? UNION SELECT ?::integer)";
+      ltCompanyParams = [req.companyUser.id, cid(req)];
+    } else {
+      ltCompanyCond = "= ?";
+      ltCompanyParams = [qCid ? Number(qCid) : cid(req)];
+    }
     const [templates] = await pool.query(
-      `SELECT lt.id, lt.template_name AS "templateName", lt.asset_type AS "assetType",
+      `SELECT lt.id, lt.company_id AS "companyId", lt.template_name AS "templateName", lt.asset_type AS "assetType",
               lt.asset_model AS "assetModel", lt.frequency, lt.asset_id AS "assetId",
               a.asset_name AS "assetName",
               lt.description, lt.header_config AS "headerConfig",
@@ -2627,9 +2673,9 @@ router.get("/logsheet-templates", async (req, res, next) => {
        FROM logsheet_templates lt
        LEFT JOIN assets a ON a.id = lt.asset_id
        LEFT JOIN shifts sh ON sh.id = lt.shift_id
-       WHERE lt.company_id = ?
+       WHERE lt.company_id ${ltCompanyCond}
        ORDER BY lt.template_name`,
-      [cid(req)]
+      ltCompanyParams
     );
 
     if (!templates.length) return res.json([]);
@@ -2677,6 +2723,10 @@ router.get("/logsheet-templates", async (req, res, next) => {
 /* ── Submit Logsheet Entry ──────────────────────────────────────────────────── */
 router.post("/logsheet-templates/:templateId/entries", async (req, res, next) => {
   try {
+    if (req.companyUser?.role !== "admin") {
+      const canFill = await hasModulePerm(req, "logsheets", "fill_logsheets");
+      if (!canFill) return res.status(403).json({ message: "You do not have permission to fill logsheets" });
+    }
     const { templateId } = req.params;
     const { assetId, month, year, shift, headerValues = {}, answers, tabularData } = req.body;
 
@@ -3074,8 +3124,8 @@ router.get("/logsheet-templates/:templateId", async (req, res, next) => {
 /* ── Update Logsheet Template ───────────────────────────────────────────────── */
 router.put("/logsheet-templates/:templateId", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin" && req.companyUser.role !== "supervisor") {
-      return res.status(403).json({ message: "Only admin or supervisor can edit logsheet templates" });
+    if (!(await hasModulePerm(req, "logsheets", "u"))) {
+      return res.status(403).json({ message: "Insufficient permissions" });
     }
     const { templateId } = req.params;
     const [[tmpl]] = await pool.query(
@@ -3158,8 +3208,8 @@ router.put("/logsheet-templates/:templateId", async (req, res, next) => {
 /* ── Delete Logsheet Template ───────────────────────────────────────────────── */
 router.delete("/logsheet-templates/:templateId", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin" && req.companyUser.role !== "supervisor") {
-      return res.status(403).json({ message: "Only admin or supervisor can delete logsheet templates" });
+    if (!(await hasModulePerm(req, "logsheets", "d"))) {
+      return res.status(403).json({ message: "Insufficient permissions" });
     }
     const { templateId } = req.params;
     const [[tmpl]] = await pool.query(
@@ -3271,11 +3321,11 @@ router.get("/my-team", async (req, res, next) => {
 
 router.post("/employees", async (req, res, next) => {
   try {
-    const { fullName, email, phone, designation, role = "employee", status = "Active", password, username, supervisorId, shift, serviceDomain = "technical", employeeCode, eligibleForAttendance } = req.body;
+    const { fullName, email, phone, designation, role = "employee", status = "Active", password, username, supervisorId, shift, serviceDomain = "both", employeeCode, eligibleForAttendance } = req.body;
     if (!fullName || !email) return res.status(400).json({ message: "fullName and email are required" });
 
-    if (req.companyUser.role !== "admin" && req.companyUser.role !== "supervisor") {
-      return res.status(403).json({ message: "Only admin or supervisor can add employees" });
+    if (!(await hasModulePerm(req, "employees", "c"))) {
+      return res.status(403).json({ message: "Insufficient permissions" });
     }
 
     const resolvedSupervisorId = req.companyUser.role === "supervisor"
@@ -3283,7 +3333,7 @@ router.post("/employees", async (req, res, next) => {
       : (supervisorId || null);
 
     const validDomains = ['technical', 'soft', 'both'];
-    const resolvedDomain = validDomains.includes(serviceDomain) ? serviceDomain : 'technical';
+    const resolvedDomain = validDomains.includes(serviceDomain) ? serviceDomain : 'both';
 
     let passwordHash = null;
     if (password) passwordHash = await bcrypt.hash(password, 10);
@@ -3342,7 +3392,7 @@ router.put("/employees/:id", async (req, res, next) => {
     const { id } = req.params;
     const { fullName, email, phone, designation, role, status, password, username, supervisorId, shift, serviceDomain, employeeCode, permissions, moduleAccess, eligibleForAttendance } = req.body;
 
-    if (req.companyUser.role !== "admin" && req.companyUser.role !== "supervisor") {
+    if (!(await hasModulePerm(req, "employees", "u"))) {
       return res.status(403).json({ message: "Not authorised" });
     }
 
@@ -3428,7 +3478,7 @@ router.put("/employees/:id", async (req, res, next) => {
 
 router.delete("/employees/:id", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") {
+    if (!(await hasModulePerm(req, "employees", "d"))) {
       return res.status(403).json({ message: "Only admin can delete employees" });
     }
     const { id } = req.params;
@@ -3467,7 +3517,7 @@ router.get("/employees/:id/shifts", async (req, res, next) => {
    Replaces all existing assignments for this employee in one atomic diff.     */
 router.put("/employees/:id/shifts", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "employees", "u"))) return res.status(403).json({ message: "Insufficient permissions" });
     const companyId = cid(req);
     const { id } = req.params;
     const { shiftIds = [] } = req.body;
@@ -3524,8 +3574,8 @@ router.put("/employees/:id/shifts", async (req, res, next) => {
 /* ── Bulk import employees ──────────────────────────────────────────────────── */
 router.post("/employees/bulk", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin" && req.companyUser.role !== "supervisor") {
-      return res.status(403).json({ message: "Not authorised" });
+    if (!(await hasModulePerm(req, "employees", "import")) && !(await hasModulePerm(req, "employees", "c"))) {
+      return res.status(403).json({ message: "Insufficient permissions" });
     }
     const { employees } = req.body; // array of { fullName, email, phone, designation, role, status, password }
     if (!Array.isArray(employees) || !employees.length) {
@@ -3563,6 +3613,8 @@ router.get("/me", async (req, res, next) => {
     const [[row]] = await pool.query(
       `SELECT cu.id, cu.full_name AS "fullName", cu.email, cu.phone, cu.designation, cu.role,
               cu.status, c.id AS "companyId", c.company_name AS "companyName",
+              COALESCE(cu.can_access_combined_view, TRUE) AS "canAccessCombinedView",
+              cu.default_company_id AS "defaultCompanyId",
               c.enabled_modules AS "enabledModules", c.logo_url AS "logoUrl"
        FROM company_users cu
        JOIN companies c ON c.id = ?
@@ -3573,6 +3625,9 @@ router.get("/me", async (req, res, next) => {
     row.enabledModules = row.enabledModules
       ? (typeof row.enabledModules === "string" ? JSON.parse(row.enabledModules) : row.enabledModules)
       : null;
+    const rolePortalPerms = await getRolePortalPerms(cid(req), row.role);
+    row.rolePortalPerms = rolePortalPerms;
+    row.roleCapabilities = await getRoleCapabilities(cid(req), row.role);
     res.json(row);
   } catch (err) {
     next(err);
@@ -3653,6 +3708,8 @@ router.get("/checklist-submissions/recent", async (req, res, next) => {
       [rows] = await pool.query(
         `${SELECT} WHERE ct.company_id IN (${idPH}) AND cs.submitted_at::date = ?::date
          AND COALESCE(cs.is_soft_raise, FALSE) = FALSE
+         AND COALESCE(cs.is_soft_resolve, FALSE) = FALSE
+         AND NOT EXISTS (SELECT 1 FROM soft_service_requests ssr WHERE ssr.resolve_submission_id = cs.id)
          ORDER BY cs.submitted_at DESC NULLS LAST`,
         [...targetCompanyIds, date]
       );
@@ -3660,6 +3717,8 @@ router.get("/checklist-submissions/recent", async (req, res, next) => {
       [rows] = await pool.query(
         `${SELECT} WHERE ct.company_id IN (${idPH})
          AND COALESCE(cs.is_soft_raise, FALSE) = FALSE
+         AND COALESCE(cs.is_soft_resolve, FALSE) = FALSE
+         AND NOT EXISTS (SELECT 1 FROM soft_service_requests ssr WHERE ssr.resolve_submission_id = cs.id)
          ORDER BY cs.submitted_at DESC NULLS LAST LIMIT 50`,
         targetCompanyIds
       );
@@ -3676,6 +3735,7 @@ router.get("/checklist-submissions/recent", async (req, res, next) => {
 // DELETE /checklist-submissions/:id  — delete a single submission (admin only)
 router.delete("/checklist-submissions/:id", async (req, res, next) => {
   try {
+    if (!(await hasModulePerm(req, "checklists", "d"))) return res.status(403).json({ message: "Insufficient permissions" });
     const companyId = cid(req);
     const id = Number(req.params.id);
     if (!id) return res.status(400).json({ message: "Invalid id" });
@@ -3696,6 +3756,7 @@ router.delete("/checklist-submissions/:id", async (req, res, next) => {
 // DELETE /checklist-submissions/bulk  — delete multiple submissions at once
 router.post("/checklist-submissions/bulk-delete", async (req, res, next) => {
   try {
+    if (!(await hasModulePerm(req, "checklists", "d"))) return res.status(403).json({ message: "Insufficient permissions" });
     const companyId = cid(req);
     const ids = (req.body.ids || []).map(Number).filter(Boolean);
     if (!ids.length) return res.status(400).json({ message: "No ids provided" });
@@ -3710,6 +3771,95 @@ router.post("/checklist-submissions/bulk-delete", async (req, res, next) => {
     if (!validIds.length) return res.status(404).json({ message: "No matching submissions found" });
     await pool.query(`DELETE FROM checklist_submission_answers WHERE submission_id IN (${validIds.map(() => "?").join(",")})`, validIds);
     await pool.query(`DELETE FROM checklist_submissions WHERE id IN (${validIds.map(() => "?").join(",")})`, validIds);
+    res.json({ ok: true, deleted: validIds.length });
+  } catch (err) { next(err); }
+});
+
+/* ── Delete logsheet submissions ────────────────────────────────────────────── */
+
+// DELETE /logsheet-submissions/:id  — delete a single logsheet submission
+router.delete("/logsheet-submissions/:id", async (req, res, next) => {
+  try {
+    if (!(await hasModulePerm(req, "logsheets", "d"))) return res.status(403).json({ message: "Insufficient permissions" });
+    const companyId = cid(req);
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ message: "Invalid id" });
+    // Verify logsheet entry belongs to this company
+    const [[sub]] = await pool.query(
+      `SELECT le.id FROM logsheet_entries le
+       LEFT JOIN logsheet_templates lt ON lt.id = le.template_id
+       WHERE le.id = ? AND lt.company_id = ?`,
+      [id, companyId]
+    );
+    if (!sub) return res.status(404).json({ message: "Logsheet submission not found" });
+    await pool.query("DELETE FROM logsheet_answers WHERE entry_id = ?", [id]);
+    await pool.query("DELETE FROM logsheet_entries WHERE id = ?", [id]);
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// POST /logsheet-submissions/bulk-delete  — delete multiple logsheet submissions at once
+router.post("/logsheet-submissions/bulk-delete", async (req, res, next) => {
+  try {
+    if (!(await hasModulePerm(req, "logsheets", "d"))) return res.status(403).json({ message: "Insufficient permissions" });
+    const companyId = cid(req);
+    const ids = (req.body.ids || []).map(Number).filter(Boolean);
+    if (!ids.length) return res.status(400).json({ message: "No ids provided" });
+    // Verify all belong to this company
+    const [subs] = await pool.query(
+      `SELECT le.id FROM logsheet_entries le
+       LEFT JOIN logsheet_templates lt ON lt.id = le.template_id
+       WHERE le.id IN (${ids.map(() => "?").join(",")}) AND lt.company_id = ?`,
+      [...ids, companyId]
+    );
+    const validIds = subs.map((r) => r.id);
+    if (!validIds.length) return res.status(404).json({ message: "No matching submissions found" });
+    await pool.query(`DELETE FROM logsheet_answers WHERE entry_id IN (${validIds.map(() => "?").join(",")})`, validIds);
+    await pool.query(`DELETE FROM logsheet_entries WHERE id IN (${validIds.map(() => "?").join(",")})`, validIds);
+    res.json({ ok: true, deleted: validIds.length });
+  } catch (err) { next(err); }
+});
+
+/* ── Delete work orders (Requests) ──────────────────────────────────────────── */
+
+// DELETE /work-orders/:id  — delete a single work order
+router.delete("/work-orders/:id", async (req, res, next) => {
+  try {
+    if (!(await hasModulePerm(req, "workorders", "d"))) return res.status(403).json({ message: "Insufficient permissions" });
+    const companyId = cid(req);
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ message: "Invalid id" });
+    const [[wo]] = await pool.query(
+      `SELECT id FROM work_orders WHERE id = ? AND company_id = ?`,
+      [id, companyId]
+    );
+    if (!wo) return res.status(404).json({ message: "Work order not found" });
+    await pool.query("DELETE FROM work_order_escalation_history WHERE work_order_id = ?", [id]).catch(() => {});
+    await pool.query("DELETE FROM work_order_history WHERE work_order_id = ?", [id]).catch(() => {});
+    await pool.query("UPDATE flags SET work_order_id = NULL WHERE work_order_id = ?", [id]).catch(() => {});
+    await pool.query("DELETE FROM work_orders WHERE id = ? AND company_id = ?", [id, companyId]);
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// POST /work-orders/bulk-delete  — delete multiple work orders at once
+router.post("/work-orders/bulk-delete", async (req, res, next) => {
+  try {
+    if (!(await hasModulePerm(req, "workorders", "d"))) return res.status(403).json({ message: "Insufficient permissions" });
+    const companyId = cid(req);
+    const ids = (req.body.ids || []).map(Number).filter(Boolean);
+    if (!ids.length) return res.status(400).json({ message: "No ids provided" });
+    const [wos] = await pool.query(
+      `SELECT id FROM work_orders WHERE id IN (${ids.map(() => "?").join(",")}) AND company_id = ?`,
+      [...ids, companyId]
+    );
+    const validIds = wos.map((r) => r.id);
+    if (!validIds.length) return res.status(404).json({ message: "No matching work orders found" });
+    const ph = validIds.map(() => "?").join(",");
+    await pool.query(`DELETE FROM work_order_escalation_history WHERE work_order_id IN (${ph})`, validIds).catch(() => {});
+    await pool.query(`DELETE FROM work_order_history WHERE work_order_id IN (${ph})`, validIds).catch(() => {});
+    await pool.query(`UPDATE flags SET work_order_id = NULL WHERE work_order_id IN (${ph})`, validIds).catch(() => {});
+    await pool.query(`DELETE FROM work_orders WHERE id IN (${ph}) AND company_id = ?`, [...validIds, companyId]);
     res.json({ ok: true, deleted: validIds.length });
   } catch (err) { next(err); }
 });
@@ -3730,7 +3880,7 @@ router.post("/template-user-assignments", async (req, res, next) => {
     }
 
     const role = req.companyUser.role;
-    if (role !== "admin" && role !== "supervisor") {
+    if (!(await hasModulePerm(req, "checklists", "u")) && !(await hasModulePerm(req, "logsheets", "u"))) {
       return res.status(403).json({ message: "Only admin or supervisor can assign templates" });
     }
 
@@ -3935,7 +4085,16 @@ async function sendExpoPush(pushToken, title, body, data = {}) {
     await fetch("https://exp.host/--/api/v2/push/send", {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ to: pushToken, title, body, data, sound: "default" }),
+      body: JSON.stringify({
+        to: pushToken,
+        title,
+        body,
+        data,
+        sound: "default",
+        priority: "high",
+        channelId: data?.channelId || "default",
+        _displayInForeground: true,
+      }),
     });
   } catch { /* Non-fatal */ }
 }
@@ -3946,7 +4105,23 @@ const generateWONumber = () =>
 /* GET /work-orders/users  – list company users available for assignment */
 router.get("/work-orders/users", async (req, res, next) => {
   try {
-    const companyId = parseInt(cid(req), 10);
+    const qCid = req.query.companyId;
+    const role = req.companyUser?.role;
+    const isAdmin = role === "admin" || role === "catalyst_admin";
+
+    if (qCid === "all") {
+      const [rows] = await pool.query(
+        `SELECT cu.id, cu.full_name AS "fullName", cu.email, cu.role, cu.designation, cu.status, c.company_name AS "companyName"
+         FROM company_users cu
+         JOIN companies c ON c.id = cu.company_id
+         WHERE ${isAdmin ? "1=1" : "cu.company_id IN (SELECT company_id FROM user_company_assignments WHERE user_id = ? UNION SELECT ?::integer)"}
+           AND cu.status = 'Active'
+         ORDER BY cu.full_name ASC`,
+        isAdmin ? [] : [req.companyUser.id, cid(req)]
+      );
+      return res.json(rows);
+    }
+    const companyId = parseInt(qCid || cid(req), 10);
     if (!companyId || isNaN(companyId)) return res.status(400).json({ message: "Invalid company context" });
     const [rows] = await pool.query(
       `SELECT id, full_name AS "fullName", email, role, designation, status
@@ -4059,17 +4234,25 @@ router.get("/work-orders", async (req, res, next) => {
   try {
     const { status, priority, assignedTo, limit = 200, offset = 0 } = req.query;
     const qCid = req.query.companyId;
-    let woCompanyCond, woCompanyParam;
+    const role = req.companyUser?.role;
+    const isAdmin = role === "admin" || role === "catalyst_admin";
+
+    let woCompanyCond, woCompanyParams;
     if (qCid === "all") {
-      woCompanyCond = "IN (SELECT company_id FROM user_company_assignments WHERE user_id = ?)";
-      woCompanyParam = req.companyUser.id;
+      if (isAdmin) {
+        woCompanyCond = "IS NOT NULL";
+        woCompanyParams = [];
+      } else {
+        woCompanyCond = "IN (SELECT company_id FROM user_company_assignments WHERE user_id = ? UNION SELECT ?::integer)";
+        woCompanyParams = [req.companyUser.id, cid(req)];
+      }
     } else {
       woCompanyCond = "= ?";
-      woCompanyParam = cid(req);
+      woCompanyParams = [qCid ? Number(qCid) : cid(req)];
     }
 
     let where = `WHERE wo.company_id ${woCompanyCond}`;
-    const params = [woCompanyParam];
+    const params = [...woCompanyParams];
 
     if (status)     { where += " AND wo.status = ?";      params.push(status); }
     if (priority)   { where += " AND wo.priority = ?";    params.push(priority); }
@@ -4122,14 +4305,9 @@ router.get("/work-orders", async (req, res, next) => {
 /* POST /work-orders  – create a work order (optionally linked to a flag) */
 router.post("/work-orders", async (req, res, next) => {
   try {
-    const companyId = cid(req);
-    const { role, id: userId } = req.companyUser;
-    // Built-in non-supervisory roles cannot create work orders
-    const blockedRoles = ['employee', 'technician', 'cleaner', 'security', 'driver', 'fleet_operator'];
-    if (blockedRoles.includes(role)) {
-      return res.status(403).json({ message: "Not authorised" });
-    }
-
+    const companyId = req.body.companyId ? parseInt(req.body.companyId, 10) : cid(req);
+    const role = req.companyUser?.role || req.user?.role;
+    const userId = req.companyUser?.id || req.user?.id;
     const {
       assetId,
       issueDescription,
@@ -4142,6 +4320,15 @@ router.post("/work-orders", async (req, res, next) => {
       expectedCompletionAt,
       escalationIntervalMinutes,
     } = req.body;
+
+    const isAdmin = role === 'admin' || role === 'catalyst_admin';
+    if (!isAdmin) {
+      const canCreateFromWarning = flagId ? (await hasModulePerm(req, "warnings", "create_workorder")) : false;
+      const canCreateWorkOrder = await hasModulePerm(req, "workorders", "c");
+      if (!canCreateFromWarning && !canCreateWorkOrder) {
+        return res.status(403).json({ message: "Not authorised to create work orders" });
+      }
+    }
 
     // Accept 'title' or 'description' as fallback for 'issueDescription' (mobile compatibility)
     const resolvedDescription = issueDescription || title || description;
@@ -4241,7 +4428,10 @@ router.put("/work-orders/:id/assign", async (req, res, next) => {
     const companyId = cid(req);
     const { role, id: userId } = req.companyUser;
     if (role !== "admin" && role !== "supervisor") {
-      return res.status(403).json({ message: "Not authorised" });
+      // Allow custom roles with Update permission on workorders
+      if (!(await hasModulePerm(req, "workorders", "u"))) {
+        return res.status(403).json({ message: "Not authorised" });
+      }
     }
 
     const woId = Number(req.params.id);
@@ -4290,15 +4480,19 @@ router.put("/work-orders/:id/status", async (req, res, next) => {
     const woId = Number(req.params.id);
 
     if (role !== "admin" && role !== "supervisor") {
-      // Technicians can only update their own assigned work orders
-      const [[assigned]] = await pool.query(
-        "SELECT id FROM work_orders WHERE id = ? AND company_id = ? AND cp_assigned_to = ?",
-        [woId, companyId, userId]
-      );
-      if (!assigned) return res.status(403).json({ message: "Not authorised" });
+      // Custom roles with Update perm can change status; otherwise restrict to own assigned WO
+      const hasPerm = await hasModulePerm(req, "workorders", "u");
+      if (!hasPerm) {
+        const [[assigned]] = await pool.query(
+          "SELECT id FROM work_orders WHERE id = ? AND company_id = ? AND cp_assigned_to = ?",
+          [woId, companyId, userId]
+        );
+        if (!assigned) return res.status(403).json({ message: "Not authorised" });
+      }
     }
 
-    const { status, remark } = req.body;
+    let { status, remark, notes } = req.body;
+    if (status === "resolved") status = "completed";
 
     const VALID = ["open", "in_progress", "completed", "closed"];
     if (!VALID.includes(status)) {
@@ -4493,7 +4687,7 @@ router.get("/ojt/trainings/:id", async (req, res, next) => {
 /* POST /ojt/trainings – create training (admin only) */
 router.post("/ojt/trainings", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "ojt", "c"))) return res.status(403).json({ message: "Insufficient permissions" });
     const companyId = cid(req);
     const { title, description, assetId, passingPercentage = 70,
             category = "general", estimatedDurationMinutes = 60,
@@ -4518,7 +4712,7 @@ router.post("/ojt/trainings", async (req, res, next) => {
 /* PUT /ojt/trainings/:id – update training (admin only) */
 router.put("/ojt/trainings/:id", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "ojt", "u"))) return res.status(403).json({ message: "Insufficient permissions" });
     const companyId = cid(req);
     const { id } = req.params;
     const [[check]] = await pool.query("SELECT id FROM ojt_trainings WHERE id = ? AND company_id = ?", [id, companyId]);
@@ -4556,7 +4750,7 @@ router.put("/ojt/trainings/:id", async (req, res, next) => {
 /* PATCH /ojt/trainings/:id/publish – toggle published/draft (admin only) */
 router.patch("/ojt/trainings/:id/publish", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "ojt", "u"))) return res.status(403).json({ message: "Insufficient permissions" });
     const companyId = cid(req);
     const { id } = req.params;
     const [[check]] = await pool.query("SELECT id, status FROM ojt_trainings WHERE id = ? AND company_id = ?", [id, companyId]);
@@ -4570,7 +4764,7 @@ router.patch("/ojt/trainings/:id/publish", async (req, res, next) => {
 /* DELETE /ojt/trainings/:id – delete training (admin only) */
 router.delete("/ojt/trainings/:id", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "ojt", "d"))) return res.status(403).json({ message: "Insufficient permissions" });
     const companyId = cid(req);
     const { id } = req.params;
     const [[check]] = await pool.query("SELECT id FROM ojt_trainings WHERE id = ? AND company_id = ?", [id, companyId]);
@@ -4583,7 +4777,7 @@ router.delete("/ojt/trainings/:id", async (req, res, next) => {
 /* POST /ojt/trainings/:id/modules – add module (admin only) */
 router.post("/ojt/trainings/:id/modules", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "ojt", "u"))) return res.status(403).json({ message: "Insufficient permissions" });
     const companyId = cid(req);
     const { id } = req.params;
     const [[training]] = await pool.query("SELECT id FROM ojt_trainings WHERE id = ? AND company_id = ?", [id, companyId]);
@@ -4603,7 +4797,7 @@ router.post("/ojt/trainings/:id/modules", async (req, res, next) => {
 /* PUT /ojt/modules/:moduleId – update module (admin only) */
 router.put("/ojt/modules/:moduleId", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "ojt", "u"))) return res.status(403).json({ message: "Insufficient permissions" });
     const { moduleId } = req.params;
     const { title, description, orderNumber } = req.body;
     const [[mod]] = await pool.query(
@@ -4629,7 +4823,7 @@ router.put("/ojt/modules/:moduleId", async (req, res, next) => {
 /* DELETE /ojt/modules/:moduleId (admin only) */
 router.delete("/ojt/modules/:moduleId", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "ojt", "d"))) return res.status(403).json({ message: "Insufficient permissions" });
     const { moduleId } = req.params;
     const [[mod]] = await pool.query(
       `SELECT om.id FROM ojt_modules om
@@ -4646,7 +4840,7 @@ router.delete("/ojt/modules/:moduleId", async (req, res, next) => {
 /* POST /ojt/modules/:moduleId/content – add content to module */
 router.post("/ojt/modules/:moduleId/content", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "ojt", "u"))) return res.status(403).json({ message: "Insufficient permissions" });
     const { moduleId } = req.params;
     const [[mod]] = await pool.query(
       `SELECT om.id FROM ojt_modules om
@@ -4669,7 +4863,7 @@ router.post("/ojt/modules/:moduleId/content", async (req, res, next) => {
 /* DELETE /ojt/contents/:contentId */
 router.delete("/ojt/contents/:contentId", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "ojt", "d"))) return res.status(403).json({ message: "Insufficient permissions" });
     const { contentId } = req.params;
     const [[c]] = await pool.query(
       `SELECT oc.id FROM ojt_module_contents oc
@@ -4687,7 +4881,7 @@ router.delete("/ojt/contents/:contentId", async (req, res, next) => {
 /* POST /ojt/trainings/:id/test – create or replace test */
 router.post("/ojt/trainings/:id/test", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "ojt", "u"))) return res.status(403).json({ message: "Insufficient permissions" });
     const companyId = cid(req);
     const { id } = req.params;
     const [[training]] = await pool.query("SELECT id FROM ojt_trainings WHERE id = ? AND company_id = ?", [id, companyId]);
@@ -4705,7 +4899,7 @@ router.post("/ojt/trainings/:id/test", async (req, res, next) => {
 /* POST /ojt/tests/:testId/questions – add question */
 router.post("/ojt/tests/:testId/questions", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "ojt", "u"))) return res.status(403).json({ message: "Insufficient permissions" });
     const { testId } = req.params;
     const [[test]] = await pool.query(
       `SELECT ot2.id FROM ojt_tests ot2
@@ -4729,7 +4923,7 @@ router.post("/ojt/tests/:testId/questions", async (req, res, next) => {
 /* PUT /ojt/questions/:questionId */
 router.put("/ojt/questions/:questionId", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "ojt", "u"))) return res.status(403).json({ message: "Insufficient permissions" });
     const { questionId } = req.params;
     const [[q]] = await pool.query(
       `SELECT oq.id FROM ojt_questions oq
@@ -4757,7 +4951,7 @@ router.put("/ojt/questions/:questionId", async (req, res, next) => {
 /* DELETE /ojt/questions/:questionId */
 router.delete("/ojt/questions/:questionId", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "ojt", "d"))) return res.status(403).json({ message: "Insufficient permissions" });
     const { questionId } = req.params;
     const [[q]] = await pool.query(
       `SELECT oq.id FROM ojt_questions oq
@@ -4775,7 +4969,7 @@ router.delete("/ojt/questions/:questionId", async (req, res, next) => {
 /* GET /ojt/trainings/:id/users – user progress tracking (admin only) */
 router.get("/ojt/trainings/:id/users", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "ojt", "r"))) return res.status(403).json({ message: "Insufficient permissions" });
     const companyId = cid(req);
     const { id } = req.params;
     const [[training]] = await pool.query(
@@ -4814,7 +5008,7 @@ router.get("/ojt/trainings/:id/users", async (req, res, next) => {
 /* POST /ojt/trainings/:id/assign – admin assigns training to a user with optional due date */
 router.post("/ojt/trainings/:id/assign", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "ojt", "u"))) return res.status(403).json({ message: "Insufficient permissions" });
     const companyId = cid(req);
     const { id } = req.params;
     const { userId, dueDate } = req.body;
@@ -4874,7 +5068,7 @@ router.post("/ojt/progress/:id/trainer-signoff", async (req, res, next) => {
 /* POST /ojt/progress/:id/certificate – grant certificate to user */
 router.post("/ojt/progress/:id/certificate", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "ojt", "u"))) return res.status(403).json({ message: "Insufficient permissions" });
     const companyId = cid(req);
     const { id } = req.params;
     const [[progress]] = await pool.query(
@@ -5021,6 +5215,7 @@ router.get("/fleet/submissions/detail/:type/:id", async (req, res, next) => {
 /* GET /fleet/submissions/export-csv – export fleet submissions as CSV */
 router.get("/fleet/submissions/export-csv", async (req, res, next) => {
   try {
+    if (!(await hasModulePerm(req, "fleet", "export"))) return res.status(403).json({ message: "Insufficient permissions" });
     const companyId = cid(req);
     const [fleetAssets] = await pool.query(
       `SELECT id FROM assets WHERE company_id = ? AND asset_type = 'fleet'`,
@@ -5229,7 +5424,7 @@ router.get("/fleet/inspections", async (req, res, next) => {
 /* POST /fleet/inspections */
 router.post("/fleet/inspections", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "fleet", "c"))) return res.status(403).json({ message: "Insufficient permissions" });
     const companyId = cid(req);
     const { assetId, inspectionDate, checklistItems = [], status = "pending", notes } = req.body;
     if (!assetId) return res.status(400).json({ message: "assetId is required" });
@@ -5249,7 +5444,7 @@ router.post("/fleet/inspections", async (req, res, next) => {
 /* PUT /fleet/inspections/:id */
 router.put("/fleet/inspections/:id", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "fleet", "u"))) return res.status(403).json({ message: "Insufficient permissions" });
     const companyId = cid(req);
     const { id } = req.params;
     const [[check]] = await pool.query("SELECT id FROM fleet_inspections WHERE id = ? AND company_id = ?", [id, companyId]);
@@ -5274,7 +5469,7 @@ router.put("/fleet/inspections/:id", async (req, res, next) => {
 /* DELETE /fleet/inspections/:id */
 router.delete("/fleet/inspections/:id", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "fleet", "d"))) return res.status(403).json({ message: "Insufficient permissions" });
     const companyId = cid(req);
     const { id } = req.params;
     const [[check]] = await pool.query("SELECT id FROM fleet_inspections WHERE id = ? AND company_id = ?", [id, companyId]);
@@ -5312,7 +5507,7 @@ router.get("/fleet/fuel", async (req, res, next) => {
 /* POST /fleet/fuel */
 router.post("/fleet/fuel", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "fleet", "c"))) return res.status(403).json({ message: "Insufficient permissions" });
     const companyId = cid(req);
     const { assetId, fuelAmount, cost, odometer, fuelType, logDate, notes } = req.body;
     if (!assetId) return res.status(400).json({ message: "assetId is required" });
@@ -5332,7 +5527,7 @@ router.post("/fleet/fuel", async (req, res, next) => {
 /* PUT /fleet/fuel/:id */
 router.put("/fleet/fuel/:id", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "fleet", "u"))) return res.status(403).json({ message: "Insufficient permissions" });
     const companyId = cid(req);
     const { id } = req.params;
     const [[check]] = await pool.query("SELECT id FROM fleet_fuel_logs WHERE id = ? AND company_id = ?", [id, companyId]);
@@ -5355,7 +5550,7 @@ router.put("/fleet/fuel/:id", async (req, res, next) => {
 /* DELETE /fleet/fuel/:id */
 router.delete("/fleet/fuel/:id", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "fleet", "d"))) return res.status(403).json({ message: "Insufficient permissions" });
     const companyId = cid(req);
     const { id } = req.params;
     const [[check]] = await pool.query("SELECT id FROM fleet_fuel_logs WHERE id = ? AND company_id = ?", [id, companyId]);
@@ -5394,7 +5589,7 @@ router.get("/fleet/maintenance", async (req, res, next) => {
 /* POST /fleet/maintenance */
 router.post("/fleet/maintenance", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "fleet", "c"))) return res.status(403).json({ message: "Insufficient permissions" });
     const companyId = cid(req);
     const { assetId, issueTitle, description, priority = "medium", assignedTo, scheduledDate, cost } = req.body;
     if (!assetId || !issueTitle?.trim()) return res.status(400).json({ message: "assetId and issueTitle are required" });
@@ -5414,7 +5609,7 @@ router.post("/fleet/maintenance", async (req, res, next) => {
 /* PUT /fleet/maintenance/:id */
 router.put("/fleet/maintenance/:id", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "fleet", "u"))) return res.status(403).json({ message: "Insufficient permissions" });
     const companyId = cid(req);
     const { id } = req.params;
     const [[check]] = await pool.query("SELECT id FROM fleet_maintenance WHERE id = ? AND company_id = ?", [id, companyId]);
@@ -5444,7 +5639,7 @@ router.put("/fleet/maintenance/:id", async (req, res, next) => {
 /* PATCH /fleet/maintenance/:id/status */
 router.patch("/fleet/maintenance/:id/status", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "fleet", "u"))) return res.status(403).json({ message: "Insufficient permissions" });
     const companyId = cid(req);
     const { id } = req.params;
     const { status } = req.body;
@@ -5464,7 +5659,7 @@ router.patch("/fleet/maintenance/:id/status", async (req, res, next) => {
 /* DELETE /fleet/maintenance/:id */
 router.delete("/fleet/maintenance/:id", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    if (!(await hasModulePerm(req, "fleet", "d"))) return res.status(403).json({ message: "Insufficient permissions" });
     const companyId = cid(req);
     const { id } = req.params;
     const [[check]] = await pool.query("SELECT id FROM fleet_maintenance WHERE id = ? AND company_id = ?", [id, companyId]);
@@ -5918,8 +6113,11 @@ router.post("/switch-company", async (req, res, next) => {
       { expiresIn: "10h" }
     );
 
+    const rolePortalPerms = await getRolePortalPerms(Number(targetId), companyUser.role);
+
     res.json({
       token: newToken,
+      rolePortalPerms,
       company: {
         id: company.id,
         companyName: company.companyName,
@@ -5994,42 +6192,11 @@ router.get("/combined-dashboard", async (req, res, next) => {
           [co.id]
         );
 
-        const [subCounts] = await pool.query(
-          `SELECT cs.template_id AS "templateId", COUNT(*) AS "count"
-           FROM checklist_submissions cs
-           JOIN checklist_templates ct ON ct.id = cs.template_id
-           WHERE ct.company_id = ?
-             AND cs.submitted_at::date = ?::date
-             AND COALESCE(ct.status, 'active') != 'inactive'
-             AND cs.status NOT IN ('rejected')
-             AND (
-               LOWER(COALESCE(ct.frequency, 'daily')) != 'hourly'
-               OR ct.start_time IS NULL
-               OR ct.end_time IS NULL
-               OR (
-                 (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
-                   >= (EXTRACT(HOUR FROM ct.start_time::time) * 60 + EXTRACT(MINUTE FROM ct.start_time::time))
-                 AND (EXTRACT(HOUR FROM cs.submitted_at) * 60 + EXTRACT(MINUTE FROM cs.submitted_at))
-                   < (EXTRACT(HOUR FROM ct.end_time::time) * 60 + EXTRACT(MINUTE FROM ct.end_time::time))
-               )
-             )
-           GROUP BY cs.template_id`,
-          [co.id, targetDate]
-        );
-
-        const expectedByTemplate = {};
-        let totalExpected = 0;
-        for (const t of templates) {
-          const exp = expectedSlotsForTemplate(t);
-          expectedByTemplate[Number(t.id)] = exp;
-          totalExpected += exp;
-        }
-
-        let filledSlots = 0;
-        for (const sc of subCounts) {
-          const exp = expectedByTemplate[Number(sc.templateId)] ?? 1;
-          filledSlots += Math.min(Number(sc.count) || 0, exp);
-        }
+        // Location-based, shift-window-scoped site score calculation (consistent with single-company dashboard)
+        const scoreRes = await computeSiteScore(co.id, targetDate);
+        const totalExpected = scoreRes.totalExpected || 0;
+        const filledSlots = scoreRes.filledSlots || 0;
+        const siteScorePct = scoreRes.siteScorePct || 0;
 
         const [[row]] = await pool.query(
           `SELECT
@@ -6055,7 +6222,8 @@ router.get("/combined-dashboard", async (req, res, next) => {
             : co.enabledModules,
           totalTemplates:        totalExpected,
           filledToday:           filledSlots,
-          siteScore:             totalExpected > 0 ? Math.round((filledSlots / totalExpected) * 100) : 0,
+          pendingChecklists:     Math.max(0, totalExpected - filledSlots),
+          siteScore:             siteScorePct,
           activeLocations:       Number(row?.locations      ?? 0),
           openSoftRequests:      Number(row?.open_soft      ?? 0),
           totalAssets:           Number(row?.total_assets   ?? 0),
@@ -6070,7 +6238,7 @@ router.get("/combined-dashboard", async (req, res, next) => {
         };
         } catch (e) {
           console.error('[combined-dashboard] per-company error for', co.id, e.message);
-          return { id: co.id, companyName: co.companyName, totalTemplates: 0, filledToday: 0, siteScore: 0, activeLocations: 0, openSoftRequests: 0, totalAssets: 0, activeAssets: 0, totalDepartments: 0, activeEmployees: 0, openIssues: 0, openFlags: 0, criticalFlags: 0, totalLogsheetTemplates: 0, filledLogsheetsToday: 0 };
+          return { id: co.id, companyName: co.companyName, totalTemplates: 0, filledToday: 0, pendingChecklists: 0, siteScore: 0, activeLocations: 0, openSoftRequests: 0, totalAssets: 0, activeAssets: 0, totalDepartments: 0, activeEmployees: 0, openIssues: 0, openFlags: 0, criticalFlags: 0, totalLogsheetTemplates: 0, filledLogsheetsToday: 0 };
         }
       })),
       // Recent open alerts across all companies
@@ -6239,6 +6407,21 @@ router.get("/combined-dashboard", async (req, res, next) => {
 
 const VALID_ATTENDANCE_STATUSES = ['Present', 'Absent', 'Half Day', 'Leave', 'Week Off', 'Holiday'];
 
+async function hasRoleCapability(companyId, roleKey, column) {
+  if (!roleKey) return false;
+  if (roleKey === 'admin') return true;
+  try {
+    const [[row]] = await pool.query(
+      `SELECT ${column} AS cap FROM company_roles
+       WHERE company_id = ? AND role_key = ? AND is_active = TRUE LIMIT 1`,
+      [companyId, roleKey]
+    );
+    return !!(row && row.cap);
+  } catch {
+    return false;
+  }
+}
+
 /* ── GET /attendance — list eligible employees + their status for a date/range */
 router.get("/attendance", async (req, res, next) => {
   try {
@@ -6340,7 +6523,7 @@ router.get("/attendance", async (req, res, next) => {
 /* ── PUT /attendance — upsert a single record (admin only) */
 router.put("/attendance", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== 'admin') return res.status(403).json({ message: 'Admin only' });
+    if (!(await hasModulePerm(req, "attendance", "u"))) return res.status(403).json({ message: 'Insufficient permissions' });
     const companyId = cid(req);
     const { employeeId, date, status } = req.body;
     if (!employeeId || !date) return res.status(400).json({ message: 'employeeId and date required' });
@@ -6368,7 +6551,7 @@ router.put("/attendance", async (req, res, next) => {
 /* ── PUT /attendance/bulk — upsert multiple records in one transaction (admin only) */
 router.put("/attendance/bulk", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== 'admin') return res.status(403).json({ message: 'Admin only' });
+    if (!(await hasModulePerm(req, "attendance", "u"))) return res.status(403).json({ message: 'Insufficient permissions' });
     const companyId = cid(req);
     const { employeeIds, date, status } = req.body;
     if (!Array.isArray(employeeIds) || !employeeIds.length || !date)
@@ -6400,7 +6583,9 @@ router.put("/attendance/bulk", async (req, res, next) => {
 /* ── GET /attendance/export — download xlsx for filtered attendance */
 router.get("/attendance/export", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== 'admin') return res.status(403).json({ message: 'Admin only' });
+    if (!(await hasModulePerm(req, "attendance", "export_excel"))) {
+      return res.status(403).json({ message: "You do not have permission to export attendance excel" });
+    }
     const rawCid = req.query.companyId;
     const isAllCompanies = rawCid === 'all';
     let companyIds;
@@ -6499,7 +6684,9 @@ router.get("/attendance/export", async (req, res, next) => {
 /* ── GET /attendance/export/pdf — download PDF for filtered attendance */
 router.get("/attendance/export/pdf", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== 'admin') return res.status(403).json({ message: 'Admin only' });
+    if (!(await hasModulePerm(req, "attendance", "export_pdf"))) {
+      return res.status(403).json({ message: "You do not have permission to export attendance PDF" });
+    }
     const rawCid = req.query.companyId;
     const isAllCompanies = rawCid === 'all';
     let companyIds;
@@ -6648,7 +6835,7 @@ router.get("/attendance/export/pdf", async (req, res, next) => {
 /* ── DELETE /attendance/:employeeId/:date — delete a single attendance record */
 router.delete("/attendance/:employeeId/:date", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== 'admin') return res.status(403).json({ message: 'Admin only' });
+    if (!(await hasModulePerm(req, "attendance", "d"))) return res.status(403).json({ message: 'Insufficient permissions' });
     const companyId = cid(req);
     const { employeeId, date } = req.params;
     await pool.query(
@@ -6662,7 +6849,7 @@ router.delete("/attendance/:employeeId/:date", async (req, res, next) => {
 /* ── POST /attendance/bulk-delete — delete multiple attendance records */
 router.post("/attendance/bulk-delete", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== 'admin') return res.status(403).json({ message: 'Admin only' });
+    if (!(await hasModulePerm(req, "attendance", "d"))) return res.status(403).json({ message: 'Insufficient permissions' });
     const companyId = cid(req);
     const { records } = req.body; // [{employeeId, date}]
     if (!Array.isArray(records) || !records.length) return res.status(400).json({ message: 'records[] required' });
@@ -6682,7 +6869,7 @@ router.post("/attendance/bulk-delete", async (req, res, next) => {
 /* ── PUT /attendance/submit — save per-employee statuses for one date (admin) */
 router.put("/attendance/submit", async (req, res, next) => {
   try {
-    if (req.companyUser.role !== 'admin') return res.status(403).json({ message: 'Admin only' });
+    if (!(await hasModulePerm(req, "attendance", "u"))) return res.status(403).json({ message: 'Insufficient permissions' });
     const companyId = cid(req);
     const { date, records } = req.body;
     if (!date || !Array.isArray(records) || !records.length)

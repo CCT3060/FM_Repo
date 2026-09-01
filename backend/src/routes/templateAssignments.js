@@ -12,6 +12,7 @@ import {
   calculateLogsheetSeverity,
 } from "../utils/flagsHelper.js";
 import { dispatchFlagNotifications, notifyAssignment } from "../utils/notificationsHelper.js";
+import { hasModulePerm } from "../utils/permissions.js";
 
 const router = Router();
 router.use(requireCompanyAuth);
@@ -78,6 +79,7 @@ const normalizeInputType = (value) => {
     // Phase 3 — composite key: location_id on checklist_submissions
     `ALTER TABLE checklist_submissions ADD COLUMN IF NOT EXISTS location_id BIGINT REFERENCES locations(id) ON DELETE SET NULL`,
     `ALTER TABLE checklist_submissions ADD COLUMN IF NOT EXISTS is_soft_raise BOOLEAN DEFAULT FALSE`,
+    `ALTER TABLE checklist_submissions ADD COLUMN IF NOT EXISTS is_soft_resolve BOOLEAN DEFAULT FALSE`,
     `ALTER TABLE checklist_submissions ADD COLUMN IF NOT EXISTS shift_id BIGINT NULL REFERENCES shifts(id) ON DELETE SET NULL`,
   ];
   for (const sql of migrations) {
@@ -926,19 +928,20 @@ router.post(
         await pool.query(`DELETE FROM checklist_submission_answers WHERE submission_id = ?`, [submissionId]);
       } else {
         const isSoftRaiseSubmission = req.body.softRaise === '1' || req.body.softRaise === true;
+        const isSoftResolveSubmission = req.body.softResolve === '1' || req.body.softResolve === true || req.body.isSoftResolve === true;
         const [csResult] = await pool.query(
           `INSERT INTO checklist_submissions
-           (template_id, asset_id, submitted_by, company_user_id, status, completion_pct, submitted_at, latitude, longitude, device_ip, location_address, overall_remark, location_id, is_soft_raise, shift_id)
-           VALUES (?, ?, NULL, ?, 'submitted', 100, NOW(), ?, ?, ?, ?, ?, ?, ?, ?)
+           (template_id, asset_id, submitted_by, company_user_id, status, completion_pct, submitted_at, latitude, longitude, device_ip, location_address, overall_remark, location_id, is_soft_raise, is_soft_resolve, shift_id)
+           VALUES (?, ?, NULL, ?, 'submitted', 100, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?)
            RETURNING id`,
-          [templateId, effectiveAssetId, req.companyUser.id, latitude ?? null, longitude ?? null, deviceIp, locationAddress ?? null, overallRemark ?? null, locId, isSoftRaiseSubmission, assignedShiftId]
+          [templateId, effectiveAssetId, req.companyUser.id, latitude ?? null, longitude ?? null, deviceIp, locationAddress ?? null, overallRemark ?? null, locId, isSoftRaiseSubmission, isSoftResolveSubmission, assignedShiftId]
         ).catch(() =>
           pool.query(
             `INSERT INTO checklist_submissions
-             (template_id, asset_id, submitted_by, status, completion_pct, submitted_at, latitude, longitude, device_ip, location_address, overall_remark, location_id, is_soft_raise, shift_id)
-             VALUES (?, ?, NULL, 'submitted', 100, NOW(), ?, ?, ?, ?, ?, ?, ?, ?)
+             (template_id, asset_id, submitted_by, status, completion_pct, submitted_at, latitude, longitude, device_ip, location_address, overall_remark, location_id, is_soft_raise, is_soft_resolve, shift_id)
+             VALUES (?, ?, NULL, 'submitted', 100, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?)
              RETURNING id`,
-            [templateId, effectiveAssetId, latitude ?? null, longitude ?? null, deviceIp, locationAddress ?? null, overallRemark ?? null, locId, isSoftRaiseSubmission, assignedShiftId]
+            [templateId, effectiveAssetId, latitude ?? null, longitude ?? null, deviceIp, locationAddress ?? null, overallRemark ?? null, locId, isSoftRaiseSubmission, isSoftResolveSubmission, assignedShiftId]
           )
         );
         submissionId = csResult.insertId || csResult[0]?.id;
@@ -1102,14 +1105,19 @@ router.post(
   ]),
   async (req, res, next) => {
     try {
+      if (req.companyUser?.role !== "admin") {
+        const canFill = await hasModulePerm(req, "logsheets", "fill_logsheets");
+        if (!canFill) return res.status(403).json({ message: "You do not have permission to fill logsheets" });
+      }
       const { templateId, assetId, answers, latitude, longitude, locationAddress } = req.body;
       const rawIp2 = (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').split(',')[0].trim();
       const deviceIp = rawIp2.replace(/^::ffff:/i, '') || null;
 
-      // Supervisors, admins, and users with any soft-service capability can fill
-      // any company logsheet directly; regular employees need an explicit assignment.
+      // Supervisors, admins, users with fill permission, and users with any soft-service capability can fill
+      // company logsheets directly; otherwise check explicit user assignment.
       const logRoleKey = req.companyUser.role;
-      const logIsPrivileged = logRoleKey === 'supervisor' || logRoleKey === 'admin' ||
+      const canFillAny = logRoleKey === 'admin' || (await hasModulePerm(req, "logsheets", "fill_logsheets"));
+      const logIsPrivileged = canFillAny || logRoleKey === 'supervisor' ||
         await hasSoftCapability(cid(req), logRoleKey);
 
       if (!logIsPrivileged) {
@@ -1246,9 +1254,15 @@ router.post(
             const ruleEval = evaluateRule(qInfo.rule, a.answer);
             if (!ruleEval.violated) continue;
 
+            const cleanEntered = String(
+              typeof a.answer === "object" && a.answer !== null
+                ? (a.answer.value ?? a.answer.answer ?? a.answer.val ?? JSON.stringify(a.answer))
+                : (a.answer ?? "")
+            );
+
             const description =
               `Rule violation for "${qInfo.text}": ` +
-              `entered=${a.answer}, ${ruleEval.expectedText}`;
+              `entered=${cleanEntered}, ${ruleEval.expectedText}`;
 
             const flagId = await createFlag(
               {
@@ -1260,7 +1274,7 @@ router.post(
                 raisedBy:        req.companyUser.id,
                 description,
                 severity:        ruleEval.severity,
-                enteredValue:    String(a.answer),
+                enteredValue:    cleanEntered.slice(0, 255),
                 expectedRule:    ruleEval.expectedText,
                 forceWorkOrder:  !!qInfo.rule.autoWorkOrder,
               },
@@ -1275,7 +1289,7 @@ router.post(
                 assetName:    lsAsset?.asset_name,
                 location:     lsLocation,
                 questionText: qInfo.text,
-                enteredValue: String(a.answer),
+                enteredValue: cleanEntered,
                 expectedRange: ruleEval.expectedText,
                 severity:     ruleEval.severity,
                 raisedBy:     req.companyUser.id,
@@ -2570,57 +2584,455 @@ router.get("/site-score", async (req, res, next) => {
 });
 
 /* ────────────────────────────────────────────────────────────────────────────
-   GET /all-templates  – all active templates for the company (mobile: browse all)
-   Returns checklists + logsheet templates with completion status for today.
+   GET /all-templates  – all active templates / location-checklists for company
+   Returns slot-level location–checklist pairs + standalone templates + logsheet templates
+   with granular location/room/shift info and completion status for today,
+   strictly matching computeSiteScore mathematical calculations.
 ──────────────────────────────────────────────────────────────────────────── */
 router.get("/all-templates", async (req, res, next) => {
   try {
     const companyId = cid(req);
+    const today = new Date().toISOString().slice(0, 10);
 
-    // All active checklist templates
-    const [checklists] = await pool.query(
-      `SELECT
-         ct.id,
-         ct.template_name  AS "templateName",
-         ct.asset_type     AS "assetType",
-         ct.frequency,
-         ct.is_active      AS "isActive",
-         'checklist'       AS "templateType",
-         EXISTS (
-           SELECT 1 FROM checklist_submissions cs
-           WHERE cs.template_id = ct.id AND cs.submitted_at >= CURRENT_DATE
-         ) AS "completedToday"
-       FROM checklist_templates ct
-       WHERE ct.company_id = ? AND ct.is_active = 1
-       ORDER BY ct.template_name`,
+    function expectedSlots(frequency, hourlyInterval, startTime, endTime) {
+      const freq = (frequency || 'Daily').toLowerCase();
+      if (freq !== 'hourly') return 1;
+      const interval = Math.max(0.25, Number(hourlyInterval) || 1);
+      if (startTime && endTime) {
+        const [sh, sm = 0] = String(startTime).split(':').map(Number);
+        const [eh, em = 0] = String(endTime).split(':').map(Number);
+        const startMins = sh * 60 + (sm || 0);
+        const endMins   = eh * 60 + (em || 0);
+        if (endMins <= startMins) {
+          const totalMins = (1440 - startMins) + endMins;
+          return Math.max(1, Math.floor(totalMins / (interval * 60)));
+        }
+        return Math.max(1, Math.floor((endMins - startMins) / (interval * 60)));
+      }
+      return Math.max(1, Math.floor(1440 / (interval * 60)));
+    }
+
+    function computeSlotTiming(frequency, hourlyInterval, startTime, endTime, slotIdx, totalSlots) {
+      const freq = (frequency || 'Daily').toLowerCase();
+      const pad2 = (n) => String(n).padStart(2, '0');
+      const fmt = (mins) => {
+        const h = Math.floor((mins % 1440) / 60);
+        const m = mins % 60;
+        return `${pad2(h)}:${pad2(m)}`;
+      };
+
+      if (!startTime || !endTime) {
+        if (freq === 'hourly') {
+          const intervalMins = Math.max(15, Math.round((Number(hourlyInterval) || 1) * 60));
+          const sMins = slotIdx * intervalMins;
+          const eMins = (slotIdx + 1) * intervalMins;
+          return `${fmt(sMins)} - ${fmt(eMins)}`;
+        }
+        return 'All Day';
+      }
+
+      const [sh, sm = 0] = String(startTime).split(':').map(Number);
+      const [eh, em = 0] = String(endTime).split(':').map(Number);
+      const startMins = sh * 60 + (sm || 0);
+      let endMins = eh * 60 + (em || 0);
+      if (endMins <= startMins) {
+        endMins += 1440; // overnight shift
+      }
+
+      if (freq !== 'hourly' || totalSlots <= 1) {
+        return `${fmt(startMins)} - ${fmt(endMins)}`;
+      }
+
+      const intervalMins = Math.max(15, Math.round((Number(hourlyInterval) || 1) * 60));
+      const slotStartMins = startMins + slotIdx * intervalMins;
+      const slotEndMins = Math.min(endMins, startMins + (slotIdx + 1) * intervalMins);
+
+      return `${fmt(slotStartMins)} - ${fmt(slotEndMins)}`;
+    }
+
+    // 1. Fetch active shifts
+    const [shiftRows] = await pool.query(
+      `SELECT id, name, start_time AS "startTime", end_time AS "endTime" FROM shifts WHERE company_id = ? AND status = 'active'`,
       [companyId]
+    ).catch(() => [[]]);
+    const shiftMap = Object.fromEntries(shiftRows.map(s => [Number(s.id), s]));
+    const companyHasShifts = Object.keys(shiftMap).length > 0;
+
+    // 2. Fetch Location–Checklist pairs
+    const [locPairs] = await pool.query(
+      `SELECT
+         l.id AS "locationId",
+         l.name AS "locationName",
+         l.campus,
+         l.building,
+         l.floor,
+         l.room,
+         ct.id AS "templateId",
+         ct.template_name AS "templateName",
+         ct.asset_type AS "assetType",
+         COALESCE(l.frequency, ct.frequency, 'Daily') AS frequency,
+         COALESCE(l.hourly_interval, ct.hourly_interval, 1) AS "hourlyInterval",
+         COALESCE(l.shift_ids, '[]'::jsonb) AS "shiftIds",
+         LEAST(l.created_at, ct.created_at)::date::text AS "createdDate",
+         ct.is_active AS "isActive"
+       FROM locations l
+       JOIN checklist_templates ct ON ct.id = l.checklist_id
+       WHERE l.company_id = ? AND LOWER(COALESCE(l.status, 'active')) = 'active'
+         AND COALESCE(ct.status, 'active') != 'inactive' AND ct.is_active = 1
+       UNION
+       SELECT
+         ct.location_id AS "locationId",
+         l.name AS "locationName",
+         l.campus,
+         l.building,
+         l.floor,
+         l.room,
+         ct.id AS "templateId",
+         ct.template_name AS "templateName",
+         ct.asset_type AS "assetType",
+         COALESCE(l.frequency, ct.frequency, 'Daily'),
+         COALESCE(l.hourly_interval, ct.hourly_interval, 1),
+         COALESCE(l.shift_ids, '[]'::jsonb),
+         LEAST(l.created_at, ct.created_at)::date::text,
+         ct.is_active
+       FROM checklist_templates ct
+       JOIN locations l ON l.id = ct.location_id
+       WHERE ct.company_id = ? AND LOWER(COALESCE(l.status, 'active')) = 'active'
+         AND COALESCE(ct.status, 'active') != 'inactive' AND ct.is_active = 1
+         AND ct.location_id IS NOT NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM locations l2
+           WHERE l2.company_id = l.company_id AND l2.checklist_id = ct.id AND l2.id = l.id
+         )`,
+      [companyId, companyId]
     );
 
-    // All active logsheet templates
+    // 3. Standalone checklist templates
+    const [standalone] = await pool.query(
+      `SELECT
+         NULL::bigint AS "locationId",
+         NULL::text AS "locationName",
+         NULL::text AS campus,
+         NULL::text AS building,
+         NULL::text AS floor,
+         NULL::text AS room,
+         ct.id AS "templateId",
+         ct.template_name AS "templateName",
+         ct.asset_type AS "assetType",
+         COALESCE(ct.frequency, 'Daily') AS frequency,
+         COALESCE(ct.hourly_interval, 1) AS "hourlyInterval",
+         ct.start_time AS "startTime",
+         ct.end_time AS "endTime",
+         ct.created_at::date::text AS "createdDate",
+         ct.is_active AS "isActive"
+       FROM checklist_templates ct
+       WHERE ct.company_id = ? AND COALESCE(ct.status, 'active') != 'inactive' AND ct.is_active = 1
+         AND (ct.location_id IS NULL OR ct.location_id = 0)
+         AND ct.id NOT IN (
+           SELECT DISTINCT checklist_id FROM locations WHERE company_id = ? AND checklist_id IS NOT NULL
+         )`,
+      [companyId, companyId]
+    );
+
+    // 4. Logsheet templates
     const [logsheets] = await pool.query(
       `SELECT
-         lt.id,
-         lt.template_name  AS "templateName",
-         lt.asset_type     AS "assetType",
-         lt.frequency,
-         TRUE              AS "isActive",
-         'logsheet'        AS "templateType",
-         EXISTS (
-           SELECT 1 FROM logsheet_entries le
-           WHERE le.template_id = lt.id AND le.submitted_at >= CURRENT_DATE
-         ) AS "completedToday"
+         NULL::bigint AS "locationId",
+         NULL::text AS "locationName",
+         NULL::text AS campus,
+         NULL::text AS building,
+         NULL::text AS floor,
+         NULL::text AS room,
+         lt.id AS "templateId",
+         lt.template_name AS "templateName",
+         lt.asset_type AS "assetType",
+         COALESCE(lt.frequency, 'Daily') AS frequency,
+         TRUE AS "isActive",
+         'logsheet' AS "templateType"
        FROM logsheet_templates lt
-       WHERE lt.company_id = ?
-       ORDER BY lt.template_name`,
+       WHERE lt.company_id = ?`,
       [companyId]
     );
 
-    const all = [...checklists, ...logsheets].map(t => ({
-      ...t,
-      completedToday: Boolean(t.completedToday),
-    }));
+    // 5. Shift-scoped checklist submissions for today
+    const [locSubs] = await pool.query(
+      `SELECT cs.id, cs.location_id AS "locationId", cs.template_id AS "templateId",
+              s.id AS "shiftId", cs.submitted_at AS "submittedAt",
+              COALESCE(cu.full_name, u.full_name) AS "submittedByName"
+       FROM checklist_submissions cs
+       JOIN checklist_templates ct ON ct.id = cs.template_id
+       JOIN locations l ON l.id = cs.location_id
+       JOIN shifts s ON s.company_id = ct.company_id AND s.status = 'active'
+         AND s.id::bigint = ANY(ARRAY(SELECT jsonb_array_elements_text(l.shift_ids))::bigint[])
+         AND (
+           (cs.shift_id IS NOT NULL AND cs.shift_id = s.id)
+           OR
+           (cs.shift_id IS NULL AND (
+             (s.end_time::time > s.start_time::time
+               AND (EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at))
+                   >= (EXTRACT(HOUR FROM s.start_time::time)*60+EXTRACT(MINUTE FROM s.start_time::time))
+               AND (EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at))
+                   <  (EXTRACT(HOUR FROM s.end_time::time)*60+EXTRACT(MINUTE FROM s.end_time::time)))
+             OR
+             (s.end_time::time <= s.start_time::time
+               AND ((EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at))
+                     >= (EXTRACT(HOUR FROM s.start_time::time)*60+EXTRACT(MINUTE FROM s.start_time::time))
+                 OR  (EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at))
+                     <  (EXTRACT(HOUR FROM s.end_time::time)*60+EXTRACT(MINUTE FROM s.end_time::time))))
+           ))
+         )
+       LEFT JOIN company_users cu ON cu.id = cs.company_user_id
+       LEFT JOIN users u ON u.id = cs.submitted_by
+       WHERE ct.company_id = ?
+         AND (
+           cs.submitted_at::date = ?::date
+           OR (
+             cs.submitted_at::date = (?::date + INTERVAL '1 day')::date
+             AND s.end_time::time <= s.start_time::time
+             AND (EXTRACT(HOUR FROM cs.submitted_at)*60+EXTRACT(MINUTE FROM cs.submitted_at))
+                 < (EXTRACT(HOUR FROM s.end_time::time)*60+EXTRACT(MINUTE FROM s.end_time::time))
+           )
+         )
+         AND cs.location_id IS NOT NULL AND cs.status NOT IN ('rejected')
+         AND COALESCE(cs.is_soft_raise, FALSE) = FALSE
+         AND COALESCE(ct.status,'active') != 'inactive'
+       ORDER BY cs.submitted_at DESC`,
+      [companyId, today, today]
+    );
 
-    res.json(all);
+    // 6. Submissions without shift (for non-shift companies or standalone templates)
+    const [noShiftSubs] = await pool.query(
+      `SELECT cs.id, cs.location_id AS "locationId", cs.template_id AS "templateId",
+              cs.submitted_at AS "submittedAt",
+              COALESCE(cu.full_name, u.full_name) AS "submittedByName"
+       FROM checklist_submissions cs
+       JOIN checklist_templates ct ON ct.id = cs.template_id
+       LEFT JOIN company_users cu ON cu.id = cs.company_user_id
+       LEFT JOIN users u ON u.id = cs.submitted_by
+       WHERE ct.company_id = ?
+         AND cs.submitted_at::date = ?::date
+         AND cs.status NOT IN ('rejected')
+         AND COALESCE(cs.is_soft_raise, FALSE) = FALSE
+         AND COALESCE(ct.status,'active') != 'inactive'
+       ORDER BY cs.submitted_at DESC`,
+      [companyId, today]
+    );
+
+    // 7. Logsheet entries for today
+    const [logsheetSubs] = await pool.query(
+      `SELECT
+         le.id,
+         le.template_id AS "templateId",
+         le.submitted_at AS "submittedAt",
+         COALESCE(cu.full_name, u.full_name) AS "submittedByName"
+       FROM logsheet_entries le
+       JOIN logsheet_templates lt ON lt.id = le.template_id
+       LEFT JOIN company_users cu ON cu.id = le.company_user_id
+       LEFT JOIN users u ON u.id = le.submitted_by
+       WHERE lt.company_id = ?
+         AND le.submitted_at >= CURRENT_DATE
+       ORDER BY le.submitted_at DESC`,
+      [companyId]
+    );
+
+    // Map shift submissions: locId_tplId_shiftId -> list of subs
+    const shiftSubsMap = {};
+    for (const s of locSubs) {
+      const k = `${s.locationId}_${s.templateId}_${s.shiftId}`;
+      if (!shiftSubsMap[k]) shiftSubsMap[k] = [];
+      shiftSubsMap[k].push(s);
+    }
+
+    // Map no-shift subs: locId_tplId -> list of subs, tplId -> list of subs
+    const locNoShiftSubsMap = {};
+    const standaloneSubsMap = {};
+    for (const s of noShiftSubs) {
+      if (s.locationId) {
+        const k = `${s.locationId}_${s.templateId}`;
+        if (!locNoShiftSubsMap[k]) locNoShiftSubsMap[k] = [];
+        locNoShiftSubsMap[k].push(s);
+      } else {
+        if (!standaloneSubsMap[s.templateId]) standaloneSubsMap[s.templateId] = [];
+        standaloneSubsMap[s.templateId].push(s);
+      }
+    }
+
+    const logSubMap = {};
+    for (const sub of logsheetSubs) {
+      if (!logSubMap[sub.templateId]) logSubMap[sub.templateId] = sub;
+    }
+
+    // Expand slots
+    const expandedChecklistSlots = [];
+
+    for (const pair of locPairs) {
+      if (pair.createdDate && pair.createdDate > today) continue;
+      const shiftIds = Array.isArray(pair.shiftIds) ? pair.shiftIds.map(Number).filter(Boolean)
+        : JSON.parse(typeof pair.shiftIds === 'string' ? pair.shiftIds : '[]').map(Number).filter(Boolean);
+
+      if (companyHasShifts) {
+        if (shiftIds.length === 0) continue; // Out of scope for shift-based company
+        for (const sid of shiftIds) {
+          const shift = shiftMap[sid];
+          if (!shift) continue;
+          const slots = expectedSlots(pair.frequency, pair.hourlyInterval, shift.startTime, shift.endTime);
+          const subsList = shiftSubsMap[`${pair.locationId}_${pair.templateId}_${sid}`] || [];
+
+          for (let slotIdx = 0; slotIdx < slots; slotIdx++) {
+            const sub = subsList[slotIdx] || null;
+            const slotTiming = computeSlotTiming(pair.frequency, pair.hourlyInterval, shift.startTime, shift.endTime, slotIdx, slots);
+            expandedChecklistSlots.push({
+              id: `${pair.templateId}-${pair.locationId}-${sid}-${slotIdx}`,
+              templateId: Number(pair.templateId),
+              templateName: pair.templateName,
+              locationId: Number(pair.locationId),
+              locationName: pair.locationName,
+              campus: pair.campus || null,
+              building: pair.building || null,
+              floor: pair.floor || null,
+              room: pair.room || null,
+              assetType: pair.assetType || null,
+              frequency: pair.frequency || 'Daily',
+              hourlyInterval: pair.hourlyInterval,
+              shiftId: sid,
+              shiftName: shift.name,
+              shiftWindow: `${String(shift.startTime).slice(0, 5)} - ${String(shift.endTime).slice(0, 5)}`,
+              slotTiming,
+              slotIndex: slotIdx + 1,
+              totalSlotsInShift: slots,
+              templateType: 'checklist',
+              isActive: Boolean(pair.isActive),
+              completedToday: Boolean(sub),
+              submissionId: sub ? Number(sub.id) : null,
+              submittedAt: sub ? sub.submittedAt : null,
+              submittedByName: sub ? sub.submittedByName : null,
+            });
+          }
+        }
+      } else {
+        // Company does not use shifts
+        const slots = expectedSlots(pair.frequency, pair.hourlyInterval, null, null);
+        const subsList = locNoShiftSubsMap[`${pair.locationId}_${pair.templateId}`] || [];
+        for (let slotIdx = 0; slotIdx < slots; slotIdx++) {
+          const sub = subsList[slotIdx] || null;
+          const slotTiming = computeSlotTiming(pair.frequency, pair.hourlyInterval, null, null, slotIdx, slots);
+          expandedChecklistSlots.push({
+            id: `${pair.templateId}-${pair.locationId}-0-${slotIdx}`,
+            templateId: Number(pair.templateId),
+            templateName: pair.templateName,
+            locationId: Number(pair.locationId),
+            locationName: pair.locationName,
+            campus: pair.campus || null,
+            building: pair.building || null,
+            floor: pair.floor || null,
+            room: pair.room || null,
+            assetType: pair.assetType || null,
+            frequency: pair.frequency || 'Daily',
+            hourlyInterval: pair.hourlyInterval,
+            shiftId: null,
+            shiftName: null,
+            shiftWindow: null,
+            slotTiming,
+            slotIndex: slotIdx + 1,
+            totalSlotsInShift: slots,
+            templateType: 'checklist',
+            isActive: Boolean(pair.isActive),
+            completedToday: Boolean(sub),
+            submissionId: sub ? Number(sub.id) : null,
+            submittedAt: sub ? sub.submittedAt : null,
+            submittedByName: sub ? sub.submittedByName : null,
+          });
+        }
+      }
+    }
+
+    // Standalone (only if company has no shifts)
+    if (!companyHasShifts) {
+      for (const t of standalone) {
+        if (t.createdDate && t.createdDate > today) continue;
+        const slots = expectedSlots(t.frequency, t.hourlyInterval, t.startTime, t.endTime);
+        const subsList = standaloneSubsMap[t.templateId] || [];
+        for (let slotIdx = 0; slotIdx < slots; slotIdx++) {
+          const sub = subsList[slotIdx] || null;
+          const slotTiming = computeSlotTiming(t.frequency, t.hourlyInterval, t.startTime, t.endTime, slotIdx, slots);
+          expandedChecklistSlots.push({
+            id: `${t.templateId}-0-0-${slotIdx}`,
+            templateId: Number(t.templateId),
+            templateName: t.templateName,
+            locationId: null,
+            locationName: null,
+            campus: null,
+            building: null,
+            floor: null,
+            room: null,
+            assetType: t.assetType || null,
+            frequency: t.frequency || 'Daily',
+            hourlyInterval: t.hourlyInterval,
+            shiftId: null,
+            shiftName: null,
+            shiftWindow: null,
+            slotTiming,
+            slotIndex: slotIdx + 1,
+            totalSlotsInShift: slots,
+            templateType: 'checklist',
+            isActive: Boolean(t.isActive),
+            completedToday: Boolean(sub),
+            submissionId: sub ? Number(sub.id) : null,
+            submittedAt: sub ? sub.submittedAt : null,
+            submittedByName: sub ? sub.submittedByName : null,
+          });
+        }
+      }
+    }
+
+    // Logsheet items
+    const expandedLogsheets = logsheets.map((item) => {
+      const sub = logSubMap[item.templateId];
+      return {
+        id: `l-${item.templateId}`,
+        templateId: Number(item.templateId),
+        templateName: item.templateName,
+        locationId: null,
+        locationName: null,
+        campus: null,
+        building: null,
+        floor: null,
+        room: null,
+        assetType: item.assetType || null,
+        frequency: item.frequency || 'Daily',
+        hourlyInterval: 1,
+        shiftId: null,
+        shiftName: null,
+        shiftWindow: null,
+        slotIndex: 1,
+        totalSlotsInShift: 1,
+        templateType: 'logsheet',
+        isActive: Boolean(item.isActive),
+        completedToday: Boolean(sub),
+        submissionId: sub ? Number(sub.id) : null,
+        submittedAt: sub ? sub.submittedAt : null,
+        submittedByName: sub ? sub.submittedByName : null,
+      };
+    });
+
+    const combined = [...expandedChecklistSlots, ...expandedLogsheets];
+
+    // Sort location items first by location name then template name and shift
+    combined.sort((a, b) => {
+      if (a.templateType !== b.templateType) {
+        return a.templateType === 'checklist' ? -1 : 1;
+      }
+      const locA = a.locationName || '';
+      const locB = b.locationName || '';
+      if (locA && locB && locA !== locB) return locA.localeCompare(locB);
+      if (locA && !locB) return -1;
+      if (!locA && locB) return 1;
+      const nameDiff = (a.templateName || '').localeCompare(b.templateName || '');
+      if (nameDiff !== 0) return nameDiff;
+      return (a.shiftId || 0) - (b.shiftId || 0) || (a.slotIndex || 0) - (b.slotIndex || 0);
+    });
+
+    res.json(combined);
   } catch (err) { next(err); }
 });
 

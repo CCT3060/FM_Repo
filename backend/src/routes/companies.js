@@ -403,6 +403,37 @@ router.put(
            ON CONFLICT (company_id, role) DO UPDATE SET permissions = EXCLUDED.permissions`,
           [companyId, role, permJson]
         );
+
+        // Dual-write sync to company_roles capability columns for seamless backward compatibility
+        if (perms && typeof perms === "object") {
+          const isSoftManager = perms._meta?.isManagerViewOnly;
+          const canRaiseSoftIssue = perms.softrequests?.raise_hk_issues;
+          const canResolveSoftIssue = perms.softrequests?.resolve_hk_issues;
+          const canRaiseAdditional = perms['additional-requests']?.raise_additional_request;
+          const canMarkAttendance = perms.attendance?.mark_mobile_attendance;
+          const canAssignRequests = perms['additional-requests']?.assign_additional_request;
+          const isTechSupervisor = perms.checklists?.assign_checklists || perms.workorders?.assign_work_orders;
+          const isTechnician = perms.checklists?.fill_checklists || perms.workorders?.execute_work_orders;
+
+          const syncUpdates = [];
+          const syncParams = [];
+          if (isSoftManager !== undefined) { syncUpdates.push("is_soft_manager = ?"); syncParams.push(Boolean(isSoftManager)); }
+          if (canRaiseSoftIssue !== undefined) { syncUpdates.push("can_raise_soft_issue = ?"); syncParams.push(Boolean(canRaiseSoftIssue)); }
+          if (canResolveSoftIssue !== undefined) { syncUpdates.push("can_resolve_soft_issue = ?"); syncParams.push(Boolean(canResolveSoftIssue)); }
+          if (canRaiseAdditional !== undefined) { syncUpdates.push("can_raise_additional_request = ?"); syncParams.push(Boolean(canRaiseAdditional)); }
+          if (canMarkAttendance !== undefined) { syncUpdates.push("can_mark_attendance = ?"); syncParams.push(Boolean(canMarkAttendance)); }
+          if (canAssignRequests !== undefined) { syncUpdates.push("can_assign_raised_requests = ?"); syncParams.push(Boolean(canAssignRequests)); }
+          if (isTechSupervisor !== undefined) { syncUpdates.push("is_technical_supervisor = ?"); syncParams.push(Boolean(isTechSupervisor)); }
+          if (isTechnician !== undefined) { syncUpdates.push("is_technician = ?"); syncParams.push(Boolean(isTechnician)); }
+
+          if (syncUpdates.length) {
+            syncParams.push(companyId, role);
+            await pool.query(
+              `UPDATE company_roles SET ${syncUpdates.join(", ")} WHERE company_id = ? AND role_key = ?`,
+              syncParams
+            ).catch(() => {});
+          }
+        }
       }
       res.json({ ok: true });
     } catch (err) { next(err); }

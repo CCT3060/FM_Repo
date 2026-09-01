@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Scheduled Email Reports
  * Endpoint prefix: /api/company-portal/scheduled-reports
  *
@@ -705,6 +705,8 @@ async function generatePDF(companyId) {
           )
           AND cs.location_id IS NOT NULL AND cs.status NOT IN ('rejected')
           AND COALESCE(cs.is_soft_raise, FALSE) = FALSE
+        AND COALESCE(cs.is_soft_resolve, FALSE) = FALSE
+        AND NOT EXISTS (SELECT 1 FROM soft_service_requests ssr WHERE ssr.resolve_submission_id = cs.id)
           AND COALESCE(ct.status,'active') != 'inactive'
         GROUP BY cs.location_id, cs.template_id, s.id`,
         [companyId, todayDbStr, todayDbStr]
@@ -900,7 +902,7 @@ async function generatePDF(companyId) {
       const sectionH = chartH + 46;
       if (y + sectionH > H - 40) { doc.addPage(); y = 32; }
       doc.roundedRect(M, y, IW, sectionH, 6).fillAndStroke("#fff", "#e2e8f0");
-      doc.fillColor(DARK).fontSize(11).font("Helvetica-Bold").text("Site Performance Trend", M + 12, y + 8);
+      doc.fillColor(DARK).fontSize(11).font("Helvetica-Bold").text("Weekly Site Performance Trend", M + 12, y + 8);
       doc.fillColor(LGRAY).fontSize(8).font("Helvetica").text("Last 7 days (" + _sevenDaysAgo + " to " + todayDbStr + ") \u2014 Slot-based completion rate", M + 12, y + 21);
       const barAreaX = M + chartPad + 28;
       const barAreaW = IW - chartPad * 2 - 28;

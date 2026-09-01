@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { getApiBaseUrl } from "../utils/runtimeConfig";
+import { confirmDeleteAction } from "../pages/CompanyEmployeePortal.jsx";
 
 const BASE = getApiBaseUrl();
 
@@ -316,7 +317,7 @@ function CreateWOModal({ assets, users, companyPortalToken, preselectedAssetId, 
 }
 
 /* ── Main Panel ─────────────────────────────────────────────────────────── */
-export default function WorkOrdersPanel({ token, companyId, assets = [], preselectedAssetId = null, allCompanies = false }) {
+export default function WorkOrdersPanel({ token, companyId, assets = [], preselectedAssetId = null, allCompanies = false, isAdmin = false, hasPerm = null }) {
   const [workOrders, setWorkOrders] = useState([]);
   const [total, setTotal]           = useState(0);
   const [users, setUsers]           = useState([]);
@@ -328,19 +329,22 @@ export default function WorkOrdersPanel({ token, companyId, assets = [], presele
   const [assignWO, setAssignWO]     = useState(null);
   const [setCutoffWO, setCutoffWOState] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [selected, setSelected]     = useState(new Set());
+  const [deleting, setDeleting]     = useState(false);
+
+  const canDelete = isAdmin || (hasPerm ? hasPerm("workorders", "d") : isAdmin);
 
   const load = useCallback(async () => {
     if (!token || (!companyId && !allCompanies)) return;
     setLoading(true); setError(null);
     try {
       const params = new URLSearchParams({ limit: 200 });
-      // "escalated" is a client-side filter (escalationLevel > 0); load all for it
-      if (filter !== "all" && filter !== "escalated") params.set("status", filter);
       if (allCompanies) params.set("companyId", "all");
+      else if (companyId) params.set("companyId", String(companyId));
 
       const [woRes, usersRes] = await Promise.all([
         apiFetch("GET", `/api/company-portal/work-orders?${params}`, undefined, token),
-        apiFetch("GET", `/api/company-portal/work-orders/users`, undefined, token),
+        apiFetch("GET", `/api/company-portal/work-orders/users${allCompanies ? "?companyId=all" : (companyId ? `?companyId=${companyId}` : "")}`, undefined, token),
       ]);
       setWorkOrders(woRes?.data ?? []);
       setTotal(woRes?.total ?? 0);
@@ -350,7 +354,7 @@ export default function WorkOrdersPanel({ token, companyId, assets = [], presele
     } finally {
       setLoading(false);
     }
-  }, [token, companyId, filter, allCompanies]);
+  }, [token, companyId, allCompanies]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -371,22 +375,74 @@ export default function WorkOrdersPanel({ token, companyId, assets = [], presele
     }
   };
 
-  const displayed = search.trim()
-    ? workOrders.filter((w) => {
-        const q = search.toLowerCase();
-        return (w.workOrderNumber || "").toLowerCase().includes(q)
-          || (w.assetName || "").toLowerCase().includes(q)
-          || (w.issueDescription || "").toLowerCase().includes(q)
-          || (w.assignedToName || "").toLowerCase().includes(q);
-      })
-    : filter === "escalated"
-      ? workOrders.filter((w) => Number(w.escalationLevel) > 0 || w.flagEscalated === true)
-      : workOrders;
+  const toggleSelect = (id) => setSelected((prev) => {
+    const s = new Set(prev);
+    s.has(id) ? s.delete(id) : s.add(id);
+    return s;
+  });
+
+  const toggleAll = () => setSelected((prev) =>
+    prev.size === displayed.length && displayed.length > 0 ? new Set() : new Set(displayed.map((r) => r.id))
+  );
+
+  const deleteOne = async (id) => {
+    if (!confirmDeleteAction(canDelete, "Delete this request? This cannot be undone.")) return;
+    setDeleting(true);
+    try {
+      const qs = companyId ? `?companyId=${companyId}` : "";
+      const res = await fetch(`${BASE}/api/company-portal/work-orders/${id}${qs}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || "Delete failed"); }
+      setWorkOrders((prev) => prev.filter((r) => r.id !== id));
+      setSelected((prev) => { const s = new Set(prev); s.delete(id); return s; });
+    } catch (e) { alert(e.message); }
+    finally { setDeleting(false); }
+  };
+
+  const deleteBulk = async () => {
+    if (!selected.size) return;
+    if (!confirmDeleteAction(canDelete, `Delete ${selected.size} request${selected.size > 1 ? "s" : ""}? This cannot be undone.`)) return;
+    setDeleting(true);
+    try {
+      const qs = companyId ? `?companyId=${companyId}` : "";
+      const res = await fetch(`${BASE}/api/company-portal/work-orders/bulk-delete${qs}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: [...selected] }),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || "Bulk delete failed"); }
+      const { deleted } = await res.json();
+      setWorkOrders((prev) => prev.filter((r) => !selected.has(r.id)));
+      setSelected(new Set());
+      alert(`${deleted} request${deleted > 1 ? "s" : ""} deleted.`);
+    } catch (e) { alert(e.message); }
+    finally { setDeleting(false); }
+  };
+
+  const displayed = workOrders
+    .filter((w) => {
+      if (filter === "all") return true;
+      if (filter === "escalated") return Number(w.escalationLevel) > 0 || w.flagEscalated === true;
+      return w.status === filter;
+    })
+    .filter((w) => {
+      if (!search.trim()) return true;
+      const q = search.toLowerCase();
+      return (
+        (w.workOrderNumber || "").toLowerCase().includes(q) ||
+        (w.assetName || "").toLowerCase().includes(q) ||
+        (w.issueDescription || "").toLowerCase().includes(q) ||
+        (w.assignedToName || "").toLowerCase().includes(q) ||
+        (w.location || "").toLowerCase().includes(q)
+      );
+    });
 
   const counts = { open: 0, in_progress: 0, completed: 0, closed: 0, escalated: 0 };
   for (const w of workOrders) {
     if (counts[w.status] !== undefined) counts[w.status]++;
-    if (Number(w.escalationLevel) > 0) counts.escalated++;
+    if (Number(w.escalationLevel) > 0 || w.flagEscalated === true) counts.escalated++;
   }
 
   return (
@@ -432,7 +488,29 @@ export default function WorkOrdersPanel({ token, companyId, assets = [], presele
               )}
             </button>
           ))}
-          <div style={{ marginLeft: "auto", padding: "8px 0", flexShrink: 0 }}>
+          <div style={{ marginLeft: "auto", padding: "8px 0", flexShrink: 0, display: "flex", alignItems: "center", gap: "8px" }}>
+            {canDelete && selected.size > 0 && (
+              <button
+                onClick={deleteBulk}
+                disabled={deleting}
+                style={{
+                  padding: "7px 14px",
+                  borderRadius: "8px",
+                  background: "#fef2f2",
+                  color: "#dc2626",
+                  border: "1px solid #fecaca",
+                  fontWeight: 700,
+                  fontSize: "12.5px",
+                  cursor: deleting ? "not-allowed" : "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                🗑 Delete Selected ({selected.size})
+              </button>
+            )}
             <input type="text" placeholder="Search…" value={search} onChange={(e) => setSearch(e.target.value)}
               style={{ padding: "7px 12px", border: "1px solid #e2e8f0", borderRadius: "6px", fontSize: "13px", width: "200px", outline: "none" }} />
           </div>
@@ -469,6 +547,14 @@ export default function WorkOrdersPanel({ token, companyId, assets = [], presele
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr style={{ background: "#f8fafc" }}>
+                  <th style={{ width: "36px", padding: "11px 10px 11px 14px", textAlign: "center", borderBottom: "1px solid #e2e8f0" }}>
+                    <input
+                      type="checkbox"
+                      checked={selected.size === displayed.length && displayed.length > 0}
+                      onChange={toggleAll}
+                      style={{ cursor: "pointer" }}
+                    />
+                  </th>
                   {["#", "WO Number", "Asset", "Description", "Priority", "Source", "Assigned To", "Status", "Created", "Actions"].map((h) => (
                     <th key={h} style={{ padding: "11px 14px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>{h}</th>
                   ))}
@@ -480,10 +566,19 @@ export default function WorkOrdersPanel({ token, companyId, assets = [], presele
                   const stat = STATUS_STYLES[wo.status]      || STATUS_STYLES.open;
                   const src  = SOURCE_STYLES[wo.issueSource] || SOURCE_STYLES.manual;
                   const isUpd = updating === wo.id;
+                  const isSelected = selected.has(wo.id);
                   return (
-                    <tr key={wo.id} style={{ borderBottom: "1px solid #f1f5f9" }}
-                      onMouseEnter={(e) => (e.currentTarget.style.background = "#fafafa")}
-                      onMouseLeave={(e) => (e.currentTarget.style.background = "")}>
+                    <tr key={wo.id} style={{ borderBottom: "1px solid #f1f5f9", background: isSelected ? "#f0fdf4" : undefined }}
+                      onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = "#fafafa"; }}
+                      onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = ""; }}>
+                      <td style={{ padding: "12px 10px 12px 14px", textAlign: "center" }}>
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleSelect(wo.id)}
+                          style={{ cursor: "pointer" }}
+                        />
+                      </td>
                       <td style={{ padding: "12px 14px", color: "#94a3b8", fontWeight: 600, fontSize: "12px" }}>{i + 1}</td>
                       <td style={{ padding: "12px 14px" }}>
                         <div style={{ fontWeight: 700, fontSize: "12px", color: "#0f172a", fontFamily: "monospace" }}>{wo.workOrderNumber}</div>
@@ -548,7 +643,7 @@ export default function WorkOrdersPanel({ token, companyId, assets = [], presele
                         {wo.createdAt ? new Date(wo.createdAt).toLocaleString() : "—"}
                       </td>
                       <td style={{ padding: "12px 14px" }}>
-                        <div style={{ display: "flex", gap: "5px", flexWrap: "wrap" }}>
+                        <div style={{ display: "flex", gap: "5px", flexWrap: "wrap", alignItems: "center" }}>
                           {/* Assign button — only for open/in-progress work orders */}
                           {(wo.status === "open" || wo.status === "in_progress") && (
                             <button disabled={isUpd} onClick={() => setAssignWO(wo)}
@@ -594,6 +689,28 @@ export default function WorkOrdersPanel({ token, companyId, assets = [], presele
                             <button disabled={isUpd} onClick={() => setAssignWO(wo)}
                               style={{ padding: "5px 9px", borderRadius: "6px", border: "1px solid #e2e8f0", background: "#f8fafc", color: "#475569", fontSize: "11px", fontWeight: 700, cursor: "pointer", opacity: isUpd ? 0.5 : 1, whiteSpace: "nowrap" }}>
                               Reassign
+                            </button>
+                          )}
+                          {/* Delete button */}
+                          {canDelete && (
+                            <button
+                              disabled={isUpd || deleting}
+                              onClick={() => deleteOne(wo.id)}
+                              style={{
+                                padding: "5px 9px",
+                                borderRadius: "6px",
+                                border: "1px solid #fecaca",
+                                background: "#fef2f2",
+                                color: "#dc2626",
+                                fontSize: "11px",
+                                fontWeight: 700,
+                                cursor: (isUpd || deleting) ? "not-allowed" : "pointer",
+                                opacity: (isUpd || deleting) ? 0.5 : 1,
+                                whiteSpace: "nowrap"
+                              }}
+                              title="Delete request"
+                            >
+                              🗑
                             </button>
                           )}
                         </div>

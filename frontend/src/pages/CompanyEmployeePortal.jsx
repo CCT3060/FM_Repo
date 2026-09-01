@@ -1,4 +1,4 @@
-﻿import { getPublicAppUrl } from "../utils/runtimeConfig";
+import { getPublicAppUrl } from "../utils/runtimeConfig";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import * as XLSX from "xlsx";
 import { useNavigate, useParams } from "react-router-dom";
@@ -171,18 +171,25 @@ const applyCustomRoles = (rolesFromServer) => {
 };
 const SHIFTS = ["Morning", "Afternoon", "Evening", "Night"];
 
+export const confirmDeleteAction = (canDelete, customMessage = "Do you want to delete this?") => {
+  if (!canDelete) {
+    alert("You don't have access to delete this");
+    return false;
+  }
+  return window.confirm(customMessage);
+};
+
 const NAV_ALL = [
   { key: "dashboard", label: "Dashboard", roles: ["admin","supervisor","*"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg> },
   { key: "departments", label: "Departments", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg> },
   { key: "assets", label: "Assets", roles: ["admin","supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 19.07a10 10 0 0 1 0-14.14"/></svg> },
   { key: "checklists", label: "Checklists", roles: ["admin","supervisor","*"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg> },
   { key: "logsheets", label: "Logsheets", roles: ["admin","supervisor","*"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> },
-  { key: "employees", label: "My Team", roles: ["supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> },
-  { key: "employees", label: "Employees", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> },
+  { key: "employees", label: "Employees", roles: ["admin","supervisor","*"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> },
   { key: "warnings", label: "Warnings", roles: ["admin","supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> },
   { key: "notifications", label: "Notifications", roles: ["admin","supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg> },
   { key: "workorders", label: "Requests", roles: ["admin","supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-4 0v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg> },
-  { key: "softrequests", label: "Soft Requests", roles: ["admin","supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> },
+  { key: "softrequests", label: "HK Request", roles: ["admin","supervisor"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> },
   { key: "additional-requests", label: "Additional Request", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg> },
   { key: "locations", label: "Locations", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg> },
   { key: "shifts", label: "Shifts", roles: ["admin"], icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> },
@@ -852,31 +859,12 @@ function EmployeeModal({ existing, token, employees = [], customRoles = [], curr
   const isEdit = !!existing;
   const maskedPassword = isEdit && (existing?.password || existing?.hasPassword) ? "********" : "";
 
-  // Use the saved service_domain from the DB directly.
-  // Falls back to role-capability derivation only when the field is absent.
-  const deriveServiceDomain = () => {
-    if (isEdit && existing?.serviceDomain) {
-      const sd = existing.serviceDomain.toLowerCase();
-      if (["soft", "technical", "both"].includes(sd)) return sd;
-    }
-    if (!isEdit || !existing?.role) return "technical";
-    const matched = customRoles.find((r) => r.roleKey === existing.role);
-    if (matched) {
-      const hasSoft = matched.canRaiseSoftIssue || matched.isSoftManager;
-      const hasTech = matched.isTechnician || matched.isTechnicalSupervisor;
-      if (hasSoft && hasTech) return "both";
-      if (hasSoft) return "soft";
-    }
-    return "technical";
-  };
-
   const def = {
     fullName: "", email: "", phone: "", designation: "", role: "technician",
     shift: "", status: "Active", password: "", username: "", supervisorId: "",
     employeeCode: "",
     eligibleForAttendance: true,
     permissions: normalizePerms(null),
-    moduleAccess: ["dashboard", "checklists", "logsheets", "mytasks", "locations"],
   };
   const [form, setForm] = useState(isEdit ? {
     ...def, ...existing,
@@ -891,12 +879,7 @@ function EmployeeModal({ existing, token, employees = [], customRoles = [], curr
     supervisorId: existing.supervisorId ? String(existing.supervisorId) : "",
     shift: existing.shift || "",
     permissions: normalizePerms(existing.permissions),
-    // If the DB has an empty moduleAccess array (default before feature existed),
-    // fall back to the full default list so all checkboxes appear checked.
-    moduleAccess: (Array.isArray(existing.moduleAccess) && existing.moduleAccess.length > 0)
-      ? existing.moduleAccess : def.moduleAccess,
   } : def);
-  const [serviceDomain, setServiceDomain] = useState(deriveServiceDomain);
   const [initialPassword, setInitialPassword] = useState(maskedPassword);
   const [showPassword, setShowPassword] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -921,6 +904,21 @@ function EmployeeModal({ existing, token, employees = [], customRoles = [], curr
   const changeRole = (newRole) => {
     setForm((p) => ({ ...p, role: newRole, supervisorId: "", shift: "" }));
   };
+
+  const allRoleOptions = useMemo(() => {
+    const list = customRoles && customRoles.length > 0
+      ? customRoles.map((r) => ({
+          value: r.roleKey,
+          label: r.label + (r.parentRoleKey ? ` (Reports to: ${customRoles.find(x => x.roleKey === r.parentRoleKey)?.label || r.parentRoleKey})` : ""),
+        }))
+      : HIERARCHY_CHAIN.map((h) => ({ value: h.role, label: h.label }));
+
+    if (form.role && !list.some((r) => r.value === form.role)) {
+      const fallbackObj = ROLES.find(r => r.value === form.role);
+      list.unshift({ value: form.role, label: fallbackObj?.label || form.role });
+    }
+    return list;
+  }, [customRoles, form.role]);
 
   // Determine what parent role this role should report to
   const parentRole = PARENT_ROLE[form.role] ?? null;
@@ -948,7 +946,7 @@ function EmployeeModal({ existing, token, employees = [], customRoles = [], curr
     try {
       const payload = {
         ...form,
-        serviceDomain,
+        serviceDomain: existing?.serviceDomain || "both",
         supervisorId: form.supervisorId ? Number(form.supervisorId) : null,
         shift: form.shift || null,
       };
@@ -995,48 +993,6 @@ function EmployeeModal({ existing, token, employees = [], customRoles = [], curr
           <input type="password" name="prevent_autofill_password" style={{ display: "none" }} readOnly tabIndex={-1} />
           {error && <div style={{ gridColumn: "span 2" }}><Alert>{error}</Alert></div>}
 
-          {/* ── Service Domain ── */}
-          <div style={{ gridColumn: "span 2" }}>
-            <label style={{ display: "block", fontSize: "12.5px", fontWeight: 700, color: "#0f172a", marginBottom: "8px" }}>
-              Service Domain <span style={{ fontWeight: 400, color: "#64748b" }}>(determines asset access)</span>
-            </label>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "8px" }}>
-              {[
-                { key: "technical", label: "🔧 Technical",     desc: "Handles technical checklists, work orders & maintenance assets" },
-                { key: "soft",      label: "🧹 Soft Service",  desc: "Handles soft service requests & soft service asset types" },
-                { key: "both",      label: "⚙️ Both",          desc: "Full access to technical and soft service functionality" },
-              ].map(({ key, label, desc }) => (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => setServiceDomain(key)}
-                  style={{
-                    padding: "10px 12px",
-                    borderRadius: "10px",
-                    border: `2px solid ${serviceDomain === key ? "#2563eb" : "#e2e8f0"}`,
-                    background: serviceDomain === key ? "#eff6ff" : "#fff",
-                    cursor: "pointer",
-                    textAlign: "left",
-                    transition: "all 0.12s",
-                  }}
-                >
-                  <div style={{ fontSize: "13px", fontWeight: 700, color: serviceDomain === key ? "#2563eb" : "#1e293b", marginBottom: "3px" }}>{label}</div>
-                  <div style={{ fontSize: "11px", color: "#64748b", lineHeight: "1.4" }}>{desc}</div>
-                </button>
-              ))}
-            </div>
-            {serviceDomain === "soft" && (
-              <div style={{ marginTop: "8px", padding: "8px 12px", background: "#fef9c3", border: "1px solid #fde68a", borderRadius: "8px", fontSize: "12px", color: "#92400e" }}>
-                ⚠ Soft service employees do not require checklist assignments — they handle service requests and soft service assets only.
-              </div>
-            )}
-            {serviceDomain === "technical" && (
-              <div style={{ marginTop: "8px", padding: "8px 12px", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "8px", fontSize: "12px", color: "#166534" }}>
-                ✓ Technical employees will see only technical asset types. Soft service templates and assets will be hidden.
-              </div>
-            )}
-          </div>
-
           {/* Basic info */}
           <div style={{ gridColumn: "span 2" }}>
             <FInput label="Full Name" required value={form.fullName} onChange={(e) => change("fullName", e.target.value)} placeholder="e.g. Ahmed Hassan" />
@@ -1052,73 +1008,15 @@ function EmployeeModal({ existing, token, employees = [], customRoles = [], curr
 
           {/* Role */}
           <div style={{ gridColumn: "span 2" }}>
-            <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "8px" }}>
+            <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>
               Role <span style={{ color: "#ef4444" }}>*</span>
-              {serviceDomain !== "both" && (
-                <span style={{ marginLeft: "8px", fontSize: "11px", color: "#64748b", fontWeight: 400 }}>
-                  — showing {serviceDomain === "soft" ? "soft service" : "technical"} roles
-                </span>
-              )}
             </label>
-            {/* Hierarchy roles visual selector */}
-            <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "10px", padding: "10px", marginBottom: "10px" }}>
-              <p style={{ fontSize: "11px", fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "8px" }}>Hierarchy Roles</p>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-                {HIERARCHY_CHAIN.map((h, i) => (
-                  <button key={h.role} type="button" onClick={() => changeRole(h.role)}
-                    style={{ padding: "5px 12px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: `1.5px solid ${form.role === h.role ? h.color : h.border}`, background: form.role === h.role ? h.bg : "#fff", color: form.role === h.role ? h.color : "#64748b", display: "flex", alignItems: "center", gap: "5px", transition: "all 0.12s" }}>
-                    <span style={{ fontSize: "10px", color: "#94a3b8" }}>{i + 1}.</span>
-                    {h.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            {/* Custom company roles */}
-            {customRoles.length > 0 && (
-              <div style={{ marginTop: "10px" }}>
-                <p style={{ fontSize: "11px", fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "8px" }}>Custom Roles</p>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-                  {customRoles
-                    .filter((r) => {
-                      if (serviceDomain === "both") return true;
-                      const hasSoft = r.canRaiseSoftIssue || r.isSoftManager || r.canResolveSoftIssue;
-                      const hasTech = r.isTechnician || r.isTechnicalSupervisor;
-                      // Domain-agnostic roles (no flags) always show; purely opposite-domain roles hide
-                      if (serviceDomain === "soft") return !hasTech; // hide only purely-technical roles
-                      if (serviceDomain === "technical") return !hasSoft; // hide only purely-soft roles
-                      return true;
-                    })
-                    .map((r) => {
-                      const selected = form.role === r.roleKey;
-                      const domainTag = (r.canRaiseSoftIssue || r.isSoftManager)
-                        ? "🧹 Soft"
-                        : (r.isTechnician || r.isTechnicalSupervisor)
-                          ? "🔧 Tech"
-                          : null;
-                      return (
-                        <button key={r.roleKey} type="button" onClick={() => changeRole(r.roleKey)}
-                          style={{ padding: "6px 14px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: `1.5px solid ${selected ? (r.color || "#6366f1") : "#e2e8f0"}`, background: selected ? (r.bgColor || "#eef2ff") : "#fff", color: selected ? (r.color || "#6366f1") : "#64748b", display: "flex", alignItems: "center", gap: "5px" }}>
-                          {r.label}
-                          {domainTag && <span style={{ fontSize: "10px", opacity: 0.65 }}>{domainTag}</span>}
-                        </button>
-                      );
-                    })}
-                </div>
-                {customRoles.filter((r) => {
-                  if (serviceDomain === "both") return false;
-                  const hasSoft = r.canRaiseSoftIssue || r.isSoftManager || r.canResolveSoftIssue;
-                  const hasTech = r.isTechnician || r.isTechnicalSupervisor;
-                  // Only show hint when there are roles hidden (purely opposite domain)
-                  if (serviceDomain === "soft") return hasTech && !hasSoft;
-                  if (serviceDomain === "technical") return hasSoft && !hasTech;
-                  return false;
-                }).length > 0 && (
-                  <p style={{ marginTop: "6px", fontSize: "11px", color: "#94a3b8" }}>
-                    Some roles are hidden based on the selected service domain. Switch to "Both" to see all.
-                  </p>
-                )}
-              </div>
-            )}
+            <SearchableSelect
+              value={form.role}
+              onChange={(val) => changeRole(val)}
+              options={allRoleOptions}
+              placeholder="Search or select role…"
+            />
           </div>
 
           {/* Shift — only for Assistant Manager */}
@@ -1294,55 +1192,6 @@ function EmployeeModal({ existing, token, employees = [], customRoles = [], curr
                 Mobile access active — username: <strong>{form.username}</strong>
               </p>
             )}
-          </div>
-
-          {/* Permissions */}
-          <div style={{ gridColumn: "span 2", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "10px", padding: "16px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0ea5e9" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-              <p style={{ fontWeight: 700, fontSize: "13.5px", color: "#0f172a", margin: 0 }}>Permissions (Checklists &amp; Logsheets)</p>
-            </div>
-            <p style={{ fontSize: "12px", color: "#64748b", marginBottom: "12px" }}>Fine-grained CRUD permissions applied when this user uses the mobile app or web portal.</p>
-            {["checklists", "logsheets"].map((area) => (
-              <div key={area} style={{ marginBottom: "8px" }}>
-                <p style={{ fontSize: "11.5px", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: "6px" }}>{area}</p>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-                  {["view", "create", "fill", "edit", "delete"].map((op) => {
-                    const on = !!form.permissions?.[area]?.[op];
-                    return (
-                      <label key={op} style={{ display: "inline-flex", alignItems: "center", gap: "5px", padding: "5px 10px", background: on ? "#dbeafe" : "#fff", border: `1px solid ${on ? "#93c5fd" : "#e2e8f0"}`, borderRadius: "20px", fontSize: "12px", fontWeight: 600, color: on ? "#1d4ed8" : "#64748b", cursor: "pointer", userSelect: "none" }}>
-                        <input type="checkbox" checked={on} onChange={(e) =>
-                          setForm((p) => ({ ...p, permissions: { ...p.permissions, [area]: { ...(p.permissions?.[area] || {}), [op]: e.target.checked } } }))
-                        } style={{ margin: 0 }} />
-                        {op}
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* Module access */}
-          <div style={{ gridColumn: "span 2", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "10px", padding: "16px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
-              <p style={{ fontWeight: 700, fontSize: "13.5px", color: "#0f172a", margin: 0 }}>Module Access</p>
-            </div>
-            <p style={{ fontSize: "12px", color: "#64748b", marginBottom: "12px" }}>Modules visible to this user on web portal and mobile app.</p>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-              {(companyModules ? ALL_MODULES.filter((m) => companyModules.includes(m.key)) : ALL_MODULES).map((m) => {
-                const on = form.moduleAccess?.includes(m.key);
-                return (
-                  <label key={m.key} style={{ display: "inline-flex", alignItems: "center", gap: "5px", padding: "5px 10px", background: on ? "#dcfce7" : "#fff", border: `1px solid ${on ? "#86efac" : "#e2e8f0"}`, borderRadius: "20px", fontSize: "12px", fontWeight: 600, color: on ? "#15803d" : "#64748b", cursor: "pointer", userSelect: "none" }}>
-                    <input type="checkbox" checked={on} onChange={(e) =>
-                      setForm((p) => ({ ...p, moduleAccess: e.target.checked ? [...(p.moduleAccess || []), m.key] : (p.moduleAccess || []).filter((k) => k !== m.key) }))
-                    } style={{ margin: 0 }} />
-                    {m.label}
-                  </label>
-                );
-              })}
-            </div>
           </div>
         </div>
 
@@ -4127,53 +3976,527 @@ function FleetMaintModal({ token, fleetAssets, onClose, onSaved }) {
   );
 }
 
-/* ─── Role Permissions Modules ────────────────────────────────────────── */
+/* ─── Role Permissions Helper ────────────────────────────────────────── */
+export function checkRolePerm(permsForRole, moduleKey, op) {
+  if (!permsForRole) return op === "v"; // Default view=true if no perms set
+
+  const modPerms =
+    permsForRole[moduleKey] ||
+    (moduleKey === "softrequests"
+      ? permsForRole["soft-requests"] || permsForRole["softRequests"]
+      : null) ||
+    (moduleKey === "workorders" ? permsForRole["requests"] : null) ||
+    (moduleKey === "ojt"
+      ? permsForRole["ojtTraining"] || permsForRole["ojt-training"]
+      : null) ||
+    (moduleKey === "additional-requests"
+      ? permsForRole["additionalRequests"]
+      : null);
+
+  if (!modPerms) {
+    return op === "v";
+  }
+
+  if (op === "v") {
+    if (modPerms.v !== undefined) return Boolean(modPerms.v);
+    return true; // Backward compatibility (missing 'v' defaults to true)
+  }
+
+  const isViewAllowed = modPerms.v !== undefined ? Boolean(modPerms.v) : true;
+  if (!isViewAllowed) return false;
+
+  const shortOp = op;
+  const longOp =
+    op === "c"
+      ? "create"
+      : op === "r"
+      ? "read"
+      : op === "u"
+      ? "update"
+      : op === "d"
+      ? "delete"
+      : op;
+
+  const isCustomDashboardAction =
+    moduleKey === "dashboard" &&
+    ["show_site_score", "show_today_site_score", "show_submission_overview", "show_site_score_overview", "show_recent_submissions"].includes(op);
+
+  if (modPerms[shortOp] !== undefined) return Boolean(modPerms[shortOp]);
+  if (modPerms[longOp] !== undefined) return Boolean(modPerms[longOp]);
+  if (op === "show_site_score" && modPerms.show_today_site_score !== undefined) return Boolean(modPerms.show_today_site_score);
+  if (op === "show_today_site_score" && modPerms.show_site_score !== undefined) return Boolean(modPerms.show_site_score);
+  if (isCustomDashboardAction) return true;
+
+  return false;
+}
+
 const PERM_MODULES = [
-  { key: "assets",       label: "Asset Mgmt",    moduleKey: "assets" },
-  { key: "checklists",   label: "Checklists",    moduleKey: "checklists" },
-  { key: "logsheets",    label: "Logsheets",     moduleKey: "logsheets" },
-  { key: "requests",     label: "Requests",      moduleKey: "requests" },
-  { key: "softRequests", label: "Soft Requests", moduleKey: "soft-requests" },
-  { key: "locations",    label: "Locations",     moduleKey: "locations" },
-  { key: "ojtTraining",  label: "OJT Training",  moduleKey: "ojt-training" },
-  { key: "fleet",        label: "Fleet Mgmt",    moduleKey: "fleet" },
+  { key: "dashboard",           label: "Dashboard",       moduleKey: "dashboard" },
+  { key: "departments",         label: "Departments",     moduleKey: "departments" },
+  { key: "employees",           label: "Employees",       moduleKey: "employees" },
+  { key: "warnings",            label: "Warnings",        moduleKey: "warnings" },
+  { key: "notifications",       label: "Notifications",   moduleKey: "notifications" },
+  { key: "shifts",              label: "Shifts",          moduleKey: "shifts" },
+  { key: "roles",               label: "Manage Roles",    moduleKey: "roles" },
+  { key: "asset-types",         label: "Asset Types",     moduleKey: "asset-types" },
+  { key: "mytasks",             label: "My Tasks",        moduleKey: "mytasks" },
+
+  // Enabled Sub-modules
+  { key: "assets",              label: "Asset Mgmt",      moduleKey: "assets" },
+  { key: "checklists",          label: "Checklists",      moduleKey: "checklists" },
+  { key: "logsheets",           label: "Logsheets",       moduleKey: "logsheets" },
+  { key: "workorders",          label: "Requests",        moduleKey: "requests" },
+  { key: "softrequests",        label: "HK Request",      moduleKey: "soft-requests" },
+  { key: "additional-requests", label: "Additional Req",  moduleKey: "additional-requests" },
+  { key: "locations",           label: "Locations",       moduleKey: "locations" },
+  { key: "attendance",          label: "Attendance",      moduleKey: "attendance" },
+  { key: "ojt",                 label: "OJT Training",    moduleKey: "ojt-training" },
+  { key: "fleet",               label: "Fleet Mgmt",      moduleKey: "fleet" },
 ];
 
-/* ─── Role Management Modal (custom hierarchy) ───────────────────────── */
+/* ─── Per-Module Extended Actions Configuration ────────────────────────── */
+const MODULE_EXTENDED_ACTIONS = {
+  dashboard: [
+    { key: "export_excel",             label: "Export Excel" },
+    { key: "print",                    label: "Print View" },
+    { key: "show_site_score",          label: "Show Today's Site Score" },
+    { key: "show_submission_overview", label: "Show Submission Overview (donut chart)" },
+    { key: "show_site_score_overview", label: "Show Site Score Overview (bar graph)" },
+    { key: "show_recent_submissions",  label: "Show Recent Submissions" },
+  ],
+  attendance: [
+    { key: "mark_mobile_attendance", label: "Can Mark Attendance on Mobile", badge: "Mobile" },
+    { key: "export_excel",           label: "Export Excel" },
+    { key: "export_pdf",             label: "Export PDF" },
+  ],
+  assets: [
+    { key: "import",       label: "Import CSV" },
+    { key: "print_qr",     label: "Print QR" },
+    { key: "download_qr",  label: "Download QR" },
+  ],
+  locations: [
+    { key: "bulk_import",  label: "Bulk Import" },
+    { key: "export",       label: "Export Excel" },
+    { key: "print_qr",     label: "Print QR" },
+  ],
+  employees: [
+    { key: "import",       label: "Import CSV" },
+  ],
+  fleet: [
+    { key: "export",       label: "Export CSV" },
+  ],
+  checklists: [
+    { key: "fill_checklists",   label: "Fill / Execute Checklists (Mobile)", badge: "Mobile" },
+    { key: "assign_checklists", label: "Assign Checklists to Team",           badge: "Mobile/Web" },
+    { key: "import",            label: "Import Checklists" },
+    { key: "export",            label: "Export Submissions / PDF" },
+  ],
+  logsheets: [
+    { key: "fill_logsheets",   label: "Can Fill / Execute Logsheet (Web and Mobile)", badge: "Mobile/Web" },
+    { key: "assign_logsheets", label: "Assign Logsheets (Web and Mobile)",           badge: "Mobile/Web" },
+    { key: "export",           label: "Export Entries" },
+  ],
+  workorders: [
+    { key: "execute_work_orders", label: "Execute Assigned Work Orders (Mobile)", badge: "Mobile" },
+    { key: "assign_work_orders",  label: "Assign & Manage Work Orders",           badge: "Mobile/Web" },
+    { key: "export",              label: "Export Requests" },
+  ],
+  warnings: [
+    { key: "assign_cutoff_warnings_web",    label: "Can Assign Warning and Set Cutoff (Web)",    badge: "Web" },
+    { key: "assign_cutoff_warnings_mobile", label: "Can Assign Warning and Set Cutoff (Mobile)", badge: "Mobile" },
+    { key: "change_status_warnings_web",    label: "Can Change Status (Web)",                    badge: "Web" },
+    { key: "change_status_warnings_mobile", label: "Can Change Status (Mobile)",                 badge: "Mobile" },
+    { key: "create_workorder",              label: "Can Create Workorder",                       badge: "Web" },
+  ],
+  softrequests: [
+    { key: "raise_hk_issues",          label: "Can Raise HK Issues (Mobile)",                badge: "Mobile" },
+    { key: "resolve_hk_issues",        label: "Can Resolve HK Request (from mobile)",        badge: "Mobile" },
+    { key: "assign_cutoff_hk_web",     label: "Can Assign HK Request and Set Cutoff (Web)",  badge: "Web" },
+    { key: "assign_cutoff_hk_mobile",  label: "Can Assign HK Request and Set Cutoff (Mobile)", badge: "Mobile" },
+    { key: "change_status_hk_web",     label: "Can Change Status (Web)",                    badge: "Web" },
+    { key: "change_status_hk_mobile",  label: "Can Change Status (Mobile)",                 badge: "Mobile" },
+    { key: "export",                   label: "Export HK Requests" },
+  ],
+  "additional-requests": [
+    { key: "raise_additional_request",  label: "Can Raise Additional Requests (Mobile)", badge: "Mobile" },
+    { key: "assign_additional_request", label: "Can Assign / Set Cutoff Date",          badge: "Mobile/Web" },
+    { key: "export",                    label: "Export Additional Requests" },
+  ],
+  ojt: [
+    { key: "print_qr",     label: "Generate / Print QR" },
+  ],
+};
+
+/* ─── Sleek Toggle Switch Component ────────────────────────────────────────── */
+const ToggleSwitch = ({ checked, onChange, disabled, title }) => (
+  <label
+    title={title}
+    style={{
+      display: "inline-flex",
+      alignItems: "center",
+      cursor: disabled ? "not-allowed" : "pointer",
+      opacity: disabled ? 0.35 : 1,
+      userSelect: "none",
+    }}
+  >
+    <div
+      onClick={() => {
+        if (!disabled && onChange) onChange(!checked);
+      }}
+      style={{
+        width: "36px",
+        height: "20px",
+        borderRadius: "10px",
+        background: checked ? "#2563eb" : "#cbd5e1",
+        position: "relative",
+        transition: "background 0.18s ease-in-out",
+        boxShadow: "inset 0 1px 2px rgba(0,0,0,0.1)",
+      }}
+    >
+      <div
+        style={{
+          width: "16px",
+          height: "16px",
+          borderRadius: "50%",
+          background: "#ffffff",
+          position: "absolute",
+          top: "2px",
+          left: checked ? "18px" : "2px",
+          transition: "left 0.18s ease-in-out",
+          boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
+        }}
+      />
+    </div>
+  </label>
+);
+
+/* ─── Site Score Date Filter Popover ───────────────────────────────────────── */
+const SiteScoreDateFilter = ({ currentRange, onApply, onReset }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [draftStart, setDraftStart] = useState("");
+  const [draftEnd, setDraftEnd] = useState("");
+  const [errorMsg, setErrorMsg] = useState(null);
+  const popoverRef = useRef(null);
+
+  // When opening, pre-fill with Last 7 Days if current range is single-day, or with current active range
+  const handleOpen = () => {
+    const today = new Date().toISOString().slice(0, 10);
+    if (currentRange.startDate === currentRange.endDate) {
+      const end = today;
+      const startD = new Date(end + "T00:00:00");
+      startD.setDate(startD.getDate() - 6);
+      setDraftStart(startD.toISOString().slice(0, 10));
+      setDraftEnd(end);
+    } else {
+      setDraftStart(currentRange.startDate || today);
+      setDraftEnd(currentRange.endDate || today);
+    }
+    setErrorMsg(null);
+    setIsOpen(true);
+  };
+
+  // Close on outside click or Escape
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleClickOutside = (e) => {
+      if (popoverRef.current && !popoverRef.current.contains(e.target)) {
+        setIsOpen(false);
+        setErrorMsg(null);
+      }
+    };
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape") {
+        setIsOpen(false);
+        setErrorMsg(null);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen]);
+
+  const setPreset = (days) => {
+    const today = new Date().toISOString().slice(0, 10);
+    if (days === 1) {
+      setDraftStart(today);
+      setDraftEnd(today);
+    } else {
+      const d = new Date(today + "T00:00:00");
+      d.setDate(d.getDate() - (days - 1));
+      setDraftStart(d.toISOString().slice(0, 10));
+      setDraftEnd(today);
+    }
+    setErrorMsg(null);
+  };
+
+  const handleApply = () => {
+    if (!draftStart || !draftEnd) {
+      const msg = "Please select both From and To dates.";
+      setErrorMsg(msg);
+      window.alert(msg);
+      return;
+    }
+    if (draftStart > draftEnd) {
+      const msg = "From date cannot be after To date.";
+      setErrorMsg(msg);
+      window.alert(msg);
+      return;
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    if (draftEnd > today) {
+      const msg = "To date cannot be in the future.";
+      setErrorMsg(msg);
+      window.alert(msg);
+      return;
+    }
+    const startD = new Date(draftStart + "T00:00:00");
+    const endD = new Date(draftEnd + "T00:00:00");
+    const diffDays = Math.round((endD - startD) / (1000 * 60 * 60 * 24));
+    if (diffDays > 365) {
+      const msg = "Date range cannot exceed 365 days (1 year). Please select a shorter range.";
+      setErrorMsg(msg);
+      window.alert(msg);
+      return;
+    }
+
+    setErrorMsg(null);
+    onApply({ startDate: draftStart, endDate: draftEnd });
+    setIsOpen(false);
+  };
+
+  const handleReset = () => {
+    const today = new Date().toISOString().slice(0, 10);
+    onReset ? onReset() : onApply({ startDate: today, endDate: today });
+    setIsOpen(false);
+    setErrorMsg(null);
+  };
+
+  const isFiltered = currentRange.startDate !== currentRange.endDate;
+
+  return (
+    <div style={{ position: "relative" }} ref={popoverRef}>
+      <button
+        type="button"
+        onClick={() => (isOpen ? setIsOpen(false) : handleOpen())}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: "6px",
+          padding: "6px 12px",
+          borderRadius: "8px",
+          border: isFiltered ? "1.5px solid #f97316" : "1px solid #cbd5e1",
+          background: isFiltered ? "#fff7ed" : "#f8fafc",
+          color: isFiltered ? "#ea580c" : "#475569",
+          fontSize: "12px",
+          fontWeight: 600,
+          cursor: "pointer",
+          transition: "all 0.15s ease",
+          boxShadow: isFiltered ? "0 1px 3px rgba(249,115,22,0.15)" : "none",
+        }}
+        title="Filter date range"
+      >
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
+        </svg>
+        <span>Filter</span>
+        {isFiltered && (
+          <span style={{ fontSize: "10px", background: "#f97316", color: "#fff", borderRadius: "10px", padding: "1px 6px", fontWeight: 700 }}>
+            Active
+          </span>
+        )}
+      </button>
+
+      {isOpen && (
+        <div
+          style={{
+            position: "absolute",
+            top: "calc(100% + 8px)",
+            right: 0,
+            zIndex: 100,
+            background: "#ffffff",
+            borderRadius: "14px",
+            border: "1px solid #e2e8f0",
+            boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)",
+            padding: "16px 18px",
+            width: "290px",
+          }}
+        >
+          {/* Header */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px", borderBottom: "1px solid #f1f5f9", paddingBottom: "8px" }}>
+            <div>
+              <p style={{ margin: 0, fontSize: "13px", fontWeight: 700, color: "#0f172a" }}>Filter Date Range</p>
+              <p style={{ margin: "2px 0 0", fontSize: "11px", color: "#94a3b8" }}>Defaults to last 7 days</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsOpen(false)}
+              style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: "16px", padding: 0, lineHeight: 1 }}
+            >
+              ✕
+            </button>
+          </div>
+
+          {/* Quick Presets */}
+          <div style={{ display: "flex", gap: "6px", marginBottom: "12px" }}>
+            <button
+              type="button"
+              onClick={() => setPreset(1)}
+              style={{ flex: 1, padding: "4px 0", fontSize: "11px", fontWeight: 600, borderRadius: "6px", border: "1px solid #e2e8f0", background: "#f8fafc", color: "#475569", cursor: "pointer" }}
+            >
+              Today
+            </button>
+            <button
+              type="button"
+              onClick={() => setPreset(7)}
+              style={{ flex: 1, padding: "4px 0", fontSize: "11px", fontWeight: 600, borderRadius: "6px", border: "1px solid #e2e8f0", background: "#f8fafc", color: "#475569", cursor: "pointer" }}
+            >
+              7 Days
+            </button>
+            <button
+              type="button"
+              onClick={() => setPreset(30)}
+              style={{ flex: 1, padding: "4px 0", fontSize: "11px", fontWeight: 600, borderRadius: "6px", border: "1px solid #e2e8f0", background: "#f8fafc", color: "#475569", cursor: "pointer" }}
+            >
+              30 Days
+            </button>
+          </div>
+
+          {/* Inputs */}
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginBottom: "14px" }}>
+            <div>
+              <label style={{ display: "block", fontSize: "11px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>From Date</label>
+              <input
+                type="date"
+                value={draftStart}
+                onChange={(e) => { setDraftStart(e.target.value); setErrorMsg(null); }}
+                style={{ width: "100%", boxSizing: "border-box", padding: "6px 10px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "12px", color: "#0f172a" }}
+              />
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: "11px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>To Date</label>
+              <input
+                type="date"
+                value={draftEnd}
+                onChange={(e) => { setDraftEnd(e.target.value); setErrorMsg(null); }}
+                style={{ width: "100%", boxSizing: "border-box", padding: "6px 10px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "12px", color: "#0f172a" }}
+              />
+            </div>
+          </div>
+
+          {/* Inline alert if error */}
+          {errorMsg && (
+            <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: "8px", padding: "8px 10px", marginBottom: "12px", fontSize: "11.5px", color: "#b91c1c", fontWeight: 500 }}>
+              ⚠️ {errorMsg}
+            </div>
+          )}
+
+          {/* Footer buttons */}
+          <div style={{ display: "flex", gap: "8px", justifyContent: "space-between", alignItems: "center" }}>
+            <button
+              type="button"
+              onClick={handleReset}
+              style={{
+                padding: "6px 10px",
+                borderRadius: "8px",
+                border: "1px solid #e2e8f0",
+                background: "#ffffff",
+                color: "#64748b",
+                fontSize: "11.5px",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              Reset to Today
+            </button>
+            <button
+              type="button"
+              onClick={handleApply}
+              style={{
+                padding: "6px 14px",
+                borderRadius: "8px",
+                border: "none",
+                background: "#ea580c",
+                color: "#ffffff",
+                fontSize: "11.5px",
+                fontWeight: 700,
+                cursor: "pointer",
+                boxShadow: "0 1px 2px rgba(234,88,12,0.3)",
+              }}
+            >
+              Apply Filter
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* ─── Role Management Modal (custom hierarchy & unified permissions) ───────────────────────── */
 function RolesModal({ token, initialRoles, onClose, onSaved, inline = false, enabledModules, readOnly = false, allCompanies = false, companyId }) {
   const [roles, setRoles] = useState(initialRoles || []);
+  const [selectedRoleKey, setSelectedRoleKey] = useState("");
+  const [roleSearch, setRoleSearch] = useState("");
+  const [moduleSearch, setModuleSearch] = useState("");
   const [draftLabel, setDraftLabel] = useState("");
   const [draftParent, setDraftParent] = useState("");
   const [draftColor, setDraftColor] = useState("#2563eb");
   const [draftCompanyId, setDraftCompanyId] = useState("");
-  const [draftCanRaise, setDraftCanRaise]   = useState(false);
-  const [draftCanResolve, setDraftCanResolve] = useState(false);
-  const [draftIsManager, setDraftIsManager]   = useState(false);
-  const [draftIsTechSupervisor, setDraftIsTechSupervisor] = useState(false);
-  const [draftIsTechnician, setDraftIsTechnician]         = useState(false);
-  const [draftCanRaiseAdditional, setDraftCanRaiseAdditional] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [rolePerms, setRolePerms] = useState({});
   const [permsSaving, setPermsSaving] = useState(false);
+  const [isPermsEditing, setIsPermsEditing] = useState(false);
+  const [permsSavedNotice, setPermsSavedNotice] = useState(false);
   const [myCompanies, setMyCompanies] = useState([]);
-  // Filter PERM_MODULES to only show modules enabled for this company
-  const activePermModules = enabledModules
-    ? PERM_MODULES.filter((m) => enabledModules.includes(m.moduleKey))
-    : PERM_MODULES;
-  // Edit state
+  const [extendedPermModal, setExtendedPermModal] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm]   = useState({});
+  
+  const activePermModules = PERM_MODULES.filter((m) => {
+    if (!enabledModules || !Array.isArray(enabledModules)) return true;
+    const keyToMatch = m.moduleKey || m.key;
+    return enabledModules.includes(keyToMatch) ||
+           enabledModules.includes(m.key) ||
+           (keyToMatch === "requests" && enabledModules.includes("workorders")) ||
+           (keyToMatch === "soft-requests" && enabledModules.includes("softrequests")) ||
+           (keyToMatch === "ojt-training" && enabledModules.includes("ojt"));
+  });
 
-  // Fetch accessible companies for company selector
+  const activeRoleKey = selectedRoleKey || roles[0]?.roleKey || "";
+  const selectedRoleObj = roles.find((r) => r.roleKey === activeRoleKey) || roles[0];
+  const filteredRoles = roles.filter((r) => !roleSearch.trim() || r.label.toLowerCase().includes(roleSearch.toLowerCase()));
+  const filteredPermModules = activePermModules.filter((m) => !moduleSearch.trim() || m.label.toLowerCase().includes(moduleSearch.toLowerCase()));
+
+  const isMatrixDisabled = readOnly || !isPermsEditing;
+
+  const updatePerm = (roleKey, moduleKey, op, val) => {
+    if (isMatrixDisabled) return;
+    setRolePerms((prev) => {
+      const currentRolePerms = prev[roleKey] || {};
+      const currentModPerms = currentRolePerms[moduleKey] || {};
+      return {
+        ...prev,
+        [roleKey]: {
+          ...currentRolePerms,
+          [moduleKey]: {
+            ...currentModPerms,
+            [op]: val,
+          },
+        },
+      };
+    });
+  };
+
   useEffect(() => {
     getMyCompanies(token).then((list) => {
       if (Array.isArray(list)) setMyCompanies(list);
     }).catch(() => {});
   }, [token]);
 
-  // Always fetch fresh data from server on mount so roles are up-to-date
-  // Note: Backend getCompanyRoles uses JWT company_id, doesn't support multi-company aggregation
   useEffect(() => {
     getCompanyRoles(token).then((list) => {
       if (Array.isArray(list)) setRoles(list);
@@ -4186,15 +4509,9 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false, ena
   const startEdit = (r) => {
     setEditingId(r.id);
     setEditForm({
-      label:                r.label,
-      color:                r.color || "#2563eb",
-      parentRoleKey:        r.parentRoleKey || "",
-      canRaiseSoftIssue:    !!r.canRaiseSoftIssue,
-      canResolveSoftIssue:  !!r.canResolveSoftIssue,
-      isSoftManager:        !!r.isSoftManager,
-      isTechnicalSupervisor:!!r.isTechnicalSupervisor,
-      isTechnician:         !!r.isTechnician,
-      canRaiseAdditionalRequest: !!r.canRaiseAdditionalRequest,
+      label:         r.label,
+      color:         r.color || "#2563eb",
+      parentRoleKey: r.parentRoleKey || "",
     });
   };
 
@@ -4203,16 +4520,10 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false, ena
     setSaving(true); setError(null);
     try {
       await updateCompanyRole(token, editingId, {
-        label:                editForm.label.trim(),
-        color:                editForm.color,
-        bgColor:              lightenHex(editForm.color),
-        parentRoleKey:        editForm.parentRoleKey || null,
-        canRaiseSoftIssue:    editForm.canRaiseSoftIssue,
-        canResolveSoftIssue:  editForm.canResolveSoftIssue,
-        isSoftManager:        editForm.isSoftManager,
-        isTechnicalSupervisor:editForm.isTechnicalSupervisor,
-        isTechnician:         editForm.isTechnician,
-        canRaiseAdditionalRequest: editForm.canRaiseAdditionalRequest,
+        label:         editForm.label.trim(),
+        color:         editForm.color,
+        bgColor:       lightenHex(editForm.color),
+        parentRoleKey: editForm.parentRoleKey || null,
       });
       const list = await getCompanyRoles(token);
       setRoles(list || []);
@@ -4229,25 +4540,22 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false, ena
     if (myCompanies.length > 1 && !draftCompanyId) return setError("Please select a company for this role");
     setSaving(true); setError(null);
     try {
-      await createCompanyRole(token, {
-        label: draftLabel.trim(),
+      const created = await createCompanyRole(token, {
+        label:         draftLabel.trim(),
         parentRoleKey: draftParent || null,
-        color: draftColor,
-        bgColor: lightenHex(draftColor),
-        canRaiseSoftIssue:   draftCanRaise,
-        canResolveSoftIssue: draftCanResolve,
-        isSoftManager:       draftIsManager,
-        isTechnicalSupervisor: draftIsTechSupervisor,
-        isTechnician:          draftIsTechnician,
-        canRaiseAdditionalRequest: draftCanRaiseAdditional,
-        companyId: myCompanies.length > 1 ? draftCompanyId : undefined,
+        color:         draftColor,
+        bgColor:       lightenHex(draftColor),
+        companyId:     myCompanies.length > 1 ? draftCompanyId : undefined,
       });
       const list = await getCompanyRoles(token);
       setRoles(list || []);
       onSaved(list || []);
+      const newKey = created?.roleKey || list?.find((r) => r.label === draftLabel.trim())?.roleKey || list?.[list.length - 1]?.roleKey;
+      if (newKey) {
+        setSelectedRoleKey(newKey);
+      }
+      setIsPermsEditing(true);
       setDraftLabel(""); setDraftParent(""); setDraftColor("#2563eb"); setDraftCompanyId("");
-      setDraftCanRaise(false); setDraftCanResolve(false); setDraftIsManager(false);
-      setDraftIsTechSupervisor(false); setDraftIsTechnician(false); setDraftCanRaiseAdditional(false);
     } catch (err) { setError(err.message || "Create failed"); }
     finally { setSaving(false); }
   };
@@ -4260,198 +4568,386 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false, ena
       const list = await getCompanyRoles(token);
       setRoles(list || []);
       onSaved(list || []);
+      if (selectedRoleObj?.id === id) {
+        setSelectedRoleKey(list?.[0]?.roleKey || "");
+      }
     } catch (err) { setError(err.message || "Delete failed"); }
     finally { setSaving(false); }
   };
 
-  const moveRole = async (id, dir) => {
-    const idx = roles.findIndex((r) => r.id === id);
-    if (idx < 0) return;
-    const swap = idx + dir;
-    if (swap < 0 || swap >= roles.length) return;
-    const a = roles[idx], b = roles[swap];
-    setSaving(true);
+  const handleSavePerms = async () => {
+    setPermsSaving(true);
+    setError(null);
     try {
-      await updateCompanyRole(token, a.id, { sortOrder: b.sortOrder });
-      await updateCompanyRole(token, b.id, { sortOrder: a.sortOrder });
-      const list = await getCompanyRoles(token);
-      setRoles(list || []);
-      onSaved(list || []);
-    } catch (err) { setError(err.message || "Reorder failed"); }
-    finally { setSaving(false); }
+      await saveCompanyPortalRolePerms(token, rolePerms);
+      setIsPermsEditing(false);
+      setPermsSavedNotice(true);
+      setTimeout(() => setPermsSavedNotice(false), 3500);
+    } catch (err) {
+      setError(err.message || "Failed to save permissions");
+    } finally {
+      setPermsSaving(false);
+    }
   };
 
   const handleClose = () => { onSaved(roles); onClose(); };
 
-  const PermCheckboxes = ({ form, setForm }) => (
-    <>
-      <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: "10px" }}>
-        <p style={{ fontSize: "11px", fontWeight: 700, color: "#94a3b8", marginBottom: "8px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Soft Services Mobile Permissions</p>
-        <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" }}>
-          {[
-            { key: "canRaiseSoftIssue",   label: "Can raise issues (Client Supervisor)" },
-            { key: "canResolveSoftIssue", label: "Can resolve issues (Catalyst Supervisor)" },
-            { key: "isSoftManager",       label: "Manager view only (Client Manager)" },
-            { key: "canRaiseAdditionalRequest", label: "Can raise Additional Request" },
-          ].map(({ key, label }) => (
-            <label key={key} style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "#475569", cursor: "pointer" }}>
-              <input type="checkbox" checked={!!form[key]} onChange={(e) => {
-                const v = e.target.checked;
-                const reset = key === "canRaiseSoftIssue" || key === "canResolveSoftIssue" || key === "isSoftManager"
-                  ? { canRaiseSoftIssue: false, canResolveSoftIssue: false, isSoftManager: false }
-                  : {};
-                setForm((p) => ({ ...p, ...reset, [key]: v }));
-              }} />
-              {label}
-            </label>
-          ))}
+  const unifiedFlow = (
+    <div style={{ display: "flex", flexDirection: "column" }}>
+      {error && (
+        <div style={{ padding: "12px 20px" }}>
+          <Alert>{error}</Alert>
         </div>
-      </div>
-      <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: "10px", marginTop: "6px" }}>
-        <p style={{ fontSize: "11px", fontWeight: 700, color: "#94a3b8", marginBottom: "8px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Technical Asset Mobile Permissions</p>
-        <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" }}>
-          {[
-            { key: "isTechnicalSupervisor", label: "Technical Supervisor (assign checklists, manage team)" },
-            { key: "isTechnician",          label: "Technician (fill assigned checklists)" },
-          ].map(({ key, label }) => (
-            <label key={key} style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "#475569", cursor: "pointer" }}>
-              <input type="checkbox" checked={!!form[key]} onChange={(e) => {
-                const v = e.target.checked;
-                const other = key === "isTechnicalSupervisor" ? "isTechnician" : "isTechnicalSupervisor";
-                setForm((p) => ({ ...p, [other]: v ? false : p[other], [key]: v }));
-              }} />
-              {label}
-            </label>
-          ))}
+      )}
+
+      {/* ── 1. Add New Role Section (Top) ── */}
+      {!readOnly && (
+        <div style={{ padding: "16px 22px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px", flexWrap: "wrap", gap: "8px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "22px", height: "22px", borderRadius: "50%", background: "#eff6ff", color: "#2563eb", fontWeight: 800, fontSize: "13px", border: "1px solid #bfdbfe" }}>+</span>
+              <span style={{ fontSize: "14px", fontWeight: 700, color: "#0f172a" }}>Add New Role</span>
+            </div>
+            <span style={{ fontSize: "12px", color: "#64748b" }}>Create a role, then configure its permissions immediately in the matrix below</span>
+          </div>
+
+          {myCompanies.length > 1 && (
+            <div style={{ marginBottom: "10px" }}>
+              <label style={{ display: "block", fontSize: "11.5px", fontWeight: 600, color: "#475569", marginBottom: "4px" }}>Company <span style={{ color: "#ef4444" }}>*</span></label>
+              <select value={draftCompanyId} onChange={(e) => setDraftCompanyId(e.target.value)}
+                style={{ width: "100%", maxWidth: "320px", boxSizing: "border-box", padding: "7px 10px", border: "1px solid #cbd5e1", borderRadius: "6px", fontSize: "13px", background: "#fff" }}>
+                <option value="">— Select company —</option>
+                {myCompanies.map((c) => (
+                  <option key={c.id} value={c.id}>{c.companyName}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr auto", gap: "10px", alignItems: "end" }}>
+            <div>
+              <label style={{ display: "block", fontSize: "11.5px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>Role Label *</label>
+              <input value={draftLabel} onChange={(e) => setDraftLabel(e.target.value)} placeholder="e.g. Client Supervisor" style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", border: "1px solid #cbd5e1", borderRadius: "6px", fontSize: "13px" }} />
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: "11.5px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>Reports To (optional)</label>
+              <select value={draftParent} onChange={(e) => setDraftParent(e.target.value)} style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", border: "1px solid #cbd5e1", borderRadius: "6px", fontSize: "13px", background: "#fff" }}>
+                <option value="">— Top of hierarchy —</option>
+                {roles.map((r) => <option key={r.roleKey} value={r.roleKey}>{r.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: "11.5px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>Color</label>
+              <input type="color" value={draftColor} onChange={(e) => setDraftColor(e.target.value)} style={{ width: "100%", height: "34px", padding: "2px", border: "1px solid #cbd5e1", borderRadius: "6px", cursor: "pointer" }} />
+            </div>
+            <Btn onClick={addRole} disabled={saving || !draftLabel.trim()}>
+              {saving ? "Adding…" : "+ Add Role"}
+            </Btn>
+          </div>
         </div>
-        <p style={{ fontSize: "11px", color: "#94a3b8", marginTop: "6px" }}>A role can have both Technical and Soft Service permissions simultaneously.</p>
-      </div>
-    </>
-  );
+      )}
 
-  const content = (
-    <div style={{ padding: "18px 22px", overflowY: "auto", flex: 1 }}>
-      {error && <Alert>{error}</Alert>}
+      {/* ── 2. Connected Role Permissions Section (Immediately Below) ── */}
+      <div style={{ padding: "20px 22px" }}>
+        <div style={{ marginBottom: "16px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
+          <div>
+            <p style={{ fontSize: "16px", fontWeight: 800, color: "#0f172a", margin: 0 }}>Role Permissions Matrix</p>
+            <p style={{ fontSize: "12.5px", color: "#64748b", margin: "3px 0 0 0" }}>Select a role from the left to view or edit unified web portal and mobile app permissions.</p>
+          </div>
+          {permsSavedNotice && (
+            <span style={{ fontSize: "12.5px", fontWeight: 700, color: "#16a34a", background: "#dcfce7", border: "1px solid #bbf7d0", padding: "4px 12px", borderRadius: "16px", display: "inline-flex", alignItems: "center", gap: "5px" }}>
+              ✓ Permissions saved successfully!
+            </span>
+          )}
+        </div>
 
-      {/* Existing roles */}
-      <div style={{ marginBottom: "16px" }}>
-        {roles.length === 0 && (
-          <p style={{ fontSize: "12.5px", color: "#64748b", padding: "10px 4px" }}>
-            No roles defined yet. Add roles below to build your hierarchy.
-          </p>
-        )}
-        {roles.map((r, i) => (
-          <div key={r.id} style={{ borderRadius: "8px", border: `1px solid ${editingId === r.id ? "#6366f1" : "#e2e8f0"}`, marginBottom: "8px", background: editingId === r.id ? "#fafbff" : "#fff", overflow: "hidden" }}>
-            {/* Row header */}
-            <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px", flexWrap: "wrap" }}>
-              <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-                <button onClick={() => moveRole(r.id, -1)} disabled={saving || i === 0} style={{ padding: "0 4px", border: "none", background: "transparent", cursor: i === 0 ? "default" : "pointer", color: i === 0 ? "#cbd5e1" : "#64748b" }}>▲</button>
-                <button onClick={() => moveRole(r.id, 1)} disabled={saving || i === roles.length - 1} style={{ padding: "0 4px", border: "none", background: "transparent", cursor: i === roles.length - 1 ? "default" : "pointer", color: i === roles.length - 1 ? "#cbd5e1" : "#64748b" }}>▼</button>
+        {roles.length === 0 ? (
+          <p style={{ color: "#94a3b8", fontSize: "13px" }}>Add roles above to configure permissions.</p>
+        ) : (
+          <div style={{ display: "flex", gap: "20px", flexWrap: "wrap", alignItems: "flex-start" }}>
+            {/* Sidebar with roles */}
+            <div style={{ width: "270px", flexShrink: 0, background: "#f8fafc", borderRadius: "12px", border: "1px solid #e2e8f0", padding: "14px", boxSizing: "border-box" }}>
+              <div style={{ marginBottom: "10px" }}>
+                <input
+                  value={roleSearch}
+                  onChange={(e) => setRoleSearch(e.target.value)}
+                  placeholder="🔍 Search roles…"
+                  style={{ width: "100%", padding: "7px 10px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "12.5px", boxSizing: "border-box" }}
+                />
               </div>
-              <span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: 600, background: r.bgColor || "#dbeafe", color: r.color || "#2563eb" }}>{r.label}</span>
-              <span style={{ fontSize: "11.5px", color: "#94a3b8" }}>{r.parentRoleKey ? `reports to ${roles.find((x) => x.roleKey === r.parentRoleKey)?.label || r.parentRoleKey}` : "top level"}</span>
-              {r.canRaiseSoftIssue    && <span style={{ padding: "2px 8px", borderRadius: "12px", fontSize: "10.5px", fontWeight: 600, background: "#fef9c3", color: "#854d0e" }}>Raises Issues</span>}
-              {r.canResolveSoftIssue  && <span style={{ padding: "2px 8px", borderRadius: "12px", fontSize: "10.5px", fontWeight: 600, background: "#dcfce7", color: "#166534" }}>Resolves Issues</span>}
-              {r.isSoftManager        && <span style={{ padding: "2px 8px", borderRadius: "12px", fontSize: "10.5px", fontWeight: 600, background: "#e0f2fe", color: "#0369a1" }}>Manager View</span>}
-              {r.isTechnicalSupervisor && <span style={{ padding: "2px 8px", borderRadius: "12px", fontSize: "10.5px", fontWeight: 600, background: "#eff6ff", color: "#1d4ed8" }}>Tech Supervisor</span>}
-              {r.isTechnician         && <span style={{ padding: "2px 8px", borderRadius: "12px", fontSize: "10.5px", fontWeight: 600, background: "#f5f3ff", color: "#6d28d9" }}>Technician</span>}
-              <span style={{ marginLeft: "auto", fontSize: "11px", color: "#94a3b8" }}>{r.roleKey}</span>
-              {!readOnly && (
-                <button onClick={() => editingId === r.id ? cancelEdit() : startEdit(r)} disabled={saving}
-                  style={{ padding: "4px 10px", border: `1px solid ${editingId === r.id ? "#c7d2fe" : "#e2e8f0"}`, background: editingId === r.id ? "#eef2ff" : "#f8fafc", color: editingId === r.id ? "#4f46e5" : "#475569", borderRadius: "6px", cursor: "pointer", fontSize: "11.5px", fontWeight: 600 }}>
-                  {editingId === r.id ? "Cancel" : "Edit"}
-                </button>
-              )}
-              {!readOnly && (
-                <button onClick={() => removeRole(r.id)} disabled={saving}
-                  style={{ padding: "4px 8px", border: "1px solid #fecaca", background: "#fff0f0", color: "#dc2626", borderRadius: "6px", cursor: "pointer", fontSize: "11.5px", fontWeight: 600 }}>Delete</button>
-              )}
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px", maxHeight: "550px", overflowY: "auto" }}>
+                {filteredRoles.map((r) => {
+                  const isSelected = activeRoleKey === r.roleKey;
+                  return (
+                    <div
+                      key={r.id}
+                      onClick={() => setSelectedRoleKey(r.roleKey)}
+                      style={{
+                        padding: "10px 12px",
+                        borderRadius: "10px",
+                        cursor: "pointer",
+                        background: isSelected ? "#eff6ff" : "#ffffff",
+                        border: isSelected ? "1.5px solid #2563eb" : "1px solid #e2e8f0",
+                        boxShadow: isSelected ? "0 2px 4px rgba(37,99,235,0.12)" : "none",
+                        transition: "all 0.15s ease",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: "8px",
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0, flex: 1 }}>
+                        <span style={{ width: "10px", height: "10px", borderRadius: "50%", background: r.color || "#2563eb", flexShrink: 0 }} />
+                        <div style={{ minWidth: 0 }}>
+                          <span style={{ fontWeight: isSelected ? 700 : 600, color: isSelected ? "#1d4ed8" : "#334155", fontSize: "13px", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {r.label}
+                          </span>
+                          <span style={{ fontSize: "11px", color: "#94a3b8", display: "block" }}>
+                            {r.parentRoleKey ? `reports to ${roles.find((x) => x.roleKey === r.parentRoleKey)?.label || r.parentRoleKey}` : "top level"}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div style={{ display: "flex", alignItems: "center", gap: "4px", flexShrink: 0 }}>
+                        {!readOnly && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); editingId === r.id ? cancelEdit() : startEdit(r); }}
+                              style={{ border: "none", background: "transparent", color: "#64748b", cursor: "pointer", padding: "2px 4px", fontSize: "12px", borderRadius: "4px" }}
+                              title="Edit role metadata"
+                            >
+                              ✎
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); removeRole(r.id); }}
+                              style={{ border: "none", background: "transparent", color: "#ef4444", cursor: "pointer", padding: "2px 4px", fontSize: "12px", borderRadius: "4px" }}
+                              title="Delete role"
+                            >
+                              ✕
+                            </button>
+                          </>
+                        )}
+                        {isSelected && (
+                          <span style={{ color: "#2563eb", fontWeight: 800, fontSize: "14px" }}>→</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
 
-            {/* Inline edit form */}
-            {editingId === r.id && (
-              <div style={{ padding: "14px 16px", borderTop: "1px solid #e0e7ff", background: "#f5f7ff" }}>
-                <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 80px", gap: "10px", marginBottom: "12px", alignItems: "end" }}>
-                  <div>
-                    <label style={{ display: "block", fontSize: "11px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>Role Label *</label>
-                    <input value={editForm.label || ""} onChange={(e) => setEditForm((p) => ({ ...p, label: e.target.value }))}
-                      style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", border: "1px solid #c7d2fe", borderRadius: "6px", fontSize: "13px" }} />
+            {/* Matrix & Action Buttons */}
+            <div style={{ flex: 1, minWidth: "480px", background: "#ffffff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden", display: "flex", flexDirection: "column" }}>
+              {selectedRoleObj ? (
+                <div>
+                  {/* Selected Role Header */}
+                  <div style={{ padding: "14px 18px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "10px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                      <span style={{ padding: "4px 12px", borderRadius: "14px", background: selectedRoleObj.bgColor || "#dbeafe", color: selectedRoleObj.color || "#2563eb", fontSize: "12.5px", fontWeight: 700 }}>
+                        {selectedRoleObj.label}
+                      </span>
+                      <span style={{ fontSize: "12px", color: "#64748b", fontWeight: 600 }}>
+                        {selectedRoleObj.parentRoleKey ? `(Reports to: ${roles.find((x) => x.roleKey === selectedRoleObj.parentRoleKey)?.label || selectedRoleObj.parentRoleKey})` : "(Top level role)"}
+                      </span>
+                      <span style={{
+                        padding: "2px 8px",
+                        borderRadius: "6px",
+                        fontSize: "11.5px",
+                        fontWeight: 700,
+                        background: isPermsEditing ? "#fef3c7" : "#f1f5f9",
+                        color: isPermsEditing ? "#b45309" : "#64748b",
+                        border: isPermsEditing ? "1px solid #fde68a" : "1px solid #e2e8f0"
+                      }}>
+                        {isPermsEditing ? "✏️ Editing Mode (Unlocked)" : "🔒 View Mode (Locked)"}
+                      </span>
+                    </div>
+                    <input
+                      value={moduleSearch}
+                      onChange={(e) => setModuleSearch(e.target.value)}
+                      placeholder="🔍 Search modules…"
+                      style={{ padding: "6px 10px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "12px", width: "180px" }}
+                    />
                   </div>
-                  <div>
-                    <label style={{ display: "block", fontSize: "11px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>Reports To</label>
-                    <select value={editForm.parentRoleKey || ""} onChange={(e) => setEditForm((p) => ({ ...p, parentRoleKey: e.target.value }))}
-                      style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", border: "1px solid #c7d2fe", borderRadius: "6px", fontSize: "13px", background: "#fff" }}>
-                      <option value="">— Top of hierarchy —</option>
-                      {roles.filter((x) => x.id !== r.id).map((x) => <option key={x.roleKey} value={x.roleKey}>{x.label}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label style={{ display: "block", fontSize: "11px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>Color</label>
-                    <input type="color" value={editForm.color || "#2563eb"} onChange={(e) => setEditForm((p) => ({ ...p, color: e.target.value }))}
-                      style={{ width: "100%", height: "34px", padding: "2px", border: "1px solid #c7d2fe", borderRadius: "6px" }} />
-                  </div>
-                </div>
-                <PermCheckboxes form={editForm} setForm={setEditForm} />
-                <div style={{ marginTop: "12px", display: "flex", justifyContent: "flex-end", gap: "8px" }}>
-                  <Btn onClick={cancelEdit} outline color="#64748b" bg="#fff">Cancel</Btn>
-                  <Btn onClick={saveEdit} disabled={saving}>{saving ? "Saving…" : "Save Changes"}</Btn>
-                </div>
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
 
-      {/* Add new role */}
-      {!readOnly && (
-      <div style={{ background: "#f8fafc", borderRadius: "10px", padding: "14px 16px", border: "1px solid #e2e8f0" }}>
-        <p style={{ fontSize: "12.5px", fontWeight: 700, color: "#475569", marginBottom: "10px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Add New Role</p>
-        
-        {/* Company Selector (only show for multi-company admins) */}
-        {myCompanies.length > 1 && (
-          <div style={{ marginBottom: "12px" }}>
-            <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>Company <span style={{ color: "#ef4444" }}>*</span></label>
-            <select value={draftCompanyId} onChange={(e) => setDraftCompanyId(e.target.value)}
-              style={{ width: "100%", maxWidth: "320px", boxSizing: "border-box", padding: "7px 10px", border: "1px solid #e2e8f0", borderRadius: "6px", fontSize: "13px", background: "#fff" }}>
-              <option value="">— Select company —</option>
-              {myCompanies.map((c) => (
-                <option key={c.id} value={c.id}>{c.companyName}</option>
-              ))}
-            </select>
+                  {/* Inline edit form if role is currently being edited */}
+                  {editingId === selectedRoleObj.id && (
+                    <div style={{ padding: "14px 18px", background: "#f5f7ff", borderBottom: "1px solid #e0e7ff" }}>
+                      <p style={{ margin: "0 0 8px 0", fontSize: "12px", fontWeight: 700, color: "#4338ca" }}>Edit Role Details</p>
+                      <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 80px", gap: "10px", marginBottom: "10px", alignItems: "end" }}>
+                        <div>
+                          <label style={{ display: "block", fontSize: "11px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>Role Label *</label>
+                          <input value={editForm.label || ""} onChange={(e) => setEditForm((p) => ({ ...p, label: e.target.value }))}
+                            style={{ width: "100%", boxSizing: "border-box", padding: "6px 10px", border: "1px solid #c7d2fe", borderRadius: "6px", fontSize: "13px" }} />
+                        </div>
+                        <div>
+                          <label style={{ display: "block", fontSize: "11px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>Reports To</label>
+                          <select value={editForm.parentRoleKey || ""} onChange={(e) => setEditForm((p) => ({ ...p, parentRoleKey: e.target.value }))}
+                            style={{ width: "100%", boxSizing: "border-box", padding: "6px 10px", border: "1px solid #c7d2fe", borderRadius: "6px", fontSize: "13px", background: "#fff" }}>
+                            <option value="">— Top of hierarchy —</option>
+                            {roles.filter((x) => x.id !== selectedRoleObj.id).map((x) => <option key={x.roleKey} value={x.roleKey}>{x.label}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label style={{ display: "block", fontSize: "11px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>Color</label>
+                          <input type="color" value={editForm.color || "#2563eb"} onChange={(e) => setEditForm((p) => ({ ...p, color: e.target.value }))}
+                            style={{ width: "100%", height: "32px", padding: "2px", border: "1px solid #c7d2fe", borderRadius: "6px" }} />
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
+                        <Btn onClick={cancelEdit} outline color="#64748b" bg="#fff">Cancel</Btn>
+                        <Btn onClick={saveEdit} disabled={saving}>{saving ? "Saving…" : "Save Role Changes"}</Btn>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Permissions Table */}
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+                      <thead>
+                        <tr style={{ background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
+                          <th style={{ padding: "10px 16px", textAlign: "left", fontWeight: 700, color: "#475569" }}>Module</th>
+                          <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: "#2563eb", width: "90px" }}>View</th>
+                          <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: "#475569", width: "90px" }}>Create</th>
+                          <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: "#475569", width: "90px" }}>Read</th>
+                          <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: "#475569", width: "90px" }}>Update</th>
+                          <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: "#475569", width: "90px" }}>Delete</th>
+                          <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: "#475569", width: "110px" }}>Other</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredPermModules.map((m) => {
+                          const isViewOn = checkRolePerm(rolePerms[activeRoleKey], m.key, "v");
+                          const extActions = MODULE_EXTENDED_ACTIONS[m.key] || [];
+                          const hasExt = extActions.length > 0;
+                          const activeExtCount = hasExt
+                            ? extActions.filter((act) => checkRolePerm(rolePerms[activeRoleKey], m.key, act.key)).length
+                            : 0;
+                          const isRowDisabled = isMatrixDisabled || !isViewOn;
+
+                          return (
+                            <tr key={m.key} style={{ borderBottom: "1px solid #f1f5f9", background: isViewOn ? "#ffffff" : "#f8fafc" }}>
+                              <td style={{ padding: "12px 16px", fontWeight: 600, color: isViewOn ? "#0f172a" : "#94a3b8" }}>
+                                {m.label}
+                              </td>
+                              <td style={{ padding: "12px", textAlign: "center" }}>
+                                <ToggleSwitch
+                                  checked={isViewOn}
+                                  onChange={(val) => updatePerm(activeRoleKey, m.key, "v", val)}
+                                  disabled={isMatrixDisabled}
+                                  title={`View ${m.label}`}
+                                />
+                              </td>
+                              {["c", "r", "u", "d"].map((op) => {
+                                const isChecked = checkRolePerm(rolePerms[activeRoleKey], m.key, op);
+                                return (
+                                  <td key={op} style={{ padding: "12px", textAlign: "center" }}>
+                                    <ToggleSwitch
+                                      checked={isChecked}
+                                      onChange={(val) => updatePerm(activeRoleKey, m.key, op, val)}
+                                      disabled={isRowDisabled}
+                                      title={`${op.toUpperCase()} ${m.label}`}
+                                    />
+                                  </td>
+                                );
+                              })}
+                              <td style={{ padding: "12px", textAlign: "center" }}>
+                                {hasExt ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => setExtendedPermModal({
+                                      roleKey: activeRoleKey,
+                                      roleLabel: selectedRoleObj.label,
+                                      moduleKey: m.key,
+                                      moduleLabel: m.label,
+                                      actions: extActions,
+                                    })}
+                                    disabled={isRowDisabled}
+                                    style={{
+                                      padding: "4px 10px",
+                                      borderRadius: "6px",
+                                      border: activeExtCount > 0 ? "1px solid #93c5fd" : "1px solid #cbd5e1",
+                                      background: activeExtCount > 0 ? "#eff6ff" : "#f8fafc",
+                                      color: activeExtCount > 0 ? "#2563eb" : "#64748b",
+                                      fontSize: "11.5px",
+                                      fontWeight: 600,
+                                      cursor: isRowDisabled ? "not-allowed" : "pointer",
+                                      opacity: isRowDisabled ? 0.4 : 1,
+                                      display: "inline-flex",
+                                      alignItems: "center",
+                                      gap: "4px",
+                                      transition: "all 0.15s ease",
+                                    }}
+                                    title={`Configure extended permissions for ${m.label}`}
+                                  >
+                                    <span>⚙ More</span>
+                                    {activeExtCount > 0 && (
+                                      <span style={{ background: "#2563eb", color: "#fff", borderRadius: "10px", padding: "1px 6px", fontSize: "10px", fontWeight: 700 }}>
+                                        {activeExtCount}
+                                      </span>
+                                    )}
+                                  </button>
+                                ) : (
+                                  <span style={{ color: "#cbd5e1", fontSize: "13px" }}>—</span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Bottom Action Bar: Edit Permissions + Save Permissions */}
+                  {!readOnly && (
+                    <div style={{
+                      padding: "16px 20px",
+                      background: "#f8fafc",
+                      borderTop: "1px solid #e2e8f0",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      flexWrap: "wrap",
+                      gap: "12px"
+                    }}>
+                      <div style={{ fontSize: "12.5px", color: "#64748b" }}>
+                        {isPermsEditing ? (
+                          <span style={{ color: "#b45309", fontWeight: 600 }}>● Editing active — remember to save your changes</span>
+                        ) : (
+                          <span>Permissions are confirmed and locked. Click <strong>Edit Permissions</strong> to make changes.</span>
+                        )}
+                      </div>
+                      <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+                        <Btn
+                          onClick={() => setIsPermsEditing(true)}
+                          outline={!isPermsEditing}
+                          color={isPermsEditing ? "#64748b" : "#2563eb"}
+                          bg={isPermsEditing ? "#f1f5f9" : "#fff"}
+                          disabled={isPermsEditing || permsSaving}
+                        >
+                          ✏️ Edit Permissions
+                        </Btn>
+                        <Btn
+                          onClick={handleSavePerms}
+                          disabled={!isPermsEditing || permsSaving}
+                        >
+                          {permsSaving ? "Saving…" : "💾 Save Permissions"}
+                        </Btn>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>
+                  Select a role on the left to configure permissions.
+                </div>
+              )}
+            </div>
           </div>
         )}
-        
-        <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr auto", gap: "10px", alignItems: "end", marginBottom: "12px" }}>
-          <div>
-            <label style={{ display: "block", fontSize: "11.5px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>Role Label *</label>
-            <input value={draftLabel} onChange={(e) => setDraftLabel(e.target.value)} placeholder="e.g. Jabil Client Supervisor" style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", border: "1px solid #e2e8f0", borderRadius: "6px", fontSize: "13px" }} />
-          </div>
-          <div>
-            <label style={{ display: "block", fontSize: "11.5px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>Reports To (optional)</label>
-            <select value={draftParent} onChange={(e) => setDraftParent(e.target.value)} style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", border: "1px solid #e2e8f0", borderRadius: "6px", fontSize: "13px", background: "#fff" }}>
-              <option value="">— Top of hierarchy —</option>
-              {roles.map((r) => <option key={r.roleKey} value={r.roleKey}>{r.label}</option>)}
-            </select>
-          </div>
-          <div>
-            <label style={{ display: "block", fontSize: "11.5px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>Color</label>
-            <input type="color" value={draftColor} onChange={(e) => setDraftColor(e.target.value)} style={{ width: "100%", height: "34px", padding: "2px", border: "1px solid #e2e8f0", borderRadius: "6px", cursor: "pointer" }} />
-          </div>
-          <Btn onClick={addRole} disabled={saving || !draftLabel.trim()}>Add</Btn>
-        </div>
-        <PermCheckboxes
-          form={{ canRaiseSoftIssue: draftCanRaise, canResolveSoftIssue: draftCanResolve, isSoftManager: draftIsManager, isTechnicalSupervisor: draftIsTechSupervisor, isTechnician: draftIsTechnician, canRaiseAdditionalRequest: draftCanRaiseAdditional }}
-          setForm={(updater) => {
-            const next = typeof updater === "function"
-              ? updater({ canRaiseSoftIssue: draftCanRaise, canResolveSoftIssue: draftCanResolve, isSoftManager: draftIsManager, isTechnicalSupervisor: draftIsTechSupervisor, isTechnician: draftIsTechnician, canRaiseAdditionalRequest: draftCanRaiseAdditional })
-              : updater;
-            setDraftCanRaise(next.canRaiseSoftIssue); setDraftCanResolve(next.canResolveSoftIssue);
-            setDraftIsManager(next.isSoftManager); setDraftIsTechSupervisor(next.isTechnicalSupervisor);
-            setDraftIsTechnician(next.isTechnician); setDraftCanRaiseAdditional(next.canRaiseAdditionalRequest ?? false);
-          }}
-        />
       </div>
-      )}
     </div>
   );
 
@@ -4459,118 +4955,167 @@ function RolesModal({ token, initialRoles, onClose, onSaved, inline = false, ena
     <div>
       <div style={{ marginBottom: "22px" }}>
         <h1 style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px", marginBottom: "4px" }}>Manage Roles</h1>
-        <p style={{ color: "#64748b", fontSize: "13.5px" }}>Define your organization's role hierarchy and mobile app permissions. Top of list = top of chain.</p>
+        <p style={{ color: "#64748b", fontSize: "13.5px" }}>Define your organization's role hierarchy and configure unified web and mobile permissions in one continuous flow.</p>
       </div>
-      <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0" }}>
-        {content}
-        {/* ── Role Permissions Table ── */}
-        <div style={{ padding: "20px 22px", borderTop: "2px solid #e2e8f0" }}>
-          <div style={{ marginBottom: "14px" }}>
-            <p style={{ fontSize: "15px", fontWeight: 700, color: "#0f172a", margin: 0 }}>Role Permissions</p>
-            <p style={{ fontSize: "12.5px", color: "#64748b", margin: "4px 0 0 0" }}>Configure Create / Read / Update / Delete permissions per role and module.</p>
-          </div>
-          {roles.length === 0 ? (
-            <p style={{ color: "#94a3b8", fontSize: "13px" }}>Add roles first to configure permissions.</p>
-          ) : (
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ borderCollapse: "collapse", fontSize: "12px", width: "100%" }}>
-                <thead>
-                  <tr>
-                    <th style={{ padding: "8px 12px", textAlign: "left", fontWeight: 700, color: "#475569", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>Role</th>
-                    {activePermModules.map((m) => (
-                      <th key={m.key} style={{ padding: "8px 6px", textAlign: "center", fontWeight: 600, color: "#475569", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", minWidth: "80px" }}>
-                        <div style={{ fontSize: "11px" }}>{m.label}</div>
-                        <div style={{ display: "flex", gap: "2px", justifyContent: "center", marginTop: "4px" }}>
-                          {["C","R","U","D"].map((op) => (
-                            <span key={op} style={{ fontSize: "10px", color: "#94a3b8", fontWeight: 700 }}>{op}</span>
-                          ))}
-                        </div>
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {roles.map((r) => (
-                    <tr key={r.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                      <td style={{ padding: "8px 12px", fontWeight: 600, color: "#374151" }}>
-                        <span style={{ padding: "2px 8px", borderRadius: "12px", background: (r.bgColor || "#dbeafe"), color: (r.color || "#2563eb"), fontSize: "11px" }}>{r.label}</span>
-                      </td>
-                      {activePermModules.map((m) => (
-                        <td key={m.key} style={{ padding: "6px", textAlign: "center" }}>
-                          <div style={{ display: "flex", gap: "3px", justifyContent: "center" }}>
-                            {["create","read","update","delete"].map((op) => (
-                              <input key={op} type="checkbox"
-                                checked={!!(rolePerms[r.roleKey] && rolePerms[r.roleKey][m.key] && rolePerms[r.roleKey][m.key][op])}
-                                disabled={readOnly}
-                                onChange={(e) => {
-                                  if (readOnly) return;
-                                  const v = e.target.checked;
-                                  setRolePerms((prev) => ({
-                                    ...prev,
-                                    [r.roleKey]: {
-                                      ...(prev[r.roleKey] || {}),
-                                      [m.key]: {
-                                        ...((prev[r.roleKey] || {})[m.key] || {}),
-                                        [op]: v,
-                                      },
-                                    },
-                                  }));
-                                }}
-                                title={`${op} ${m.label}`}
-                                style={{ cursor: "pointer" }}
-                              />
-                            ))}
-                          </div>
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+      <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
+        {unifiedFlow}
+      </div>
+
+      {extendedPermModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 1400, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+          <div style={{ background: "#fff", borderRadius: "14px", width: "100%", maxWidth: "440px", boxShadow: "0 20px 25px -5px rgba(0,0,0,0.15), 0 10px 10px -5px rgba(0,0,0,0.05)", overflow: "hidden" }}>
+            <div style={{ padding: "16px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#f8fafc" }}>
+              <div>
+                <p style={{ fontWeight: 800, fontSize: "15px", color: "#0f172a", margin: 0 }}>{extendedPermModal.moduleLabel} • Other Permissions</p>
+                <p style={{ fontSize: "12px", color: "#64748b", margin: "2px 0 0" }}>Role: <span style={{ fontWeight: 700, color: "#2563eb" }}>{extendedPermModal.roleLabel}</span></p>
+              </div>
+              <button onClick={() => setExtendedPermModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: "20px", lineHeight: 1 }}>✕</button>
             </div>
-          )}
-          <div style={{ marginTop: "12px", display: "flex", justifyContent: "flex-end" }}>
-            {!readOnly && (
-            <Btn onClick={async () => {
-              setPermsSaving(true);
-              try {
-                await saveCompanyPortalRolePerms(token, rolePerms);
-              } catch (err) {
-                setError(err.message || "Failed to save permissions");
-              } finally {
-                setPermsSaving(false);
-              }
-            }} disabled={permsSaving}>{permsSaving ? "Saving…" : "Save Permissions"}</Btn>
-            )}
+            <div style={{ padding: "18px 20px", display: "flex", flexDirection: "column", gap: "10px", maxHeight: "60vh", overflowY: "auto" }}>
+              <p style={{ fontSize: "11.5px", color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", margin: 0 }}>Extended Actions</p>
+              {extendedPermModal.actions.map((act) => {
+                const isGranted = checkRolePerm(rolePerms[extendedPermModal.roleKey], extendedPermModal.moduleKey, act.key);
+                return (
+                  <div key={act.key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", background: isGranted ? "#eff6ff" : "#f8fafc", borderRadius: "10px", border: isGranted ? "1.5px solid #bfdbfe" : "1px solid #e2e8f0", transition: "all 0.15s ease" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                      <span style={{ fontSize: "13px", fontWeight: 600, color: isGranted ? "#1e40af" : "#334155" }}>{act.label}</span>
+                      {act.badge && (
+                        <span style={{ fontSize: "10px", fontWeight: 700, padding: "1px 6px", borderRadius: "8px", background: act.badge === "Mobile" ? "#dbeafe" : "#fef3c7", color: act.badge === "Mobile" ? "#1d4ed8" : "#92400e" }}>
+                          {act.badge}
+                        </span>
+                      )}
+                    </div>
+                    <ToggleSwitch
+                      checked={isGranted}
+                      onChange={(val) => updatePerm(extendedPermModal.roleKey, extendedPermModal.moduleKey, act.key, val)}
+                      disabled={isMatrixDisabled}
+                      title={act.label}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ padding: "14px 20px", borderTop: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#f8fafc" }}>
+              <div style={{ display: "flex", gap: "8px" }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    extendedPermModal.actions.forEach((act) => updatePerm(extendedPermModal.roleKey, extendedPermModal.moduleKey, act.key, true));
+                  }}
+                  disabled={isMatrixDisabled}
+                  style={{ fontSize: "11.5px", fontWeight: 600, color: "#2563eb", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+                >
+                  Allow All
+                </button>
+                <span style={{ color: "#cbd5e1" }}>•</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    extendedPermModal.actions.forEach((act) => updatePerm(extendedPermModal.roleKey, extendedPermModal.moduleKey, act.key, false));
+                  }}
+                  disabled={isMatrixDisabled}
+                  style={{ fontSize: "11.5px", fontWeight: 600, color: "#64748b", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+                >
+                  Deny All
+                </button>
+              </div>
+              <Btn onClick={() => setExtendedPermModal(null)}>Done</Btn>
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 1200, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
-      <div style={{ background: "#fff", borderRadius: "14px", width: "100%", maxWidth: "720px", maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
-        <div style={{ padding: "18px 22px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <div style={{ background: "#fff", borderRadius: "14px", width: "100%", maxWidth: "980px", maxHeight: "92vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <div style={{ padding: "16px 22px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#f8fafc" }}>
           <div>
-            <p style={{ fontWeight: 700, fontSize: "16px", color: "#0f172a" }}>Manage Custom Roles & Hierarchy</p>
-            <p style={{ fontSize: "12px", color: "#64748b", marginTop: "2px" }}>Define your organization's role hierarchy. Top of list = top of chain.</p>
+            <p style={{ fontWeight: 700, fontSize: "16px", color: "#0f172a", margin: 0 }}>Manage Custom Roles & Hierarchy</p>
+            <p style={{ fontSize: "12px", color: "#64748b", margin: "2px 0 0" }}>Define roles and configure their permissions in one connected flow.</p>
           </div>
           <button onClick={handleClose} style={{ width: "28px", height: "28px", borderRadius: "7px", background: "#f1f5f9", border: "none", cursor: "pointer", color: "#64748b" }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
         </div>
-        {content}
-        <div style={{ padding: "14px 22px", borderTop: "1px solid #e2e8f0", display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+        <div style={{ overflowY: "auto", flex: 1 }}>
+          {unifiedFlow}
+        </div>
+        <div style={{ padding: "14px 22px", borderTop: "1px solid #e2e8f0", display: "flex", justifyContent: "flex-end", gap: "10px", background: "#f8fafc" }}>
           <Btn onClick={handleClose}>Done</Btn>
         </div>
       </div>
+
+      {extendedPermModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 1400, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+          <div style={{ background: "#fff", borderRadius: "14px", width: "100%", maxWidth: "440px", boxShadow: "0 20px 25px -5px rgba(0,0,0,0.15), 0 10px 10px -5px rgba(0,0,0,0.05)", overflow: "hidden" }}>
+            <div style={{ padding: "16px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#f8fafc" }}>
+              <div>
+                <p style={{ fontWeight: 800, fontSize: "15px", color: "#0f172a", margin: 0 }}>{extendedPermModal.moduleLabel} • Other Permissions</p>
+                <p style={{ fontSize: "12px", color: "#64748b", margin: "2px 0 0" }}>Role: <span style={{ fontWeight: 700, color: "#2563eb" }}>{extendedPermModal.roleLabel}</span></p>
+              </div>
+              <button onClick={() => setExtendedPermModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: "20px", lineHeight: 1 }}>✕</button>
+            </div>
+            <div style={{ padding: "18px 20px", display: "flex", flexDirection: "column", gap: "10px", maxHeight: "60vh", overflowY: "auto" }}>
+              <p style={{ fontSize: "11.5px", color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", margin: 0 }}>Extended Actions</p>
+              {extendedPermModal.actions.map((act) => {
+                const isGranted = checkRolePerm(rolePerms[extendedPermModal.roleKey], extendedPermModal.moduleKey, act.key);
+                return (
+                  <div key={act.key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", background: isGranted ? "#eff6ff" : "#f8fafc", borderRadius: "10px", border: isGranted ? "1.5px solid #bfdbfe" : "1px solid #e2e8f0", transition: "all 0.15s ease" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                      <span style={{ fontSize: "13px", fontWeight: 600, color: isGranted ? "#1e40af" : "#334155" }}>{act.label}</span>
+                      {act.badge && (
+                        <span style={{ fontSize: "10px", fontWeight: 700, padding: "1px 6px", borderRadius: "8px", background: act.badge === "Mobile" ? "#dbeafe" : "#fef3c7", color: act.badge === "Mobile" ? "#1d4ed8" : "#92400e" }}>
+                          {act.badge}
+                        </span>
+                      )}
+                    </div>
+                    <ToggleSwitch
+                      checked={isGranted}
+                      onChange={(val) => updatePerm(extendedPermModal.roleKey, extendedPermModal.moduleKey, act.key, val)}
+                      disabled={isMatrixDisabled}
+                      title={act.label}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ padding: "14px 20px", borderTop: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#f8fafc" }}>
+              <div style={{ display: "flex", gap: "8px" }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    extendedPermModal.actions.forEach((act) => updatePerm(extendedPermModal.roleKey, extendedPermModal.moduleKey, act.key, true));
+                  }}
+                  disabled={isMatrixDisabled}
+                  style={{ fontSize: "11.5px", fontWeight: 600, color: "#2563eb", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+                >
+                  Allow All
+                </button>
+                <span style={{ color: "#cbd5e1" }}>•</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    extendedPermModal.actions.forEach((act) => updatePerm(extendedPermModal.roleKey, extendedPermModal.moduleKey, act.key, false));
+                  }}
+                  disabled={isMatrixDisabled}
+                  style={{ fontSize: "11.5px", fontWeight: 600, color: "#64748b", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+                >
+                  Deny All
+                </button>
+              </div>
+              <Btn onClick={() => setExtendedPermModal(null)}>Done</Btn>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 /* ─── Asset Types Panel ──────────────────────────────────────────── */
-function AssetTypesPanel({ token, onLayoutSaved }) {
+function AssetTypesPanel({ token, hasPerm, onLayoutSaved }) {
   const API = import.meta.env.VITE_API_BASE || "";
   const [tab, setTab] = useState("types"); // "types" | "layout"
   const [types, setTypes] = useState([]);
@@ -4638,7 +5183,7 @@ function AssetTypesPanel({ token, onLayoutSaved }) {
   };
 
   const handleDeleteType = async (id) => {
-    if (!window.confirm("Delete this asset type?")) return;
+    if (!confirmDeleteAction(hasPerm ? hasPerm("asset-types", "d") : false, "Do you want to delete this?")) return;
     setDeleteId(id);
     try {
       const r = await fetch(`${API}/api/company-portal/asset-types/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
@@ -5059,7 +5604,7 @@ function DashboardNotificationsBox({ token, onViewAll, onItemClick, filterDate }
 }
 
 /* ─── Notifications Panel ────────────────────────────────────────── */
-function NotificationsPanel({ token, allCompanies = false, companyId }) {
+function NotificationsPanel({ token, hasPerm, allCompanies = false, companyId }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("all"); // "all" | "unread" | "checklist_reminder"
@@ -5113,12 +5658,13 @@ function NotificationsPanel({ token, allCompanies = false, companyId }) {
   };
 
   const handleDelete = async (id) => {
+    if (!confirmDeleteAction(hasPerm ? hasPerm("notifications", "d") : false, "Do you want to delete this?")) return;
     await deleteNotification(token, id);
     setItems((prev) => prev.filter((n) => n.id !== id));
   };
 
   const handleDeleteAll = async () => {
-    if (!window.confirm("Delete all notifications? This cannot be undone.")) return;
+    if (!confirmDeleteAction(hasPerm ? hasPerm("notifications", "d") : false, "Delete all notifications? This cannot be undone.")) return;
     await deleteAllNotifications(token);
     setItems([]);
     setSelectedIds(new Set());
@@ -5144,7 +5690,7 @@ function NotificationsPanel({ token, allCompanies = false, companyId }) {
 
   const handleDeleteSelected = async () => {
     if (selectedIds.size === 0) return;
-    if (!window.confirm(`Delete ${selectedIds.size} notification(s)?`)) return;
+    if (!confirmDeleteAction(hasPerm ? hasPerm("notifications", "d") : false, `Delete ${selectedIds.size} notification(s)?`)) return;
     await Promise.all([...selectedIds].map((id) => deleteNotification(token, id).catch(() => {})));
     setItems((prev) => prev.filter((n) => !selectedIds.has(n.id)));
     setSelectedIds(new Set());
@@ -5333,34 +5879,45 @@ export default function CompanyEmployeePortal() {
   const [switchingCompany, setSwitchingCompany] = useState(false);
 
   useEffect(() => {
-    if (!cpToken || currentUser?.role !== "admin") return;
+    if (!cpToken) return;
     getMyCompanies(cpToken).then(list => {
       if (Array.isArray(list) && list.length > 1) {
         setMyCompanies(list);
         const explicitChoice = sessionStorage.getItem("cp_explicit_company_choice");
         const allIds = list.map((c) => String(c.id));
+        const canAccessCombined = currentUser?.canAccessCombinedView !== false;
+        const defaultCid = currentUser?.defaultCompanyId ? String(currentUser.defaultCompanyId) : null;
+
         if (explicitChoice && allIds.includes(String(explicitChoice))) {
           setSelectedCompanyIds([String(explicitChoice)]);
+          setIsAllCompaniesDashboard(false);
+        } else if (defaultCid && allIds.includes(defaultCid)) {
+          setSelectedCompanyIds([defaultCid]);
+          setIsAllCompaniesDashboard(false);
+        } else if (!canAccessCombined) {
+          // If combined view is disabled for this user, default to single company view
+          setSelectedCompanyIds([allIds[0]]);
           setIsAllCompaniesDashboard(false);
         } else {
           setSelectedCompanyIds(allIds);
         }
       }
     }).catch(() => {});
-  }, [cpToken, currentUser?.role]);
+  }, [cpToken, currentUser?.id, currentUser?.canAccessCombinedView, currentUser?.defaultCompanyId]);
 
   // Auto-enable All Companies dashboard on first load when employee has multiple sites
   const allCompaniesInitRef = useRef(false);
   useEffect(() => {
     if (!allCompaniesInitRef.current && myCompanies.length > 1) {
       allCompaniesInitRef.current = true;
-      // Only auto-enable if the user hasn't explicitly chosen a single company
       const hasExplicitChoice = sessionStorage.getItem("cp_explicit_company_choice");
-      if (!hasExplicitChoice) {
+      const canAccessCombined = currentUser?.canAccessCombinedView !== false;
+      const defaultCid = currentUser?.defaultCompanyId ? String(currentUser.defaultCompanyId) : null;
+      if (!hasExplicitChoice && canAccessCombined && !defaultCid) {
         setIsAllCompaniesDashboard(true);
       }
     }
-  }, [myCompanies.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [myCompanies.length, currentUser?.canAccessCombinedView, currentUser?.defaultCompanyId]);
 
   const handleSwitchCompany = async (targetCompanyId) => {
     if (!cpToken || !targetCompanyId) return;
@@ -5421,12 +5978,8 @@ export default function CompanyEmployeePortal() {
   // Site filter for modules when in All Companies mode: "all" or a specific companyId
   const [moduleSiteFilter, setModuleSiteFilter] = useState("all");
   const visibleNav = useMemo(() => {
-    const STANDARD = new Set(["admin", "supervisor", "employee", "catalyst_admin"]);
-    const isCustom = !!(currentUser?.role && !STANDARD.has(currentUser.role));
-    const base = getNav(isCustom ? "admin" : (currentUser?.role || "employee"));
     const isAdmin = currentUser?.role === "admin" || currentUser?.role === "catalyst_admin";
-    const ADMIN_ALWAYS = new Set(["dashboard", "employees", "notifications"]);
-    const ALWAYS_VISIBLE = new Set(["dashboard", "mytasks", "employees"]);
+    const rolePerms = currentUser?.rolePortalPerms || null;
     const toModuleKey = (k) => k === "softrequests" ? "soft-requests" : k;
 
     // When in "All Companies" mode, use the union of all companies' enabled modules
@@ -5443,16 +5996,26 @@ export default function CompanyEmployeePortal() {
         })()
       : enabledModules;
 
+    const isModuleEnabled = (key) => {
+      if (!effectiveModules || !Array.isArray(effectiveModules)) return true;
+      const k = toModuleKey(key);
+      return (
+        effectiveModules.includes(k) ||
+        effectiveModules.includes(key) ||
+        (k === "workorders" && (effectiveModules.includes("requests") || effectiveModules.includes("workorders") || effectiveModules.includes("work-orders"))) ||
+        (k === "softrequests" && (effectiveModules.includes("soft-requests") || effectiveModules.includes("softrequests") || effectiveModules.includes("softRequests"))) ||
+        (k === "additional-requests" && (effectiveModules.includes("additional-requests") || effectiveModules.includes("additionalRequests"))) ||
+        (k === "ojt" && (effectiveModules.includes("ojt-training") || effectiveModules.includes("ojt") || effectiveModules.includes("ojtTraining")))
+      );
+    };
+
     const sortByModuleOrder = (list) => {
-      if (!effectiveModules) return list;
+      if (!effectiveModules || !Array.isArray(effectiveModules)) return list;
       return [...list].sort((a, b) => {
-        const aAlways = ADMIN_ALWAYS.has(a.key);
-        const bAlways = ADMIN_ALWAYS.has(b.key);
-        if (aAlways && bAlways) return 0;
-        if (aAlways) return -1;
-        if (bAlways) return 1;
-        const ai = effectiveModules.indexOf(toModuleKey(a.key));
-        const bi = effectiveModules.indexOf(toModuleKey(b.key));
+        const ak = toModuleKey(a.key);
+        const bk = toModuleKey(b.key);
+        const ai = effectiveModules.findIndex(m => m === ak || m === a.key);
+        const bi = effectiveModules.findIndex(m => m === bk || m === b.key);
         if (ai === -1 && bi === -1) return 0;
         if (ai === -1) return 1;
         if (bi === -1) return -1;
@@ -5460,22 +6023,123 @@ export default function CompanyEmployeePortal() {
       });
     };
 
-    if (isAdmin || isCustom) {
-      if (!effectiveModules) return base;
-      const filtered = base.filter((n) => ADMIN_ALWAYS.has(n.key) || effectiveModules.includes(toModuleKey(n.key)));
-      return sortByModuleOrder(filtered);
+    // Use full NAV_ALL deduplicated by key
+    const seen = new Set();
+    const allNavItems = NAV_ALL.filter((n) => {
+      if (seen.has(n.key)) return false;
+      seen.add(n.key);
+      return true;
+    });
+
+    const moduleFiltered = allNavItems.filter((n) => isModuleEnabled(n.key));
+
+    if (isAdmin) {
+      return sortByModuleOrder(moduleFiltered);
     }
 
-    const byCompany = !effectiveModules
-      ? base
-      : base.filter((n) => ALWAYS_VISIBLE.has(n.key) || effectiveModules.includes(toModuleKey(n.key)));
+    // Dynamic role permissions filtering
+    if (rolePerms) {
+      const permAliases = {
+        softrequests:          ["soft-requests", "softRequests"],
+        workorders:            ["requests", "work-orders", "workorders"],
+        ojt:                   ["ojtTraining", "ojt-training", "ojt"],
+        "additional-requests": ["additionalRequests", "additional-requests"],
+        "asset-types":         ["assetTypes", "asset-types"],
+        mytasks:               ["myTasks"],
+      };
+      const canView = (key) => {
+        const mod = rolePerms[key]
+          || (permAliases[key] || []).reduce((found, k) => found || rolePerms[k], null);
+        if (!mod) {
+          if (["dashboard", "mytasks", "checklists", "logsheets"].includes(key)) return true;
+          return currentUser?.role === "supervisor";
+        }
+        return mod.v !== undefined ? Boolean(mod.v) : true;
+      };
+      const permFiltered = moduleFiltered.filter((n) => canView(n.key));
+      return sortByModuleOrder(permFiltered.length > 0 ? permFiltered : moduleFiltered.filter(n => n.key === "dashboard"));
+    }
+
+    // Legacy fallback based on role
+    const base = getNav(currentUser?.role || "employee");
+    const byCompany = base.filter((n) => isModuleEnabled(n.key));
     const userModules = currentUser?.moduleAccess;
     if (!Array.isArray(userModules) || userModules.length === 0) {
       return sortByModuleOrder(byCompany);
     }
-    return sortByModuleOrder(byCompany.filter((n) => ALWAYS_VISIBLE.has(n.key) || userModules.includes(n.key)));
-  }, [enabledModules, currentUser?.role, currentUser?.moduleAccess, isAllCompaniesDashboard, myCompanies]);
+    return sortByModuleOrder(byCompany.filter((n) => userModules.includes(n.key)));
+  }, [enabledModules, currentUser?.role, currentUser?.moduleAccess, currentUser?.rolePortalPerms, isAllCompaniesDashboard, myCompanies]);
+
+  // Ensure current active nav is permitted; redirect to first visible nav item if access revoked
+  useEffect(() => {
+    if (visibleNav && visibleNav.length > 0 && nav) {
+      const isAllowed = visibleNav.some((item) => item.key === nav);
+      if (!isAllowed) {
+        const fallback = visibleNav[0]?.key || "dashboard";
+        setNav(fallback);
+      }
+    }
+  }, [visibleNav, nav, setNav]);
+
+  /**
+   * hasPerm(moduleKey, op) — returns true if the current user can perform op on moduleKey.
+   * Admin/catalyst_admin always return true.
+   * Other roles check currentUser.rolePortalPerms (the portal permission matrix).
+   * op: "c" = create, "r" = read/view, "u" = update, "d" = delete, "v" = view
+   */
+  const hasPerm = (moduleKey, op = "v") => {
+    const role = currentUser?.role;
+    if (!role) return false;
+    if (role === "admin" || role === "catalyst_admin") return true;
+    const perms = currentUser?.rolePortalPerms;
+    if (!perms) {
+      if (role === "supervisor") return true;
+      return op === "v"; // fallback: only view allowed
+    }
+    const aliases = {
+      softrequests:          ["soft-requests", "softRequests"],
+      workorders:            ["requests", "work-orders", "workorders"],
+      ojt:                   ["ojtTraining", "ojt-training", "ojt"],
+      "additional-requests": ["additionalRequests", "additional-requests"],
+      "asset-types":         ["assetTypes", "asset-types"],
+      mytasks:               ["myTasks"],
+    };
+    const mod = perms[moduleKey]
+      || (aliases[moduleKey] || []).reduce((found, k) => found || perms[k], null);
+    if (!mod) {
+      if (role === "supervisor") return true;
+      return op === "v";
+    }
+    const viewOn = mod.v !== undefined ? Boolean(mod.v) : true;
+    if (!viewOn) return false;
+    if (op === "v") return viewOn;
+
+    const shortOp = op;
+    const longOp =
+      op === "c"
+        ? "create"
+        : op === "r"
+        ? "read"
+        : op === "u"
+        ? "update"
+        : op === "d"
+        ? "delete"
+        : op;
+
+    const isCustomDashboardAction =
+      moduleKey === "dashboard" &&
+      ["show_site_score", "show_today_site_score", "show_submission_overview", "show_site_score_overview", "show_recent_submissions"].includes(op);
+
+    if (mod[shortOp] !== undefined) return Boolean(mod[shortOp]);
+    if (mod[longOp] !== undefined) return Boolean(mod[longOp]);
+    if (op === "show_site_score" && mod.show_today_site_score !== undefined) return Boolean(mod.show_today_site_score);
+    if (op === "show_today_site_score" && mod.show_site_score !== undefined) return Boolean(mod.show_site_score);
+    if (isCustomDashboardAction) return true;
+    return false;
+  };
+
   const [dashboard, setDashboard] = useState(null);
+
 
   // ── Alert sound / toast / bell notification state ───────────────
   const [warnOpenCount, setWarnOpenCount] = useState(0);
@@ -5530,15 +6194,13 @@ export default function CompanyEmployeePortal() {
   // Site Score chart states
   const [siteScoreHistory, setSiteScoreHistory] = useState(null);
   const [siteScoreChartRange, setSiteScoreChartRange] = useState(() => {
-    const end = new Date(); const endDate = end.toISOString().slice(0, 10);
-    const start = new Date(end); start.setDate(start.getDate() - 6);
-    return { startDate: start.toISOString().slice(0, 10), endDate };
+    const today = new Date().toISOString().slice(0, 10);
+    return { startDate: today, endDate: today };
   });
   const [companiesSiteScore, setCompaniesSiteScore] = useState(null);
   const [companiesSiteScoreRange, setCompaniesSiteScoreRange] = useState(() => {
-    const end = new Date(); const endDate = end.toISOString().slice(0, 10);
-    const start = new Date(end); start.setDate(start.getDate() - 6);
-    return { startDate: start.toISOString().slice(0, 10), endDate };
+    const today = new Date().toISOString().slice(0, 10);
+    return { startDate: today, endDate: today };
   });
   // Global dashboard date filter — all cards show data for this date (default: today)
   const [dashboardDate, setDashboardDate] = useState(() => new Date().toISOString().slice(0, 10));
@@ -5750,6 +6412,13 @@ export default function CompanyEmployeePortal() {
     getCompanyPortalMe(token).then((me) => {
       if (me?.enabledModules) setEnabledModules(me.enabledModules);
       if (me?.logoUrl) setCompanyLogoUrl(me.logoUrl);
+      if (me) {
+        setCurrentUser((prev) => {
+          const updated = { ...prev, ...me };
+          sessionStorage.setItem("cp_user", JSON.stringify(updated));
+          return updated;
+        });
+      }
     }).catch(() => {});
     // Always load custom roles on mount so dashboard can check role capabilities
     getCompanyRoles(token).then((list) => {
@@ -5801,9 +6470,10 @@ export default function CompanyEmployeePortal() {
       getCompanyPortalDepartments(token).then((d) => d && setDepartments(d)).catch(() => {});
       getCompanyPortalAssets(token).then((d) => d && setAssets(d)).catch(() => {});
       getCompanyPortalAssetTypes(token).then(d => d && setAssetTypesList(d)).catch(() => {});
-      // Load soft requests raised by this user
+      // Load soft requests
       setDashboardSoftLoading(true);
-      getSoftServiceRequestsMy(token, "status=open")
+      const isSoftMgr = currentUser?.role === "admin" || currentUser?.role === "supervisor" || isCustomRole || currentUser?.isSoftManager || currentUser?.roleCapabilities?.isSoftManager || hasPerm("softrequests", "v");
+      (isSoftMgr ? getSoftServiceRequestsAll(token, "status=open") : getSoftServiceRequestsMy(token, "status=open"))
         .then((d) => setDashboardSoftRequests(Array.isArray(d) ? d : []))
         .catch(() => {})
         .finally(() => setDashboardSoftLoading(false));
@@ -5814,7 +6484,9 @@ export default function CompanyEmployeePortal() {
   }, [token, load]);
 
   useEffect(() => {
-    if (!token || (currentUser?.role !== "admin" && !isCustomRole)) return;
+    if (!token) return;
+    const canSeeCharts = currentUser?.role === "admin" || isCustomRole || currentUser?.role === "supervisor" || currentUser?.isSoftManager || currentUser?.roleCapabilities?.isSoftManager;
+    if (!canSeeCharts) return;
     setChartStats(null);
     setChartError(null);
     // Always fetch stats for the selected dashboard date (single-day custom range)
@@ -5826,7 +6498,8 @@ export default function CompanyEmployeePortal() {
     // Refresh shift-wise attendance for the selected date
     getShiftAttendance(token, dashboardDate).then((d) => Array.isArray(d) && setShiftAttendance(d)).catch(() => {});
     // Refresh open additional request count for the selected date
-    if (currentUser?.role === 'admin') {
+    const isAddMgr = currentUser?.role === 'admin' || isCustomRole || currentUser?.role === 'supervisor' || currentUser?.isSoftManager || currentUser?.roleCapabilities?.isSoftManager || hasPerm("additional-requests", "v");
+    if (isAddMgr) {
       setDashboardAdditionalLoading(true);
       getAdditionalRequestsAll(token, `status=open&date=${dashboardDate}`)
         .then((r) => setDashboardAdditionalRequests(Array.isArray(r) ? r : []))
@@ -5862,8 +6535,9 @@ export default function CompanyEmployeePortal() {
     if (!shifts.length) {
       getShifts(token).then(d => d && setShifts(d)).catch(() => {});
     }
-    // Refresh dashboard quick-view (admin or custom role)
-    if (currentUser?.role === "admin" || isCustomRole) {
+    // Refresh dashboard quick-view (admin, supervisor, client manager, or custom role / permitted role)
+    const isAnyManager = currentUser?.role === "admin" || isCustomRole || currentUser?.role === "supervisor" || currentUser?.isSoftManager || currentUser?.roleCapabilities?.isSoftManager || hasPerm("softrequests", "v") || hasPerm("additional-requests", "v") || hasPerm("workorders", "v");
+    if (isAnyManager) {
       setDashboardAlertsLoading(true);
       getCompanyPortalAdminFlags(token, "status=open&limit=5")
         .then((d) => d && setDashboardAlerts(d.data ?? []))
@@ -5880,7 +6554,7 @@ export default function CompanyEmployeePortal() {
         })
         .catch(() => {})
         .finally(() => setDashboardWOLoading(false));
-      // Admin sees all open soft requests
+      // Manager/Admin sees all open soft requests
       setDashboardSoftLoading(true);
       getSoftServiceRequestsAll(token, "status=open")
         .then((d) => setDashboardSoftRequests(Array.isArray(d) ? d.slice(0, 5) : []))
@@ -5892,8 +6566,8 @@ export default function CompanyEmployeePortal() {
         .then((r) => setDashboardAdditionalRequests(Array.isArray(r) ? r : []))
         .catch(() => {})
         .finally(() => setDashboardAdditionalLoading(false));
-    } else if (currentUser?.role === "supervisor") {
-      // Supervisor sees their own open soft requests
+    } else {
+      // Employee sees their own open soft requests
       setDashboardSoftLoading(true);
       getSoftServiceRequestsMy(token, "status=open")
         .then((d) => setDashboardSoftRequests(Array.isArray(d) ? d : []))
@@ -5914,10 +6588,9 @@ export default function CompanyEmployeePortal() {
   // ── Sync site score chart range with dashboard date picker ────────────────
   useEffect(() => {
     if (!token) return;
-    const _chartEnd = dashboardDate;
-    const _chartStart = (() => { const d = new Date(_chartEnd + 'T00:00:00'); d.setDate(d.getDate() - 6); return d.toISOString().slice(0, 10); })();
-    setSiteScoreChartRange({ startDate: _chartStart, endDate: _chartEnd });
-    setCompaniesSiteScoreRange({ startDate: _chartStart, endDate: _chartEnd });
+    const _chartDate = dashboardDate;
+    setSiteScoreChartRange({ startDate: _chartDate, endDate: _chartDate });
+    setCompaniesSiteScoreRange({ startDate: _chartDate, endDate: _chartDate });
     // Re-fetch checklists for the selected dashboard date
     setRecentChecklistsLoading(true);
     // For combined dashboard, pass companyIds to aggregate submissions from all assigned companies
@@ -6334,8 +7007,9 @@ export default function CompanyEmployeePortal() {
     else setDepartments(p => [norm, ...p]);
     setShowDeptModal(false); setEditDept(null);
   };
+
   const handleDeleteDept = async (id) => {
-    if (!window.confirm("Delete this department?")) return;
+    if (!confirmDeleteAction(hasPerm("departments", "d"), "Do you want to delete this?")) return;
     try { await deleteCompanyPortalDepartment(token, id); setDepartments(p => p.filter(d => d.id !== id)); }
     catch (err) { alert(err.message || "Delete failed"); }
   };
@@ -6347,7 +7021,7 @@ export default function CompanyEmployeePortal() {
     setShowAssetModal(false); setEditAsset(null);
   };
   const handleDeleteAsset = async (id) => {
-    if (!window.confirm("Delete this asset?")) return;
+    if (!confirmDeleteAction(hasPerm("assets", "d"), "Do you want to delete this?")) return;
     try { await deleteCompanyPortalAsset(token, id); setAssets(p => p.filter(a => a.id !== id)); }
     catch (err) { alert(err.message || "Delete failed"); }
   };
@@ -6438,7 +7112,7 @@ export default function CompanyEmployeePortal() {
   };
 
   const handleDeleteLocation = async (id) => {
-    if (!window.confirm("Delete this location?")) return;
+    if (!confirmDeleteAction(hasPerm("locations", "d"), "Do you want to delete this?")) return;
     try {
       const r = await fetch(`/api/company-portal/locations/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
       if (!r.ok) throw new Error("Delete failed");
@@ -6451,7 +7125,7 @@ export default function CompanyEmployeePortal() {
 
   const handleDeleteSelectedLocations = async () => {
     if (selectedLocIds.size === 0) return;
-    if (!window.confirm(`Delete ${selectedLocIds.size} location${selectedLocIds.size > 1 ? "s" : ""}? This cannot be undone.`)) return;
+    if (!confirmDeleteAction(hasPerm("locations", "d"), `Delete ${selectedLocIds.size} location${selectedLocIds.size > 1 ? "s" : ""}? This cannot be undone.`)) return;
     try {
       const r = await fetch("/api/company-portal/locations", {
         method: "DELETE",
@@ -6512,7 +7186,7 @@ export default function CompanyEmployeePortal() {
   };
 
   const handleDeleteBuilding = async (id) => {
-    if (!window.confirm("Delete this building? All its floors and rooms will also be deleted.")) return;
+    if (!confirmDeleteAction(hasPerm("locations", "d"), "Delete this building? All its floors and rooms will also be deleted.")) return;
     await fetch(`/api/company-portal/buildings/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
     await reloadBuildings();
     setFloors((p) => p.filter((f) => f.buildingId !== id));
@@ -6535,7 +7209,7 @@ export default function CompanyEmployeePortal() {
   };
 
   const handleDeleteFloor = async (id) => {
-    if (!window.confirm("Delete this floor? All its rooms will also be deleted.")) return;
+    if (!confirmDeleteAction(hasPerm("locations", "d"), "Delete this floor? All its rooms will also be deleted.")) return;
     await fetch(`/api/company-portal/floors/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
     await reloadFloors();
     setRooms((p) => p.filter((rm) => rm.floorId !== id));
@@ -6646,7 +7320,7 @@ export default function CompanyEmployeePortal() {
   };
 
   const handleDeleteRoom = async (id) => {
-    if (!window.confirm("Delete this room?")) return;
+    if (!confirmDeleteAction(hasPerm("locations", "d"), "Do you want to delete this?")) return;
     const r = await fetch(`/api/company-portal/rooms/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
     if (!r.ok) {
       const data = await r.json().catch(() => ({}));
@@ -7023,7 +7697,7 @@ export default function CompanyEmployeePortal() {
     setShowChecklistModal(false); setEditChecklist(null);
   };
   const handleDeleteChecklist = async (id) => {
-    if (!window.confirm("Delete this checklist template?")) return;
+    if (!confirmDeleteAction(hasPerm("checklists", "d"), "Do you want to delete this?")) return;
     try { await deleteCompanyPortalChecklist(token, id); setChecklists(p => p.filter(c => c.id !== id)); }
     catch (err) { alert(err.message || "Delete failed"); }
   };
@@ -7057,7 +7731,7 @@ export default function CompanyEmployeePortal() {
   };
 
   const handleDeleteEmp = async (id) => {
-    if (!window.confirm("Delete this employee?")) return;
+    if (!confirmDeleteAction(hasPerm("employees", "d"), "Do you want to delete this?")) return;
     try {
       await deleteCompanyPortalEmployee(token, id);
       setEmployees((prev) => prev.filter((e) => e.id !== id));
@@ -7111,25 +7785,30 @@ export default function CompanyEmployeePortal() {
               value={isAllCompaniesDashboard ? selectedCompanyIds : [String(currentUser?.companyId || "")]}
               onChange={(vals) => {
                 const nextVals = Array.isArray(vals) ? vals : (vals ? [String(vals)] : []);
+                const canCombined = currentUser?.canAccessCombinedView !== false;
                 if (nextVals.length === 0) {
-                  setSelectedCompanyIds(myCompanies.map((c) => String(c.id)));
-                  sessionStorage.removeItem("cp_explicit_company_choice");
-                  setIsAllCompaniesDashboard(true);
-                  setNav("dashboard");
+                  if (canCombined) {
+                    setSelectedCompanyIds(myCompanies.map((c) => String(c.id)));
+                    sessionStorage.removeItem("cp_explicit_company_choice");
+                    setIsAllCompaniesDashboard(true);
+                    setNav("dashboard");
+                  }
                   return;
                 }
 
-                setSelectedCompanyIds(nextVals);
-                if (nextVals.length === 1) {
-                  openSingleCompanyDashboard(Number(nextVals[0]));
+                if (nextVals.length === 1 || !canCombined) {
+                  const targetId = Number(nextVals[0] || myCompanies[0]?.id);
+                  setSelectedCompanyIds([String(targetId)]);
+                  openSingleCompanyDashboard(targetId);
                 } else {
+                  setSelectedCompanyIds(nextVals);
                   sessionStorage.removeItem("cp_explicit_company_choice");
                   setIsAllCompaniesDashboard(true);
                   setNav("dashboard");
                 }
               }}
               options={[
-                { value: "all", label: "✦ All Companies" },
+                ...(currentUser?.canAccessCombinedView !== false ? [{ value: "all", label: "✦ All Companies" }] : []),
                 ...myCompanies.map(c => ({ value: String(c.id), label: c.companyName })),
               ]}
               placeholder={switchingCompany ? "Switching…" : "Search companies…"}
@@ -7337,7 +8016,7 @@ export default function CompanyEmployeePortal() {
           // Soft-services portal: has soft-requests but no warnings/flags module
           const isSoftServices = !!(enabledModules && enabledModules.includes("soft-requests") && !enabledModules.includes("warnings"));
           const hasWarnings = !enabledModules || enabledModules.includes("warnings");
-          const hasWorkOrders = !enabledModules || enabledModules.includes("workorders") || enabledModules.includes("work-orders");
+          const hasWorkOrders = !enabledModules || enabledModules.includes("workorders") || enabledModules.includes("work-orders") || enabledModules.includes("requests");
           // Filter recent submissions to only the selected dashboard date
           const filterByDashDate = (item) => {
             const d = item.submittedAt || item.createdAt;
@@ -7655,159 +8334,8 @@ export default function CompanyEmployeePortal() {
             </div>
           );
 
-          /* ── SUPERVISOR DASHBOARD ── */
-          // Determine if user has supervisor-level access via custom role
-          const builtInRoles = ["admin", "supervisor", "technical_lead", "assistant_manager", "technical_executive", "technician", "cleaner", "security", "driver", "fleet_operator", "employee"];
-          const userCustomRoleInfo = !builtInRoles.includes(currentUser.role) ? customRoles.find((r) => r.roleKey === currentUser.role) : null;
-          // Custom roles → show admin dashboard (handled later); only real supervisors get supervisor dashboard
-          const hasCustomSupervisorAccess = false; // custom roles now fall through to admin dashboard
-          if (currentUser.role === "supervisor") {
-            const myTeam = employees.filter((e) => String(e.supervisorId) === String(currentUser.id));
-            const forwardedByMe = assignments.filter((a) => String(a.assignedBy) === String(currentUser.id));
-            return (
-              <div>
-                <div style={{ marginBottom: "24px" }}>
-                  <h1 style={{ fontSize: "26px", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px", marginBottom: "4px" }}>
-                    Welcome, {(currentUser.fullName || "").split(" ")[0]} 👋
-                  </h1>
-                  <p style={{ color: "#64748b", fontSize: "14px" }}>{currentUser.companyName} — Supervisor Portal &nbsp;·&nbsp; {new Date().toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}</p>
-                </div>
 
-                {/* Stat cards */}
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px", marginBottom: "28px" }}>
-                  <StatCard label="Assigned to Me" value={myAssignments.length} sub="From admin" subCol="#2563eb" iconBg="#eff6ff" iconCol="#2563eb"
-                    icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>} />
-                  <StatCard label="My Team Size" value={myTeam.length} sub="Helpers under you" subCol="#7c3aed" iconBg="#f3e8ff" iconCol="#7c3aed"
-                    icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>} />
-                  <StatCard label="Forwarded" value={forwardedByMe.length} sub="Tasks given to team" subCol="#16a34a" iconBg="#f0fdf4" iconCol="#16a34a"
-                    icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 10 20 15 15 20"/><path d="M4 4v7a4 4 0 0 0 4 4h12"/></svg>} />
-                  <StatCard label="Recent Activity" value={recentEntries.length} sub="Filled logsheets" subCol="#ca8a04" iconBg="#fef9c3" iconCol="#ca8a04"
-                    icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>} />
-                </div>
-
-                {/* Assigned to Me by Admin */}
-                <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden", marginBottom: "20px" }}>
-                  <div style={{ padding: "16px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", gap: "8px" }}>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2563eb" strokeWidth="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-                    <h2 style={{ fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>Assigned to Me by Admin</h2>
-                    <span style={{ marginLeft: "auto", fontSize: "12px", color: "#64748b" }}>{myAssignments.length} task{myAssignments.length !== 1 ? "s" : ""}</span>
-                  </div>
-                  {myAssignments.length === 0 ? (
-                    <p style={{ padding: "32px", textAlign: "center", color: "#94a3b8" }}>No templates assigned to you yet.</p>
-                  ) : (
-                    <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: "10px" }}>
-                      {myAssignments.map((a) => {
-                        const alreadyForwarded = assignments.filter(
-                          (fw) => String(fw.assignedBy) === String(currentUser.id) &&
-                            fw.templateType === a.templateType &&
-                            String(fw.templateId) === String(a.templateId)
-                        );
-                        return (
-                          <div key={a.id} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "12px 14px", background: "#f8fafc", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
-                            <span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "11px", fontWeight: 700, background: a.templateType === "checklist" ? "#dbeafe" : "#ede9fe", color: a.templateType === "checklist" ? "#1d4ed8" : "#7c3aed", flexShrink: 0 }}>
-                              {a.templateType === "checklist" ? "Checklist" : "Logsheet"}
-                            </span>
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <p style={{ fontWeight: 700, fontSize: "14px", color: "#0f172a", marginBottom: "2px" }}>{a.templateName || `Template #${a.templateId}`}</p>
-                              {a.note && <p style={{ fontSize: "12px", color: "#64748b" }}>Note: {a.note}</p>}
-                            </div>
-                            {alreadyForwarded.length > 0 && (
-                              <span style={{ fontSize: "12px", color: "#16a34a", fontWeight: 600, flexShrink: 0 }}>
-                                ✓ {alreadyForwarded.length} forwarded
-                              </span>
-                            )}
-
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-
-                {/* My Team quick view */}
-                <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden", marginBottom: "20px" }}>
-                  <div style={{ padding: "16px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
-                      <h2 style={{ fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>My Team</h2>
-                    </div>
-                    <button onClick={() => setNav("employees")} style={{ fontSize: "13px", color: "#2563eb", background: "none", border: "none", cursor: "pointer", fontWeight: 600 }}>Manage Team →</button>
-                  </div>
-                  {myTeam.length === 0 ? (
-                    <p style={{ padding: "32px", textAlign: "center", color: "#94a3b8" }}>No team members yet. Add employees and assign yourself as their supervisor.</p>
-                  ) : (
-                    <div style={{ padding: "12px 16px", display: "flex", flexWrap: "wrap", gap: "10px" }}>
-                      {myTeam.map((m) => {
-                        const taskCount = assignments.filter((a) => String(a.assignedTo) === String(m.id)).length;
-                        return (
-                          <div key={m.id} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 14px", background: "#f8fafc", borderRadius: "10px", border: "1px solid #e2e8f0", minWidth: "200px" }}>
-                            <div style={{ width: "36px", height: "36px", borderRadius: "50%", background: "#ede9fe", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, color: "#7c3aed", fontSize: "14px", flexShrink: 0 }}>
-                              {(m.fullName || "?")[0].toUpperCase()}
-                            </div>
-                            <div>
-                              <p style={{ fontWeight: 700, fontSize: "13px", color: "#0f172a", marginBottom: "1px" }}>{m.fullName}</p>
-                              <p style={{ fontSize: "11px", color: "#94a3b8" }}>{taskCount} task{taskCount !== 1 ? "s" : ""} assigned</p>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-
-                {/* Recent Logsheets */}
-                {recentTable}
-              </div>
-            );
-          }
-
-          /* ── EMPLOYEE DASHBOARD ── */
-          if (currentUser.role !== "admin" && !isCustomRole) {
-            const myTaskCount = myAssignments.length;
-            return (
-              <div>
-                <div style={{ marginBottom: "24px" }}>
-                  <h1 style={{ fontSize: "26px", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px", marginBottom: "4px" }}>
-                    Welcome, {(currentUser.fullName || "").split(" ")[0]} 👋
-                  </h1>
-                  <p style={{ color: "#64748b", fontSize: "14px" }}>{currentUser.companyName} — {new Date().toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}</p>
-                </div>
-
-                {/* Stat cards */}
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px", marginBottom: "28px" }}>
-                  <StatCard label="My Tasks" value={myTaskCount} sub="Assigned to you" subCol="#2563eb" iconBg="#eff6ff" iconCol="#2563eb"
-                    icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>} />
-                  <StatCard label="Filled Logsheets" value={recentEntries.length} sub="Recent submissions" subCol="#16a34a" iconBg="#f0fdf4" iconCol="#16a34a"
-                    icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>} />
-                  <StatCard label="Checklists" value={checklists.length} sub="Available templates" subCol="#7c3aed" iconBg="#f3e8ff" iconCol="#7c3aed"
-                    icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>} />
-                </div>
-
-                {/* Quick nav */}
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px" }}>
-                  {visibleNav.filter((n) => n.key !== "dashboard").map((item) => (
-                    <button key={item.key + item.label} onClick={() => setNav(item.key)}
-                      style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: "12px", padding: "20px", cursor: "pointer", textAlign: "left", transition: "box-shadow 0.15s", display: "flex", alignItems: "center", gap: "14px" }}
-                      onMouseEnter={(e) => (e.currentTarget.style.boxShadow = "0 4px 16px rgba(0,0,0,0.08)")}
-                      onMouseLeave={(e) => (e.currentTarget.style.boxShadow = "none")}>
-                      <div style={{ width: "44px", height: "44px", background: "#eff6ff", borderRadius: "10px", display: "flex", alignItems: "center", justifyContent: "center", color: "#2563eb", flexShrink: 0 }}>{item.icon}</div>
-                      <div>
-                        <p style={{ fontWeight: 700, fontSize: "14px", color: "#0f172a", marginBottom: "2px" }}>{item.label}</p>
-                        <p style={{ fontSize: "12px", color: "#94a3b8" }}>View &amp; manage →</p>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-
-                {recentTable}
-              </div>
-            );
-          }
-
-          /* ── ADMIN DASHBOARD ── */
-          return (() => {
-
-            // ── COMBINED (ALL COMPANIES) DASHBOARD ─────────────────────────
+          // ── COMBINED (ALL COMPANIES) DASHBOARD ─────────────────────────
             if (isAllCompaniesDashboard && myCompanies.length > 1) {
               const cd = combinedDashboard;
               const perComp = cd?.companies || [];
@@ -7820,11 +8348,13 @@ export default function CompanyEmployeePortal() {
               const recentLogsheets = cd?.recentLogsheets || [];
               const anyUnrestricted = perComp.some(c => !c.enabledModules);
               const hasAnyModule = (m) => anyUnrestricted || perComp.some(c => c.enabledModules && c.enabledModules.includes(m));
-              const combinedHasLogsheets = hasAnyModule("logsheets");
-              const combinedHasWarnings = hasAnyModule("warnings") || hasAnyModule("flags");
-              const combinedHasWorkOrders = hasAnyModule("workorders") || hasAnyModule("work-orders");
-              const combinedHasSoftRequests = hasAnyModule("soft-requests") || hasAnyModule("softrequests");
-              const combinedHasAssets = hasAnyModule("assets");
+              const combinedHasChecklists = hasAnyModule("checklists") && hasPerm("checklists", "v");
+              const combinedHasLocations = hasAnyModule("locations") && hasPerm("locations", "v");
+              const combinedHasLogsheets = hasAnyModule("logsheets") && hasPerm("logsheets", "v");
+              const combinedHasWarnings = (hasAnyModule("warnings") || hasAnyModule("flags")) && hasPerm("warnings", "v");
+              const combinedHasWorkOrders = (hasAnyModule("workorders") || hasAnyModule("work-orders") || hasAnyModule("requests")) && hasPerm("workorders", "v");
+              const combinedHasSoftRequests = (hasAnyModule("soft-requests") || hasAnyModule("softrequests")) && hasPerm("softrequests", "v");
+              const combinedHasAssets = hasAnyModule("assets") && hasPerm("assets", "v");
               const combinedDonutData = totals.totalTemplates > 0 ? [
                 { label: "Filled Checklists", value: totals.filledToday || 0, color: "#16a34a" },
                 { label: "Pending Checklists", value: totals.pendingChecklists || 0, color: "#86efac" },
@@ -7878,9 +8408,9 @@ export default function CompanyEmployeePortal() {
                     <>
                       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "16px", marginBottom: "24px" }}>
                         {[
-                          { label: "Combined Site Score", value: totals.siteScore + "%", sub: `${totals.filledToday}/${totals.totalTemplates} templates`, color: "#16a34a", bg: "#f0fdf4" },
-                          { label: "Total Active Locations", value: totals.activeLocations, sub: "Across all sites", color: "#2563eb", bg: "#eff6ff" },
-                          { label: "Open HK Requests", value: totals.openSoftRequests, sub: totals.openSoftRequests > 0 ? "Needs attention" : "All clear", color: totals.openSoftRequests > 0 ? "#dc2626" : "#16a34a", bg: totals.openSoftRequests > 0 ? "#fef2f2" : "#f0fdf4" },
+                          ...(combinedHasChecklists && hasPerm("dashboard", "show_site_score") ? [{ label: "Combined Site Score", value: totals.siteScore + "%", sub: `${totals.filledToday}/${totals.totalTemplates} templates`, color: "#16a34a", bg: "#f0fdf4" }] : []),
+                          ...(combinedHasLocations ? [{ label: "Total Active Locations", value: totals.activeLocations, sub: "Across all sites", color: "#2563eb", bg: "#eff6ff" }] : []),
+                          ...(combinedHasSoftRequests ? [{ label: "Open HK Requests", value: totals.openSoftRequests, sub: totals.openSoftRequests > 0 ? "Needs attention" : "All clear", color: totals.openSoftRequests > 0 ? "#dc2626" : "#16a34a", bg: totals.openSoftRequests > 0 ? "#fef2f2" : "#f0fdf4" }] : []),
                           { label: "Total Sites", value: perComp.length, sub: "In current selection", color: "#7c3aed", bg: "#f3e8ff" },
                         ].map(s => (
                           <div key={s.label} style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", padding: "18px 16px" }}>
@@ -7943,11 +8473,13 @@ export default function CompanyEmployeePortal() {
                             <p style={{ margin: 0, fontSize: "12px", color: totals.criticalFlags > 0 ? "#dc2626" : "#64748b" }}>{totals.criticalFlags} critical flags</p>
                           </div>
                         )}
+                        {combinedHasChecklists && (
                         <div style={{ background: "linear-gradient(135deg, #eff6ff 0%, #f8fafc 100%)", border: "1px solid #bfdbfe", borderRadius: "12px", padding: "12px 14px" }}>
-                          <p style={{ margin: 0, fontSize: "11px", fontWeight: 700, color: "#1d4ed8", textTransform: "uppercase" }}>Total Filled Checklists</p>
+                          <p style={{ margin: 0, fontSize: "11px", fontWeight: 700, color: "#1d4ed8", textTransform: "uppercase" }}>Combined Total Filled Checklists</p>
                           <p style={{ margin: "6px 0 2px", fontSize: "22px", fontWeight: 800, color: "#0f172a" }}>{totals.filledToday}</p>
                           <p style={{ margin: 0, fontSize: "12px", color: "#64748b" }}>{totals.pendingChecklists} pending</p>
                         </div>
+                        )}
                         {combinedHasLogsheets && (
                           <div style={{ background: "linear-gradient(135deg, #f3e8ff 0%, #f8fafc 100%)", border: "1px solid #e9d5ff", borderRadius: "12px", padding: "12px 14px" }}>
                             <p style={{ margin: 0, fontSize: "11px", fontWeight: 700, color: "#7c3aed", textTransform: "uppercase" }}>Total Filled Logsheets</p>
@@ -7960,7 +8492,7 @@ export default function CompanyEmployeePortal() {
                   )}
 
                   {/* Site Score Overview chart */}
-                  {(() => {
+                  {hasPerm("dashboard", "show_site_score_overview") && (() => {
                     const chartRange = companiesSiteScoreRange;
                     const setRange = (fn) => setCompaniesSiteScoreRange(prev => typeof fn === "function" ? fn(prev) : fn);
                     const toDateStr = (d) => d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10);
@@ -7974,14 +8506,11 @@ export default function CompanyEmployeePortal() {
                             <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", margin: 0 }}>Site Score Overview</p>
                             <p style={{ fontSize: "12px", color: "#94a3b8", margin: 0, marginTop: "3px" }}>Average checklist completion per site</p>
                           </div>
-                          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                            <span style={{ fontSize: "11.5px", color: "#64748b" }}>From</span>
-                            <input type="date" value={chartRange.startDate} onChange={e => setRange(prev => ({ ...prev, startDate: e.target.value }))}
-                              style={{ padding: "4px 8px", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "11.5px", color: "#0f172a" }} />
-                            <span style={{ fontSize: "11.5px", color: "#64748b" }}>To</span>
-                            <input type="date" value={chartRange.endDate} onChange={e => setRange(prev => ({ ...prev, endDate: e.target.value }))}
-                              style={{ padding: "4px 8px", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "11.5px", color: "#0f172a" }} />
-                          </div>
+                          <SiteScoreDateFilter
+                            currentRange={chartRange}
+                            onApply={(newRange) => setCompaniesSiteScoreRange(newRange)}
+                            onReset={() => setCompaniesSiteScoreRange({ startDate: dashboardDate, endDate: dashboardDate })}
+                          />
                         </div>
                         {!displayData ? (
                           <p style={{ textAlign: "center", color: "#94a3b8", padding: "40px 0", margin: 0 }}>Loading…</p>
@@ -8031,7 +8560,9 @@ export default function CompanyEmployeePortal() {
                   })()}
 
                   {/* Submission Overview + Latest Alerts */}
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px", marginBottom: "20px" }}>
+                  {(hasPerm("dashboard", "show_submission_overview") || combinedHasWarnings) && (
+                  <div style={{ display: "grid", gridTemplateColumns: hasPerm("dashboard", "show_submission_overview") && combinedHasWarnings ? "1fr 1fr" : "1fr", gap: "20px", marginBottom: "20px" }}>
+                    {hasPerm("dashboard", "show_submission_overview") && (
                     <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px" }}>
                       <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", margin: "0 0 4px" }}>Submission Overview</p>
                       <p style={{ fontSize: "12px", color: "#94a3b8", margin: "0 0 16px" }}>Data for {new Date(dashboardDate + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}</p>
@@ -8081,6 +8612,8 @@ export default function CompanyEmployeePortal() {
                         );
                       })()}
                     </div>
+                    )}
+                    {combinedHasWarnings && (
                     <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px" }}>
                       <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", margin: "0 0 2px" }}>Latest Alerts</p>
                       <p style={{ fontSize: "12px", color: "#94a3b8", margin: "0 0 14px" }}>Open warnings &amp; flags</p>
@@ -8100,10 +8633,13 @@ export default function CompanyEmployeePortal() {
                           </div>
                       }
                     </div>
+                    )}
                   </div>
+                  )}
 
                   {/* Requests + HK Request */}
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px", marginBottom: "20px" }}>
+                  {(combinedHasWorkOrders || combinedHasSoftRequests) && (
+                  <div style={{ display: "grid", gridTemplateColumns: combinedHasWorkOrders && combinedHasSoftRequests ? "1fr 1fr" : "1fr", gap: "20px", marginBottom: "20px" }}>
                     {combinedHasWorkOrders && (
                       <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px" }}>
                         <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", margin: "0 0 2px" }}>Requests</p>
@@ -8145,9 +8681,10 @@ export default function CompanyEmployeePortal() {
                       </div>
                     )}
                   </div>
+                  )}
 
                   {/* Notifications */}
-                  {recentNotifications.length > 0 && (
+                  {recentNotifications.length > 0 && hasPerm("notifications", "v") && (
                     <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px", marginBottom: "20px" }}>
                       <p style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a", margin: "0 0 2px" }}>Notifications</p>
                       <p style={{ fontSize: "12px", color: "#94a3b8", margin: "0 0 14px" }}>Latest alerts &amp; reminders</p>
@@ -8167,7 +8704,7 @@ export default function CompanyEmployeePortal() {
                   )}
 
                   {/* Recent Submissions — grouped by company, submitted + not-submitted */}
-                  {(() => {
+                  {hasPerm("dashboard", "show_recent_submissions") && hasPerm("checklists", "v") && (() => {
                     // Expand hourly checklist templates into expected slots
                     const _toMins = (t) => { if (!t) return 0; const [h, m = 0] = t.split(':').map(Number); return h * 60 + m; };
                     const _fmtMins = (mins) => { const h = Math.floor(mins / 60) % 24; const m = mins % 60; const ap = h >= 12 ? 'PM' : 'AM'; return `${h % 12 || 12}:${String(m).padStart(2,'0')} ${ap}`; };
@@ -8387,6 +8924,160 @@ export default function CompanyEmployeePortal() {
               );
             }
 
+          /* ── SUPERVISOR DASHBOARD ── */
+          // Determine if user has supervisor-level access via custom role
+          const builtInRoles = ["admin", "supervisor", "technical_lead", "assistant_manager", "technical_executive", "technician", "cleaner", "security", "driver", "fleet_operator", "employee"];
+          const userCustomRoleInfo = !builtInRoles.includes(currentUser.role) ? customRoles.find((r) => r.roleKey === currentUser.role) : null;
+          // Custom roles → show admin dashboard (handled later); only real supervisors get supervisor dashboard
+          const hasCustomSupervisorAccess = false; // custom roles now fall through to admin dashboard
+          if (currentUser.role === "supervisor") {
+            const myTeam = employees.filter((e) => String(e.supervisorId) === String(currentUser.id));
+            const forwardedByMe = assignments.filter((a) => String(a.assignedBy) === String(currentUser.id));
+            return (
+              <div>
+                <div style={{ marginBottom: "24px" }}>
+                  <h1 style={{ fontSize: "26px", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px", marginBottom: "4px" }}>
+                    Welcome, {(currentUser.fullName || "").split(" ")[0]} 👋
+                  </h1>
+                  <p style={{ color: "#64748b", fontSize: "14px" }}>{currentUser.companyName} — Supervisor Portal &nbsp;·&nbsp; {new Date().toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}</p>
+                </div>
+
+                {/* Stat cards */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px", marginBottom: "28px" }}>
+                  <StatCard label="Assigned to Me" value={myAssignments.length} sub="From admin" subCol="#2563eb" iconBg="#eff6ff" iconCol="#2563eb"
+                    icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>} />
+                  <StatCard label="My Team Size" value={myTeam.length} sub="Helpers under you" subCol="#7c3aed" iconBg="#f3e8ff" iconCol="#7c3aed"
+                    icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>} />
+                  <StatCard label="Forwarded" value={forwardedByMe.length} sub="Tasks given to team" subCol="#16a34a" iconBg="#f0fdf4" iconCol="#16a34a"
+                    icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 10 20 15 15 20"/><path d="M4 4v7a4 4 0 0 0 4 4h12"/></svg>} />
+                  <StatCard label="Recent Activity" value={recentEntries.length} sub="Filled logsheets" subCol="#ca8a04" iconBg="#fef9c3" iconCol="#ca8a04"
+                    icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>} />
+                </div>
+
+                {/* Assigned to Me by Admin */}
+                <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden", marginBottom: "20px" }}>
+                  <div style={{ padding: "16px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", gap: "8px" }}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2563eb" strokeWidth="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                    <h2 style={{ fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>Assigned to Me by Admin</h2>
+                    <span style={{ marginLeft: "auto", fontSize: "12px", color: "#64748b" }}>{myAssignments.length} task{myAssignments.length !== 1 ? "s" : ""}</span>
+                  </div>
+                  {myAssignments.length === 0 ? (
+                    <p style={{ padding: "32px", textAlign: "center", color: "#94a3b8" }}>No templates assigned to you yet.</p>
+                  ) : (
+                    <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: "10px" }}>
+                      {myAssignments.map((a) => {
+                        const alreadyForwarded = assignments.filter(
+                          (fw) => String(fw.assignedBy) === String(currentUser.id) &&
+                            fw.templateType === a.templateType &&
+                            String(fw.templateId) === String(a.templateId)
+                        );
+                        return (
+                          <div key={a.id} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "12px 14px", background: "#f8fafc", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
+                            <span style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "11px", fontWeight: 700, background: a.templateType === "checklist" ? "#dbeafe" : "#ede9fe", color: a.templateType === "checklist" ? "#1d4ed8" : "#7c3aed", flexShrink: 0 }}>
+                              {a.templateType === "checklist" ? "Checklist" : "Logsheet"}
+                            </span>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <p style={{ fontWeight: 700, fontSize: "14px", color: "#0f172a", marginBottom: "2px" }}>{a.templateName || `Template #${a.templateId}`}</p>
+                              {a.note && <p style={{ fontSize: "12px", color: "#64748b" }}>Note: {a.note}</p>}
+                            </div>
+                            {alreadyForwarded.length > 0 && (
+                              <span style={{ fontSize: "12px", color: "#16a34a", fontWeight: 600, flexShrink: 0 }}>
+                                ✓ {alreadyForwarded.length} forwarded
+                              </span>
+                            )}
+
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* My Team quick view */}
+                <div style={{ background: "#fff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden", marginBottom: "20px" }}>
+                  <div style={{ padding: "16px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+                      <h2 style={{ fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>My Team</h2>
+                    </div>
+                    <button onClick={() => setNav("employees")} style={{ fontSize: "13px", color: "#2563eb", background: "none", border: "none", cursor: "pointer", fontWeight: 600 }}>Manage Team →</button>
+                  </div>
+                  {myTeam.length === 0 ? (
+                    <p style={{ padding: "32px", textAlign: "center", color: "#94a3b8" }}>No team members yet. Add employees and assign yourself as their supervisor.</p>
+                  ) : (
+                    <div style={{ padding: "12px 16px", display: "flex", flexWrap: "wrap", gap: "10px" }}>
+                      {myTeam.map((m) => {
+                        const taskCount = assignments.filter((a) => String(a.assignedTo) === String(m.id)).length;
+                        return (
+                          <div key={m.id} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 14px", background: "#f8fafc", borderRadius: "10px", border: "1px solid #e2e8f0", minWidth: "200px" }}>
+                            <div style={{ width: "36px", height: "36px", borderRadius: "50%", background: "#ede9fe", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, color: "#7c3aed", fontSize: "14px", flexShrink: 0 }}>
+                              {(m.fullName || "?")[0].toUpperCase()}
+                            </div>
+                            <div>
+                              <p style={{ fontWeight: 700, fontSize: "13px", color: "#0f172a", marginBottom: "1px" }}>{m.fullName}</p>
+                              <p style={{ fontSize: "11px", color: "#94a3b8" }}>{taskCount} task{taskCount !== 1 ? "s" : ""} assigned</p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Recent Logsheets */}
+                {hasPerm("dashboard", "show_recent_submissions") && recentTable}
+              </div>
+            );
+          }
+
+          /* ── EMPLOYEE DASHBOARD ── */
+          if (currentUser.role !== "admin" && !isCustomRole) {
+            const myTaskCount = myAssignments.length;
+            return (
+              <div>
+                <div style={{ marginBottom: "24px" }}>
+                  <h1 style={{ fontSize: "26px", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px", marginBottom: "4px" }}>
+                    Welcome, {(currentUser.fullName || "").split(" ")[0]} 👋
+                  </h1>
+                  <p style={{ color: "#64748b", fontSize: "14px" }}>{currentUser.companyName} — {new Date().toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}</p>
+                </div>
+
+                {/* Stat cards */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px", marginBottom: "28px" }}>
+                  <StatCard label="My Tasks" value={myTaskCount} sub="Assigned to you" subCol="#2563eb" iconBg="#eff6ff" iconCol="#2563eb"
+                    icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>} />
+                  <StatCard label="Filled Logsheets" value={recentEntries.length} sub="Recent submissions" subCol="#16a34a" iconBg="#f0fdf4" iconCol="#16a34a"
+                    icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>} />
+                  <StatCard label="Checklists" value={checklists.length} sub="Available templates" subCol="#7c3aed" iconBg="#f3e8ff" iconCol="#7c3aed"
+                    icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>} />
+                </div>
+
+                {/* Quick nav */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px" }}>
+                  {visibleNav.filter((n) => n.key !== "dashboard").map((item) => (
+                    <button key={item.key + item.label} onClick={() => setNav(item.key)}
+                      style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: "12px", padding: "20px", cursor: "pointer", textAlign: "left", transition: "box-shadow 0.15s", display: "flex", alignItems: "center", gap: "14px" }}
+                      onMouseEnter={(e) => (e.currentTarget.style.boxShadow = "0 4px 16px rgba(0,0,0,0.08)")}
+                      onMouseLeave={(e) => (e.currentTarget.style.boxShadow = "none")}>
+                      <div style={{ width: "44px", height: "44px", background: "#eff6ff", borderRadius: "10px", display: "flex", alignItems: "center", justifyContent: "center", color: "#2563eb", flexShrink: 0 }}>{item.icon}</div>
+                      <div>
+                        <p style={{ fontWeight: 700, fontSize: "14px", color: "#0f172a", marginBottom: "2px" }}>{item.label}</p>
+                        <p style={{ fontSize: "12px", color: "#94a3b8" }}>View &amp; manage →</p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+
+                {hasPerm("dashboard", "show_recent_submissions") && recentTable}
+              </div>
+            );
+          }
+
+          /* ── ADMIN DASHBOARD ── */
+          return (() => {
+
+            
+
             // SVG Donut Chart helper
             const DonutChart = ({ data, size = 200, thickness = 38, centerLabel }) => {
               const vals = data.map((d) => Math.max(0, d.value || 0));
@@ -8434,7 +9125,17 @@ export default function CompanyEmployeePortal() {
 
             const PERIOD_LABELS = { day: "Today", week: "This Week", month: "This Month", year: "This Year" };
             const cs = chartStats;
-            const hasLogsheets = !enabledModules || enabledModules.includes("logsheets");
+            const hasLogsheets = (!enabledModules || enabledModules.includes("logsheets")) && hasPerm("logsheets", "v");
+            const hasWarnings = (!enabledModules || enabledModules.includes("warnings") || enabledModules.includes("flags")) && hasPerm("warnings", "v");
+            const hasWorkOrders = (!enabledModules || enabledModules.includes("workorders") || enabledModules.includes("work-orders") || enabledModules.includes("requests")) && hasPerm("workorders", "v");
+            const hasChecklists = (!enabledModules || enabledModules.includes("checklists")) && hasPerm("checklists", "v");
+            const hasAssets = (!enabledModules || enabledModules.includes("assets")) && hasPerm("assets", "v");
+            const hasLocations = (!enabledModules || enabledModules.includes("locations")) && hasPerm("locations", "v");
+            const hasSoftRequests = (!enabledModules || enabledModules.includes("soft-requests") || enabledModules.includes("softrequests")) && hasPerm("softrequests", "v");
+            const hasAdditionalRequests = (!enabledModules || enabledModules.includes("additional-requests")) && hasPerm("additional-requests", "v");
+            const hasShifts = (!enabledModules || enabledModules.includes("shifts")) && hasPerm("shifts", "v");
+            const hasAttendance = (!enabledModules || enabledModules.includes("attendance")) && hasPerm("attendance", "v");
+            const hasNotifications = (!enabledModules || enabledModules.includes("notifications")) && hasPerm("notifications", "v");
             const chartData = cs ? [
               { label: "Filled Checklists",  value: cs.filledChecklists,  color: "#16a34a" },
               { label: "Pending Checklists", value: cs.pendingChecklists, color: "#86efac" },
@@ -8514,6 +9215,7 @@ export default function CompanyEmployeePortal() {
                       Schedule Mail
                     </button>
                     )}
+                    {hasPerm("dashboard", "export_excel") && (
                     <button
                       type="button"
                       onClick={() => {
@@ -8544,6 +9246,8 @@ export default function CompanyEmployeePortal() {
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                       Export Excel
                     </button>
+                    )}
+                    {hasPerm("dashboard", "print") && (
                     <button
                       type="button"
                       onClick={() => window.print()}
@@ -8552,6 +9256,7 @@ export default function CompanyEmployeePortal() {
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
                       Print
                     </button>
+                    )}
                   </div>
                 </div>
 
@@ -8560,17 +9265,17 @@ export default function CompanyEmployeePortal() {
                 {/* 4 Key stat cards */}
                 {dashboard && (
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "16px", marginBottom: "16px" }}>
-                    {(!enabledModules || enabledModules.includes("assets")) && (
+                    {hasAssets && (
                     <StatCard label="Active Assets" value={dashboard.activeAssets} sub={`${dashboard.totalAssets} total`} subCol="#22c55e"
                       iconBg="#eff6ff" iconCol="#2563eb" onClick={() => setNav("assets")}
                       icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 19.07a10 10 0 0 1 0-14.14"/></svg>} />
                     )}
-                    {(!enabledModules || enabledModules.includes("locations")) && (
+                    {hasLocations && (
                     <StatCard label="Active Locations" value={dashboard.totalLocations ?? 0} sub="Location records" subCol="#22c55e"
                       iconBg="#ecfdf5" iconCol="#059669" onClick={() => setNav("locations")}
                       icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>} />
                     )}
-                    {(!enabledModules || enabledModules.includes("workorders") || enabledModules.includes("work-orders")) && (
+                    {hasWorkOrders && (
                     <StatCard label="Open Requests" value={dashboard.openIssues}
                       sub={dashboard.openIssues > 0 ? "Needs attention" : "All clear"}
                       subCol={dashboard.openIssues > 0 ? "#dc2626" : "#22c55e"}
@@ -8579,7 +9284,7 @@ export default function CompanyEmployeePortal() {
                       onClick={() => setNav("workorders")}
                       icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>} />
                     )}
-                    {(!enabledModules || enabledModules.includes("soft-requests") || enabledModules.includes("softrequests")) && (
+                    {hasSoftRequests && (
                     <StatCard label={isSoftServices ? "Open HK Requests" : "Open Soft Requests"} value={dashboard.openSoftRequests ?? dashboardSoftRequests.length}
                       sub={(dashboard.openSoftRequests ?? dashboardSoftRequests.length) > 0 ? "Needs attention" : "All clear"}
                       subCol={(dashboard.openSoftRequests ?? dashboardSoftRequests.length) > 0 ? "#7c3aed" : "#22c55e"}
@@ -8588,7 +9293,7 @@ export default function CompanyEmployeePortal() {
                       onClick={() => setNav("softrequests")}
                       icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>} />
                     )}
-                    {(!enabledModules || enabledModules.includes("additional-requests")) && (
+                    {hasAdditionalRequests && (
                     <StatCard label="Open Additional Requests" value={dashboardAdditionalRequests.length}
                       sub={dashboardAdditionalRequests.length > 0 ? "Needs attention" : "All clear"}
                       subCol={dashboardAdditionalRequests.length > 0 ? "#7c3aed" : "#22c55e"}
@@ -8597,7 +9302,7 @@ export default function CompanyEmployeePortal() {
                       onClick={() => setNav("additional-requests")}
                       icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>} />
                     )}
-                    {(!enabledModules || enabledModules.includes("warnings") || enabledModules.includes("flags")) && (
+                    {hasWarnings && (
                     <StatCard label="Total Warnings" value={(dashboard.flags?.open || 0) + (dashboard.softRequestWarnings || 0)}
                       sub={`${dashboard.flags?.critical || 0} critical flags${dashboard.softRequestWarnings ? ` + ${dashboard.softRequestWarnings} escalated requests` : ""}`}
                       subCol={(dashboard.flags?.critical || 0) > 0 || (dashboard.softRequestWarnings || 0) > 0 ? "#dc2626" : "#64748b"}
@@ -8615,6 +9320,7 @@ export default function CompanyEmployeePortal() {
                   gap: "12px",
                   marginBottom: "20px",
                 }}>
+                  {hasChecklists && hasPerm("dashboard", "show_site_score") && (
                   <div style={{ background: "linear-gradient(135deg, #eff6ff 0%, #f8fafc 100%)", border: "1px solid #bfdbfe", borderRadius: "12px", padding: "12px 14px" }}>
                     <p style={{ margin: 0, fontSize: "11px", fontWeight: 700, color: "#1d4ed8", letterSpacing: "0.03em", textTransform: "uppercase" }}>{isToday ? "Today's Site Score" : "Site Score"}</p>
                     <p style={{ margin: "6px 0 2px", fontSize: "22px", fontWeight: 800, color: "#0f172a" }}>{siteScoreRate}%</p>
@@ -8622,11 +9328,14 @@ export default function CompanyEmployeePortal() {
                       {scoreDisplayTotal > 0 ? `${scoreDisplayFilled} of ${scoreDisplayTotal} checklists filled` : "Checklist completion rate"}
                     </p>
                   </div>
+                  )}
+                  {hasChecklists && (
                   <div style={{ background: "linear-gradient(135deg, #f0fdf4 0%, #f8fafc 100%)", border: "1px solid #bbf7d0", borderRadius: "12px", padding: "12px 14px" }}>
                     <p style={{ margin: 0, fontSize: "11px", fontWeight: 700, color: "#15803d", letterSpacing: "0.03em", textTransform: "uppercase" }}>Total Filled Checklists</p>
                     <p style={{ margin: "6px 0 2px", fontSize: "22px", fontWeight: 800, color: "#0f172a" }}>{displayFilledChecklists}</p>
                     <p style={{ margin: 0, fontSize: "12px", color: "#64748b" }}>Filled checklists for selected date</p>
                   </div>
+                  )}
                   {hasLogsheets && (
                   <div style={{ background: "linear-gradient(135deg, #eff6ff 0%, #f8fafc 100%)", border: "1px solid #bfdbfe", borderRadius: "12px", padding: "12px 14px" }}>
                     <p style={{ margin: 0, fontSize: "11px", fontWeight: 700, color: "#1d4ed8", letterSpacing: "0.03em", textTransform: "uppercase" }}>Total Filled Logsheets</p>
@@ -8652,7 +9361,7 @@ export default function CompanyEmployeePortal() {
 
                 {/* Submission Overview */}
                 {/* ── Shift summary banner ── */}
-                {shifts.length > 0 && (() => {
+                {hasShifts && shifts.length > 0 && (() => {
                   const now = new Date();
                   const nowMins = now.getHours() * 60 + now.getMinutes();
                   const activeShiftList = shifts.filter((s) => {
@@ -8692,6 +9401,7 @@ export default function CompanyEmployeePortal() {
                 <div data-print-grid="1" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "20px", marginBottom: "20px", alignItems: "start" }}>
 
                   {/* ── Left: Submission Overview ── */}
+                  {hasPerm("dashboard", "show_submission_overview") && (
                   <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px" }}>
                     {/* Title (period filters removed — now driven by top-level date picker) */}
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "10px" }}>
@@ -8745,6 +9455,7 @@ export default function CompanyEmployeePortal() {
                       </div>
                     </div>
                   </div>
+                  )}
 
                   {/* ── Right column: Latest Alerts + Work Orders stacked ── */}
                   <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
@@ -8822,8 +9533,8 @@ export default function CompanyEmployeePortal() {
                   </div>
                   )} {/* end hasWarnings Latest Alerts */}
 
-                  {/* Work Orders — only show if workorders module is enabled */}
-                  {(!enabledModules || enabledModules.includes("workorders") || enabledModules.includes("work-orders")) && (
+                  {/* Work Orders — only show if workorders module is enabled and viewable */}
+                  {(!enabledModules || enabledModules.includes("workorders") || enabledModules.includes("work-orders") || enabledModules.includes("requests")) && hasPerm("workorders", "v") && (
                   <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
                       <div>
@@ -8888,7 +9599,7 @@ export default function CompanyEmployeePortal() {
                   )}
 
                   {/* Soft Service Requests */}
-                  {(currentUser?.role === "admin" || currentUser?.role === "supervisor") && (() => {
+                  {(!enabledModules || enabledModules.includes("softrequests") || enabledModules.includes("soft-requests")) && hasPerm("softrequests", "v") && (() => {
                     const filteredSoftReqs = dashboardSoftRequests.filter((sr) => {
                       const d = sr.raisedAt || sr.createdAt;
                       if (!d) return true;
@@ -8940,7 +9651,7 @@ export default function CompanyEmployeePortal() {
                   })()}
 
                   {/* Additional Requests panel card */}
-                  {currentUser?.role === "admin" && (!enabledModules || enabledModules.includes("additional-requests")) && (() => {
+                  {(!enabledModules || enabledModules.includes("additional-requests")) && hasPerm("additional-requests", "v") && (() => {
                     return (
                   <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
@@ -8987,7 +9698,7 @@ export default function CompanyEmployeePortal() {
                   })()}
 
                   {/* Notifications quick-view */}
-                  {currentUser?.role === "admin" && (
+                  {(!enabledModules || enabledModules.includes("notifications")) && hasPerm("notifications", "v") && (
                   <DashboardNotificationsBox token={token} onViewAll={() => setNav("notifications")} filterDate={dashboardDate}
                     onItemClick={(type) => { if (type === "flag_raised" || type === "flag_escalated") setNav("warnings"); else setNav("notifications"); }} />
                   )}
@@ -9063,7 +9774,7 @@ export default function CompanyEmployeePortal() {
                 )}
 
                 {/* ── Shift Wise Site Score — full-width card below the 2-col grid ── */}
-                {shiftSiteScore.length > 0 && (
+                {hasShifts && shiftSiteScore.length > 0 && (
                   <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px", marginBottom: "20px" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
                       <div>
@@ -9093,7 +9804,7 @@ export default function CompanyEmployeePortal() {
                 )}
 
                 {/* ── Shift Wise Attendance ─────────────────────────────────── */}
-                {shiftAttendance.length > 0 && (!enabledModules || enabledModules.includes("attendance")) && (
+                {hasAttendance && shiftAttendance.length > 0 && (
                   <div style={{ background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "20px", marginBottom: "20px" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
                       <div>
@@ -9126,7 +9837,7 @@ export default function CompanyEmployeePortal() {
                 )}
 
                 {/* ── Site Score Overview ───────────────────────────────── */}
-                {(() => {
+                {hasPerm("dashboard", "show_site_score_overview") && (() => {
                   const isMultiCo = myCompanies.length > 1 && isAllCompaniesDashboard;
                   const chartData  = isMultiCo ? companiesSiteScore : siteScoreHistory;
                   const chartRange = isMultiCo ? companiesSiteScoreRange : siteScoreChartRange;
@@ -9183,17 +9894,11 @@ export default function CompanyEmployeePortal() {
                             {isMultiCo ? "Average checklist completion per site" : "Daily checklist completion rate"}
                           </p>
                         </div>
-                        {/* Date range pickers — defaults to today */}
-                        <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
-                          <span style={{ fontSize: "11.5px", color: "#64748b" }}>From</span>
-                          <input type="date" value={chartRange.startDate}
-                            onChange={e => setRange(prev => ({ ...prev, startDate: e.target.value }))}
-                            style={{ padding: "4px 8px", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "11.5px", color: "#0f172a" }} />
-                          <span style={{ fontSize: "11.5px", color: "#64748b" }}>To</span>
-                          <input type="date" value={chartRange.endDate}
-                            onChange={e => setRange(prev => ({ ...prev, endDate: e.target.value }))}
-                            style={{ padding: "4px 8px", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "11.5px", color: "#0f172a" }} />
-                        </div>
+                        <SiteScoreDateFilter
+                          currentRange={chartRange}
+                          onApply={(newRange) => (isMultiCo ? setCompaniesSiteScoreRange(newRange) : setSiteScoreChartRange(newRange))}
+                          onReset={() => (isMultiCo ? setCompaniesSiteScoreRange({ startDate: dashboardDate, endDate: dashboardDate }) : setSiteScoreChartRange({ startDate: dashboardDate, endDate: dashboardDate }))}
+                        />
                       </div>
 
                       {/* Chart area */}
@@ -9284,7 +9989,7 @@ export default function CompanyEmployeePortal() {
                   );
                 })()}
 
-                {recentTable}
+                {hasPerm("dashboard", "show_recent_submissions") && recentTable}
               </div>
             );
           })()
@@ -9292,7 +9997,9 @@ export default function CompanyEmployeePortal() {
 
         {/* ── Departments ────────────────────────────────────────── */}
         {nav === "departments" && (() => {
-          const isAdmin = currentUser.role === "admin";
+          const canCreateDept = hasPerm("departments", "c");
+          const canUpdateDept = hasPerm("departments", "u");
+          const canDeleteDept = hasPerm("departments", "d");
           return (
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "22px" }}>
@@ -9300,7 +10007,7 @@ export default function CompanyEmployeePortal() {
                 <h1 style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px", marginBottom: "4px" }}>Departments</h1>
                 <p style={{ color: "#64748b", fontSize: "13.5px" }}>Operational departments within {currentUser.companyName}</p>
               </div>
-              {isAdmin && (
+              {canCreateDept && (
                 <Btn onClick={() => { setEditDept(null); setShowDeptModal(true); }}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                   Add Department
@@ -9319,31 +10026,35 @@ export default function CompanyEmployeePortal() {
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
                     <thead>
                       <tr>
-                        {["#", "Department Name", "Description", "Created", ...(isAdmin ? ["Actions"] : [])].map((h) => (
+                        {["#", "Department Name", "Description", "Created", ...((canUpdateDept || canDeleteDept) ? ["Actions"] : [])].map((h) => (
                           <th key={h} style={{ padding: "12px 16px", textAlign: "left", color: "#475569", fontWeight: 600, fontSize: "12px", textTransform: "uppercase", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
                       {filteredDepts.length === 0
-                        ? <tr><td colSpan={isAdmin ? 5 : 4} style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>No departments found</td></tr>
+                        ? <tr><td colSpan={(canUpdateDept || canDeleteDept) ? 5 : 4} style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>No departments found</td></tr>
                         : filteredDepts.map((d, i) => (
                           <tr key={d.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
                             <td style={{ padding: "14px 16px", color: "#64748b", fontWeight: 600 }}>{i + 1}</td>
                             <td style={{ padding: "14px 16px", fontWeight: 600, color: "#0f172a" }}>{d.departmentName}</td>
                             <td style={{ padding: "14px 16px", color: "#64748b", fontSize: "13px" }}>{d.description || "—"}</td>
                             <td style={{ padding: "14px 16px", color: "#94a3b8", fontSize: "12px" }}>{d.createdAt ? new Date(d.createdAt).toLocaleDateString() : "—"}</td>
-                            {isAdmin && (
+                            {(canUpdateDept || canDeleteDept) && (
                               <td style={{ padding: "12px 16px" }}>
                                 <div style={{ display: "flex", gap: "6px" }}>
-                                  <button title="Edit" onClick={() => { setEditDept(d); setShowDeptModal(true); }}
-                                    style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#eff6ff", color: "#2563eb", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                                  </button>
-                                  <button title="Delete" onClick={() => handleDeleteDept(d.id)}
-                                    style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#fef2f2", color: "#dc2626", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-                                  </button>
+                                  {canUpdateDept && (
+                                    <button title="Edit" onClick={() => { setEditDept(d); setShowDeptModal(true); }}
+                                      style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#eff6ff", color: "#2563eb", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                                    </button>
+                                  )}
+                                  {canDeleteDept && (
+                                    <button title="Delete" onClick={() => handleDeleteDept(d.id)}
+                                      style={{ width: "30px", height: "30px", borderRadius: "6px", background: "#fef2f2", color: "#dc2626", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                                    </button>
+                                  )}
                                 </div>
                               </td>
                             )}
@@ -9359,7 +10070,7 @@ export default function CompanyEmployeePortal() {
 
         {/* ── Assets ────────────────────────────────────────────── */}
         {nav === "assets" && (() => {
-          const isAdmin = currentUser.role === "admin";
+          const isAdmin = hasPerm("assets", "u"); // dynamic RBAC: admins + roles with assets update perm
           return (
           <div>
             {/* Sub-tab navigation */}
@@ -9559,13 +10270,13 @@ export default function CompanyEmployeePortal() {
                 fetchTemplate={null}
                 updateTemplate={updateCompanyPortalChecklist}
                 deleteTemplate={deleteCompanyPortalChecklist}
-                canBuild={currentUser.role === "admin" || currentUser.role === "supervisor"}
+                canBuild={hasPerm("checklists", "c")}
                 companyId={isAllCompaniesDashboard && moduleSiteFilter !== "all" ? moduleSiteFilter : (isAllCompaniesDashboard ? "all" : currentUser.companyId)}
                 companyPortalMode={true}
               />
             )}
             {checklistSubNav === "submissions" && (
-              <SubmissionsPanel token={token} type="checklists" isAdmin={currentUser?.role === "admin"} companyId={isAllCompaniesDashboard ? moduleSiteFilter : undefined} />
+              <SubmissionsPanel token={token} type="checklists" isAdmin={hasPerm("checklists", "d")} companyId={isAllCompaniesDashboard ? moduleSiteFilter : undefined} />
             )}
           </div>
         )}
@@ -9601,14 +10312,16 @@ export default function CompanyEmployeePortal() {
                 deleteTemplate={deleteCompanyPortalLogsheetTemplate}
                 assignTemplate={assignCompanyPortalLogsheetTemplate}
                 fetchGrid={getCompanyPortalLogsheetGrid}
-                canBuild={currentUser.role === "admin" || currentUser.role === "supervisor"}
+                canBuild={hasPerm("logsheets", "c")}
+                canFill={hasPerm("logsheets", "fill_logsheets")}
+                canAssign={hasPerm("logsheets", "assign_logsheets")}
                 companyPortalMode={true}
                 directFill={directFillLogsheet}
                 onDirectFillConsumed={() => setDirectFillLogsheet(null)}
               />
             )}
             {logsheetSubNav === "submissions" && (
-              <SubmissionsPanel token={token} type="logsheets" isAdmin={currentUser?.role === "admin"} companyId={isAllCompaniesDashboard ? moduleSiteFilter : undefined} />
+              <SubmissionsPanel token={token} type="logsheets" isAdmin={hasPerm("logsheets", "d")} companyId={isAllCompaniesDashboard ? moduleSiteFilter : undefined} />
             )}
           </div>
         )}
@@ -9617,6 +10330,8 @@ export default function CompanyEmployeePortal() {
         {nav === "warnings" && (
           <WarningsPanel
             token={token}
+            currentUser={currentUser}
+            hasPerm={hasPerm}
             companyId={currentUser.companyId}
             companies={[{ id: currentUser.companyId, companyName: currentUser.companyName }]}
           />
@@ -9624,27 +10339,37 @@ export default function CompanyEmployeePortal() {
 
         {/* ── Notifications ─────────────────────────────────────── */}
         {nav === "notifications" && (
-          <NotificationsPanel token={token} allCompanies={isAllCompaniesDashboard && moduleSiteFilter === "all"} companyId={isAllCompaniesDashboard && moduleSiteFilter !== "all" ? moduleSiteFilter : undefined} />
+          <NotificationsPanel token={token} hasPerm={hasPerm} allCompanies={isAllCompaniesDashboard && moduleSiteFilter === "all"} companyId={isAllCompaniesDashboard && moduleSiteFilter !== "all" ? moduleSiteFilter : undefined} />
         )}
 
         {/* ── Work Orders ───────────────────────────────────────── */}
         {nav === "workorders" && (
           <WorkOrdersPanel
             token={token}
-            companyId={currentUser.companyId}
+            companyId={isAllCompaniesDashboard && moduleSiteFilter !== "all" ? moduleSiteFilter : currentUser?.companyId}
             assets={assets}
             allCompanies={isAllCompaniesDashboard && moduleSiteFilter === "all"}
+            isAdmin={currentUser?.role === "admin" || currentUser?.role === "catalyst_admin"}
+            hasPerm={hasPerm}
           />
         )}
 
         {/* ── Soft Service Requests ─────────────────────────────── */}
-        {nav === "softrequests" && <SoftRequestsPanel token={token} currentUser={currentUser} allCompanies={isAllCompaniesDashboard && moduleSiteFilter === "all"} />}
+        {nav === "softrequests" && (
+          <SoftRequestsPanel
+            token={token}
+            currentUser={currentUser}
+            hasPerm={hasPerm}
+            allCompanies={isAllCompaniesDashboard && moduleSiteFilter === "all"}
+          />
+        )}
 
         {/* ── Additional Requests ───────────────────────────────── */}
         {nav === "additional-requests" && (
           <AdditionalRequestsPanel
             token={token}
             currentUser={currentUser}
+            hasPerm={hasPerm}
             allCompanies={isAllCompaniesDashboard && moduleSiteFilter === "all"}
             companyId={isAllCompaniesDashboard && moduleSiteFilter !== "all" ? moduleSiteFilter : currentUser.companyId}
             onCountChange={(cnt) => setOpenAdditionalCount(cnt)}
@@ -9653,7 +10378,7 @@ export default function CompanyEmployeePortal() {
 
         {/* ── Locations ─────────────────────────────────────────── */}
         {nav === "locations" && (() => {
-          const isAdmin = currentUser.role === "admin";
+          const isAdmin = hasPerm("locations", "u"); // dynamic RBAC: admins + roles with locations update perm
           return (
             <div>
               {/* QR Settings Modal */}
@@ -9775,37 +10500,43 @@ export default function CompanyEmployeePortal() {
                       }} />
                     </label>
                     {/* Print selected / Print all QR */}
-                    {selectedLocIds.size > 0 ? (
-                      <button disabled={bulkLocQrPrinting} onClick={() => {
-                        const toPrint = filteredLocations.filter(l => selectedLocIds.has(l.id));
-                        openBulkLocQrPrintWindow(toPrint);
-                      }} style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "8px", background: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
-                        Print QR ({selectedLocIds.size})
-                      </button>
-                    ) : (
-                      <button disabled={bulkLocQrPrinting || filteredLocations.length === 0} onClick={() => openBulkLocQrPrintWindow(filteredLocations)}
-                        style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "8px", background: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe", cursor: filteredLocations.length === 0 ? "default" : "pointer", fontSize: "13px", fontWeight: 600, opacity: filteredLocations.length === 0 ? 0.5 : 1 }}>
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
-                        Print QR
-                      </button>
+                    {hasPerm("locations", "print_qr") && (
+                      selectedLocIds.size > 0 ? (
+                        <button disabled={bulkLocQrPrinting} onClick={() => {
+                          const toPrint = filteredLocations.filter(l => selectedLocIds.has(l.id));
+                          openBulkLocQrPrintWindow(toPrint);
+                        }} style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "8px", background: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                          Print QR ({selectedLocIds.size})
+                        </button>
+                      ) : (
+                        <button disabled={bulkLocQrPrinting || filteredLocations.length === 0} onClick={() => openBulkLocQrPrintWindow(filteredLocations)}
+                          style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "8px", background: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe", cursor: filteredLocations.length === 0 ? "default" : "pointer", fontSize: "13px", fontWeight: 600, opacity: filteredLocations.length === 0 ? 0.5 : 1 }}>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                          Print QR
+                        </button>
+                      )
                     )}
                     <Btn onClick={() => { setEditLoc(null); setShowLocModal(true); }}>
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                       Add Location
                     </Btn>
                     {/* Bulk Import */}
+                    {hasPerm("locations", "bulk_import") && (
                     <button onClick={() => setShowLocImport(true)} title="Bulk Import Locations"
                       style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 12px", borderRadius: "8px", background: "#fffbeb", color: "#b45309", border: "1px solid #fde68a", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                       Bulk Import
                     </button>
+                    )}
                     {/* Bulk Export */}
+                    {hasPerm("locations", "export") && (
                     <button onClick={handleExportLocations} title="Export Locations to Excel"
                       style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 12px", borderRadius: "8px", background: "#f0fdf4", color: "#16a34a", border: "1px solid #bbf7d0", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                       Bulk Export
                     </button>
+                    )}
                     <button onClick={() => setShowLocSettings(true)} title="QR Settings"
                       style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 12px", borderRadius: "8px", background: "#f8fafc", color: "#475569", border: "1px solid #e2e8f0", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 19.07a10 10 0 0 1 0-14.14"/></svg>
@@ -10181,8 +10912,8 @@ export default function CompanyEmployeePortal() {
 
         {/* ── Employees ─────────────────────────────────────────── */}
         {nav === "employees" && (() => {
-          const canManage = currentUser.role === "admin" || currentUser.role === "supervisor";
-          const isAdmin = currentUser.role === "admin";
+          const canManage = hasPerm("employees", "u"); // dynamic RBAC: admins, supervisors + roles with employees update perm
+          const isAdmin = hasPerm("employees", "d"); // delete requires 'd' permission
           const isSupervisor = currentUser.role === "supervisor";
 
           const EmpRow = ({ e, showAssign }) => (
@@ -10230,16 +10961,12 @@ export default function CompanyEmployeePortal() {
                 </div>
                 {canManage && (
                   <div style={{ display: "flex", gap: "8px" }}>
-                    {isAdmin && (
-                      <Btn onClick={() => setShowRolesModal(true)} outline color="#7c3aed" bg="#fff">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 7h18M3 12h18M3 17h18"/></svg>
-                        Manage Roles
-                      </Btn>
-                    )}
+                    {hasPerm("employees", "import") && (
                     <Btn onClick={() => setShowImport(true)} outline color="#64748b" bg="#fff">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
                       Import CSV
                     </Btn>
+                    )}
                     <Btn onClick={() => { setEditEmp(null); setShowEmpModal(true); }}>
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                       Add Employee
@@ -10529,7 +11256,7 @@ export default function CompanyEmployeePortal() {
 
         {/* ── Asset Types ────────────────────────────────────────── */}
         {nav === "asset-types" && (
-          <AssetTypesPanel token={token} onLayoutSaved={() => getCompanyPortalAssetTypes(token).then(d => d && setAssetTypesList(d)).catch(() => {})} />
+          <AssetTypesPanel token={token} hasPerm={hasPerm} onLayoutSaved={() => getCompanyPortalAssetTypes(token).then(d => d && setAssetTypesList(d)).catch(() => {})} />
         )}
 
         {/* ── Attendance ────────────────────────────────────────── */}
@@ -10558,13 +11285,19 @@ export default function CompanyEmployeePortal() {
           };
 
           const handleSubmit = async () => {
-            const records = Object.entries(attPending).map(([employeeId, status]) => ({ employeeId: Number(employeeId), status }));
-            if (!records.length) return;
             if (isFutureDate) { alert('Cannot mark attendance for future dates.'); return; }
+            const records = displayRows.map(r => ({ employeeId: Number(r.employeeId), status: r.status }));
+            if (!records.length) { alert('No eligible employees found to submit attendance for.'); return; }
             setAttSubmitting(true);
-            try { await submitAttendanceRecords(token, { date: attDate, records }); reloadAtt(); }
-            catch (e) { alert(e.message || 'Submit failed'); }
-            finally { setAttSubmitting(false); }
+            try {
+              await submitAttendanceRecords(token, { date: attDate, records });
+              setAttPending({});
+              reloadAtt();
+            } catch (e) {
+              alert(e.message || 'Submit failed');
+            } finally {
+              setAttSubmitting(false);
+            }
           };
 
           const reloadReport = () => {
@@ -10601,8 +11334,12 @@ export default function CompanyEmployeePortal() {
                   <button onClick={() => setAttShowReport(false)} style={{ padding: '7px 14px', border: '1px solid #e2e8f0', background: '#fff', color: '#475569', borderRadius: '8px', fontWeight: 600, fontSize: '13px', cursor: 'pointer' }}>← Back</button>
                   <div><h2 style={{ fontSize: '20px', fontWeight: 800, color: '#0f172a', margin: 0 }}>Attendance Report</h2><p style={{ fontSize: '13px', color: '#64748b', marginTop: '2px' }}>Historical submitted records</p></div>
                   <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}>
+                    {hasPerm("attendance", "export_excel") && (
                     <button onClick={() => { const params = {}; if (effectiveCompanyId) params.companyId = effectiveCompanyId; if (attRepMode === 'range' && attRepStart && attRepEnd) { params.startDate = attRepStart; params.endDate = attRepEnd; } else { params.month = attRepMonth; params.year = attRepYear; } params.recordsOnly = '1'; setAttRepExporting(true); downloadAttendanceExport(token, params).catch(e => alert(e?.message || 'Export failed')).finally(() => setAttRepExporting(false)); }} disabled={attRepExporting} style={{ padding: '7px 14px', background: '#0f172a', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 600, fontSize: '13px', cursor: attRepExporting ? 'not-allowed' : 'pointer', opacity: attRepExporting ? 0.7 : 1 }}>{attRepExporting ? 'Exporting…' : 'Export Excel'}</button>
+                    )}
+                    {hasPerm("attendance", "export_pdf") && (
                     <button onClick={() => { const params = {}; if (effectiveCompanyId) params.companyId = effectiveCompanyId; if (attRepMode === 'range' && attRepStart && attRepEnd) { params.startDate = attRepStart; params.endDate = attRepEnd; } else { params.month = attRepMonth; params.year = attRepYear; } params.recordsOnly = '1'; setAttRepPdfing(true); downloadAttendancePdf(token, params).catch(e => alert(e?.message || 'PDF export failed')).finally(() => setAttRepPdfing(false)); }} disabled={attRepPdfing} style={{ padding: '7px 14px', background: '#dc2626', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 600, fontSize: '13px', cursor: attRepPdfing ? 'not-allowed' : 'pointer', opacity: attRepPdfing ? 0.7 : 1 }}>{attRepPdfing ? 'Generating…' : 'Export PDF'}</button>
+                    )}
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: '10px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'center', background: '#f8fafc', padding: '12px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
@@ -10642,7 +11379,7 @@ export default function CompanyEmployeePortal() {
                       try { await submitAttendanceRecords(token, { date: upds[0]?.date, records: upds.map(u => ({ employeeId: u.employeeId, status: u.status })) }); reloadReport(); setAttRepSelected(new Set()); setAttRepEdits({}); } catch (e) { alert(e.message || 'Update failed'); }
                     }} style={{ padding: '5px 12px', background: '#2563eb', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 700, fontSize: '12.5px', cursor: 'pointer' }}>Bulk Update</button>
                     <button onClick={async () => {
-                      if (!window.confirm(`Delete ${attRepSelected.size} record(s)?`)) return;
+                      if (!confirmDeleteAction(hasPerm("attendance", "d"), `Delete ${attRepSelected.size} record(s)?`)) return;
                       const recs = [...attRepSelected].map(k => { const [eid, d] = k.split('__'); return { employeeId: Number(eid), date: d }; });
                       try { await bulkDeleteAttendanceRecords(token, recs); reloadReport(); setAttRepSelected(new Set()); } catch (e) { alert(e.message || 'Delete failed'); }
                     }} style={{ padding: '5px 12px', background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: '6px', fontWeight: 700, fontSize: '12.5px', cursor: 'pointer' }}>Bulk Delete</button>
@@ -10688,7 +11425,7 @@ export default function CompanyEmployeePortal() {
                                   }} style={{ padding: '4px 10px', background: '#2563eb', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 700, fontSize: '12px', cursor: 'pointer' }}>Save</button>
                                 )}
                                 <button onClick={async () => {
-                                  if (!window.confirm('Delete this record?')) return;
+                                  if (!confirmDeleteAction(hasPerm("attendance", "d"), "Do you want to delete this?")) return;
                                   try { await deleteAttendanceRecord(token, row.employeeId, row.date); setAttRepEdits(p => { const n = { ...p }; delete n[rowKey]; return n; }); reloadReport(); } catch (e) { alert(e.message || 'Delete failed'); }
                                 }} style={{ padding: '4px 10px', background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: '6px', fontWeight: 700, fontSize: '12px', cursor: 'pointer' }}>Delete</button>
                               </div>
@@ -10715,8 +11452,12 @@ export default function CompanyEmployeePortal() {
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>
                     Report
                   </Btn>
-                  <Btn onClick={handleSubmit} disabled={attSubmitting || !hasPending || isFutureDate} color={hasPending && !isFutureDate ? '#2563eb' : '#94a3b8'}>
-                    {attSubmitting ? 'Saving…' : hasPending ? `Submit (${Object.keys(attPending).length})` : 'Submit'}
+                  <Btn
+                    onClick={handleSubmit}
+                    disabled={attSubmitting || isFutureDate || displayRows.length === 0}
+                    color={!isFutureDate && displayRows.length > 0 ? '#2563eb' : '#94a3b8'}
+                  >
+                    {attSubmitting ? 'Saving…' : hasPending ? `Submit (${Object.keys(attPending).length} modified)` : `Submit (${displayRows.length})`}
                   </Btn>
                 </div>
               </div>
@@ -10852,7 +11593,7 @@ export default function CompanyEmployeePortal() {
           };
 
           const handleDeleteShift = async (id) => {
-            if (!window.confirm("Delete this shift? This will unlink it from all templates.")) return;
+            if (!confirmDeleteAction(hasPerm("shifts", "d"), "Delete this shift? This will unlink it from all templates.")) return;
             try {
               await deleteShift(token, id);
               setShifts((p) => p.filter((s) => s.id !== id));
@@ -10888,7 +11629,7 @@ export default function CompanyEmployeePortal() {
                   <h1 style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px", marginBottom: "4px" }}>Shift Management</h1>
                   <p style={{ color: "#64748b", fontSize: "13.5px" }}>Create work shifts and assign employees, checklists, and logsheets to them</p>
                 </div>
-                {currentUser.role === "admin" && (
+                {hasPerm("shifts", "c") && (
                   <button onClick={handleOpenCreate}
                     style={{ display: "inline-flex", alignItems: "center", gap: "6px", background: "#2563eb", color: "#fff", border: "none", borderRadius: "8px", padding: "9px 16px", fontWeight: 600, fontSize: "13.5px", cursor: "pointer" }}>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -10942,7 +11683,7 @@ export default function CompanyEmployeePortal() {
                             style={{ padding: "6px 12px", background: expanded ? "#eff6ff" : "#f8fafc", color: expanded ? "#2563eb" : "#64748b", border: "1px solid #e2e8f0", borderRadius: "7px", fontSize: "12.5px", fontWeight: 600, cursor: "pointer" }}>
                             {expanded ? "Hide" : "Employees"}
                           </button>
-                          {currentUser.role === "admin" && (
+                          {hasPerm("shifts", "u") && (
                             <>
                               <button onClick={() => handleOpenEdit(s)}
                                 style={{ width: "30px", height: "30px", borderRadius: "7px", background: "#eff6ff", color: "#2563eb", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -10969,7 +11710,7 @@ export default function CompanyEmployeePortal() {
                               {empList.map((e) => (
                                 <span key={e.id} style={{ display: "inline-flex", alignItems: "center", gap: "6px", background: "#fff", border: "1px solid #e2e8f0", borderRadius: "20px", padding: "4px 10px", fontSize: "12.5px", color: "#374151" }}>
                                   {e.fullName || e.username || e.email}
-                                  {currentUser.role === "admin" && (
+                                  {hasPerm("shifts", "u") && (
                                     <button onClick={() => handleRemoveEmp(s.id, e.id)}
                                       style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", padding: 0, lineHeight: 1, display: "flex" }}>
                                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -10979,7 +11720,7 @@ export default function CompanyEmployeePortal() {
                               ))}
                             </div>
                           )}
-                          {currentUser.role === "admin" && (
+                          {hasPerm("shifts", "u") && (
                             <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
                               <div style={{ flex: 1 }}>
                                 <SearchableSelect
@@ -11707,10 +12448,12 @@ export default function CompanyEmployeePortal() {
               <Card>
                 <div style={{ padding: "12px 16px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <span style={{ fontWeight: 600, color: "#0f172a", fontSize: "14px" }}>Submission History ({fleetHistory.length})</span>
+                  {hasPerm("fleet", "export") && (
                   <button onClick={async () => { try { await downloadFleetSubmissionsCSV(token); } catch (e) { alert("CSV export failed"); } }}
                     style={{ padding: "6px 14px", borderRadius: "8px", background: "#16a34a", color: "#fff", border: "none", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}>
                     ⬇ Export CSV
                   </button>
+                  )}
                 </div>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
                   <thead>

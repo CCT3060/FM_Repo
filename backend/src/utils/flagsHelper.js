@@ -98,47 +98,118 @@ export function calculateLogsheetSeverity(value, min, max) {
 export function evaluateRule(rule, rawValue) {
   if (!rule) return { violated: false, severity: "medium", expectedText: "" };
 
-  const operator    = (rule.operator || "between").toLowerCase();
-  const ruleSev     = rule.severity || null;
+  // 1. Unpack object / JSON payload (e.g. photo attachments { value: "...", photoUrl: "..." } or { answer: "..." })
+  let cleanValue = rawValue;
+  if (cleanValue != null && typeof cleanValue === "object") {
+    cleanValue = cleanValue.value !== undefined ? cleanValue.value : (cleanValue.answer !== undefined ? cleanValue.answer : (cleanValue.val !== undefined ? cleanValue.val : cleanValue));
+  } else if (typeof cleanValue === "string" && cleanValue.trim().startsWith("{") && cleanValue.trim().endsWith("}")) {
+    try {
+      const parsed = JSON.parse(cleanValue);
+      if (parsed && typeof parsed === "object") {
+        cleanValue = parsed.value !== undefined ? parsed.value : (parsed.answer !== undefined ? parsed.answer : (parsed.val !== undefined ? parsed.val : cleanValue));
+      }
+    } catch {}
+  }
 
-  // Yes/No, ok_not_ok, and cleaned_not_cleaned
-  if (operator === "yes_no" || operator === "ok_not_ok" || operator === "cleaned_not_cleaned") {
-    const defaultTrigger = operator === "yes_no" ? "no" : operator === "ok_not_ok" ? "not_ok" : "not cleaned";
-    const triggerVal  = (rule.triggerValue || defaultTrigger).toLowerCase().trim();
-    const answerLower = String(rawValue ?? "").toLowerCase().trim();
-    const violated    = answerLower === triggerVal
-      || (triggerVal === "no"          && ["n", "false", "0"].includes(answerLower))
-      || (triggerVal === "not_ok"      && ["not ok", "notok"].includes(answerLower))
-      || (triggerVal === "not cleaned" && ["not_cleaned", "notcleaned", "not-cleaned"].includes(answerLower));
+  const operator = (rule.operator || "between").toLowerCase();
+  const ruleSev  = rule.severity || null;
+
+  // Resolve trigger value and thresholds from all standard rule shapes
+  const triggerValRaw = rule.triggerValue ?? rule.value1 ?? rule.flagOn ?? "";
+  const triggerValStr = String(triggerValRaw ?? "").toLowerCase().trim();
+  const answerStr     = String(cleanValue ?? "").trim();
+  const answerLower   = answerStr.toLowerCase();
+
+  // 2. Yes/No, OK/Not OK, Cleaned/Not Cleaned & Boolean rules
+  if (
+    operator === "yes_no" ||
+    operator === "ok_not_ok" ||
+    operator === "cleaned_not_cleaned" ||
+    ((operator === "eq" || operator === "neq") && (triggerValStr === "yes" || triggerValStr === "no" || triggerValStr === "ok" || triggerValStr === "not_ok" || triggerValStr === "cleaned" || triggerValStr === "not cleaned"))
+  ) {
+    const defaultTrigger = operator === "ok_not_ok" ? "not_ok" : (operator === "cleaned_not_cleaned" ? "not cleaned" : "no");
+    const targetTrigger = triggerValStr || defaultTrigger;
+    
+    // Normalization helper for boolean-like answers
+    const isTargetMatch = (ans, target) => {
+      if (ans === target) return true;
+      if (target === "no" && (ans === "n" || ans === "false" || ans === "0")) return true;
+      if (target === "yes" && (ans === "y" || ans === "true" || ans === "1")) return true;
+      if (target === "not_ok" && (ans === "not ok" || ans === "notok" || ans === "fail" || ans === "failed")) return true;
+      if (target === "ok" && (ans === "pass" || ans === "passed")) return true;
+      if (target === "not cleaned" && (ans === "not_cleaned" || ans === "notcleaned" || ans === "not-cleaned")) return true;
+      return false;
+    };
+
+    let violated = false;
+    if (operator === "neq") {
+      violated = !isTargetMatch(answerLower, targetTrigger);
+    } else {
+      // operator === "eq" or "yes_no" or "ok_not_ok" or "cleaned_not_cleaned"
+      violated = isTargetMatch(answerLower, targetTrigger);
+    }
+
     if (!violated) return { violated: false, severity: "medium", expectedText: "" };
     return {
       violated: true,
       severity: ruleSev || (operator === "cleaned_not_cleaned" ? "medium" : "high"),
-      expectedText: `Answer must NOT be "${triggerVal}"`,
+      expectedText: operator === "neq" ? `Answer must equal "${targetTrigger}"` : `Answer must NOT be "${targetTrigger}"`,
     };
   }
 
-  // Numeric operators
-  const num = Number(rawValue);
-  if (!Number.isFinite(num)) return { violated: false, severity: "medium", expectedText: "" };
+  // 3. String operators (contains, not_contains, empty, not_empty, or text eq/neq)
+  if (operator === "contains") {
+    const violated = triggerValStr ? answerLower.includes(triggerValStr) : false;
+    if (!violated) return { violated: false, severity: "medium", expectedText: "" };
+    return { violated: true, severity: ruleSev || "medium", expectedText: `Must not contain "${triggerValRaw}"` };
+  }
+  if (operator === "not_contains") {
+    const violated = triggerValStr ? !answerLower.includes(triggerValStr) : false;
+    if (!violated) return { violated: false, severity: "medium", expectedText: "" };
+    return { violated: true, severity: ruleSev || "medium", expectedText: `Must contain "${triggerValRaw}"` };
+  }
+  if (operator === "empty") {
+    const violated = answerStr === "";
+    if (!violated) return { violated: false, severity: "medium", expectedText: "" };
+    return { violated: true, severity: ruleSev || "medium", expectedText: "Field must not be empty" };
+  }
+  if (operator === "not_empty") {
+    const violated = answerStr !== "";
+    if (!violated) return { violated: false, severity: "medium", expectedText: "" };
+    return { violated: true, severity: ruleSev || "medium", expectedText: "Field must be empty" };
+  }
 
-  const min = rule.minValue != null ? Number(rule.minValue) : null;
-  const max = rule.maxValue != null ? Number(rule.maxValue) : null;
-  const tv  = rule.triggerValue != null ? Number(rule.triggerValue) : null;
+  // 4. Numeric operators
+  const num = Number(cleanValue);
+  if (!Number.isFinite(num)) {
+    // If answer is non-numeric, fallback to text eq/neq comparison
+    if (operator === "eq") {
+      const violated = answerLower === triggerValStr;
+      if (violated) return { violated: true, severity: ruleSev || "medium", expectedText: `Must not equal "${triggerValRaw}"` };
+    } else if (operator === "neq") {
+      const violated = answerLower !== triggerValStr;
+      if (violated) return { violated: true, severity: ruleSev || "medium", expectedText: `Must equal "${triggerValRaw}"` };
+    }
+    return { violated: false, severity: "medium", expectedText: "" };
+  }
+
+  const min = (rule.minValue != null && rule.minValue !== "") ? Number(rule.minValue) : (rule.value1 != null && rule.value1 !== "" ? Number(rule.value1) : null);
+  const max = (rule.maxValue != null && rule.maxValue !== "") ? Number(rule.maxValue) : (rule.value2 != null && rule.value2 !== "" ? Number(rule.value2) : null);
+  const tv  = (rule.triggerValue != null && rule.triggerValue !== "") ? Number(rule.triggerValue) : (rule.value1 != null && rule.value1 !== "" ? Number(rule.value1) : null);
 
   let violated = false;
   let expectedText = "";
 
   switch (operator) {
-    case "gt":  violated = num <= (tv ?? max ?? 0); expectedText = `Must be > ${tv ?? max}`; break;
-    case "lt":  violated = num >= (tv ?? min ?? 0); expectedText = `Must be < ${tv ?? min}`; break;
-    case "gte": violated = num <  (tv ?? min ?? 0); expectedText = `Must be ≥ ${tv ?? min}`; break;
-    case "lte": violated = num >  (tv ?? max ?? 0); expectedText = `Must be ≤ ${tv ?? max}`; break;
-    case "eq":  violated = num !== tv; expectedText = `Must equal ${tv}`; break;
-    case "neq": violated = num === tv; expectedText = `Must not equal ${tv}`; break;
+    case "gt":  violated = num >  (tv ?? max ?? min ?? 0); expectedText = `Must not be > ${tv ?? max ?? min}`; break;
+    case "gte": violated = num >= (tv ?? max ?? min ?? 0); expectedText = `Must not be ≥ ${tv ?? max ?? min}`; break;
+    case "lt":  violated = num <  (tv ?? min ?? max ?? 0); expectedText = `Must not be < ${tv ?? min ?? max}`; break;
+    case "lte": violated = num <= (tv ?? min ?? max ?? 0); expectedText = `Must not be ≤ ${tv ?? min ?? max}`; break;
+    case "eq":  violated = tv != null ? num === tv : false; expectedText = `Must not equal ${tv}`; break;
+    case "neq": violated = tv != null ? num !== tv : false; expectedText = `Must equal ${tv}`; break;
     case "outside":
-      violated    = (min != null && num < min) || (max != null && num > max);
-      expectedText = `Acceptable range: [${min ?? "–"}, ${max ?? "–"}]`;
+      violated    = (min != null && num >= min) && (max != null && num <= max);
+      expectedText = `Must be outside range: [${min ?? "–"}, ${max ?? "–"}]`;
       break;
     case "between":
     default:
@@ -410,13 +481,19 @@ export function detectChecklistFlags(answers, context, ruleMap = {}) {
     const inputType = (ans.input_type || ans.inputType || "").toLowerCase();
     const selected  = (ans.option_selected || "").toLowerCase().trim();
     let   answerText = "";
+    let   parsedVal  = null;
 
     // Unpack answer_json
     try {
       const parsed = typeof ans.answer_json === "string"
         ? JSON.parse(ans.answer_json)
         : ans.answer_json;
-      answerText = String(parsed?.value ?? "").toLowerCase().trim();
+      parsedVal = parsed?.value !== undefined ? parsed.value : parsed;
+      let inner = parsedVal;
+      if (inner && typeof inner === "object") {
+        inner = inner.value ?? inner.answer ?? inner.val ?? inner;
+      }
+      answerText = String(inner ?? "").toLowerCase().trim();
     } catch {
       answerText = String(ans.option_selected || "").toLowerCase().trim();
     }
@@ -429,17 +506,18 @@ export function detectChecklistFlags(answers, context, ruleMap = {}) {
     // Flags are NOT auto-created for yes_no="no" or ok_not_ok="not_ok" by default.
     // Admins must explicitly configure a flag rule on the question to trigger alerts.
     if (questionRule) {
-      const rawVal   = answerText || selected;
+      const rawVal   = parsedVal ?? (answerText || selected);
       const ruleEval = evaluateRule(questionRule, rawVal);
       if (ruleEval.violated) {
+        const cleanEnteredVal = String(typeof rawVal === "object" ? (rawVal?.value ?? rawVal?.answer ?? answerText) : rawVal);
         flags.push({
           source: "checklist",
           companyId, assetId, checklistId, submissionId,
           questionId:    qId,
           raisedBy,
-          description:   `Rule violation: "${ans.question_text || ans.questionText}" – value: ${rawVal}`,
+          description:   `Rule violation: "${ans.question_text || ans.questionText}" – value: ${cleanEnteredVal}`,
           severity:      ruleEval.severity,
-          enteredValue:  String(rawVal).slice(0, 255),
+          enteredValue:  cleanEnteredVal.slice(0, 255),
           expectedRule:  ruleEval.expectedText,
           forceWorkOrder: !!questionRule.autoWorkOrder,
         });

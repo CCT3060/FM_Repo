@@ -39,6 +39,7 @@ import {
   getLogsheetTemplates,
   createLogsheetTemplate,
   assignLogsheetTemplate,
+  getLogsheetGrid,
   getLogsheetEntriesByTemplate,
   submitLogsheetEntry,
   getRecentLogsheetEntries,
@@ -1083,7 +1084,18 @@ function AdminEmployeesSection({ token, companies = [] }) {
   const [search, setSearch]   = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [editEmp, setEditEmp] = useState(null);
-  const emptyForm = { fullName:"", email:"", phone:"", role:"technician", designation:"", username:"", status:"Active", password:"" };
+  const emptyForm = {
+    fullName: "",
+    email: "",
+    phone: "",
+    role: "technician",
+    designation: "",
+    username: "",
+    status: "Active",
+    password: "",
+    canAccessCombinedView: true,
+    defaultCompanyId: null,
+  };
   const [form, setForm]       = useState(emptyForm);
   const [initialPassword, setInitialPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -1112,15 +1124,36 @@ function AdminEmployeesSection({ token, companies = [] }) {
   useEffect(() => {
     if (editEmp) {
       getAdminEmployeeCompanies(token, editEmp.id)
-        .then(list => setSelectedCompanyIds((list||[]).map(c=>c.id)))
+        .then(list => {
+          const ids = (list || []).map(c => c.id);
+          setSelectedCompanyIds(ids);
+          const targetIds = ids.length > 0 ? ids : (editEmp.companyId ? [editEmp.companyId] : []);
+          if (targetIds.length > 0) {
+            getAdminCompanyRoles(token, targetIds.join(","))
+              .then(roles => setCompanyRoles(Array.isArray(roles) ? roles : []))
+              .catch(() => setCompanyRoles([]));
+          }
+        })
         .catch(() => {});
-      getAdminCompanyRoles(token, editEmp.companyId)
+    } else {
+      setCompanyRoles([]);
+    }
+  }, [editEmp, token]);
+
+  // Dynamically refresh available roles when assigned companies selection changes in Add/Edit modal
+  useEffect(() => {
+    if (!showCreate && !editEmp) return;
+    const targetIds = selectedCompanyIds.length > 0
+      ? selectedCompanyIds
+      : (selCoIds.length > 0 ? selCoIds : []);
+    if (targetIds.length > 0) {
+      getAdminCompanyRoles(token, targetIds.join(","))
         .then(roles => setCompanyRoles(Array.isArray(roles) ? roles : []))
         .catch(() => setCompanyRoles([]));
     } else {
       setCompanyRoles([]);
     }
-  }, [editEmp, token]);
+  }, [selectedCompanyIds, showCreate, editEmp, token, selCoIds]);
 
   const handleSave = async () => {
     if (!form.fullName || !form.email) return;
@@ -1157,11 +1190,24 @@ function AdminEmployeesSection({ token, companies = [] }) {
 
   const displayed = employees.filter(e => !search || (e.fullName||"").toLowerCase().includes(search.toLowerCase()) || (e.email||"").toLowerCase().includes(search.toLowerCase()) || (e.designation||"").toLowerCase().includes(search.toLowerCase()));
   const STATIC_ROLES = ["admin","supervisor","technician","employee"];
-  // Build role options: use company_roles when loaded, else fall back to static list
-  const roleOptions = companyRoles.length > 0
-    ? [{ value:"admin", label:"Admin" }, ...companyRoles.map(r => ({ value: r.roleKey, label: r.label || r.roleKey }))]
-        .filter((opt, idx, arr) => arr.findIndex(o => o.value === opt.value) === idx)
-    : STATIC_ROLES.map(r => ({ value: r, label: r.charAt(0).toUpperCase()+r.slice(1) }));
+  // Build role options: dynamically scoped to all roles across selected companies, merged with standard roles
+  const roleOptions = useMemo(() => {
+    const customList = (companyRoles || []).map(r => ({ value: r.roleKey, label: r.label || r.roleKey }));
+    const baseList = [{ value: "admin", label: "Admin" }, ...customList];
+    if (customList.length === 0) {
+      STATIC_ROLES.forEach(r => {
+        if (!baseList.some(b => b.value === r)) {
+          baseList.push({ value: r, label: r.charAt(0).toUpperCase() + r.slice(1) });
+        }
+      });
+    }
+    const unique = baseList.filter((opt, idx, arr) => arr.findIndex(o => o.value === opt.value) === idx);
+    if (form.role && !unique.some(o => o.value === form.role)) {
+      unique.push({ value: form.role, label: form.role.charAt(0).toUpperCase() + form.role.slice(1) });
+    }
+    return unique;
+  }, [companyRoles, form.role]);
+
   const roleColors = { admin:"#dbeafe", supervisor:"#fef9c3", technician:"#dcfce7", employee:"#f1f5f9" };
   const roleTextColors = { admin:"#1d4ed8", supervisor:"#854d0e", technician:"#166534", employee:"#475569" };
   // Show company column when viewing "All Companies"
@@ -1173,7 +1219,7 @@ function AdminEmployeesSection({ token, companies = [] }) {
         <div><h1 style={{ fontSize:"22px", fontWeight:800, color:"#0f172a", margin:0 }}>Employees</h1><p style={{ color:"#64748b", fontSize:"13.5px", margin:"4px 0 0" }}>Manage employees across companies</p></div>
         <div style={{ display:"flex", gap:"10px" }}>
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search employees…" style={{ padding:"8px 12px", borderRadius:"8px", border:"1px solid #e2e8f0", fontSize:"13px", outline:"none", width:"200px" }} />
-          <button type="button" onClick={() => { const primary = selCoIds[0]; setForm(emptyForm); setInitialPassword(""); setEditEmp(null); setSelectedCompanyIds(primary ? [Number(primary)] : []); setShowPassword(false); setShowCreate(true); if (primary) getAdminCompanyRoles(token, primary).then(roles => setCompanyRoles(Array.isArray(roles) ? roles : [])).catch(() => setCompanyRoles([])); else setCompanyRoles([]); }} style={{ padding:"9px 18px", background:"#2563eb", color:"#fff", border:"none", borderRadius:"8px", fontSize:"13.5px", fontWeight:700, cursor:"pointer" }}>+ Add Employee</button>
+          <button type="button" onClick={() => { const primary = selCoIds[0]; setForm(emptyForm); setInitialPassword(""); setEditEmp(null); const initialCoIds = primary ? [Number(primary)] : []; setSelectedCompanyIds(initialCoIds); setShowPassword(false); setShowCreate(true); if (initialCoIds.length > 0) getAdminCompanyRoles(token, initialCoIds.join(",")).then(roles => setCompanyRoles(Array.isArray(roles) ? roles : [])).catch(() => setCompanyRoles([])); else setCompanyRoles([]); }} style={{ padding:"9px 18px", background:"#2563eb", color:"#fff", border:"none", borderRadius:"8px", fontSize:"13.5px", fontWeight:700, cursor:"pointer" }}>+ Add Employee</button>
         </div>
       </div>
 
@@ -1260,6 +1306,44 @@ function AdminEmployeesSection({ token, companies = [] }) {
                   )}
                 </div>
               )}
+
+              {/* Multi-company options: Combined View toggle & Default Landing View */}
+              {selectedCompanyIds.length > 1 && (
+                <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "10px", padding: "12px 14px", display: "flex", flexDirection: "column", gap: "10px" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: "10px", cursor: "pointer", fontSize: "13px", fontWeight: 600, color: "#1e293b" }}>
+                    <input
+                      type="checkbox"
+                      checked={form.canAccessCombinedView !== false}
+                      onChange={(e) => setForm({ ...form, canAccessCombinedView: e.target.checked })}
+                      style={{ accentColor: "#2563eb", width: "16px", height: "16px" }}
+                    />
+                    <span>Enable Combined (All Sites) View</span>
+                  </label>
+                  <p style={{ margin: "-4px 0 0 26px", fontSize: "11px", color: "#64748b" }}>
+                    Allows this employee to see aggregated data across all assigned sites and switch to the combined dashboard.
+                  </p>
+
+                  <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                    <label style={{ fontSize: "12px", fontWeight: 600, color: "#475569" }}>Default Landing View</label>
+                    <select
+                      value={form.defaultCompanyId || ""}
+                      onChange={(e) => setForm({ ...form, defaultCompanyId: e.target.value ? Number(e.target.value) : null })}
+                      style={{ padding: "8px 12px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "13px", background: "#fff" }}
+                    >
+                      {form.canAccessCombinedView !== false && (
+                        <option value="">✦ Combined Dashboard (All Sites)</option>
+                      )}
+                      {selectedCompanyIds.map((id) => {
+                        const c = companies.find((x) => x.id === id);
+                        return <option key={id} value={id}>{c ? (c.companyName || c.name) : `Company #${id}`}</option>;
+                      })}
+                    </select>
+                    <p style={{ margin: "2px 0 0", fontSize: "11px", color: "#94a3b8" }}>
+                      Initial screen loaded when the employee logs in.
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
             <div style={{ display:"flex", gap:"10px", justifyContent:"flex-end", marginTop:"20px" }}>
               <button type="button" onClick={() => { setShowCreate(false); setEditEmp(null); setInitialPassword(""); }} style={{ padding:"9px 18px", borderRadius:"8px", border:"1px solid #e2e8f0", background:"#f8fafc", fontWeight:600, cursor:"pointer" }}>Cancel</button>
@@ -1278,7 +1362,7 @@ function AdminEmployeesSection({ token, companies = [] }) {
           <table style={{ width:"100%", borderCollapse:"collapse", fontSize:"13px", minWidth:"680px" }}>
             <thead>
               <tr style={{ background:"#f8fafc" }}>
-                {[...(showCompanyCol ? ["Company"] : []), "Name","Email","Phone","Role","Designation","Username","Status","Actions"].map(h=>(
+                {[...(showCompanyCol ? ["Assigned Companies"] : []), "Name","Email","Phone","Role","Designation","Username","Status","Actions"].map(h=>(
                   <th key={h} style={{ padding:"10px 12px", textAlign:"left", color:"#475569", fontWeight:600, fontSize:"11px", textTransform:"uppercase", borderBottom:"1px solid #e2e8f0", whiteSpace:"nowrap" }}>{h}</th>
                 ))}
               </tr>
@@ -1286,7 +1370,15 @@ function AdminEmployeesSection({ token, companies = [] }) {
             <tbody>
               {displayed.map(e => (
                 <tr key={e.id} style={{ borderBottom:"1px solid #f1f5f9" }}>
-                  {showCompanyCol && <td style={{ padding:"10px 12px", color:"#2563eb", fontSize:"12px", fontWeight:600, whiteSpace:"nowrap" }}>{e.companyName||"—"}</td>}
+                  {showCompanyCol && (
+                    <td style={{ padding:"10px 12px", color:"#2563eb", fontSize:"12px", fontWeight:600, maxWidth:"200px" }} title={Array.isArray(e.assignedCompanies) && e.assignedCompanies.length > 0 ? e.assignedCompanies.map(c => c.companyName || c.name).join(", ") : (e.companyName || "—")}>
+                      <span style={{ display:"block", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                        {Array.isArray(e.assignedCompanies) && e.assignedCompanies.length > 0
+                          ? e.assignedCompanies.map(c => c.companyName || c.name).join(", ")
+                          : (e.companyName || "—")}
+                      </span>
+                    </td>
+                  )}
                   <td style={{ padding:"10px 12px", fontWeight:600, color:"#0f172a", whiteSpace:"nowrap" }}>{e.fullName}</td>
                   <td style={{ padding:"10px 12px", color:"#475569", maxWidth:"180px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }} title={e.email}>{e.email}</td>
                   <td style={{ padding:"10px 12px", color:"#64748b", fontSize:"12px", whiteSpace:"nowrap" }}>{e.phone||"—"}</td>
@@ -1296,7 +1388,7 @@ function AdminEmployeesSection({ token, companies = [] }) {
                   <td style={{ padding:"10px 12px" }}><span style={{ padding:"3px 8px", borderRadius:"20px", fontSize:"11px", fontWeight:700, background:(e.status||"Active")==="Active"?"#dcfce7":"#f1f5f9", color:(e.status||"Active")==="Active"?"#166534":"#475569", whiteSpace:"nowrap" }}>{e.status||"Active"}</span></td>
                   <td style={{ padding:"10px 12px" }}>
                     <div style={{ display:"flex", gap:"5px" }}>
-                      <button type="button" onClick={() => { const existingPassword = e.password || (e.hasPassword ? "********" : ""); setForm({ fullName:e.fullName, email:e.email, phone:e.phone||"", role:e.role||"technician", designation:e.designation||"", username:e.username||"", status:e.status||"Active", password:existingPassword }); setInitialPassword(existingPassword); setEditEmp(e); setSelectedCompanyIds([]); setShowPassword(false); setShowCreate(false); }} style={{ padding:"4px 8px", borderRadius:"6px", border:"1px solid #e2e8f0", background:"#f8fafc", fontSize:"11px", cursor:"pointer", fontWeight:600, whiteSpace:"nowrap" }}>Edit</button>
+                      <button type="button" onClick={() => { const existingPassword = e.password || (e.hasPassword ? "********" : ""); setForm({ fullName:e.fullName, email:e.email, phone:e.phone||"", role:e.role||"technician", designation:e.designation||"", username:e.username||"", status:e.status||"Active", password:existingPassword, canAccessCombinedView: e.canAccessCombinedView !== false, defaultCompanyId: e.defaultCompanyId || null }); setInitialPassword(existingPassword); setEditEmp(e); setSelectedCompanyIds([]); setShowPassword(false); setShowCreate(false); }} style={{ padding:"4px 8px", borderRadius:"6px", border:"1px solid #e2e8f0", background:"#f8fafc", fontSize:"11px", cursor:"pointer", fontWeight:600, whiteSpace:"nowrap" }}>Edit</button>
                       <button type="button" onClick={() => handleDelete(e.id)} style={{ padding:"4px 8px", borderRadius:"6px", border:"1px solid #fee2e2", background:"#fef2f2", color:"#dc2626", fontSize:"11px", cursor:"pointer", fontWeight:600, whiteSpace:"nowrap" }}>Del</button>
                     </div>
                   </td>
@@ -2461,11 +2553,13 @@ const CompanyPortal = () => {
   };
 
   const ALL_MODULES = [
+    { key: "dashboard", label: "Dashboard" },
+    { key: "employees", label: "Employees" },
     { key: "assets", label: "Asset Management" },
     { key: "checklists", label: "FM e Checklist" },
     { key: "logsheets", label: "Logsheets" },
     { key: "workorders", label: "Requests" },
-    { key: "soft-requests", label: "Soft Requests" },
+    { key: "soft-requests", label: "HK Request" },
     { key: "locations", label: "Locations" },
     { key: "additional-requests", label: "Additional Request" },
     { key: "ojt", label: "OJT Training" },
@@ -2477,6 +2571,7 @@ const CompanyPortal = () => {
     { key: "departments", label: "Departments" },
     { key: "asset-types", label: "Asset Types" },
     { key: "roles", label: "Manage Roles" },
+    { key: "mytasks", label: "My Tasks" },
   ];
 
   const ALL_ROLES = ["admin", "technical_lead", "assistant_manager", "technical_executive", "supervisor", "technician", "cleaner", "security", "driver", "fleet_operator", "employee"];
@@ -2993,7 +3088,7 @@ const CompanyPortal = () => {
           <button className={nav === "roles" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("roles"); setShowAddForm(false); }}>Manage Roles</button>
           <button className={nav === "locations" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("locations"); setShowAddForm(false); }}>Locations</button>
           <button className={nav === "workorders" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("workorders"); setShowAddForm(false); }}>Requests</button>
-          <button className={nav === "softrequests" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("softrequests"); setShowAddForm(false); }}>Soft Requests</button>
+          <button className={nav === "softrequests" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("softrequests"); setShowAddForm(false); }}>HK Request</button>
           <button className={nav === "reports" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("reports"); setShowAddForm(false); }}>Reports</button>
           <button className={nav === "shifts" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("shifts"); setShowAddForm(false); }}>Shifts</button>
           <button className={nav === "ojt" ? "client-side-item active" : "client-side-item"} onClick={() => { setNav("ojt"); setShowAddForm(false); }}>OJT Training</button>
@@ -3819,45 +3914,55 @@ const CompanyPortal = () => {
                       <button onClick={() => setRolePermsModalId(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: "22px", lineHeight: 1 }}>✕</button>
                     </div>
                     <p style={{ color: "#64748b", fontSize: "13px", marginBottom: "16px" }}>Configure Create / Read / Update / Delete permissions per role and module.</p>
-                    <div style={{ overflowX: "auto" }}>
-                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
-                        <thead>
-                          <tr style={{ background: "#f8fafc" }}>
-                            <th style={{ padding: "10px 12px", textAlign: "left", borderBottom: "2px solid #e2e8f0", color: "#475569", fontWeight: "700", minWidth: "130px" }}>Role</th>
-                            {ALL_MODULES.map((m) => (
-                              <th key={m.key} style={{ padding: "10px 8px", textAlign: "center", borderBottom: "2px solid #e2e8f0", color: "#475569", fontWeight: "700", minWidth: "90px" }}>
-                                {m.label}
-                                <div style={{ display: "flex", justifyContent: "center", gap: "2px", marginTop: "4px" }}>
-                                  {["C","R","U","D"].map((op) => <span key={op} style={{ fontSize: "10px", color: "#94a3b8", width: "16px", textAlign: "center" }}>{op}</span>)}
-                                </div>
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {rolePermsActiveRoles.map((role, ri) => (
-                            <tr key={role} style={{ background: ri % 2 === 0 ? "#fff" : "#f8fafc" }}>
-                              <td style={{ padding: "8px 12px", borderBottom: "1px solid #e2e8f0", color: "#334155", fontWeight: "600", textTransform: "capitalize" }}>
-                                {role.replace(/_/g, " ")}
-                              </td>
-                              {ALL_MODULES.map((m) => {
-                                const perms = (rolePermsData[role] || {})[m.key] || {};
-                                return (
-                                  <td key={m.key} style={{ padding: "8px", borderBottom: "1px solid #e2e8f0", textAlign: "center" }}>
-                                    <div style={{ display: "flex", justifyContent: "center", gap: "2px" }}>
-                                      {[["c","create"],["r","read"],["u","update"],["d","delete"]].map(([op, label]) => (
-                                        <input key={op} type="checkbox" title={label} checked={!!perms[op]} onChange={() => handleRolePermChange(role, m.key, op)}
-                                          style={{ width: "14px", height: "14px", cursor: "pointer", accentColor: "#2563eb" }} />
-                                      ))}
+                    {(() => {
+                      const activeCompany = companies.find((c) => c.id === rolePermsModalId);
+                      const enabledKeys = activeCompany && Array.isArray(activeCompany.enabledModules) ? activeCompany.enabledModules : null;
+                      const activeCompanyModules = enabledKeys
+                        ? ALL_MODULES.filter((m) => enabledKeys.includes(m.key))
+                        : ALL_MODULES;
+
+                      return (
+                        <div style={{ overflowX: "auto" }}>
+                          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
+                            <thead>
+                              <tr style={{ background: "#f8fafc" }}>
+                                <th style={{ padding: "10px 12px", textAlign: "left", borderBottom: "2px solid #e2e8f0", color: "#475569", fontWeight: "700", minWidth: "130px" }}>Role</th>
+                                {activeCompanyModules.map((m) => (
+                                  <th key={m.key} style={{ padding: "10px 8px", textAlign: "center", borderBottom: "2px solid #e2e8f0", color: "#475569", fontWeight: "700", minWidth: "90px" }}>
+                                    {m.label}
+                                    <div style={{ display: "flex", justifyContent: "center", gap: "2px", marginTop: "4px" }}>
+                                      {["C","R","U","D"].map((op) => <span key={op} style={{ fontSize: "10px", color: "#94a3b8", width: "16px", textAlign: "center" }}>{op}</span>)}
                                     </div>
+                                  </th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {rolePermsActiveRoles.map((role, ri) => (
+                                <tr key={role} style={{ background: ri % 2 === 0 ? "#fff" : "#f8fafc" }}>
+                                  <td style={{ padding: "8px 12px", borderBottom: "1px solid #e2e8f0", color: "#334155", fontWeight: "600", textTransform: "capitalize" }}>
+                                    {role.replace(/_/g, " ")}
                                   </td>
-                                );
-                              })}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                                  {activeCompanyModules.map((m) => {
+                                    const perms = (rolePermsData[role] || {})[m.key] || {};
+                                    return (
+                                      <td key={m.key} style={{ padding: "8px", borderBottom: "1px solid #e2e8f0", textAlign: "center" }}>
+                                        <div style={{ display: "flex", justifyContent: "center", gap: "2px" }}>
+                                          {[["c","create"],["r","read"],["u","update"],["d","delete"]].map(([op, label]) => (
+                                            <input key={op} type="checkbox" title={label} checked={!!perms[op]} onChange={() => handleRolePermChange(role, m.key, op)}
+                                              style={{ width: "14px", height: "14px", cursor: "pointer", accentColor: "#2563eb" }} />
+                                          ))}
+                                        </div>
+                                      </td>
+                                    );
+                                  })}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      );
+                    })()}
                     <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end", marginTop: "24px" }}>
                       <button type="button" onClick={() => setRolePermsModalId(null)} className="btn-cancel">Cancel</button>
                       <button type="button" onClick={handleSaveRolePerms} className="btn-submit" disabled={rolePermsSaving}>{rolePermsSaving ? "Saving…" : "Save Permissions"}</button>
@@ -4559,18 +4664,21 @@ const CompanyPortal = () => {
             {logsheetSubNav === "templates" && (
               <LogsheetModule
                 token={token}
-                assets={assets}
-                companies={companies}
+                assets={assets || []}
+                companies={companies || []}
                 companyId={logsheetSelectedCompanyId || "all"}
                 fetchTemplates={(tok, params) => getLogsheetTemplates(tok, params)}
                 fetchTemplate={(tok, id) => getLogsheetTemplate(tok, id)}
                 createTemplate={(tok, data) => createLogsheetTemplate(tok, data)}
                 updateTemplate={(tok, id, data) => updateLogsheetTemplate(tok, id, data)}
-                deleteTemplate={(tok, id) => deleteLogsheetTemplate(tok, id, data)}
+                deleteTemplate={(tok, id) => deleteLogsheetTemplate(tok, id)}
                 assignTemplate={(tok, templateId, assetId) => assignLogsheetTemplate(tok, templateId, assetId)}
                 fetchEntries={(tok, templateId, params) => getLogsheetEntriesByTemplate(tok, templateId, params)}
                 submitEntry={(tok, templateId, data) => submitLogsheetEntry(tok, templateId, data)}
+                fetchGrid={(tok, templateId, params) => getLogsheetGrid(tok, templateId, params)}
                 canBuild={!isClientAdmin}
+                canFill={true}
+                canAssign={true}
               />
             )}
 

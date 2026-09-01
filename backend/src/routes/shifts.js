@@ -20,6 +20,7 @@ import { body, param } from "express-validator";
 import pool from "../db.js";
 import { validate } from "../validators.js";
 import { requireCompanyAuth } from "../middleware/companyAuth.js";
+import { hasModulePerm } from "../utils/permissions.js";
 
 const router = Router();
 router.use(requireCompanyAuth);
@@ -203,7 +204,7 @@ router.post(
   ]),
   async (req, res, next) => {
     try {
-      if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+      if (!await hasModulePerm(req, "shifts", "c")) return res.status(403).json({ message: "Forbidden: insufficient shift creation permission" });
       const { name, description, status = "active" } = req.body;
       const startTime = toHHMM(req.body.startTime);
       const endTime   = toHHMM(req.body.endTime);
@@ -233,7 +234,7 @@ router.put(
   ]),
   async (req, res, next) => {
     try {
-      if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+      if (!await hasModulePerm(req, "shifts", "u")) return res.status(403).json({ message: "Forbidden: insufficient shift update permission" });
       const { id } = req.params;
       const { name, description, status } = req.body;
       const startTime = req.body.startTime ? toHHMM(req.body.startTime) : undefined;
@@ -269,7 +270,7 @@ router.delete(
   validate([param("id").isInt({ min: 1 })]),
   async (req, res, next) => {
     try {
-      if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+      if (!await hasModulePerm(req, "shifts", "d")) return res.status(403).json({ message: "Forbidden: insufficient shift deletion permission" });
       const { id } = req.params;
       const [[existing]] = await pool.query(
         `SELECT id FROM shifts WHERE id = ? AND company_id = ?`, [id, cid(req)]
@@ -322,7 +323,7 @@ router.post(
   ]),
   async (req, res, next) => {
     try {
-      if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+      if (!await hasModulePerm(req, "shifts", "u")) return res.status(403).json({ message: "Forbidden: insufficient shift update permission" });
       const { id } = req.params;
       const { userIds } = req.body;
 
@@ -364,7 +365,7 @@ router.delete(
   ]),
   async (req, res, next) => {
     try {
-      if (req.companyUser.role !== "admin") return res.status(403).json({ message: "Admin only" });
+      if (!await hasModulePerm(req, "shifts", "u")) return res.status(403).json({ message: "Forbidden: insufficient shift update permission" });
       const { id, userId } = req.params;
       const [[shift]] = await pool.query(
         `SELECT id FROM shifts WHERE id = ? AND company_id = ?`, [id, cid(req)]

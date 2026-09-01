@@ -28,7 +28,8 @@ module.exports = {
         PORT: 4000,
       },
 
-      // Logging
+      // Logging — capped to prevent disk-full conditions.
+      // pm2-logrotate module must be installed: pm2 install pm2-logrotate
       out_file: "/var/log/fmapp/backend-out.log",
       error_file: "/var/log/fmapp/backend-error.log",
       merge_logs: true,

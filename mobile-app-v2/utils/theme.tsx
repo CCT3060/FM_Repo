@@ -78,7 +78,7 @@ export const LightTheme = {
 
   cardShadow:       'rgba(0,0,0,0.06)',
   overlay:          'rgba(0,0,0,0.5)',
-  statusBar:        'dark' as const,
+  statusBar:        'dark' as 'dark' | 'light',
 };
 
 export const DarkTheme: typeof LightTheme = {

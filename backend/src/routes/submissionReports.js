@@ -37,7 +37,11 @@ async function resolveScope(req) {
   if (req.companyUser) {
     const reqCid = req.query.companyId;
     if (reqCid === "all") {
-      return { cCond: "IN (SELECT company_id FROM user_company_assignments WHERE user_id = ?)", cParam: req.companyUser.id };
+      return {
+        cCond: "IN (SELECT company_id FROM user_company_assignments WHERE user_id = ? UNION SELECT ?::integer)",
+        cParams: [req.companyUser.id, req.companyUser.companyId],
+        cParam: req.companyUser.companyId,
+      };
     }
     if (reqCid && !isNaN(parseInt(reqCid, 10))) {
       const targetCid = parseInt(reqCid, 10);
@@ -46,17 +50,22 @@ async function resolveScope(req) {
           `SELECT 1 FROM user_company_assignments WHERE user_id = ? AND company_id = ?`,
           [req.companyUser.id, targetCid]
         );
-        if (ucaRow) return { cCond: "= ?", cParam: targetCid };
+        if (ucaRow) return { cCond: "= ?", cParams: [targetCid], cParam: targetCid };
       } else {
-        return { cCond: "= ?", cParam: targetCid };
+        return { cCond: "= ?", cParams: [targetCid], cParam: targetCid };
       }
     }
-    return { cCond: "= ?", cParam: req.companyUser.companyId };
+    return { cCond: "= ?", cParams: [req.companyUser.companyId], cParam: req.companyUser.companyId };
   }
   // Platform admin / legacy
   const companyId = flexCid(req);
   const userId = req.user?.id;
-  return { cCond: companyId ? "= ?" : "IN (SELECT id FROM companies WHERE user_id = ?)", cParam: companyId || userId };
+  const target = companyId || userId;
+  return {
+    cCond: companyId ? "= ?" : "IN (SELECT id FROM companies WHERE user_id = ?)",
+    cParams: [target],
+    cParam: target,
+  };
 }
 
 /*──────────────────────────────────────────────────────────────────────────────
@@ -68,8 +77,8 @@ router.get(
   flexCompanyAuth,
   async (req, res, next) => {
     try {
-      const { cCond, cParam } = await resolveScope(req);
-      if (!cParam) return res.status(400).json({ message: "Authentication required" });
+      const { cCond, cParams } = await resolveScope(req);
+      if (!cParams || !cParams.length) return res.status(400).json({ message: "Authentication required" });
 
       const { type } = req.params;
       if (!["checklists", "logsheets"].includes(type))
@@ -80,42 +89,42 @@ router.get(
           `SELECT id, template_name AS "templateName"
            FROM checklist_templates WHERE company_id ${cCond}
            ORDER BY template_name`,
-          [cParam]
+          [...cParams]
         );
         const [employees] = await pool.query(
           `SELECT id, full_name AS "fullName"
            FROM company_users
            WHERE company_id ${cCond} AND full_name IS NOT NULL
            ORDER BY full_name`,
-          [cParam]
+          [...cParams]
         );
         const [assets] = await pool.query(
           `SELECT id, asset_name AS "assetName"
            FROM assets
            WHERE company_id ${cCond}
            ORDER BY asset_name`,
-          [cParam]
+          [...cParams]
         );
         const [buildingRows] = await pool.query(
           `SELECT DISTINCT name AS building FROM buildings WHERE company_id ${cCond} AND name IS NOT NULL AND name <> ''
            UNION
            SELECT DISTINCT a.building FROM assets a WHERE a.company_id ${cCond} AND a.building IS NOT NULL AND a.building <> ''
            ORDER BY building`,
-          [cParam, cParam]
+          [...cParams, ...cParams]
         );
         const [floorRows] = await pool.query(
           `SELECT DISTINCT floor_number AS floor FROM floors WHERE company_id ${cCond} AND floor_number IS NOT NULL AND floor_number <> ''
            UNION
            SELECT DISTINCT a.floor FROM assets a WHERE a.company_id ${cCond} AND a.floor IS NOT NULL AND a.floor <> ''
            ORDER BY floor`,
-          [cParam, cParam]
+          [...cParams, ...cParams]
         );
         const [roomRows] = await pool.query(
           `SELECT DISTINCT room_name AS room FROM rooms WHERE company_id ${cCond} AND room_name IS NOT NULL AND room_name <> ''
            UNION
            SELECT DISTINCT a.room FROM assets a WHERE a.company_id ${cCond} AND a.room IS NOT NULL AND a.room <> ''
            ORDER BY room`,
-          [cParam, cParam]
+          [...cParams, ...cParams]
         );
         return res.json({ templates, employees, assets, shifts: [], buildings: buildingRows.map((r) => r.building), floors: floorRows.map((r) => r.floor), rooms: roomRows.map((r) => r.room) });
       }
@@ -125,21 +134,21 @@ router.get(
         `SELECT id, template_name AS "templateName"
          FROM logsheet_templates WHERE company_id ${cCond}
          ORDER BY template_name`,
-        [cParam]
+        [...cParams]
       );
       const [employees] = await pool.query(
         `SELECT id, full_name AS "fullName"
          FROM company_users
          WHERE company_id ${cCond} AND full_name IS NOT NULL
          ORDER BY full_name`,
-        [cParam]
+        [...cParams]
       );
       const [assets] = await pool.query(
         `SELECT id, asset_name AS "assetName"
          FROM assets
          WHERE company_id ${cCond}
          ORDER BY asset_name`,
-        [cParam]
+        [...cParams]
       );
       const [shiftRows] = await pool.query(
         `SELECT DISTINCT le.shift
@@ -147,7 +156,7 @@ router.get(
          INNER JOIN logsheet_templates lt ON lt.id = le.template_id
          WHERE lt.company_id ${cCond} AND le.shift IS NOT NULL AND le.shift <> ''
          ORDER BY le.shift`,
-        [cParam]
+        [...cParams]
       );
       const [buildingRows] = await pool.query(
         `SELECT DISTINCT name AS building FROM buildings WHERE company_id ${cCond} AND name IS NOT NULL AND name <> ''
@@ -183,12 +192,12 @@ router.get(
   flexCompanyAuth,
   async (req, res, next) => {
     try {
-      const { cCond, cParam } = await resolveScope(req);
-      if (!cParam) return res.status(400).json({ message: "Authentication required" });
+      const { cCond, cParams } = await resolveScope(req);
+      if (!cParams || !cParams.length) return res.status(400).json({ message: "Authentication required" });
 
       const { dateFrom, dateTo, period, templateId, assetId, building, floor, room, status, submittedBy, search } = req.query;
       const conditions = [`ct.company_id ${cCond}`];
-      const params     = [cParam];
+      const params     = [...cParams];
 
       if (period === "today") {
         conditions.push("DATE(cs.submitted_at) = CURRENT_DATE");
@@ -297,12 +306,12 @@ router.get(
   flexCompanyAuth,
   async (req, res, next) => {
     try {
-      const { cCond, cParam } = await resolveScope(req);
-      if (!cParam) return res.status(400).json({ message: "Authentication required" });
+      const { cCond, cParams } = await resolveScope(req);
+      if (!cParams || !cParams.length) return res.status(400).json({ message: "Authentication required" });
 
       const { dateFrom, dateTo, period, templateId, assetId, building, floor, room, status, shift, submittedBy, search } = req.query;
       const conditions = [`lt.company_id ${cCond}`];
-      const params     = [cParam];
+      const params     = [...cParams];
       const dateExpr   = "COALESCE(le.submitted_at, le.entry_date)";
 
       if (period === "today") {
@@ -379,12 +388,11 @@ router.get(
   validate([param("id").isInt({ min: 1 })]),
   async (req, res, next) => {
     try {
-      const { cCond, cParam } = await resolveScope(req);
-      if (!cParam) return res.status(400).json({ message: "Authentication required" });
+      const { cCond, cParams } = await resolveScope(req);
+      if (!cParams || !cParams.length) return res.status(400).json({ message: "Authentication required" });
 
       const { id } = req.params;
       const scopeCond  = `ct.company_id ${cCond}`;
-      const scopeParam = cParam;
       const [[submission]] = await pool.query(
         `SELECT
            cs.id,
@@ -408,7 +416,7 @@ router.get(
          LEFT JOIN departments d      ON d.id  = a.department_id
          LEFT JOIN company_users cu   ON cu.id = cs.company_user_id
          WHERE cs.id = ? AND ${scopeCond}`,
-        [id, scopeParam]
+        [id, ...cParams]
       );
       if (!submission) return res.status(404).json({ message: "Submission not found" });
 
@@ -440,12 +448,11 @@ router.get(
   validate([param("id").isInt({ min: 1 })]),
   async (req, res, next) => {
     try {
-      const { cCond, cParam } = await resolveScope(req);
-      if (!cParam) return res.status(400).json({ message: "Authentication required" });
+      const { cCond, cParams } = await resolveScope(req);
+      if (!cParams || !cParams.length) return res.status(400).json({ message: "Authentication required" });
 
       const { id } = req.params;
       const scopeCond  = `lt.company_id ${cCond}`;
-      const scopeParam = cParam;
       const [[submission]] = await pool.query(
         `SELECT
            le.id,
@@ -475,7 +482,7 @@ router.get(
          LEFT JOIN departments d        ON d.id  = a.department_id
          LEFT JOIN company_users cu     ON cu.id = le.company_user_id
          WHERE le.id = ? AND ${scopeCond}`,
-        [id, scopeParam]
+        [id, ...cParams]
       );
       if (!submission) return res.status(404).json({ message: "Entry not found" });
 
