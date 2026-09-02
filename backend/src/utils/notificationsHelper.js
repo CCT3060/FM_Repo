@@ -160,12 +160,29 @@ export async function dispatchFlagNotifications(
     // Don't notify the person who raised the flag
     if (raisedBy) recipientIds.delete(raisedBy);
 
-    // Insert one notification per unique recipient
+    // Insert one notification per unique recipient AND send push to closed/background app
     for (const recipientId of recipientIds) {
       await createNotification(
         { companyId, recipientId, flagId, type: notificationType, title, message },
         conn
       );
+
+      // ── Push notification (fire-and-forget, non-fatal) ──────────────────────
+      try {
+        const [[userRow]] = await pool.query(
+          `SELECT push_token FROM company_users WHERE id = ? LIMIT 1`,
+          [recipientId]
+        );
+        if (userRow?.push_token) {
+          await sendExpoPush(userRow.push_token, title, message, {
+            screen: "/notifications",
+            flagId: flagId ? String(flagId) : undefined,
+            type: notificationType,
+          });
+        }
+      } catch {
+        // Non-fatal — in-app notification already created above
+      }
     }
   } catch (err) {
     console.error("[Notifications] dispatchFlagNotifications failed:", err.message);
@@ -183,7 +200,8 @@ export async function markNotificationRead(notificationId, recipientId, conn = p
 // ── Send an Expo push notification ────────────────────────────────────────────
 /**
  * Sends a push notification via Expo's push API.
- * Silently fails if the token is invalid or the request fails.
+ * Logs Expo API-level errors (e.g. invalid/expired token) so failures are
+ * visible in server logs instead of being silently swallowed.
  *
  * @param {string} pushToken - ExponentPushToken[...]
  * @param {string} title
@@ -193,7 +211,7 @@ export async function markNotificationRead(notificationId, recipientId, conn = p
 export async function sendExpoPush(pushToken, title, body, data = {}) {
   if (!pushToken || !String(pushToken).startsWith("ExponentPushToken")) return;
   try {
-    await fetch("https://exp.host/--/api/v2/push/send", {
+    const res = await fetch("https://exp.host/--/api/v2/push/send", {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({
@@ -204,11 +222,20 @@ export async function sendExpoPush(pushToken, title, body, data = {}) {
         sound: "default",
         priority: "high",
         channelId: data?.channelId || "default",
-        _displayInForeground: true,
       }),
     });
-  } catch {
-    // Non-fatal
+    // Log any delivery-level errors returned by Expo's API
+    if (res.ok) {
+      const json = await res.json().catch(() => null);
+      const ticket = Array.isArray(json?.data) ? json.data[0] : json?.data;
+      if (ticket?.status === "error") {
+        console.error("[ExpoPush] Delivery error:", ticket.message, "| details:", JSON.stringify(ticket.details));
+      }
+    } else {
+      console.error("[ExpoPush] HTTP error:", res.status, await res.text().catch(() => ""));
+    }
+  } catch (err) {
+    console.error("[ExpoPush] Fetch failed:", err.message);
   }
 }
 

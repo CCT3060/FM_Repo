@@ -14,7 +14,7 @@
  */
 
 import pool from "../db.js";
-import { createNotification } from "./notificationsHelper.js";
+import { createNotification, sendExpoPush } from "./notificationsHelper.js";
 import { sendFCMPush } from "./firebaseService.js";
 
 const RUN_INTERVAL_MS = Number(
@@ -283,7 +283,7 @@ async function sendLocationReminderIfNeeded({ locationId, templateId, companyId,
 
   // Get employees assigned to this template (or all employees for this company with access)
   const [assignedUsers] = await pool.query(
-    `SELECT cu.id, cu.full_name AS "fullName", cu.fcm_token AS "fcmToken"
+    `SELECT cu.id, cu.full_name AS "fullName", cu.fcm_token AS "fcmToken", cu.push_token AS "pushToken"
      FROM template_user_assignments tua
      JOIN company_users cu ON cu.id = tua.assigned_to
      WHERE tua.template_id = ? AND tua.template_type = 'checklist' AND cu.status = 'Active'`,
@@ -293,7 +293,7 @@ async function sendLocationReminderIfNeeded({ locationId, templateId, companyId,
 async function getManagersToNotify(companyId) {
   try {
     const [users] = await pool.query(
-      `SELECT cu.id, cu.fcm_token AS "fcmToken", cu.role,
+      `SELECT cu.id, cu.fcm_token AS "fcmToken", cu.push_token AS "pushToken", cu.role,
               cr.is_technical_supervisor AS "isTechSupervisor",
               rp.permissions
        FROM company_users cu
@@ -326,6 +326,13 @@ async function getManagersToNotify(companyId) {
   const inAppTitle = "Checklist Reminder";
 
   for (const user of [...(assignedUsers || []), ...(managers || [])]) {
+    // Primary: Expo push (works without Firebase Admin credentials)
+    if (user.pushToken) {
+      await sendExpoPush(user.pushToken, pushTitle, pushBody, {
+        type: 'checklist_reminder', templateId: String(templateId), locationId: String(locationId),
+      }).catch(() => {});
+    }
+    // Secondary: direct FCM (only fires if Firebase Admin SDK is configured)
     if (user.fcmToken) {
       await sendFCMPush(user.fcmToken, pushTitle, pushBody, {
         type: 'checklist_reminder', templateId: String(templateId), locationId: String(locationId),
@@ -620,7 +627,7 @@ async function sendReminderIfNeeded({ templateId, companyId, templateName, windo
 
   // Find assigned users
   const [assignedUsers] = await pool.query(
-    `SELECT cu.id, cu.full_name AS "fullName", cu.fcm_token AS "fcmToken"
+    `SELECT cu.id, cu.full_name AS "fullName", cu.fcm_token AS "fcmToken", cu.push_token AS "pushToken"
      FROM template_user_assignments tua
      JOIN company_users cu ON cu.id = tua.assigned_to
      WHERE tua.template_id = ? AND tua.template_type = 'checklist' AND cu.status = 'Active'`,
@@ -631,6 +638,14 @@ async function sendReminderIfNeeded({ templateId, companyId, templateName, windo
   const inAppTitle = "Checklist Not Submitted";
 
   for (const user of (assignedUsers || [])) {
+    // Primary: Expo push (works without Firebase Admin credentials)
+    if (user.pushToken) {
+      await sendExpoPush(user.pushToken, pushTitle, pushBody, {
+        type: "checklist_reminder",
+        templateId: String(templateId),
+      }).catch(() => {});
+    }
+    // Secondary: direct FCM
     if (user.fcmToken) {
       await sendFCMPush(user.fcmToken, pushTitle, pushBody, {
         type: "checklist_reminder",

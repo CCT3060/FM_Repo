@@ -184,7 +184,7 @@ setTimeout(runEscalationCheck, 30_000);
 async function sendExpoPush(pushToken, title, body, data = {}) {
   if (!pushToken || !pushToken.startsWith("ExponentPushToken")) return;
   try {
-    await fetch("https://exp.host/--/api/v2/push/send", {
+    const res = await fetch("https://exp.host/--/api/v2/push/send", {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({
@@ -195,11 +195,19 @@ async function sendExpoPush(pushToken, title, body, data = {}) {
         sound: "default",
         priority: "high",
         channelId: data?.channelId || "default",
-        _displayInForeground: true,
       }),
     });
-  } catch {
-    // Non-fatal
+    if (res.ok) {
+      const json = await res.json().catch(() => null);
+      const ticket = Array.isArray(json?.data) ? json.data[0] : json?.data;
+      if (ticket?.status === "error") {
+        console.error("[ExpoPush/softRequests] Delivery error:", ticket.message, JSON.stringify(ticket.details));
+      }
+    } else {
+      console.error("[ExpoPush/softRequests] HTTP error:", res.status);
+    }
+  } catch (err) {
+    console.error("[ExpoPush/softRequests] Fetch failed:", err.message);
   }
 }
 

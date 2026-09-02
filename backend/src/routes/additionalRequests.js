@@ -45,9 +45,9 @@ async function createInAppNotification(companyId, userId, title, body) {
 async function sendExpoPush(token, title, body, data = {}) {
   if (!token || !token.startsWith("ExponentPushToken")) return;
   try {
-    await fetch("https://exp.host/--/api/v2/push/send", {
+    const res = await fetch("https://exp.host/--/api/v2/push/send", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({
         to: token,
         title,
@@ -56,11 +56,20 @@ async function sendExpoPush(token, title, body, data = {}) {
         sound: "default",
         priority: "high",
         channelId: data?.channelId || "default",
-        _displayInForeground: true,
       }),
     });
-  } catch { /* non-critical */ }
+    if (res.ok) {
+      const json = await res.json().catch(() => null);
+      const ticket = Array.isArray(json?.data) ? json.data[0] : json?.data;
+      if (ticket?.status === "error") {
+        console.error("[ExpoPush/additionalReqs] Delivery error:", ticket.message, JSON.stringify(ticket.details));
+      }
+    } else {
+      console.error("[ExpoPush/additionalReqs] HTTP error:", res.status);
+    }
+  } catch (err) { console.error("[ExpoPush/additionalReqs] Fetch failed:", err.message); }
 }
+
 
 async function hasRaiseCapability(companyId, roleKey) {
   if (!roleKey) return false;
